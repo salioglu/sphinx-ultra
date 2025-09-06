@@ -1,0 +1,97 @@
+{% extends "layout.html" %}
+
+{% set title = _('Index') %}
+
+{% block body %}
+<h1 id="index">{% trans %}Index{% endtrans %}</h1>
+
+{% if split_index %}
+<div class="genindex-jumpbox">
+  {% for key, entries in genindexentries %}
+  <a href="#{{ key }}"><strong>{{ key }}</strong></a>
+  {% if not loop.last %}
+    | 
+  {% endif %}
+  {% endfor %}
+</div>
+{% endif %}
+
+{% for key, entries in genindexentries %}
+  {% if split_index %}
+  <h2 id="{{ key }}">{{ key }}</h2>
+  {% endif %}
+  
+  <table style="width: 100%" class="indextable genindextable">
+    <tr>
+      {% set entrycount = genindexcounts[loop.index0] %}
+      {% set halfcount = ((entrycount // 2) + (entrycount % 2))|int %}
+      
+      <td style="width: 33%; vertical-align: top;">
+        <ul>
+        {% set count = [0] %}
+        {% for letter, entrylist in entries %}
+          {% for entry, (_, subentries, _) in entrylist %}
+            {% if count[0] < halfcount %}
+              <li>
+                {% if entry.1 %}
+                <a href="{{ entry.1 }}">{{ entry.0|e }}</a>
+                {% else %}
+                {{ entry.0|e }}
+                {% endif %}
+                {% if subentries %}
+                <ul>
+                  {% for subentry, (_, uri, _) in subentries %}
+                  <li>
+                    {% if uri %}
+                    <a href="{{ uri }}">{{ subentry|e }}</a>
+                    {% else %}
+                    {{ subentry|e }}
+                    {% endif %}
+                  </li>
+                  {% endfor %}
+                </ul>
+                {% endif %}
+              </li>
+              {% if count.append(count.pop() + 1) %}{% endif %}
+            {% endif %}
+          {% endfor %}
+        {% endfor %}
+        </ul>
+      </td>
+      
+      <td style="width: 33%; vertical-align: top;">
+        <ul>
+        {% set count = [0] %}
+        {% for letter, entrylist in entries %}
+          {% for entry, (_, subentries, _) in entrylist %}
+            {% if count[0] >= halfcount %}
+              <li>
+                {% if entry.1 %}
+                <a href="{{ entry.1 }}">{{ entry.0|e }}</a>
+                {% else %}
+                {{ entry.0|e }}
+                {% endif %}
+                {% if subentries %}
+                <ul>
+                  {% for subentry, (_, uri, _) in subentries %}
+                  <li>
+                    {% if uri %}
+                    <a href="{{ uri }}">{{ subentry|e }}</a>
+                    {% else %}
+                    {{ subentry|e }}
+                    {% endif %}
+                  </li>
+                  {% endfor %}
+                </ul>
+                {% endif %}
+              </li>
+            {% endif %}
+            {% if count.append(count.pop() + 1) %}{% endif %}
+          {% endfor %}
+        {% endfor %}
+        </ul>
+      </td>
+    </tr>
+  </table>
+{% endfor %}
+{% endblock %}

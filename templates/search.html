@@ -1,0 +1,41 @@
+{% extends "layout.html" %}
+
+{% set title = _('Search') %}
+
+{% block body %}
+<h1 id="search-documentation">{% trans %}Search{% endtrans %}</h1>
+
+<div id="fallback" class="admonition warning">
+  <script type="text/javascript">$('#fallback').hide();</script>
+  <p>
+    {% trans %}Please activate JavaScript to enable the search
+    functionality.{% endtrans %}
+  </p>
+</div>
+
+<p>
+  {% trans %}Enter search terms or a module, class or function name.{% endtrans %}
+</p>
+
+<form action="" method="get">
+  <input type="text" name="q" value="" />
+  <input type="submit" value="{% trans %}search{% endtrans %}" />
+  <span id="search-progress" style="padding-left: 10px"></span>
+</form>
+
+<div id="search-results">
+</div>
+
+<script type="text/javascript">
+  var DOCUMENTATION_OPTIONS = {
+    URL_ROOT: {{ pathto('', resource=true)|tojson }},
+    VERSION: {{ version|tojson }},
+    LANGUAGE: {{ language|tojson }},
+    COLLAPSE_INDEX: false,
+    FILE_SUFFIX: {{ file_suffix|tojson }},
+    HAS_SOURCE: {{ has_source|tojson }}
+  };
+</script>
+
+<script type="text/javascript" src="{{ pathto('_static/searchtools.js', resource=true) }}"></script>
+{% endblock %}

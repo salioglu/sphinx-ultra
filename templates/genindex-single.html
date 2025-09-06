@@ -1,0 +1,96 @@
+{% extends "layout.html" %}
+
+{% set title = _('Index') + ' - ' + key %}
+
+{% block body %}
+<h1 id="index-{{ key|lower }}">{% trans %}Index{% endtrans %} &#8211; {{ key }}</h1>
+
+<div class="genindex-jumpbox">
+  {% for k, e in genindexentries %}
+  {% if k == key %}
+  <strong>{{ k }}</strong>
+  {% else %}
+  <a href="{{ pathto('genindex-' + k) }}"><strong>{{ k }}</strong></a>
+  {% endif %}
+  {% if not loop.last %}
+    | 
+  {% endif %}
+  {% endfor %}
+  
+  <br />
+  <a href="{{ pathto('genindex-all') }}"><strong>{% trans %}Full index on one page{% endtrans %}</strong></a>
+</div>
+
+<table style="width: 100%" class="indextable genindextable">
+  <tr>
+    {% set halfcount = ((count // 2) + (count % 2))|int %}
+    
+    <td style="width: 50%; vertical-align: top;">
+      <ul>
+      {% set item_count = [0] %}
+      {% for letter, entrylist in entries %}
+        {% for entry, (_, subentries, _) in entrylist %}
+          {% if item_count[0] < halfcount %}
+            <li id="{{ entry.0|lower }}">
+              {% if entry.1 %}
+              <a href="{{ entry.1 }}">{{ entry.0|e }}</a>
+              {% else %}
+              {{ entry.0|e }}
+              {% endif %}
+              {% if subentries %}
+              <ul>
+                {% for subentry, (_, uri, _) in subentries %}
+                <li>
+                  {% if uri %}
+                  <a href="{{ uri }}">{{ subentry|e }}</a>
+                  {% else %}
+                  {{ subentry|e }}
+                  {% endif %}
+                </li>
+                {% endfor %}
+              </ul>
+              {% endif %}
+            </li>
+            {% if item_count.append(item_count.pop() + 1 + (subentries|length if subentries else 0)) %}{% endif %}
+          {% endif %}
+        {% endfor %}
+      {% endfor %}
+      </ul>
+    </td>
+    
+    <td style="width: 50%; vertical-align: top;">
+      <ul>
+      {% set item_count = [0] %}
+      {% for letter, entrylist in entries %}
+        {% for entry, (_, subentries, _) in entrylist %}
+          {% set total_subitems = 1 + (subentries|length if subentries else 0) %}
+          {% if item_count[0] >= halfcount %}
+            <li id="{{ entry.0|lower }}">
+              {% if entry.1 %}
+              <a href="{{ entry.1 }}">{{ entry.0|e }}</a>
+              {% else %}
+              {{ entry.0|e }}
+              {% endif %}
+              {% if subentries %}
+              <ul>
+                {% for subentry, (_, uri, _) in subentries %}
+                <li>
+                  {% if uri %}
+                  <a href="{{ uri }}">{{ subentry|e }}</a>
+                  {% else %}
+                  {{ subentry|e }}
+                  {% endif %}
+                </li>
+                {% endfor %}
+              </ul>
+              {% endif %}
+            </li>
+          {% endif %}
+          {% if item_count.append(item_count.pop() + total_subitems) %}{% endif %}
+        {% endfor %}
+      {% endfor %}
+      </ul>
+    </td>
+  </tr>
+</table>
+{% endblock %}

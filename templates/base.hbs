@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{#if title}}{{title}} — {{/if}}Sphinx Ultra Documentation</title>
+    
+    <!-- Sphinx-compatible CSS -->
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css">
+    <link rel="stylesheet" type="text/css" href="_static/theme.css">
+    
+    <!-- Sphinx-compatible JavaScript -->
+    <script src="_static/jquery.js"></script>
+    <script src="_static/doctools.js"></script>
+    <script src="_static/sphinx_highlight.js"></script>
+    
+    {{#if config.output.live_reload}}
+    <!-- Live Reload -->
+    <script>
+        const ws = new WebSocket(`ws://${location.host}/_live-reload`);
+        ws.onmessage = function(event) {
+            if (event.data === 'reload') {
+                location.reload();
+            }
+        };
+    </script>
+    {{/if}}
+
+    <style>
+        /* Sphinx RTD-inspired styles */
+        body {
+            font-family: "Lato", "proxima-nova", "Helvetica Neue", Arial, sans-serif;
+            font-size: 16px;
+            color: #404040;
+            background: #edf0f2;
+            margin: 0;
+            padding: 0;
+        }
+
+        .wy-grid-for-nav {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+        }
+
+        .wy-nav-side {
+            position: fixed;
+            top: 0;
+            bottom: 0;
+            left: 0;
+            padding-bottom: 2em;
+            width: 300px;
+            overflow-x: hidden;
+            overflow-y: hidden;
+            background: #343131;
+            z-index: 200;
+        }
+
+        .wy-side-nav-search {
+            width: 100%;
+            color: #fcfcfc;
+            background: #2980b9;
+            position: relative;
+            padding: 1em;
+            border-bottom: 1px solid rgba(0,0,0,0.2);
+        }
+
+        .wy-side-nav-search > a {
+            color: #fcfcfc;
+            font-size: 1.1em;
+            font-weight: bold;
+            text-decoration: none;
+        }
+
+        .wy-nav-content-wrap {
+            margin-left: 300px;
+            background: #fcfcfc;
+        }
+
+        .wy-nav-content {
+            padding: 1.618em 3.236em;
+            height: 100%;
+            max-width: 800px;
+        }
+
+        .wy-menu-vertical {
+            width: 100%;
+        }
+
+        .wy-menu-vertical ul {
+            list-style: none;
+            margin: 0;
+            padding: 0;
+        }
+
+        .wy-menu-vertical li.toctree-l1 > a {
+            display: block;
+            padding: 0.4045em 1.618em;
+            color: #d9d9d9;
+            text-decoration: none;
+            border-bottom: 1px solid #404040;
+        }
+
+        .wy-menu-vertical li.toctree-l1 > a:hover {
+            background: rgba(255,255,255,0.1);
+            color: #fcfcfc;
+        }
+
+        .wy-menu-vertical li.current > a {
+            color: #fcfcfc;
+            background: #2980b9;
+        }
+
+        .rst-content {
+            background: #fcfcfc;
+        }
+
+        /* Content styles */
+        .rst-content h1, .rst-content h2, .rst-content h3, .rst-content h4, .rst-content h5, .rst-content h6 {
+            color: #2980b9;
+            margin: 1.5em 0 0.5em 0;
+        }
+
+        .rst-content h1 {
+            font-size: 2.5em;
+            border-bottom: 2px solid #eee;
+            padding-bottom: 0.3em;
+        }
+
+        .rst-content p {
+            line-height: 1.6;
+            margin: 0 0 1em 0;
+        }
+
+        /* Code and highlight styles */
+        /* Code and highlight styles */
+        .highlight {
+            background: #f8f8f8;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 1em;
+            margin: 1em 0;
+            overflow-x: auto;
+        }
+
+        .highlight pre {
+            margin: 0;
+            padding: 0;
+            white-space: pre;
+            font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+            font-size: 0.9em;
+            line-height: 1.4;
+        }
+
+        /* Admonitions */
+        .admonition {
+            padding: 12px;
+            line-height: 24px;
+            margin-bottom: 24px;
+            background: #e7f2fa;
+            border-left: 4px solid #2980b9;
+        }
+
+        .admonition-title {
+            font-weight: bold;
+            color: #2980b9;
+        }
+
+        .admonition.note {
+            background: #e7f2fa;
+            border-color: #2980b9;
+        }
+
+        .admonition.warning {
+            background: #ffedcc;
+            border-color: #f0b37e;
+        }
+
+        .admonition.danger {
+            background: #fdf3f2;
+            border-color: #e74c3c;
+        }
+
+        /* Tables */
+        .rst-content table.docutils {
+            border: none;
+            border-collapse: collapse;
+            width: 100%;
+            margin-bottom: 24px;
+        }
+
+        .rst-content table.docutils th,
+        .rst-content table.docutils td {
+            border: 1px solid #e1e4e5;
+            padding: 12px;
+            text-align: left;
+        }
+
+        .rst-content table.docutils th {
+            background: #f3f6f6;
+            font-weight: bold;
+        }
+
+        /* Search form */
+        .wy-form {
+            margin-bottom: 1em;
+        }
+
+        .wy-form input[type="text"] {
+            border: 1px solid #ddd;
+            border-radius: 3px;
+            padding: 8px;
+            width: 100%;
+            font-size: 0.9em;
+        }
+
+        /* Responsive */
+        @media screen and (max-width: 768px) {
+            .wy-nav-side {
+                left: -300px;
+            }
+            
+            .wy-nav-content-wrap {
+                margin-left: 0;
+            }
+        }
+    </style>
+</head>
+
+<body class="wy-body-for-nav">
+    <div class="wy-grid-for-nav">
+        <!-- Navigation Sidebar -->
+        <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+            <div class="wy-side-scroll">
+                <div class="wy-side-nav-search">
+                    <a href="index.html" class="icon icon-home">
+                        Sphinx Ultra Documentation
+                    </a>
+                    <div role="search">
+                        <form class="wy-form" action="search.html" method="get">
+                            <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+                            <input type="hidden" name="check_keywords" value="yes" />
+                            <input type="hidden" name="area" value="default" />
+                        </form>
+                    </div>
+                </div>
+                
+                <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="main navigation">
+                    {{#if toc}}
+                    <ul>
+                        {{#each toc}}
+                        <li class="toctree-l1">
+                            <a class="reference internal" href="{{url}}">{{title}}</a>
+                            {{#if children}}
+                            <ul>
+                                {{#each children}}
+                                <li class="toctree-l2">
+                                    <a class="reference internal" href="{{url}}">{{title}}</a>
+                                </li>
+                                {{/each}}
+                            </ul>
+                            {{/if}}
+                        </li>
+                        {{/each}}
+                    </ul>
+                    {{/if}}
+                </div>
+            </div>
+        </nav>
+
+        <!-- Content -->
+        <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+            <nav class="wy-nav-top" aria-label="top navigation">
+                <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+                <a href="#">Sphinx Ultra Documentation</a>
+            </nav>
+
+            <div class="wy-nav-content">
+                <div class="rst-content">
+                    <div role="navigation" aria-label="breadcrumbs navigation">
+                        <ul class="wy-breadcrumbs">
+                            <li><a href="index.html">Docs</a> &raquo;</li>
+                            {{#if title}}<li>{{title}}</li>{{/if}}
+                        </ul>
+                        <hr/>
+                    </div>
+                    
+                    <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+                        <div itemprop="articleBody">
+                            {{{content}}}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </div>
+</body>
+</html>

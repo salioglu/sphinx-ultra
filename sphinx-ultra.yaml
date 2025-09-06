@@ -1,0 +1,35 @@
+# Default configuration for Sphinx Ultra Rust Builder
+parallel_jobs: null  # Will use number of CPU cores
+max_cache_size_mb: 500
+cache_expiration_hours: 24
+
+output:
+  html_theme: "sphinx_rtd_theme"
+  syntax_highlighting: true
+  highlight_theme: "github"
+  search_index: true
+  live_reload: true
+  minify_html: false
+  compress_output: false
+
+theme:
+  name: "sphinx_rtd_theme"
+  options: {}
+  custom_css: []
+  custom_js: []
+
+extensions:
+  - "sphinx.ext.autodoc"
+  - "sphinx.ext.viewcode"
+  - "sphinx.ext.intersphinx"
+
+template_dirs: []
+static_dirs: []
+
+optimization:
+  parallel_processing: true
+  incremental_builds: true
+  file_watching: true
+  document_caching: true
+  image_optimization: false
+  asset_bundling: false

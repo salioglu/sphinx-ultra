@@ -1,0 +1,43 @@
+{% extends "layout.html" %}
+
+{% set title = _('Index') %}
+
+{% block body %}
+<h1 id="index">{% trans %}Index{% endtrans %}</h1>
+
+<div class="genindex-jumpbox">
+  {% for key, entries in genindexentries %}
+  <a href="{{ pathto('genindex-' + key) }}"><strong>{{ key }}</strong></a>
+  {% if not loop.last %}
+    | 
+  {% endif %}
+  {% endfor %}
+  
+  <br />
+  <a href="{{ pathto('genindex-all') }}"><strong>{% trans %}Full index on one page{% endtrans %}</strong></a>
+</div>
+
+<p>{% trans %}Index pages by letter{% endtrans %}</p>
+
+<div class="genindex-letters">
+  {% for key, entries in genindexentries %}
+  <h2><a href="{{ pathto('genindex-' + key) }}">{{ key }}</a></h2>
+  <ul>
+    {% for letter, entrylist in entries %}
+      {% for entry, (_, subentries, _) in entrylist[:5] %}
+        <li>
+          {% if entry.1 %}
+          <a href="{{ pathto('genindex-' + key) }}#{{ entry.0|lower }}">{{ entry.0|e }}</a>
+          {% else %}
+          {{ entry.0|e }}
+          {% endif %}
+        </li>
+      {% endfor %}
+      {% if entrylist|length > 5 %}
+        <li>... ({{ entrylist|length - 5 }} more)</li>
+      {% endif %}
+    {% endfor %}
+  </ul>
+  {% endfor %}
+</div>
+{% endblock %}

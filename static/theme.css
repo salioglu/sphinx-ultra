@@ -1,0 +1,92 @@
+/* Sphinx-compatible theme CSS */
+.wy-nav-content {
+    max-width: none;
+}
+
+.rst-content .section {
+    margin-bottom: 2em;
+}
+
+.rst-content h1 {
+    font-size: 2.5em;
+    margin-bottom: 0.5em;
+    padding-bottom: 0.3em;
+    border-bottom: 2px solid #eee;
+}
+
+.rst-content h2 {
+    font-size: 2em;
+    margin-top: 1.5em;
+    margin-bottom: 0.5em;
+}
+
+.rst-content h3 {
+    font-size: 1.5em;
+    margin-top: 1.2em;
+    margin-bottom: 0.5em;
+}
+
+.rst-content p {
+    margin-bottom: 1em;
+    line-height: 1.6;
+}
+
+.rst-content ul,
+.rst-content ol {
+    margin-bottom: 1em;
+    padding-left: 2em;
+}
+
+.rst-content li {
+    margin-bottom: 0.5em;
+}
+
+.rst-content blockquote {
+    margin: 1em 0;
+    padding: 0 2em;
+    border-left: 4px solid #ddd;
+    font-style: italic;
+}
+
+.rst-content code {
+    background: #f8f8f8;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    padding: 2px 4px;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 0.9em;
+}
+
+.rst-content pre {
+    background: #f8f8f8;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+    padding: 1em;
+    overflow-x: auto;
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-size: 0.9em;
+    line-height: 1.4;
+}
+
+.rst-content .toctree-wrapper {
+    margin-bottom: 2em;
+}
+
+.rst-content .toctree-wrapper ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.rst-content .toctree-wrapper li {
+    margin: 0.5em 0;
+}
+
+.rst-content .toctree-wrapper a {
+    color: #2980b9;
+    text-decoration: none;
+}
+
+.rst-content .toctree-wrapper a:hover {
+    text-decoration: underline;
+}

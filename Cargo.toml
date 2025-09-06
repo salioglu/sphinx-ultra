@@ -1,0 +1,101 @@
+[package]
+name = "sphinx-ultra"
+version = "0.1.0"
+edition = "2021"
+authors = ["Sphinx Ultra Team <contact@sphinx-ultra.com>"]
+description = "High-performance Rust-based Sphinx documentation builder for large codebases"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/salioglu/sphinx-ultra"
+
+[dependencies]
+# Core dependencies
+tokio = { version = "1.0", features = ["full"] }
+clap = { version = "4.0", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+anyhow = "1.0"
+thiserror = "1.0"
+log = "0.4"
+env_logger = "0.11"
+
+# File system and I/O
+walkdir = "2.0"
+notify = "6.0"
+tempfile = "3.0"
+glob = "0.3"
+
+# String processing and templating
+regex = "1.0"
+handlebars = "4.0"
+pulldown-cmark = "0.9"
+syntect = "5.0"
+
+# Performance and concurrency
+rayon = "1.0"
+dashmap = "5.0"
+crossbeam = "0.8"
+parking_lot = "0.12"
+
+# HTTP and networking (for live reload)
+axum = { version = "0.7", features = ["ws"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["fs", "cors"] }
+hyper = "1.0"
+
+# Date and time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Hashing and caching
+blake3 = "1.0"
+lru = "0.12"
+
+# HTML and web
+html-escape = "0.2"
+minifier = "0.3"
+cssparser = "0.31"
+
+# Compression and archives
+flate2 = "1.0"
+tar = "0.4"
+
+# Binary serialization
+bincode = "1.0"
+
+# Template engine
+minijinja = "1.0"
+
+# Indexing and data structures
+indexmap = "2.0"
+
+# Base64 encoding
+base64 = "0.22"
+
+# Path utilities
+pathdiff = "0.2"
+
+# Configuration
+config = "0.14"
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+proptest = "1.0"
+tempfile = "3.0"
+
+[[bin]]
+name = "sphinx-ultra"
+path = "src/main.rs"
+
+[[bench]]
+name = "builder_benchmark"
+harness = false
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.dev]
+debug = 2

@@ -1,0 +1,25 @@
+# Basic configuration for Sphinx Ultra
+source_dir: "."
+output_dir: "_build"
+
+# Performance settings
+parallel_jobs: 4
+cache_enabled: true
+
+# Theme configuration
+theme:
+  name: "sphinx_rtd_theme"
+  options:
+    navigation_depth: 3
+    collapse_navigation: false
+
+# Extensions
+extensions:
+  - "sphinx.ext.autodoc"
+  - "sphinx.ext.viewcode"
+
+# Build settings
+build:
+  incremental: true
+  minify_html: false
+  syntax_highlighting: true

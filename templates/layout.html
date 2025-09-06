@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="{{ language|default('en') }}">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  {% if metatags %}{{ metatags }}{% endif %}
+  
+  <title>{{ title|striptags|e }}{% if title %} &#8212; {% endif %}{{ docstitle|e }}</title>
+  
+  {% for css in css_files %}
+    {{ css_tag(css) }}
+  {% endfor %}
+  
+  {% if favicon_url %}
+  <link rel="shortcut icon" href="{{ pathto(favicon_url, resource=true) }}" />
+  {% endif %}
+  
+  {% if use_opensearch %}
+  <link rel="search" type="application/opensearchdescription+xml" 
+        title="{% trans docstitle=docstitle|e %}Search within {{ docstitle }}{% endtrans %}"
+        href="{{ pathto('_static/opensearch.xml', resource=true) }}" />
+  {% endif %}
+  
+  {% if parents %}
+    <link rel="index" title="{% trans %}Index{% endtrans %}" href="{{ pathto('genindex') }}" />
+    <link rel="search" title="{% trans %}Search{% endtrans %}" href="{{ pathto('search') }}" />
+    {% for parent in parents %}
+      <link rel="up" title="{{ parent.title|striptags|e }}" href="{{ parent.link|e }}" />
+    {% endfor %}
+    {% if next %}
+      <link rel="next" title="{{ next.title|striptags|e }}" href="{{ next.link|e }}" />
+    {% endif %}
+    {% if prev %}
+      <link rel="prev" title="{{ prev.title|striptags|e }}" href="{{ prev.link|e }}" />
+    {% endif %}
+  {% endif %}
+</head>
+
+<body>
+  <div class="document">
+    <div class="documentwrapper">
+      <div class="bodywrapper">
+        <div class="body" role="main">
+          {% block body %}{{ body }}{% endblock %}
+        </div>
+      </div>
+    </div>
+    
+    <div class="sidebar">
+      <div class="sphinxsidebarwrapper">
+        {% if logo_url %}
+        <p class="logo">
+          <a href="{{ pathto(master_doc) }}">
+            <img class="logo" src="{{ pathto(logo_url, resource=true) }}" alt="{{ logo_alt }}" />
+          </a>
+        </p>
+        {% endif %}
+        
+        {% if display_toc %}
+        <h3>{% trans %}Table of Contents{% endtrans %}</h3>
+        {{ toc }}
+        {% endif %}
+        
+        {% if parents %}
+        <h4>{% trans %}Related Topics{% endtrans %}</h4>
+        <ul>
+          {% for parent in parents %}
+          <li><a href="{{ parent.link|e }}">{{ parent.title }}</a></li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+        
+        {% if (prev or next) %}
+        <h4>{% trans %}Navigation{% endtrans %}</h4>
+        <ul>
+          {% if prev %}
+          <li class="nav-item nav-item-0">
+            <a href="{{ prev.link|e }}">{% trans %}previous{% endtrans %}</a>
+          </li>
+          {% endif %}
+          {% if next %}
+          <li class="nav-item nav-item-1">
+            <a href="{{ next.link|e }}">{% trans %}next{% endtrans %}</a>
+          </li>
+          {% endif %}
+        </ul>
+        {% endif %}
+        
+        {% if show_source and has_source and sourcename %}
+        <h4>{% trans %}This Page{% endtrans %}</h4>
+        <ul>
+          <li><a href="{{ pathto('_sources/' + sourcename, resource=true) }}">{% trans %}Show Source{% endtrans %}</a></li>
+        </ul>
+        {% endif %}
+      </div>
+    </div>
+    
+    <div class="clearer"></div>
+  </div>
+  
+  <div class="footer">
+    <div class="footer-wrapper">
+      {% if show_copyright %}
+        {% if copyright %}
+          {% trans copyright=copyright|e %}&#169; Copyright {{ copyright }}.{% endtrans %}
+        {% endif %}
+      {% endif %}
+      {% if show_sphinx %}
+        {% trans %}Built with{% endtrans %} 
+        <a href="https://www.sphinx-doc.org/">Sphinx</a>
+        {% trans sphinx_version=sphinx_version|e %}using a custom Rust builder version {{ sphinx_version }}{% endtrans %}.
+      {% endif %}
+    </div>
+  </div>
+  
+  {% for js in script_files %}
+    {{ js_tag(js) }}
+  {% endfor %}
+</body>
+</html>

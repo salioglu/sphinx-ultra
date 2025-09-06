@@ -1,0 +1,74 @@
+{% extends "layout.html" %}
+
+{% set title = indextitle %}
+
+{% block body %}
+<h1 id="modindex">{{ indextitle }}</h1>
+
+<p>{% trans %}{% endtrans %}</p>
+
+{% if collapse_index %}
+<script type="text/javascript">
+  // Collapse/expand functionality for domain indices
+  function toggleSection(id) {
+    var section = document.getElementById(id);
+    if (section.style.display === 'none') {
+      section.style.display = 'block';
+    } else {
+      section.style.display = 'none';
+    }
+  }
+</script>
+{% endif %}
+
+<table class="indextable modindextable">
+  {% for section in content %}
+  <tr class="pcap">
+    <td></td>
+    <td>
+      {% if collapse_index %}
+      <a href="javascript:toggleSection('section-{{ loop.index0 }}')">
+        <strong>{{ section.0 }}</strong>
+      </a>
+      {% else %}
+      <strong>{{ section.0 }}</strong>
+      {% endif %}
+    </td>
+  </tr>
+  
+  <tbody id="section-{{ loop.index0 }}"{% if collapse_index %} style="display: none;"{% endif %}>
+    {% for entry in section.1 %}
+    <tr>
+      <td>
+        {% if entry.extra %}
+        <img src="{{ pathto('_static/minus.png', resource=true) }}" class="toggler"
+             id="toggle-{{ loop.index0 }}" style="display: none;" alt="-" />
+        {% endif %}
+      </td>
+      <td>
+        <a href="{{ entry.uri }}"><code class="xref">{{ entry.name }}</code></a>
+        {% if entry.extra %}
+        <span class="extra">{{ entry.extra }}</span>
+        {% endif %}
+      </td>
+    </tr>
+    
+    {% if entry.subentries %}
+    {% for subentry in entry.subentries %}
+    <tr class="cg-{{ loop.index0 }}">
+      <td></td>
+      <td>
+        &#160;&#160;&#160;
+        <a href="{{ subentry.uri }}"><code class="xref">{{ subentry.name }}</code></a>
+        {% if subentry.extra %}
+        <span class="extra">{{ subentry.extra }}</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+    {% endif %}
+    {% endfor %}
+  </tbody>
+  {% endfor %}
+</table>
+{% endblock %}
