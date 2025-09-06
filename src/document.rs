@@ -1,10 +1,10 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 // Custom serialization for PathBuf to handle cross-platform compatibility
-fn serialize_pathbuf<S>(path: &PathBuf, serializer: S) -> Result<S::Ok, S::Error>
+fn serialize_pathbuf<S>(path: &Path, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
@@ -101,7 +101,7 @@ pub struct MarkdownContent {
     pub front_matter: Option<serde_yaml::Value>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DocumentMetadata {
     /// Document author(s)
     pub authors: Vec<String>,
@@ -267,19 +267,6 @@ impl Document {
     pub fn set_html(&mut self, html: String) {
         self.html = html;
         self.build_time = Utc::now();
-    }
-}
-
-impl Default for DocumentMetadata {
-    fn default() -> Self {
-        Self {
-            authors: Vec::new(),
-            created: None,
-            modified: None,
-            tags: Vec::new(),
-            category: None,
-            custom: HashMap::new(),
-        }
     }
 }
 

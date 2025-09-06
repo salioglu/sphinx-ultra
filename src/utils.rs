@@ -13,54 +13,56 @@ pub struct ProjectStats {
 }
 
 pub async fn analyze_project(source_dir: &Path) -> Result<ProjectStats> {
-    let mut source_files = 0;
-    let mut total_lines = 0;
-    let mut total_size_bytes = 0;
-    let mut largest_file_kb = 0.0;
-    let mut max_depth = 0;
-    let mut cross_references = 0;
+    let mut state = AnalysisState {
+        source_files: 0,
+        total_lines: 0,
+        total_size_bytes: 0,
+        largest_file_kb: 0.0,
+        max_depth: 0,
+        cross_references: 0,
+    };
 
     // Use synchronous approach to avoid async recursion issues
     analyze_directory_sync(
         source_dir,
         source_dir,
         0,
-        &mut source_files,
-        &mut total_lines,
-        &mut total_size_bytes,
-        &mut largest_file_kb,
-        &mut max_depth,
-        &mut cross_references,
+        &mut state,
     )?;
 
-    let avg_file_size_kb = if source_files > 0 {
-        (total_size_bytes as f64) / (source_files as f64) / 1024.0
+    let avg_file_size_kb = if state.source_files > 0 {
+        (state.total_size_bytes as f64) / (state.source_files as f64) / 1024.0
     } else {
         0.0
     };
 
     Ok(ProjectStats {
-        source_files,
-        total_lines,
+        source_files: state.source_files,
+        total_lines: state.total_lines,
         avg_file_size_kb,
-        largest_file_kb,
-        max_depth,
-        cross_references,
+        largest_file_kb: state.largest_file_kb,
+        max_depth: state.max_depth,
+        cross_references: state.cross_references,
     })
+}
+
+/// Analysis state for directory traversal
+struct AnalysisState {
+    source_files: usize,
+    total_lines: usize,
+    total_size_bytes: u64,
+    largest_file_kb: f64,
+    max_depth: usize,
+    cross_references: usize,
 }
 
 fn analyze_directory_sync(
     dir: &Path,
-    root_dir: &Path,
+    _root_dir: &Path,
     current_depth: usize,
-    source_files: &mut usize,
-    total_lines: &mut usize,
-    total_size_bytes: &mut u64,
-    largest_file_kb: &mut f64,
-    max_depth: &mut usize,
-    cross_references: &mut usize,
+    state: &mut AnalysisState,
 ) -> Result<()> {
-    *max_depth = (*max_depth).max(current_depth);
+    state.max_depth = state.max_depth.max(current_depth);
 
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
@@ -76,29 +78,24 @@ fn analyze_directory_sync(
 
             analyze_directory_sync(
                 &path,
-                root_dir,
+                _root_dir,
                 current_depth + 1,
-                source_files,
-                total_lines,
-                total_size_bytes,
-                largest_file_kb,
-                max_depth,
-                cross_references,
+                state,
             )?;
         } else if is_source_file(&path) {
-            *source_files += 1;
+            state.source_files += 1;
 
             let metadata = std::fs::metadata(&path)?;
             let file_size_bytes = metadata.len();
             let file_size_kb = file_size_bytes as f64 / 1024.0;
 
-            *total_size_bytes += file_size_bytes;
-            *largest_file_kb = largest_file_kb.max(file_size_kb);
+            state.total_size_bytes += file_size_bytes;
+            state.largest_file_kb = state.largest_file_kb.max(file_size_kb);
 
             // Count lines and cross-references
             if let Ok(content) = std::fs::read_to_string(&path) {
-                *total_lines += content.lines().count();
-                *cross_references += count_cross_references(&content);
+                state.total_lines += content.lines().count();
+                state.cross_references += count_cross_references(&content);
             }
         }
     }
@@ -108,10 +105,7 @@ fn analyze_directory_sync(
 
 pub fn is_source_file(path: &Path) -> bool {
     if let Some(ext) = path.extension() {
-        match ext.to_string_lossy().as_ref() {
-            "rst" | "md" | "txt" => true,
-            _ => false,
-        }
+        matches!(ext.to_string_lossy().as_ref(), "rst" | "md" | "txt")
     } else {
         false
     }
@@ -220,7 +214,7 @@ pub fn format_bytes(bytes: u64) -> String {
 }
 
 /// Format a date according to the specified format string and language
-pub fn format_date(fmt: &str, language: &Option<String>) -> String {
+pub fn format_date(fmt: &str, _language: &Option<String>) -> String {
     let now = chrono::Utc::now();
 
     match fmt {

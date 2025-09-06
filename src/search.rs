@@ -106,7 +106,7 @@ impl SearchIndex {
 
                 self.terms
                     .entry(normalized_word)
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(doc_match);
             }
         }
@@ -117,9 +117,8 @@ impl SearchIndex {
     /// Extract words and their positions from content
     fn extract_words(&self, content: &str) -> HashMap<String, Vec<usize>> {
         let mut words = HashMap::new();
-        let mut position = 0;
 
-        for word in content.split_whitespace() {
+        for (position, word) in content.split_whitespace().enumerate() {
             let cleaned_word = self.clean_word(word);
             if !cleaned_word.is_empty() {
                 words
@@ -127,7 +126,6 @@ impl SearchIndex {
                     .or_insert_with(Vec::new)
                     .push(position);
             }
-            position += 1;
         }
 
         words
@@ -450,7 +448,7 @@ mod tests {
             .unwrap();
 
         let results = index.search("test document");
-        assert!(results.len() >= 1);
+        assert!(!results.is_empty());
         assert!(results
             .iter()
             .any(|r| r.docname == "test1" || r.docname == "test2"));

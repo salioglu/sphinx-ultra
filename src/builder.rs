@@ -1,5 +1,5 @@
 use anyhow::Result;
-use log::{debug, info, warn};
+use log::{debug, info};
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -183,19 +183,9 @@ impl SphinxBuilder {
         Ok(())
     }
 
-    async fn discover_files_recursive(&self, dir: &Path) -> Result<Vec<PathBuf>> {
-        // This method is no longer needed, keeping for compatibility
-        let mut files = Vec::new();
-        self.discover_files_sync(dir, &mut files)?;
-        Ok(files)
-    }
-
     fn is_source_file(&self, path: &Path) -> bool {
         if let Some(ext) = path.extension() {
-            match ext.to_string_lossy().as_ref() {
-                "rst" | "md" | "txt" => true,
-                _ => false,
-            }
+            matches!(ext.to_string_lossy().as_ref(), "rst" | "md" | "txt")
         } else {
             false
         }
@@ -239,7 +229,7 @@ impl SphinxBuilder {
                 .collect()
         });
 
-        Ok(documents?)
+        documents
     }
 
     fn process_single_file(&self, file_path: &Path) -> Result<Document> {
@@ -388,7 +378,7 @@ impl SphinxBuilder {
     async fn validate_documents(
         &self,
         processed_docs: &[Document],
-        source_files: &[PathBuf],
+        _source_files: &[PathBuf],
     ) -> Result<()> {
         info!("Validating documents and checking for warnings...");
 
@@ -468,26 +458,23 @@ impl SphinxBuilder {
 
         let mut references = Vec::new();
 
-        match &doc.content {
-            DocumentContent::RestructuredText(rst_content) => {
-                for node in &rst_content.ast {
-                    if let crate::document::RstNode::Directive { name, content, .. } = node {
-                        if name == "toctree" {
-                            // Extract references from toctree content
-                            for line in content.lines() {
-                                let trimmed = line.trim();
-                                if !trimmed.is_empty()
-                                    && !trimmed.starts_with(':')
-                                    && !trimmed.starts_with("..")
-                                {
-                                    references.push(trimmed.to_string());
-                                }
+        if let DocumentContent::RestructuredText(rst_content) = &doc.content {
+            for node in &rst_content.ast {
+                if let crate::document::RstNode::Directive { name, content, .. } = node {
+                    if name == "toctree" {
+                        // Extract references from toctree content
+                        for line in content.lines() {
+                            let trimmed = line.trim();
+                            if !trimmed.is_empty()
+                                && !trimmed.starts_with(':')
+                                && !trimmed.starts_with("..")
+                            {
+                                references.push(trimmed.to_string());
                             }
                         }
                     }
                 }
             }
-            _ => {} // Handle other content types as needed
         }
 
         if references.is_empty() {

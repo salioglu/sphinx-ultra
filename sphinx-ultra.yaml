@@ -8,7 +8,6 @@ output:
   syntax_highlighting: true
   highlight_theme: "github"
   search_index: true
-  live_reload: true
   minify_html: false
   compress_output: false
 
@@ -29,7 +28,6 @@ static_dirs: []
 optimization:
   parallel_processing: true
   incremental_builds: true
-  file_watching: true
   document_caching: true
   image_optimization: false
   asset_bundling: false

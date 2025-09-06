@@ -4,8 +4,6 @@ use pulldown_cmark::{Event, Parser as MarkdownParser, Tag};
 use regex::Regex;
 use std::collections::HashMap;
 use std::path::Path;
-use syntect::highlighting::ThemeSet;
-use syntect::parsing::SyntaxSet;
 
 use crate::config::BuildConfig;
 use crate::document::{
@@ -17,8 +15,6 @@ use crate::utils;
 pub struct Parser {
     rst_directive_regex: Regex,
     cross_ref_regex: Regex,
-    syntax_set: SyntaxSet,
-    theme_set: ThemeSet,
 }
 
 impl Parser {
@@ -26,14 +22,9 @@ impl Parser {
         let rst_directive_regex = Regex::new(r"^\s*\.\.\s+(\w+)::\s*(.*?)$")?;
         let cross_ref_regex = Regex::new(r":(\w+):`([^`]+)`")?;
 
-        let syntax_set = SyntaxSet::load_defaults_newlines();
-        let theme_set = ThemeSet::load_defaults();
-
         Ok(Self {
             rst_directive_regex,
             cross_ref_regex,
-            syntax_set,
-            theme_set,
         })
     }
 
@@ -166,7 +157,7 @@ impl Parser {
     fn parse_markdown(&self, content: &str) -> Result<DocumentContent> {
         let mut nodes = Vec::new();
         let parser = MarkdownParser::new(content);
-        let mut current_line = 1;
+        let current_line = 1;
 
         for event in parser {
             match event {
@@ -226,11 +217,11 @@ impl Parser {
                 continue;
             }
 
-            if line.starts_with("   :") {
+            if let Some(stripped) = line.strip_prefix("   :") {
                 // This is an option
-                if let Some(colon_pos) = line[4..].find(':') {
-                    let option_name = &line[4..4 + colon_pos];
-                    let option_value = line[4 + colon_pos + 1..].trim();
+                if let Some(colon_pos) = stripped.find(':') {
+                    let option_name = &stripped[..colon_pos];
+                    let option_value = stripped[colon_pos + 1..].trim();
                     options.insert(option_name.to_string(), option_value.to_string());
                 }
                 i += 1;

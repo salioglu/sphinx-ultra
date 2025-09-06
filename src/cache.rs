@@ -257,7 +257,7 @@ impl BuildCache {
         for entry in std::fs::read_dir(&self.cache_dir)? {
             let entry = entry?;
             if entry.file_type()?.is_file()
-                && entry.path().extension().map_or(false, |ext| ext == "json")
+                && entry.path().extension().is_some_and(|ext| ext == "json")
             {
                 if let Err(e) = self.load_cache_file(&entry.path()) {
                     warn!(

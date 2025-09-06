@@ -8,9 +8,7 @@ use tokio::fs;
 
 use crate::config::BuildConfig;
 use crate::document::Document;
-use crate::environment::BuildEnvironment;
 use crate::inventory::InventoryFile;
-use crate::search::SearchIndex;
 use crate::template::TemplateEngine;
 use crate::utils;
 
@@ -310,7 +308,7 @@ impl HTMLBuilder {
     fn init_global_context(&mut self) -> Result<()> {
         use serde_json::json;
 
-        let now = std::time::SystemTime::now()
+        let _now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
@@ -492,7 +490,7 @@ impl HTMLBuilder {
 
         // Write to file
         let output_path = self.get_output_path(pagename);
-        utils::ensure_dir(&output_path.parent().unwrap()).await?;
+        utils::ensure_dir(output_path.parent().unwrap()).await?;
 
         fs::write(&output_path, output)
             .await
@@ -508,7 +506,7 @@ impl HTMLBuilder {
         {
             let sourcename = context["sourcename"].as_str().unwrap();
             let source_path = self.sources_dir.join(sourcename);
-            utils::ensure_dir(&source_path.parent().unwrap()).await?;
+            utils::ensure_dir(source_path.parent().unwrap()).await?;
 
             let doc_path = self.srcdir.join(format!("{}.rst", pagename)); // TODO: Detect actual extension
             if doc_path.exists() {
@@ -654,7 +652,7 @@ impl HTMLBuilder {
             let src_path = self.srcdir.join(src);
             let dest_path = self.images_dir.join(dest);
 
-            utils::ensure_dir(&dest_path.parent().unwrap()).await?;
+            utils::ensure_dir(dest_path.parent().unwrap()).await?;
 
             if src_path.exists() {
                 fs::copy(&src_path, &dest_path).await.with_context(|| {
@@ -680,7 +678,7 @@ impl HTMLBuilder {
             let src_path = self.srcdir.join(src);
             let dest_path = self.downloads_dir.join(dest);
 
-            utils::ensure_dir(&dest_path.parent().unwrap()).await?;
+            utils::ensure_dir(dest_path.parent().unwrap()).await?;
 
             if src_path.exists() {
                 fs::copy(&src_path, &dest_path).await.with_context(|| {

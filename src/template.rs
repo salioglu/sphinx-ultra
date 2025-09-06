@@ -1,8 +1,7 @@
 use anyhow::Result;
-use log::{debug, info};
+use log::info;
 use minijinja::{Environment, Error as MinijinjaError, ErrorKind, Value};
-use serde::{Deserialize, Serialize};
-use serde_json::Value as JsonValue;
+use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -54,20 +53,20 @@ impl TemplateEngine {
     }
 
     /// Load templates from a directory
-    fn load_templates_from_dir(env: &mut Environment<'static>, dir: &Path) -> Result<()> {
+    fn load_templates_from_dir(_env: &mut Environment<'static>, dir: &Path) -> Result<()> {
         info!("Loading templates from: {}", dir.display());
 
         for entry in std::fs::read_dir(dir)? {
             let entry = entry?;
             let path = entry.path();
 
-            if path.is_file() && path.extension().map_or(false, |ext| ext == "html") {
-                let template_name = path
+            if path.is_file() && path.extension().is_some_and(|ext| ext == "html") {
+                let _template_name = path
                     .file_name()
                     .and_then(|name| name.to_str())
                     .unwrap_or("unknown");
 
-                let content = std::fs::read_to_string(&path)?;
+                let _content = std::fs::read_to_string(&path)?;
                 // Skip this for now to avoid lifetime issues - templates will be added via built-ins
                 // env.add_template(template_name, &content)?;
             }
@@ -118,7 +117,7 @@ impl TemplateEngine {
             "pathto",
             |args: &[Value]| -> Result<Value, MinijinjaError> {
                 let target = args
-                    .get(0)
+                    .first()
                     .ok_or_else(|| {
                         MinijinjaError::new(
                             ErrorKind::InvalidOperation,
@@ -152,7 +151,7 @@ impl TemplateEngine {
         env.add_function(
             "css_tag",
             |args: &[Value]| -> Result<Value, MinijinjaError> {
-                let css = args.get(0).ok_or_else(|| {
+                let css = args.first().ok_or_else(|| {
                     MinijinjaError::new(
                         ErrorKind::InvalidOperation,
                         "css_tag requires css argument",
@@ -177,7 +176,7 @@ impl TemplateEngine {
         env.add_function(
             "js_tag",
             |args: &[Value]| -> Result<Value, MinijinjaError> {
-                let js = args.get(0).ok_or_else(|| {
+                let js = args.first().ok_or_else(|| {
                     MinijinjaError::new(ErrorKind::InvalidOperation, "js_tag requires js argument")
                 })?;
 

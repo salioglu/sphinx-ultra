@@ -1,7 +1,9 @@
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+
+/// Type alias for document relations: (parent, previous, next)
+type DocumentRelations = HashMap<String, (Option<String>, Option<String>, Option<String>)>;
 
 /// Build environment that mirrors Sphinx's BuildEnvironment
 #[derive(Debug, Clone)]
@@ -72,7 +74,7 @@ impl BuildEnvironment {
     /// Collect relations between documents
     pub fn collect_relations(
         &self,
-    ) -> HashMap<String, (Option<String>, Option<String>, Option<String>)> {
+    ) -> DocumentRelations {
         // TODO: Implement relation collection from toctree
         HashMap::new()
     }
@@ -148,7 +150,7 @@ impl Domain {
     pub fn add_object(&mut self, obj_type: &str, object: DomainObject) {
         self.objects
             .entry(obj_type.to_string())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(object);
     }
 

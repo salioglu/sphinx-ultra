@@ -9,14 +9,10 @@ mod config;
 mod document;
 mod error;
 mod parser;
-mod server;
 mod utils;
-mod watcher;
 
 use builder::SphinxBuilder;
 use config::BuildConfig;
-use server::LiveReloadServer;
-use watcher::FileWatcher;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -60,25 +56,6 @@ enum Commands {
         /// Turn warnings into errors
         #[arg(short = 'W', long)]
         fail_on_warning: bool,
-    },
-
-    /// Start live reload server
-    Serve {
-        /// Source directory
-        #[arg(short, long, default_value = ".")]
-        source: PathBuf,
-
-        /// Output directory
-        #[arg(short, long, default_value = "_build")]
-        output: PathBuf,
-
-        /// Server port
-        #[arg(short, long, default_value = "8000")]
-        port: u16,
-
-        /// Server host
-        #[arg(long, default_value = "127.0.0.1")]
-        host: String,
     },
 
     /// Clean build artifacts
@@ -205,24 +182,6 @@ async fn main() -> Result<()> {
             info!("Files processed: {}", stats.files_processed);
             info!("Build time: {:?}", stats.build_time);
             info!("Output size: {} MB", stats.output_size_mb);
-        }
-
-        Commands::Serve {
-            source,
-            output,
-            port,
-            host,
-        } => {
-            let builder = SphinxBuilder::new(config.clone(), source.clone(), output.clone())?;
-            let watcher = FileWatcher::new(source)?;
-            let server = LiveReloadServer::new(host, port, output, builder, watcher).await?;
-
-            info!(
-                "Starting live reload server at http://{}:{}",
-                server.host(),
-                server.port()
-            );
-            server.run().await?;
         }
 
         Commands::Clean { output } => {

@@ -7,7 +7,6 @@ A high-performance Rust-based Sphinx documentation builder designed for large co
 - **🚀 Blazing Fast**: Parallel processing with Rust's performance
 - **📊 Scalable**: Handle 10,000+ documentation files efficiently
 - **🔄 Incremental Builds**: Smart caching system for faster rebuilds
-- **⚡ Live Reload**: Development server with hot reload capabilities
 - **🎨 Modern Themes**: Beautiful, responsive documentation themes
 - **🔍 Full-Text Search**: Built-in search index generation
 - **🛠️ Extensible**: Plugin system for custom functionality
@@ -38,9 +37,6 @@ cargo build --release
 # Build documentation
 ./target/release/sphinx-ultra build --source ../docs --output _build
 
-# Start development server with live reload
-./target/release/sphinx-ultra serve --source ../docs --port 8000
-
 # Clean build artifacts
 ./target/release/sphinx-ultra clean --output _build
 
@@ -66,7 +62,6 @@ output:
   syntax_highlighting: true
   highlight_theme: "github"
   search_index: true
-  live_reload: true
   minify_html: false
   compress_output: false
 
@@ -87,7 +82,6 @@ extensions:
 optimization:
   parallel_processing: true
   incremental_builds: true
-  file_watching: true
   document_caching: true
   image_optimization: false
   asset_bundling: false
@@ -111,8 +105,6 @@ The Rust builder consists of several key components:
 - **Cache**: Intelligent caching system with LRU eviction
 - **Renderer**: Template-based HTML generation with Handlebars
 - **Builder**: Parallel processing engine with dependency tracking
-- **Server**: Development server with WebSocket live reload
-- **Watcher**: File system monitoring for automatic rebuilds
 
 ## 🔍 Advanced Usage
 
@@ -128,13 +120,6 @@ sphinx-ultra build --jobs 16 --source docs --output _build
 ```bash
 # Enable incremental builds for faster rebuilds
 sphinx-ultra build --incremental --source docs --output _build
-```
-
-### Development Server
-
-```bash
-# Start development server with custom host and port
-sphinx-ultra serve --host 0.0.0.0 --port 3000 --source docs
 ```
 
 ### Configuration File

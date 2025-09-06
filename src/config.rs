@@ -119,9 +119,6 @@ pub struct OutputConfig {
     /// Generate search index
     pub search_index: bool,
 
-    /// Enable live reload in development
-    pub live_reload: bool,
-
     /// Minify output HTML
     pub minify_html: bool,
 
@@ -151,9 +148,6 @@ pub struct OptimizationConfig {
 
     /// Enable incremental builds
     pub incremental_builds: bool,
-
-    /// Enable file system watching
-    pub file_watching: bool,
 
     /// Cache parsed documents
     pub document_caching: bool,
@@ -220,7 +214,6 @@ impl Default for OutputConfig {
             syntax_highlighting: true,
             highlight_theme: "github".to_string(),
             search_index: true,
-            live_reload: true,
             minify_html: false,
             compress_output: false,
         }
@@ -243,7 +236,6 @@ impl Default for OptimizationConfig {
         Self {
             parallel_processing: true,
             incremental_builds: true,
-            file_watching: true,
             document_caching: true,
             image_optimization: false,
             asset_bundling: false,

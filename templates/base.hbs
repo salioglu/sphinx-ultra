@@ -14,18 +14,6 @@
     <script src="_static/doctools.js"></script>
     <script src="_static/sphinx_highlight.js"></script>
     
-    {{#if config.output.live_reload}}
-    <!-- Live Reload -->
-    <script>
-        const ws = new WebSocket(`ws://${location.host}/_live-reload`);
-        ws.onmessage = function(event) {
-            if (event.data === 'reload') {
-                location.reload();
-            }
-        };
-    </script>
-    {{/if}}
-
     <style>
         /* Sphinx RTD-inspired styles */
         body {

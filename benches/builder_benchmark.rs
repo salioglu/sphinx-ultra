@@ -1,8 +1,8 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use sphinx_ultra_builder::builder::SphinxBuilder;
-use sphinx_ultra_builder::config::BuildConfig;
-use sphinx_ultra_builder::document::Document;
-use sphinx_ultra_builder::parser::Parser;
+use sphinx_ultra::builder::SphinxBuilder;
+use sphinx_ultra::config::BuildConfig;
+use sphinx_ultra::document::Document;
+use sphinx_ultra::parser::Parser;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
@@ -107,14 +107,16 @@ Some content for file {}.
     let config = BuildConfig::default();
 
     c.bench_function("build_small", |b| {
-        b.to_async(tokio::runtime::Runtime::new().unwrap())
-            .iter(|| async {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        b.iter(|| {
+            rt.block_on(async {
                 let builder =
                     SphinxBuilder::new(config.clone(), source_dir.clone(), output_dir.clone())
                         .unwrap();
 
                 black_box(builder.build().await.unwrap())
             })
+        })
     });
 }
 
@@ -181,8 +183,9 @@ See :doc:`file_{}` for related information.
 
     for jobs in [1, 2, 4, 8].iter() {
         group.bench_with_input(BenchmarkId::new("jobs", jobs), jobs, |b, &jobs| {
-            b.to_async(tokio::runtime::Runtime::new().unwrap())
-                .iter(|| async {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            b.iter(|| {
+                rt.block_on(async {
                     let config = BuildConfig::default();
                     let mut builder =
                         SphinxBuilder::new(config, source_dir.clone(), output_dir.clone()).unwrap();
@@ -190,6 +193,7 @@ See :doc:`file_{}` for related information.
                     builder.set_parallel_jobs(jobs);
                     black_box(builder.build().await.unwrap())
                 })
+            })
         });
     }
 

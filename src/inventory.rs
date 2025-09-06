@@ -50,7 +50,7 @@ impl Inventory {
     pub fn insert(&mut self, obj_type: String, name: String, item: InventoryItem) {
         self.data
             .entry(obj_type)
-            .or_insert_with(HashMap::new)
+            .or_default()
             .insert(name, item);
     }
 
@@ -63,7 +63,7 @@ impl Inventory {
     pub fn contains(&self, obj_type: &str, name: &str) -> bool {
         self.data
             .get(obj_type)
-            .map_or(false, |objects| objects.contains_key(name))
+            .is_some_and(|objects| objects.contains_key(name))
     }
 }
 
@@ -83,8 +83,7 @@ impl InventoryFile {
             Self::loads_v2(&mut lines, uri)
         } else if format_line == "# Sphinx inventory version 1" {
             Self::loads_v1(&mut lines, uri)
-        } else if format_line.starts_with("# Sphinx inventory version ") {
-            let version = &format_line[27..];
+        } else if let Some(version) = format_line.strip_prefix("# Sphinx inventory version ") {
             anyhow::bail!("Unknown or unsupported inventory version: {}", version);
         } else {
             anyhow::bail!("Invalid inventory header: {}", format_line);

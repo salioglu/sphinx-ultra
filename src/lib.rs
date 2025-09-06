@@ -12,10 +12,8 @@ pub mod html_builder;
 pub mod inventory;
 pub mod parser;
 pub mod search;
-pub mod server;
 pub mod template;
 pub mod utils;
-pub mod watcher;
 
 pub use builder::{BuildStats, SphinxBuilder};
 pub use config::BuildConfig;
