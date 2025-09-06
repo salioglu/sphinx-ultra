@@ -16,32 +16,32 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
 anyhow = "1.0"
-thiserror = "1.0"
+thiserror = "2.0"
 log = "0.4"
 env_logger = "0.11"
 
 # File system and I/O
 walkdir = "2.0"
-notify = "6.0"
+notify = "8.2"
 tempfile = "3.0"
 glob = "0.3"
 
 # String processing and templating
 regex = "1.0"
-handlebars = "4.0"
-pulldown-cmark = "0.9"
+handlebars = "6.3"
+pulldown-cmark = "0.13"
 syntect = "5.0"
 
 # Performance and concurrency
 rayon = "1.0"
-dashmap = "5.0"
+dashmap = "6.1"
 crossbeam = "0.8"
 parking_lot = "0.12"
 
 # HTTP and networking (for live reload)
-axum = { version = "0.7", features = ["ws"] }
-tower = "0.4"
-tower-http = { version = "0.5", features = ["fs", "cors"] }
+axum = { version = "0.8", features = ["ws"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["fs", "cors"] }
 hyper = "1.0"
 
 # Date and time
@@ -49,22 +49,22 @@ chrono = { version = "0.4", features = ["serde"] }
 
 # Hashing and caching
 blake3 = "1.0"
-lru = "0.12"
+lru = "0.16"
 
 # HTML and web
 html-escape = "0.2"
 minifier = "0.3"
-cssparser = "0.31"
+cssparser = "0.35"
 
 # Compression and archives
 flate2 = "1.0"
 tar = "0.4"
 
 # Binary serialization
-bincode = "1.0"
+bincode = "2.0"
 
 # Template engine
-minijinja = "1.0"
+minijinja = "2.12"
 
 # Indexing and data structures
 indexmap = "2.0"
@@ -76,7 +76,7 @@ base64 = "0.22"
 pathdiff = "0.2"
 
 # Configuration
-config = "0.14"
+config = "0.15"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
