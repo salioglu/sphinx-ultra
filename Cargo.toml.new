@@ -1,12 +1,12 @@
 [package]
 name = "sphinx-ultra"
 version = "0.1.0"
-authors = ["Sphinx Ultra Team <contact@sphinx-ultra.com>"]
+authors = ["Sphinx Ultra Team <sinan@alioglu.org>"]
 license = "MIT"
 description = "High-performance Rust-based Sphinx documentation builder for large codebases"
 repository = "https://github.com/salioglu/sphinx-ultra"
-homepage = "https://github.com/salioglu/sphinx-ultra"
-documentation = "https://github.com/salioglu/sphinx-ultra/blob/main/README.md"
+homepage = "https://salioglu.github.io/sphinx-ultra"
+documentation = "https://salioglu.github.io/sphinx-ultra"
 readme = "README.md"
 keywords = ["documentation", "sphinx", "rst", "markdown", "builder"]
 categories = ["command-line-utilities", "development-tools", "text-processing"]

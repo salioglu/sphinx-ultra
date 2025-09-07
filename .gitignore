@@ -69,3 +69,8 @@ temp/
 *.sphinx-ultra-cache
 .sphinx-ultra/
 sphinx-ultra
+
+# Generated documentation (build artifacts)
+docs/api/
+docs/.nojekyll
+docs/index.html

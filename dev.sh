@@ -41,7 +41,8 @@ show_help() {
     echo "  clippy    - Run clippy lints"
     echo "  check     - Run all checks (fmt, clippy, test)"
     echo "  clean     - Clean build artifacts"
-    echo "  docs      - Generate documentation"
+    echo "  docs      - Generate documentation for GitHub Pages"
+    echo "  docs-dev  - Generate and open documentation for development"
     echo "  serve     - Start development server"
     echo "  install   - Install locally"
     echo "  package   - Create release package"
@@ -115,9 +116,57 @@ clean() {
 }
 
 docs() {
-    log_info "Generating documentation..."
+    log_info "Generating documentation for GitHub Pages..."
+    
+    # Build Rust documentation
+    cargo doc --all-features --no-deps
+    
+    # Create docs directory if it doesn't exist
+    mkdir -p docs
+    
+    # Clean and copy Rust docs to docs folder (this will be gitignored)
+    rm -rf docs/api
+    cp -r target/doc docs/api
+    
+    # Create .nojekyll file for GitHub Pages
+    touch docs/.nojekyll
+    
+    # Create index.html in docs folder that redirects to main documentation
+    cat > docs/index.html << 'EOF'
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Sphinx Ultra Documentation</title>
+    <meta http-equiv="refresh" content="0; url=./api/sphinx_ultra/index.html">
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; text-align: center; padding: 50px; }
+        .container { max-width: 600px; margin: 0 auto; }
+        h1 { color: #333; }
+        p { color: #666; line-height: 1.6; }
+        a { color: #0366d6; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Sphinx Ultra Documentation</h1>
+        <p>If you are not redirected automatically, <a href="./api/sphinx_ultra/index.html">click here to view the documentation</a>.</p>
+        <p><a href="https://github.com/salioglu/sphinx-ultra">View on GitHub</a></p>
+    </div>
+</body>
+</html>
+EOF
+    
+    log_success "Documentation generated in docs/ folder for GitHub Pages!"
+    log_info "Note: docs/api/ is gitignored as it contains generated files"
+    log_info "Enable GitHub Pages in repository settings to publish at: https://salioglu.github.io/sphinx-ultra"
+}
+
+docs_dev() {
+    log_info "Generating documentation for development (opens in browser)..."
     cargo doc --all-features --no-deps --open
-    log_success "Documentation generated!"
+    log_success "Documentation generated and opened in browser!"
 }
 
 serve() {
@@ -184,6 +233,9 @@ case "${1:-help}" in
         ;;
     docs)
         docs
+        ;;
+    docs-dev)
+        docs_dev
         ;;
     serve)
         serve

@@ -17,7 +17,7 @@ We take security vulnerabilities seriously. If you discover a security vulnerabi
 For critical security vulnerabilities that could compromise user data or system security:
 
 1. **Do NOT** open a public GitHub issue
-2. Email us directly at: <security@sphinx-ultra.com>
+2. Email us directly at: <sinan@alioglu.org>
 3. Use the GitHub Security Advisory feature: [Report a vulnerability](https://github.com/salioglu/sphinx-ultra/security/advisories/new)
 
 ### For Lower-Severity Issues
@@ -112,8 +112,8 @@ We regularly audit our dependencies using:
 
 ## Contact
 
-- Security issues: <security@sphinx-ultra.com>
-- General questions: <contact@sphinx-ultra.com>
+- Security issues: <sinan@alioglu.org>
+- General questions: <sinan@alioglu.org>
 - GitHub: [Security Advisories](https://github.com/salioglu/sphinx-ultra/security)
 
 ---

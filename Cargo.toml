@@ -2,10 +2,11 @@
 name = "sphinx-ultra"
 version = "0.1.0"
 edition = "2021"
-authors = ["Sphinx Ultra Team <contact@sphinx-ultra.com>"]
+authors = ["Sphinx Ultra Team <sinan@alioglu.org>"]
 description = "High-performance Rust-based Sphinx documentation builder for large codebases"
 license = "MIT"
 readme = "README.md"
+homepage = "https://salioglu.github.io/sphinx-ultra"
 repository = "https://github.com/salioglu/sphinx-ultra"
 
 [dependencies]
