@@ -136,11 +136,13 @@ async fn main() -> Result<()> {
                 if let Some(parent) = warning_file_path.parent() {
                     std::fs::create_dir_all(parent)?;
                 }
-                Some(OpenOptions::new()
-                    .create(true)
-                    .write(true)
-                    .truncate(true)
-                    .open(warning_file_path)?)
+                Some(
+                    OpenOptions::new()
+                        .create(true)
+                        .write(true)
+                        .truncate(true)
+                        .open(warning_file_path)?,
+                )
             } else {
                 None
             };
@@ -153,13 +155,14 @@ async fn main() -> Result<()> {
                 } else {
                     String::new()
                 };
-                let warning_msg = format!("{}{}: WARNING: {}", file_path, line_info, warning.message);
-                
+                let warning_msg =
+                    format!("{}{}: WARNING: {}", file_path, line_info, warning.message);
+
                 // Write to warning file if specified
                 if let Some(ref mut file) = warning_file_handle {
                     writeln!(file, "{}", warning_msg)?;
                 }
-                
+
                 warn!("{}", warning_msg);
             }
 
@@ -172,12 +175,12 @@ async fn main() -> Result<()> {
                     String::new()
                 };
                 let error_msg = format!("{}{}: ERROR: {}", file_path, line_info, error.message);
-                
+
                 // Write to warning file if specified (errors also go to warning file in Sphinx)
                 if let Some(ref mut file) = warning_file_handle {
                     writeln!(file, "{}", error_msg)?;
                 }
-                
+
                 eprintln!("{}", error_msg);
             }
 
