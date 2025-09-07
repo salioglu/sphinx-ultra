@@ -48,10 +48,7 @@ impl Inventory {
 
     /// Insert an item into the inventory
     pub fn insert(&mut self, obj_type: String, name: String, item: InventoryItem) {
-        self.data
-            .entry(obj_type)
-            .or_default()
-            .insert(name, item);
+        self.data.entry(obj_type).or_default().insert(name, item);
     }
 
     /// Get an item from the inventory

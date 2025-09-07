@@ -23,12 +23,7 @@ pub async fn analyze_project(source_dir: &Path) -> Result<ProjectStats> {
     };
 
     // Use synchronous approach to avoid async recursion issues
-    analyze_directory_sync(
-        source_dir,
-        source_dir,
-        0,
-        &mut state,
-    )?;
+    analyze_directory_sync(source_dir, source_dir, 0, &mut state)?;
 
     let avg_file_size_kb = if state.source_files > 0 {
         (state.total_size_bytes as f64) / (state.source_files as f64) / 1024.0
@@ -76,12 +71,7 @@ fn analyze_directory_sync(
                 }
             }
 
-            analyze_directory_sync(
-                &path,
-                _root_dir,
-                current_depth + 1,
-                state,
-            )?;
+            analyze_directory_sync(&path, _root_dir, current_depth + 1, state)?;
         } else if is_source_file(&path) {
             state.source_files += 1;
 

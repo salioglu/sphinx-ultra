@@ -72,9 +72,7 @@ impl BuildEnvironment {
     }
 
     /// Collect relations between documents
-    pub fn collect_relations(
-        &self,
-    ) -> DocumentRelations {
+    pub fn collect_relations(&self) -> DocumentRelations {
         // TODO: Implement relation collection from toctree
         HashMap::new()
     }
