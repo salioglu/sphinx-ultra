@@ -1,11 +1,3 @@
-use anyhow::Result;
-use std::path::PathBuf;
-
-use sphinx_ultra::config::BuildConfig;
-use sphinx_ultra::document::Document;
-use sphinx_ultra::environment::BuildEnvironment;
-use sphinx_ultra::html_builder::HTMLBuilder;
-
 // Note: These tests need to be updated to match the current API
 // For now, they are disabled to avoid compilation errors
 
