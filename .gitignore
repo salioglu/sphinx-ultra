@@ -68,3 +68,4 @@ temp/
 # Sphinx Ultra specific
 *.sphinx-ultra-cache
 .sphinx-ultra/
+sphinx-ultra

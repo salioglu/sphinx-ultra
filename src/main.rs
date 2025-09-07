@@ -1,6 +1,8 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use log::{info, warn};
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::path::PathBuf;
 
 mod builder;
@@ -56,6 +58,10 @@ enum Commands {
         /// Turn warnings into errors
         #[arg(short = 'W', long)]
         fail_on_warning: bool,
+
+        /// Write warnings (and errors) to given file
+        #[arg(short = 'w', long)]
+        warning_file: Option<PathBuf>,
     },
 
     /// Clean build artifacts
@@ -92,6 +98,7 @@ async fn main() -> Result<()> {
             clean,
             incremental,
             fail_on_warning,
+            warning_file,
         } => {
             let mut config = if let Some(ref config_path) = cli.config {
                 BuildConfig::from_file(config_path)?
@@ -123,6 +130,21 @@ async fn main() -> Result<()> {
 
             let stats = builder.build().await?;
 
+            // Handle warning file output if specified
+            let mut warning_file_handle = if let Some(ref warning_file_path) = warning_file {
+                // Create parent directories if they don't exist
+                if let Some(parent) = warning_file_path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                Some(OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .truncate(true)
+                    .open(warning_file_path)?)
+            } else {
+                None
+            };
+
             // Print warnings in Sphinx-like format
             for warning in &stats.warning_details {
                 let file_path = warning.file.display();
@@ -131,7 +153,14 @@ async fn main() -> Result<()> {
                 } else {
                     String::new()
                 };
-                warn!("{}{}: WARNING: {}", file_path, line_info, warning.message);
+                let warning_msg = format!("{}{}: WARNING: {}", file_path, line_info, warning.message);
+                
+                // Write to warning file if specified
+                if let Some(ref mut file) = warning_file_handle {
+                    writeln!(file, "{}", warning_msg)?;
+                }
+                
+                warn!("{}", warning_msg);
             }
 
             // Print errors in Sphinx-like format
@@ -142,7 +171,19 @@ async fn main() -> Result<()> {
                 } else {
                     String::new()
                 };
-                eprintln!("{}{}: ERROR: {}", file_path, line_info, error.message);
+                let error_msg = format!("{}{}: ERROR: {}", file_path, line_info, error.message);
+                
+                // Write to warning file if specified (errors also go to warning file in Sphinx)
+                if let Some(ref mut file) = warning_file_handle {
+                    writeln!(file, "{}", error_msg)?;
+                }
+                
+                eprintln!("{}", error_msg);
+            }
+
+            // Flush and close the warning file
+            if let Some(mut file) = warning_file_handle {
+                file.flush()?;
             }
 
             // Check for fail-on-warning condition

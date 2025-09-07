@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Configurable themes and extensions
 - Comprehensive CLI interface
 - Performance benchmarking tools
+- Warning file output support (`--warning-file` / `-w` option) for saving warnings and errors to a file
 
 ### Changed
 - N/A

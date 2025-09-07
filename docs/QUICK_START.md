@@ -39,13 +39,23 @@ cd my-docs
 sphinx-ultra build --source . --output _build
 ```
 
-### 3. Start Development Server
+### 3. Save Warnings to File
+
+```bash
+# Save all warnings and errors to a log file
+sphinx-ultra build --source . --output _build --warning-file warnings.log
+
+# Short form
+sphinx-ultra build -w warnings.log --source . --output _build
+```
+
+### 4. Start Development Server
 
 ```bash
 sphinx-ultra serve --source . --port 8000
 ```
 
-### 4. Watch for Changes
+### 5. Watch for Changes
 
 ```bash
 sphinx-ultra watch --source . --output _build

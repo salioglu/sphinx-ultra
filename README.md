@@ -136,6 +136,16 @@ sphinx-ultra build --config my-config.yaml --source docs
 sphinx-ultra build --verbose --source docs --output _build
 ```
 
+### Warning File Output
+
+```bash
+# Save warnings and errors to a file
+sphinx-ultra build --warning-file warnings.log --source docs --output _build
+
+# Use with fail-on-warning for CI/CD pipelines
+sphinx-ultra build -w build-warnings.log -W --source docs --output _build
+```
+
 ## 🐛 Debugging
 
 Enable verbose logging to see detailed build information:
