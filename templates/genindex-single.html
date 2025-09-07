@@ -3,7 +3,7 @@
 {% set title = _('Index') + ' - ' + key %}
 
 {% block body %}
-<h1 id="index-{{ key|lower }}">{% trans %}Index{% endtrans %} &#8211; {{ key }}</h1>
+<h1 id="index-{{ key|lower }}">Index &#8211; {{ key }}</h1>
 
 <div class="genindex-jumpbox">
   {% for k, e in genindexentries %}
@@ -18,7 +18,7 @@
   {% endfor %}
   
   <br />
-  <a href="{{ pathto('genindex-all') }}"><strong>{% trans %}Full index on one page{% endtrans %}</strong></a>
+  <a href="{{ pathto('genindex-all') }}"><strong>Full index on one page</strong></a>
 </div>
 
 <table style="width: 100%" class="indextable genindextable">
@@ -31,11 +31,11 @@
       {% for letter, entrylist in entries %}
         {% for entry, (_, subentries, _) in entrylist %}
           {% if item_count[0] < halfcount %}
-            <li id="{{ entry.0|lower }}">
-              {% if entry.1 %}
-              <a href="{{ entry.1 }}">{{ entry.0|e }}</a>
+            <li id="{{ entry[0]|lower }}">
+              {% if entry[1] %}
+              <a href="{{ entry[1] }}">{{ entry[0]|e }}</a>
               {% else %}
-              {{ entry.0|e }}
+              {{ entry[0]|e }}
               {% endif %}
               {% if subentries %}
               <ul>
@@ -65,11 +65,11 @@
         {% for entry, (_, subentries, _) in entrylist %}
           {% set total_subitems = 1 + (subentries|length if subentries else 0) %}
           {% if item_count[0] >= halfcount %}
-            <li id="{{ entry.0|lower }}">
-              {% if entry.1 %}
-              <a href="{{ entry.1 }}">{{ entry.0|e }}</a>
+            <li id="{{ entry[0]|lower }}">
+              {% if entry[1] %}
+              <a href="{{ entry[1] }}">{{ entry[0]|e }}</a>
               {% else %}
-              {{ entry.0|e }}
+              {{ entry[0]|e }}
               {% endif %}
               {% if subentries %}
               <ul>

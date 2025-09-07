@@ -3,7 +3,7 @@
 {% set title = _('Index') %}
 
 {% block body %}
-<h1 id="index">{% trans %}Index{% endtrans %}</h1>
+<h1 id="index">Index</h1>
 
 <div class="genindex-jumpbox">
   {% for key, entries in genindexentries %}
@@ -14,10 +14,10 @@
   {% endfor %}
   
   <br />
-  <a href="{{ pathto('genindex-all') }}"><strong>{% trans %}Full index on one page{% endtrans %}</strong></a>
+  <a href="{{ pathto('genindex-all') }}"><strong>Full index on one page</strong></a>
 </div>
 
-<p>{% trans %}Index pages by letter{% endtrans %}</p>
+<p>Index pages by letter</p>
 
 <div class="genindex-letters">
   {% for key, entries in genindexentries %}
@@ -26,10 +26,10 @@
     {% for letter, entrylist in entries %}
       {% for entry, (_, subentries, _) in entrylist[:5] %}
         <li>
-          {% if entry.1 %}
-          <a href="{{ pathto('genindex-' + key) }}#{{ entry.0|lower }}">{{ entry.0|e }}</a>
+          {% if entry[1] %}
+          <a href="{{ pathto('genindex-' + key) }}#{{ entry[0]|lower }}">{{ entry[0]|e }}</a>
           {% else %}
-          {{ entry.0|e }}
+          {{ entry[0]|e }}
           {% endif %}
         </li>
       {% endfor %}

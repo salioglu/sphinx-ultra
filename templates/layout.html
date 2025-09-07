@@ -17,13 +17,13 @@
   
   {% if use_opensearch %}
   <link rel="search" type="application/opensearchdescription+xml" 
-        title="{% trans docstitle=docstitle|e %}Search within {{ docstitle }}{% endtrans %}"
+        title="Search within {{ docstitle|e }}"
         href="{{ pathto('_static/opensearch.xml', resource=true) }}" />
   {% endif %}
   
   {% if parents %}
-    <link rel="index" title="{% trans %}Index{% endtrans %}" href="{{ pathto('genindex') }}" />
-    <link rel="search" title="{% trans %}Search{% endtrans %}" href="{{ pathto('search') }}" />
+    <link rel="index" title="Index" href="{{ pathto('genindex') }}" />
+    <link rel="search" title="Search" href="{{ pathto('search') }}" />
     {% for parent in parents %}
       <link rel="up" title="{{ parent.title|striptags|e }}" href="{{ parent.link|e }}" />
     {% endfor %}
@@ -57,12 +57,12 @@
         {% endif %}
         
         {% if display_toc %}
-        <h3>{% trans %}Table of Contents{% endtrans %}</h3>
+        <h3>Table of Contents</h3>
         {{ toc }}
         {% endif %}
         
         {% if parents %}
-        <h4>{% trans %}Related Topics{% endtrans %}</h4>
+        <h4>Related Topics</h4>
         <ul>
           {% for parent in parents %}
           <li><a href="{{ parent.link|e }}">{{ parent.title }}</a></li>
@@ -71,25 +71,25 @@
         {% endif %}
         
         {% if (prev or next) %}
-        <h4>{% trans %}Navigation{% endtrans %}</h4>
+        <h4>Navigation</h4>
         <ul>
           {% if prev %}
           <li class="nav-item nav-item-0">
-            <a href="{{ prev.link|e }}">{% trans %}previous{% endtrans %}</a>
+            <a href="{{ prev.link|e }}">previous</a>
           </li>
           {% endif %}
           {% if next %}
           <li class="nav-item nav-item-1">
-            <a href="{{ next.link|e }}">{% trans %}next{% endtrans %}</a>
+            <a href="{{ next.link|e }}">next</a>
           </li>
           {% endif %}
         </ul>
         {% endif %}
         
         {% if show_source and has_source and sourcename %}
-        <h4>{% trans %}This Page{% endtrans %}</h4>
+        <h4>This Page</h4>
         <ul>
-          <li><a href="{{ pathto('_sources/' + sourcename, resource=true) }}">{% trans %}Show Source{% endtrans %}</a></li>
+          <li><a href="{{ pathto('_sources/' + sourcename, resource=true) }}">Show Source</a></li>
         </ul>
         {% endif %}
       </div>
@@ -102,13 +102,13 @@
     <div class="footer-wrapper">
       {% if show_copyright %}
         {% if copyright %}
-          {% trans copyright=copyright|e %}&#169; Copyright {{ copyright }}.{% endtrans %}
+          &#169; Copyright {{ copyright|e }}.
         {% endif %}
       {% endif %}
       {% if show_sphinx %}
-        {% trans %}Built with{% endtrans %} 
+        Built with 
         <a href="https://www.sphinx-doc.org/">Sphinx</a>
-        {% trans sphinx_version=sphinx_version|e %}using a custom Rust builder version {{ sphinx_version }}{% endtrans %}.
+        using a custom Rust builder version {{ sphinx_version|e }}.
       {% endif %}
     </div>
   </div>

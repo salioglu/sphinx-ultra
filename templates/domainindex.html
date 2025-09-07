@@ -5,8 +5,6 @@
 {% block body %}
 <h1 id="modindex">{{ indextitle }}</h1>
 
-<p>{% trans %}{% endtrans %}</p>
-
 {% if collapse_index %}
 <script type="text/javascript">
   // Collapse/expand functionality for domain indices
@@ -28,16 +26,16 @@
     <td>
       {% if collapse_index %}
       <a href="javascript:toggleSection('section-{{ loop.index0 }}')">
-        <strong>{{ section.0 }}</strong>
+        <strong>{{ section[0] }}</strong>
       </a>
       {% else %}
-      <strong>{{ section.0 }}</strong>
+      <strong>{{ section[0] }}</strong>
       {% endif %}
     </td>
   </tr>
   
   <tbody id="section-{{ loop.index0 }}"{% if collapse_index %} style="display: none;"{% endif %}>
-    {% for entry in section.1 %}
+    {% for entry in section[1] %}
     <tr>
       <td>
         {% if entry.extra %}

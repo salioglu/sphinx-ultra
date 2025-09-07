@@ -3,7 +3,7 @@
 {% set title = _('Index') %}
 
 {% block body %}
-<h1 id="index">{% trans %}Index{% endtrans %}</h1>
+<h1 id="index">Index</h1>
 
 {% if split_index %}
 <div class="genindex-jumpbox">
@@ -33,10 +33,10 @@
           {% for entry, (_, subentries, _) in entrylist %}
             {% if count[0] < halfcount %}
               <li>
-                {% if entry.1 %}
-                <a href="{{ entry.1 }}">{{ entry.0|e }}</a>
+                {% if entry[1] %}
+                <a href="{{ entry[1] }}">{{ entry[0]|e }}</a>
                 {% else %}
-                {{ entry.0|e }}
+                {{ entry[0]|e }}
                 {% endif %}
                 {% if subentries %}
                 <ul>
@@ -66,10 +66,10 @@
           {% for entry, (_, subentries, _) in entrylist %}
             {% if count[0] >= halfcount %}
               <li>
-                {% if entry.1 %}
-                <a href="{{ entry.1 }}">{{ entry.0|e }}</a>
+                {% if entry[1] %}
+                <a href="{{ entry[1] }}">{{ entry[0]|e }}</a>
                 {% else %}
-                {{ entry.0|e }}
+                {{ entry[0]|e }}
                 {% endif %}
                 {% if subentries %}
                 <ul>

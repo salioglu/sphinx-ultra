@@ -3,23 +3,23 @@
 {% set title = _('Search') %}
 
 {% block body %}
-<h1 id="search-documentation">{% trans %}Search{% endtrans %}</h1>
+<h1 id="search-documentation">Search</h1>
 
 <div id="fallback" class="admonition warning">
   <script type="text/javascript">$('#fallback').hide();</script>
   <p>
-    {% trans %}Please activate JavaScript to enable the search
-    functionality.{% endtrans %}
+    Please activate JavaScript to enable the search
+    functionality.
   </p>
 </div>
 
 <p>
-  {% trans %}Enter search terms or a module, class or function name.{% endtrans %}
+  Enter search terms or a module, class or function name.
 </p>
 
 <form action="" method="get">
   <input type="text" name="q" value="" />
-  <input type="submit" value="{% trans %}search{% endtrans %}" />
+  <input type="submit" value="search" />
   <span id="search-progress" style="padding-left: 10px"></span>
 </form>
 
