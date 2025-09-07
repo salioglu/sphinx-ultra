@@ -1,16 +1,39 @@
 # Sphinx Ultra Rust Builder
 
+[![CI](https://github.com/salioglu/sphinx-ultra/actions/workflows/ci.yml/badge.svg)](https://github.com/salioglu/sphinx-ultra/actions/workflows/ci.yml)
+[![Documentation](https://github.com/salioglu/sphinx-ultra/actions/workflows/docs.yml/badge.svg)](https://salioglu.github.io/sphinx-ultra)
+[![Release](https://github.com/salioglu/sphinx-ultra/actions/workflows/release.yml/badge.svg)](https://github.com/salioglu/sphinx-ultra/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org)
+[![Sponsor](https://img.shields.io/badge/sponsor-GitHub-pink.svg)](https://github.com/sponsors/salioglu)
+
 A high-performance Rust-based Sphinx documentation builder designed for large codebases with thousands of files.
 
-## ✨ Features
+## ⚠️ Development Status
 
-- **🚀 Blazing Fast**: Parallel processing with Rust's performance
-- **📊 Scalable**: Handle 10,000+ documentation files efficiently
-- **🔄 Incremental Builds**: Smart caching system for faster rebuilds
-- **🎨 Modern Themes**: Beautiful, responsive documentation themes
-- **🔍 Full-Text Search**: Built-in search index generation
-- **🛠️ Extensible**: Plugin system for custom functionality
-- **📱 Mobile Friendly**: Responsive design that works on all devices
+**🚧 This project is currently under active development and is NOT recommended for production usage.**
+
+**Current Focus**: The primary goal is **validation and experimentation** rather than producing perfectly matched Sphinx builds. We are:
+
+- ✅ Validating the core architecture and performance concepts
+- ✅ Testing parallel processing capabilities on large documentation sets
+- ✅ Experimenting with Rust-based parsing and rendering
+- ⚠️ **NOT** aiming for 100% Sphinx compatibility yet
+- ⚠️ **NOT** ready for production documentation workflows
+
+**Use Cases**: Perfect for developers who want to experiment with high-performance documentation building or contribute to the development of next-generation documentation tools.
+
+## ✨ Features (Planned/In Development)
+
+- **🚀 Blazing Fast**: Parallel processing with Rust's performance *(Core architecture implemented)*
+- **📊 Scalable**: Handle 10,000+ documentation files efficiently *(Testing phase)*
+- **🔄 Incremental Builds**: Smart caching system for faster rebuilds *(In development)*
+- **🎨 Modern Themes**: Beautiful, responsive documentation themes *(Planned)*
+- **🔍 Full-Text Search**: Built-in search index generation *(Planned)*
+- **🛠️ Extensible**: Plugin system for custom functionality *(Architecture design)*
+- **📱 Mobile Friendly**: Responsive design that works on all devices *(Planned)*
+
+> **Note**: Features marked as "Planned" or "In development" are not yet fully implemented. This project is in the validation phase.
 
 ## 🚀 Quick Start
 
@@ -156,7 +179,32 @@ RUST_LOG=debug ./target/release/sphinx-ultra build --verbose
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please see the main project's CONTRIBUTING.md for guidelines.
+**We welcome contributors!** This project is in active development and needs help with:
+
+- 🧪 **Testing**: Try the builder on various documentation projects
+- 🐛 **Bug Reports**: Report issues with parsing, rendering, or performance
+- 💡 **Feature Ideas**: Suggest improvements or new capabilities
+- 📝 **Documentation**: Help improve setup guides and usage examples
+- 🔧 **Code**: Contribute to core features, optimizations, or new functionality
+
+### Development Setup
+
+```bash
+# Clone and build
+git clone https://github.com/salioglu/sphinx-ultra.git
+cd sphinx-ultra
+./dev.sh setup
+
+# Run tests
+./dev.sh test
+
+# Build documentation
+./dev.sh docs
+```
+
+Please see [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
+
+**Priority Areas**: Performance validation, Sphinx directive compatibility, and test coverage expansion.
 
 ## 📄 License
 
