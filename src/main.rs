@@ -84,13 +84,6 @@ async fn main() -> Result<()> {
 
     info!("Sphinx Ultra Builder v{}", env!("CARGO_PKG_VERSION"));
 
-    // Load configuration
-    let config = if let Some(ref config_path) = cli.config {
-        BuildConfig::from_file(config_path)?
-    } else {
-        BuildConfig::default()
-    };
-
     match cli.command {
         Commands::Build {
             source,
@@ -180,6 +173,8 @@ async fn main() -> Result<()> {
 
             info!("Build completed successfully!");
             info!("Files processed: {}", stats.files_processed);
+            info!("Files skipped: {}", stats.files_skipped);
+            info!("Cache hits: {}", stats.cache_hits);
             info!("Build time: {:?}", stats.build_time);
             info!("Output size: {} MB", stats.output_size_mb);
         }

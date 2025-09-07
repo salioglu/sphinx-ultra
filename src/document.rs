@@ -252,18 +252,22 @@ impl Document {
         }
     }
 
+    #[allow(dead_code)]
     pub fn set_title(&mut self, title: String) {
         self.title = title;
     }
 
+    #[allow(dead_code)]
     pub fn add_cross_ref(&mut self, cross_ref: CrossReference) {
         self.cross_refs.push(cross_ref);
     }
 
+    #[allow(dead_code)]
     pub fn add_toc_entry(&mut self, entry: TocEntry) {
         self.toc.push(entry);
     }
 
+    #[allow(dead_code)]
     pub fn set_html(&mut self, html: String) {
         self.html = html;
         self.build_time = Utc::now();
@@ -281,6 +285,7 @@ impl TocEntry {
         }
     }
 
+    #[allow(dead_code)]
     pub fn add_child(&mut self, child: TocEntry) {
         self.children.push(child);
     }

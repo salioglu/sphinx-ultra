@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
+#[allow(dead_code)]
 pub enum BuildError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
@@ -48,6 +49,7 @@ pub struct BuildWarning {
     pub file: PathBuf,
     pub line: Option<usize>,
     pub message: String,
+    #[allow(dead_code)]
     pub warning_type: WarningType,
 }
 
@@ -56,10 +58,12 @@ pub struct BuildErrorReport {
     pub file: PathBuf,
     pub line: Option<usize>,
     pub message: String,
+    #[allow(dead_code)]
     pub error_type: ErrorType,
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum WarningType {
     MissingToctreeRef,
     OrphanedDocument,
@@ -72,6 +76,7 @@ pub enum WarningType {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum ErrorType {
     ParseError,
     FileNotFound,
@@ -116,6 +121,7 @@ impl BuildWarning {
         )
     }
 
+    #[allow(dead_code)]
     pub fn broken_cross_reference(file: PathBuf, line: Option<usize>, reference: &str) -> Self {
         Self::new(
             file,
@@ -127,6 +133,7 @@ impl BuildWarning {
 }
 
 impl BuildErrorReport {
+    #[allow(dead_code)]
     pub fn new(file: PathBuf, line: Option<usize>, message: String, error_type: ErrorType) -> Self {
         Self {
             file,

@@ -174,6 +174,7 @@ fn copy_dir_recursive_sync(src: &Path, dst: &Path) -> Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 pub fn format_duration(duration: std::time::Duration) -> String {
     let secs = duration.as_secs();
     let millis = duration.subsec_millis();
@@ -185,6 +186,7 @@ pub fn format_duration(duration: std::time::Duration) -> String {
     }
 }
 
+#[allow(dead_code)]
 pub fn format_bytes(bytes: u64) -> String {
     const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
 
@@ -204,6 +206,7 @@ pub fn format_bytes(bytes: u64) -> String {
 }
 
 /// Format a date according to the specified format string and language
+#[allow(dead_code)]
 pub fn format_date(fmt: &str, _language: &Option<String>) -> String {
     let now = chrono::Utc::now();
 
@@ -223,6 +226,7 @@ pub fn format_date(fmt: &str, _language: &Option<String>) -> String {
 }
 
 /// Ensure a directory exists, creating it if necessary
+#[allow(dead_code)]
 pub async fn ensure_dir(path: &Path) -> Result<()> {
     use tokio::fs;
 
@@ -233,6 +237,7 @@ pub async fn ensure_dir(path: &Path) -> Result<()> {
 }
 
 /// Calculate relative URI from one path to another
+#[allow(dead_code)]
 pub fn relative_uri(from: &str, to: &str, suffix: &str) -> String {
     use std::path::Path;
 
@@ -254,6 +259,7 @@ pub fn relative_uri(from: &str, to: &str, suffix: &str) -> String {
 }
 
 /// Copy all files and directories from source to destination
+#[allow(dead_code)]
 pub async fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
     use tokio::fs;
 

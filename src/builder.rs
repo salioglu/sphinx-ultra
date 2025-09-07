@@ -73,16 +73,19 @@ impl SphinxBuilder {
     }
 
     /// Add a warning to the collection
+    #[allow(dead_code)]
     pub fn add_warning(&self, warning: BuildWarning) {
         self.warnings.lock().unwrap().push(warning);
     }
 
     /// Add an error to the collection
+    #[allow(dead_code)]
     pub fn add_error(&self, error: BuildErrorReport) {
         self.errors.lock().unwrap().push(error);
     }
 
     /// Check if warnings should be treated as errors
+    #[allow(dead_code)]
     pub fn should_fail_on_warning(&self) -> bool {
         self.config.fail_on_warning
     }

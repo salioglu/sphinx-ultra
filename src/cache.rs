@@ -66,10 +66,9 @@ impl BuildCache {
                 *self.hit_count.write() += 1;
                 debug!("Cache hit for {}", file_path.display());
                 return Ok(cached.document.clone());
-            } else {
-                // Remove expired or outdated entry
-                self.documents.remove(file_path);
             }
+            // Remove expired or outdated entry
+            self.documents.remove(file_path);
         }
 
         *self.miss_count.write() += 1;
@@ -109,6 +108,7 @@ impl BuildCache {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn invalidate(&self, file_path: &Path) {
         self.documents.remove(file_path);
         self.file_hashes.write().remove(file_path);
@@ -128,6 +128,7 @@ impl BuildCache {
         debug!("Invalidated cache for {}", file_path.display());
     }
 
+    #[allow(dead_code)]
     pub fn clear(&self) -> Result<()> {
         self.documents.clear();
         self.file_hashes.write().clear();
@@ -147,10 +148,12 @@ impl BuildCache {
         *self.hit_count.read()
     }
 
+    #[allow(dead_code)]
     pub fn miss_count(&self) -> usize {
         *self.miss_count.read()
     }
 
+    #[allow(dead_code)]
     pub fn hit_ratio(&self) -> f64 {
         let hits = *self.hit_count.read() as f64;
         let misses = *self.miss_count.read() as f64;
