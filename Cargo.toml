@@ -1,6 +1,6 @@
 [package]
 name = "sphinx-ultra"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["Sphinx Ultra Team <sinan@alioglu.org>"]
 description = "High-performance Rust-based Sphinx documentation builder for large codebases"
@@ -71,6 +71,16 @@ pathdiff = "0.2"
 
 # Configuration
 config = "0.15"
+
+# Python integration
+pyo3 = { version = "0.22", features = ["auto-initialize"] }
+pythonize = "0.22"
+
+# TOML parsing (for pyproject.toml)
+toml = "0.8"
+
+# INI parsing (for setup.cfg)
+ini = "1.3"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

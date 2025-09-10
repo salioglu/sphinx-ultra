@@ -5,16 +5,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
 
-mod builder;
-mod cache;
-mod config;
-mod document;
-mod error;
-mod parser;
-mod utils;
-
-use builder::SphinxBuilder;
-use config::BuildConfig;
+use sphinx_ultra::{analyze_project, BuildConfig, SphinxBuilder};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -103,7 +94,8 @@ async fn main() -> Result<()> {
             let mut config = if let Some(ref config_path) = cli.config {
                 BuildConfig::from_file(config_path)?
             } else {
-                BuildConfig::default()
+                // Try to auto-detect configuration (including conf.py)
+                BuildConfig::auto_detect(&source)?
             };
 
             // Override config with CLI arguments
@@ -234,7 +226,7 @@ async fn main() -> Result<()> {
         }
 
         Commands::Stats { source } => {
-            let stats = utils::analyze_project(&source).await?;
+            let stats = analyze_project(&source).await?;
 
             println!("Project Statistics:");
             println!("  Source files: {}", stats.source_files);

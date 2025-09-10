@@ -2,6 +2,8 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+use crate::python_config::PythonConfigParser;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BuildConfig {
     /// Number of parallel jobs to use (defaults to number of CPU cores)
@@ -255,6 +257,45 @@ impl BuildConfig {
             serde_json::from_str(&content)?
         };
         Ok(config)
+    }
+
+    /// Load configuration from a Sphinx conf.py file
+    pub fn from_conf_py<P: AsRef<std::path::Path>>(conf_py_path: P) -> Result<Self> {
+        let mut parser = PythonConfigParser::new()?;
+        let conf_py_config = parser.parse_conf_py(conf_py_path)?;
+        Ok(conf_py_config.to_build_config())
+    }
+
+    /// Try to auto-detect and load configuration from various sources
+    pub fn auto_detect<P: AsRef<std::path::Path>>(source_dir: P) -> Result<Self> {
+        let source_dir = source_dir.as_ref();
+
+        // Try conf.py first (Sphinx standard)
+        let conf_py_path = source_dir.join("conf.py");
+        if conf_py_path.exists() {
+            return Self::from_conf_py(conf_py_path);
+        }
+
+        // Try sphinx-ultra.yaml
+        let yaml_path = source_dir.join("sphinx-ultra.yaml");
+        if yaml_path.exists() {
+            return Self::from_file(yaml_path);
+        }
+
+        // Try sphinx-ultra.yml
+        let yml_path = source_dir.join("sphinx-ultra.yml");
+        if yml_path.exists() {
+            return Self::from_file(yml_path);
+        }
+
+        // Try sphinx-ultra.json
+        let json_path = source_dir.join("sphinx-ultra.json");
+        if json_path.exists() {
+            return Self::from_file(json_path);
+        }
+
+        // Return default configuration
+        Ok(Self::default())
     }
 
     #[allow(dead_code)]
