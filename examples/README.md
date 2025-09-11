@@ -25,13 +25,13 @@ Each example includes its own README with specific instructions. Generally:
 
 1. Navigate to the example directory
 2. Build the documentation:
-   
+
    ```bash
    sphinx-ultra build --source . --output _build
    ```
 
 3. Serve locally:
-   
+
    ```bash
    sphinx-ultra serve --source . --port 8000
    ```
@@ -48,7 +48,7 @@ Each example includes:
 
 The `benchmarks/` directory contains projects of various sizes for performance testing:
 - Small (10 files)
-- Medium (100 files)  
+- Medium (100 files)
 - Large (1,000 files)
 - Extra Large (10,000 files)
 

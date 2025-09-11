@@ -9,10 +9,10 @@
   {% for key, entries in genindexentries %}
   <a href="{{ pathto('genindex-' + key) }}"><strong>{{ key }}</strong></a>
   {% if not loop.last %}
-    | 
+    |
   {% endif %}
   {% endfor %}
-  
+
   <br />
   <a href="{{ pathto('genindex-all') }}"><strong>Full index on one page</strong></a>
 </div>

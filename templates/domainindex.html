@@ -33,7 +33,7 @@
       {% endif %}
     </td>
   </tr>
-  
+
   <tbody id="section-{{ loop.index0 }}"{% if collapse_index %} style="display: none;"{% endif %}>
     {% for entry in section[1] %}
     <tr>
@@ -50,7 +50,7 @@
         {% endif %}
       </td>
     </tr>
-    
+
     {% if entry.subentries %}
     {% for subentry in entry.subentries %}
     <tr class="cg-{{ loop.index0 }}">

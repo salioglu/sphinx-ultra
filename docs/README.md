@@ -15,7 +15,7 @@ Sphinx Ultra is a high-performance Rust-based Sphinx documentation builder desig
 ### Key Features
 
 - **🚀 Blazing Fast**: Parallel processing with Rust's performance
-- **📊 Scalable**: Handle 10,000+ documentation files efficiently  
+- **📊 Scalable**: Handle 10,000+ documentation files efficiently
 - **🔄 Incremental Builds**: Smart caching system for faster rebuilds
 - **🎨 Modern Themes**: Beautiful, responsive documentation themes
 - **🔍 Full-Text Search**: Built-in search index generation

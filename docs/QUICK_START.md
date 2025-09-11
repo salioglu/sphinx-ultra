@@ -74,7 +74,7 @@ parallel_jobs: 4
 # Theme settings
 theme:
   name: "sphinx_rtd_theme"
-  
+
 # Extensions
 extensions:
   - "sphinx.ext.autodoc"
