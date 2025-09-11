@@ -6,25 +6,35 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::config::BuildConfig;
+use crate::directives::DirectiveRegistry;
 use crate::document::{
     CrossReference, Document, DocumentContent, MarkdownContent, MarkdownNode, RstContent,
     RstDirective, RstNode, TocEntry,
 };
+use crate::roles::RoleRegistry;
 use crate::utils;
 
 pub struct Parser {
     rst_directive_regex: Regex,
     cross_ref_regex: Regex,
+    #[allow(dead_code)]
+    directive_registry: DirectiveRegistry,
+    #[allow(dead_code)]
+    role_registry: RoleRegistry,
 }
 
 impl Parser {
     pub fn new(_config: &BuildConfig) -> Result<Self> {
         let rst_directive_regex = Regex::new(r"^\s*\.\.\s+(\w+)::\s*(.*?)$")?;
         let cross_ref_regex = Regex::new(r":(\w+):`([^`]+)`")?;
+        let directive_registry = DirectiveRegistry::new();
+        let role_registry = RoleRegistry::new();
 
         Ok(Self {
             rst_directive_regex,
             cross_ref_regex,
+            directive_registry,
+            role_registry,
         })
     }
 

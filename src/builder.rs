@@ -10,6 +10,7 @@ use crate::cache::BuildCache;
 use crate::config::BuildConfig;
 use crate::document::Document;
 use crate::error::{BuildErrorReport, BuildWarning};
+use crate::extensions::{ExtensionLoader, SphinxApp};
 use crate::parser::Parser;
 use crate::utils;
 
@@ -36,6 +37,10 @@ pub struct SphinxBuilder {
     incremental: bool,
     warnings: Arc<Mutex<Vec<BuildWarning>>>,
     errors: Arc<Mutex<Vec<BuildErrorReport>>>,
+    #[allow(dead_code)]
+    sphinx_app: Option<SphinxApp>,
+    #[allow(dead_code)]
+    extension_loader: ExtensionLoader,
 }
 
 impl SphinxBuilder {
@@ -51,6 +56,24 @@ impl SphinxBuilder {
                 .unwrap_or(4)
         });
 
+        // Initialize Sphinx app with extensions
+        let mut sphinx_app = SphinxApp::new(config.clone())?;
+        let mut extension_loader = ExtensionLoader::new()?;
+
+        // Load configured extensions
+        for extension_name in &config.extensions {
+            match extension_loader.load_extension(extension_name) {
+                Ok(extension) => {
+                    if let Err(e) = sphinx_app.add_extension(extension) {
+                        log::warn!("Failed to add extension '{}': {}", extension_name, e);
+                    }
+                }
+                Err(e) => {
+                    log::warn!("Failed to load extension '{}': {}", extension_name, e);
+                }
+            }
+        }
+
         Ok(Self {
             config,
             source_dir,
@@ -61,6 +84,8 @@ impl SphinxBuilder {
             incremental: false,
             warnings: Arc::new(Mutex::new(Vec::new())),
             errors: Arc::new(Mutex::new(Vec::new())),
+            sphinx_app: Some(sphinx_app),
+            extension_loader,
         })
     }
 
