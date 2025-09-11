@@ -12,8 +12,55 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  validate-version:
+    name: Validate Version Consistency
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v5
+
+    - name: Get tag version
+      id: tag_version
+      shell: bash
+      run: |
+        VERSION=${GITHUB_REF#refs/tags/v}
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Tag version: $VERSION"
+
+    - name: Get Cargo.toml version
+      id: cargo_version
+      shell: bash
+      run: |
+        CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -n1 | sed 's/version = "\(.*\)"/\1/')
+        echo "version=$CARGO_VERSION" >> $GITHUB_OUTPUT
+        echo "Cargo.toml version: $CARGO_VERSION"
+
+    - name: Validate version consistency
+      shell: bash
+      run: |
+        TAG_VERSION="${{ steps.tag_version.outputs.version }}"
+        CARGO_VERSION="${{ steps.cargo_version.outputs.version }}"
+        
+        echo "Comparing versions:"
+        echo "  Tag version: $TAG_VERSION"
+        echo "  Cargo.toml version: $CARGO_VERSION"
+        
+        if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
+          echo "❌ ERROR: Version mismatch detected!"
+          echo "The git tag version ($TAG_VERSION) does not match Cargo.toml version ($CARGO_VERSION)"
+          echo ""
+          echo "To fix this:"
+          echo "1. Update Cargo.toml version to match the tag, OR"
+          echo "2. Delete this tag and create a new one with the correct version"
+          echo "3. Use scripts/release.sh to automate releases safely"
+          exit 1
+        fi
+        
+        echo "✅ Version consistency check passed!"
+
   build-release:
     name: Build Release
+    needs: validate-version
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -41,7 +88,7 @@ jobs:
     - name: Get the release version from the tag
       shell: bash
       run: |
-        VERSION=${GITHUB_REF#refs/tags/}
+        VERSION=${GITHUB_REF#refs/tags/v}
         echo "RELEASE_VERSION=$VERSION" >> $GITHUB_ENV
 
     - name: Install Rust
