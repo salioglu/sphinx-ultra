@@ -10,7 +10,7 @@
   {% for key, entries in genindexentries %}
   <a href="#{{ key }}"><strong>{{ key }}</strong></a>
   {% if not loop.last %}
-    | 
+    |
   {% endif %}
   {% endfor %}
 </div>
@@ -20,12 +20,12 @@
   {% if split_index %}
   <h2 id="{{ key }}">{{ key }}</h2>
   {% endif %}
-  
+
   <table style="width: 100%" class="indextable genindextable">
     <tr>
       {% set entrycount = genindexcounts[loop.index0] %}
       {% set halfcount = ((entrycount // 2) + (entrycount % 2))|int %}
-      
+
       <td style="width: 33%; vertical-align: top;">
         <ul>
         {% set count = [0] %}
@@ -58,7 +58,7 @@
         {% endfor %}
         </ul>
       </td>
-      
+
       <td style="width: 33%; vertical-align: top;">
         <ul>
         {% set count = [0] %}

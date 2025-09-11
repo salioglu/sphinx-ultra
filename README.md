@@ -195,8 +195,15 @@ git clone https://github.com/salioglu/sphinx-ultra.git
 cd sphinx-ultra
 ./dev.sh setup
 
-# Run tests
-./dev.sh test
+# Install git pre-commit hooks (recommended)
+./dev.sh install-hooks
+
+# Run development commands
+./dev.sh fmt           # Format code
+./dev.sh clippy        # Run linter
+./dev.sh test          # Run tests
+./dev.sh pre-commit    # Run all pre-commit checks
+./dev.sh check         # Run all checks including tests
 
 # Build documentation
 ./dev.sh docs

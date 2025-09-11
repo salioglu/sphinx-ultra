@@ -13,10 +13,10 @@
   <a href="{{ pathto('genindex-' + k) }}"><strong>{{ k }}</strong></a>
   {% endif %}
   {% if not loop.last %}
-    | 
+    |
   {% endif %}
   {% endfor %}
-  
+
   <br />
   <a href="{{ pathto('genindex-all') }}"><strong>Full index on one page</strong></a>
 </div>
@@ -24,7 +24,7 @@
 <table style="width: 100%" class="indextable genindextable">
   <tr>
     {% set halfcount = ((count // 2) + (count % 2))|int %}
-    
+
     <td style="width: 50%; vertical-align: top;">
       <ul>
       {% set item_count = [0] %}
@@ -57,7 +57,7 @@
       {% endfor %}
       </ul>
     </td>
-    
+
     <td style="width: 50%; vertical-align: top;">
       <ul>
       {% set item_count = [0] %}

@@ -33,39 +33,41 @@ show_help() {
     echo "Usage: $0 <command>"
     echo ""
     echo "Commands:"
-    echo "  setup     - Initial development setup"
-    echo "  build     - Build the project in release mode"
-    echo "  test      - Run all tests"
-    echo "  bench     - Run benchmarks"
-    echo "  fmt       - Format code"
-    echo "  clippy    - Run clippy lints"
-    echo "  check     - Run all checks (fmt, clippy, test)"
-    echo "  clean     - Clean build artifacts"
-    echo "  docs      - Generate documentation for GitHub Pages"
-    echo "  docs-dev  - Generate and open documentation for development"
-    echo "  serve     - Start development server"
-    echo "  install   - Install locally"
-    echo "  package   - Create release package"
-    echo "  help      - Show this help"
+    echo "  setup       - Initial development setup"
+    echo "  build       - Build the project in release mode"
+    echo "  test        - Run all tests"
+    echo "  bench       - Run benchmarks"
+    echo "  fmt         - Format code"
+    echo "  clippy      - Run clippy lints"
+    echo "  check       - Run all checks (fmt, clippy, test)"
+    echo "  pre-commit  - Run pre-commit checks (fmt, clippy, build)"
+    echo "  install-hooks - Install git pre-commit hooks"
+    echo "  clean       - Clean build artifacts"
+    echo "  docs        - Generate documentation for GitHub Pages"
+    echo "  docs-dev    - Generate and open documentation for development"
+    echo "  serve       - Start development server"
+    echo "  install     - Install locally"
+    echo "  package     - Create release package"
+    echo "  help        - Show this help"
 }
 
 setup() {
     log_info "Setting up development environment..."
-    
+
     # Install Rust toolchain components
     rustup component add rustfmt clippy
-    
+
     # Install additional tools
     if ! command -v cargo-audit &> /dev/null; then
         log_info "Installing cargo-audit..."
         cargo install cargo-audit
     fi
-    
+
     if ! command -v cargo-llvm-cov &> /dev/null; then
         log_info "Installing cargo-llvm-cov..."
         cargo install cargo-llvm-cov
     fi
-    
+
     log_success "Development environment setup complete!"
 }
 
@@ -108,6 +110,65 @@ check() {
     log_success "All checks passed!"
 }
 
+pre_commit() {
+    log_info "Running pre-commit checks..."
+
+    # Check formatting
+    log_info "Checking code formatting..."
+    if ! cargo fmt --all -- --check; then
+        log_error "Code formatting issues found!"
+        log_warning "Run './dev.sh fmt' to fix formatting issues."
+        return 1
+    fi
+
+    # Run clippy
+    log_info "Running clippy..."
+    if ! cargo clippy --all-targets --all-features -- -D warnings; then
+        log_error "Clippy found issues!"
+        log_warning "Fix clippy warnings before committing."
+        return 1
+    fi
+
+    # Check compilation
+    log_info "Checking compilation..."
+    if ! cargo check --all-targets --all-features; then
+        log_error "Code does not compile!"
+        log_warning "Fix compilation errors before committing."
+        return 1
+    fi
+
+    log_success "All pre-commit checks passed!"
+}
+
+install_hooks() {
+    log_info "Installing git pre-commit hooks..."
+
+    # Create the pre-commit hook
+    cat > .git/hooks/pre-commit << 'EOF'
+#!/bin/sh
+#
+# Pre-commit hook that runs dev.sh pre-commit checks
+#
+
+echo "🔍 Running pre-commit checks..."
+
+if ! ./dev.sh pre-commit; then
+    echo "❌ Pre-commit checks failed!"
+    echo "💡 Fix the issues above and try committing again."
+    exit 1
+fi
+
+echo "✅ Pre-commit checks passed!"
+exit 0
+EOF
+
+    # Make it executable
+    chmod +x .git/hooks/pre-commit
+
+    log_success "Git pre-commit hooks installed!"
+    log_info "Now './dev.sh pre-commit' will run automatically before each commit."
+}
+
 clean() {
     log_info "Cleaning build artifacts..."
     cargo clean
@@ -117,20 +178,20 @@ clean() {
 
 docs() {
     log_info "Generating documentation for GitHub Pages..."
-    
+
     # Build Rust documentation
     cargo doc --all-features --no-deps
-    
+
     # Create docs directory if it doesn't exist
     mkdir -p docs
-    
+
     # Clean and copy Rust docs to docs folder (this will be gitignored)
     rm -rf docs/api
     cp -r target/doc docs/api
-    
+
     # Create .nojekyll file for GitHub Pages
     touch docs/.nojekyll
-    
+
     # Create index.html in docs folder that redirects to main documentation
     cat > docs/index.html << 'EOF'
 <!DOCTYPE html>
@@ -157,7 +218,7 @@ docs() {
 </body>
 </html>
 EOF
-    
+
     log_success "Documentation generated in docs/ folder for GitHub Pages!"
     log_info "Note: docs/api/ is gitignored as it contains generated files"
     log_info "Enable GitHub Pages in repository settings to publish at: https://salioglu.github.io/sphinx-ultra"
@@ -182,27 +243,27 @@ install() {
 
 package() {
     log_info "Creating release package..."
-    
+
     # Build release
     cargo build --release
-    
+
     # Create package directory
     VERSION=$(grep '^version = ' Cargo.toml | head -1 | cut -d'"' -f2)
     PACKAGE_NAME="sphinx-ultra-${VERSION}"
-    
+
     mkdir -p "dist/$PACKAGE_NAME"
-    
+
     # Copy files
     cp target/release/sphinx-ultra "dist/$PACKAGE_NAME/"
     cp README.md LICENSE CHANGELOG.md "dist/$PACKAGE_NAME/"
     cp -r examples "dist/$PACKAGE_NAME/"
     cp -r docs "dist/$PACKAGE_NAME/"
-    
+
     # Create archive
     cd dist
     tar -czf "${PACKAGE_NAME}.tar.gz" "$PACKAGE_NAME"
     cd ..
-    
+
     log_success "Package created: dist/${PACKAGE_NAME}.tar.gz"
 }
 
@@ -227,6 +288,12 @@ case "${1:-help}" in
         ;;
     check)
         check
+        ;;
+    pre-commit)
+        pre_commit
+        ;;
+    install-hooks)
+        install_hooks
         ;;
     clean)
         clean

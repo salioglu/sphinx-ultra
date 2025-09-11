@@ -1,7 +1,7 @@
 /* Basic jQuery compatibility for Sphinx */
 (function(global) {
     "use strict";
-    
+
     function $(selector, context) {
         if (typeof selector === 'string') {
             const elements = (context || document).querySelectorAll(selector);
