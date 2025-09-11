@@ -24,6 +24,12 @@ pub struct RoleRegistry {
     processors: HashMap<String, Box<dyn RoleProcessor + Send + Sync>>,
 }
 
+impl Default for RoleRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RoleRegistry {
     pub fn new() -> Self {
         let mut registry = Self {
@@ -40,8 +46,8 @@ impl RoleRegistry {
             .insert(processor.get_name().to_string(), processor);
     }
 
-    pub fn get(&self, name: &str) -> Option<&Box<dyn RoleProcessor + Send + Sync>> {
-        self.processors.get(name)
+    pub fn get(&self, name: &str) -> Option<&(dyn RoleProcessor + Send + Sync)> {
+        self.processors.get(name).map(|boxed| boxed.as_ref())
     }
 
     pub fn process_role(&self, role: &Role) -> Result<String> {

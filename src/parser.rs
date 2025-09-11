@@ -17,7 +17,9 @@ use crate::utils;
 pub struct Parser {
     rst_directive_regex: Regex,
     cross_ref_regex: Regex,
+    #[allow(dead_code)]
     directive_registry: DirectiveRegistry,
+    #[allow(dead_code)]
     role_registry: RoleRegistry,
 }
 

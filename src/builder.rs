@@ -37,7 +37,9 @@ pub struct SphinxBuilder {
     incremental: bool,
     warnings: Arc<Mutex<Vec<BuildWarning>>>,
     errors: Arc<Mutex<Vec<BuildErrorReport>>>,
+    #[allow(dead_code)]
     sphinx_app: Option<SphinxApp>,
+    #[allow(dead_code)]
     extension_loader: ExtensionLoader,
 }
 

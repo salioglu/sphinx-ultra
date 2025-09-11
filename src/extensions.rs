@@ -1,5 +1,4 @@
 use anyhow::Result;
-use pyo3::prelude::*;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -94,6 +93,7 @@ impl ExtensionLoader {
     }
 
     /// Extract metadata from extension module
+    #[allow(dead_code)]
     fn extract_extension_metadata(&self, _extension_name: &str) -> Result<ExtensionMetadata> {
         // Stub implementation - in a real version this would introspect the Python module
         Ok(ExtensionMetadata {
@@ -141,6 +141,7 @@ impl SphinxApp {
     }
 
     /// Create a configuration dictionary for Python (stub)
+    #[allow(dead_code)]
     fn create_config_dict(&self) -> Result<HashMap<String, String>> {
         // Stub implementation
         let mut config_dict = HashMap::new();
@@ -156,6 +157,12 @@ impl SphinxApp {
     /// Check if extension is loaded
     pub fn has_extension(&self, name: &str) -> bool {
         self.extensions.contains_key(name)
+    }
+}
+
+impl Default for SphinxEnvironment {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -195,7 +202,7 @@ impl SphinxEnvironment {
     pub fn add_dependency(&mut self, docname: String, dependency: String) {
         self.dependencies
             .entry(docname)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(dependency);
     }
 
@@ -208,7 +215,7 @@ impl SphinxEnvironment {
     pub fn add_metadata(&mut self, docname: String, key: String, value: String) {
         self.metadata
             .entry(docname)
-            .or_insert_with(HashMap::new)
+            .or_default()
             .insert(key, value);
     }
 

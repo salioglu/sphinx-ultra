@@ -44,6 +44,12 @@ pub struct DirectiveRegistry {
     processors: HashMap<String, Box<dyn DirectiveProcessor + Send + Sync>>,
 }
 
+impl Default for DirectiveRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DirectiveRegistry {
     pub fn new() -> Self {
         let mut registry = Self {
@@ -60,8 +66,8 @@ impl DirectiveRegistry {
             .insert(processor.get_name().to_string(), processor);
     }
 
-    pub fn get(&self, name: &str) -> Option<&Box<dyn DirectiveProcessor + Send + Sync>> {
-        self.processors.get(name)
+    pub fn get(&self, name: &str) -> Option<&(dyn DirectiveProcessor + Send + Sync)> {
+        self.processors.get(name).map(|boxed| boxed.as_ref())
     }
 
     pub fn process_directive(&self, directive: &Directive) -> Result<String> {
@@ -234,7 +240,7 @@ struct GenericAdmonitionDirective;
 impl DirectiveProcessor for GenericAdmonitionDirective {
     fn process(&self, directive: &Directive) -> Result<String> {
         let default_title = "Admonition".to_string();
-        let title = directive.arguments.get(0).unwrap_or(&default_title);
+        let title = directive.arguments.first().unwrap_or(&default_title);
         let content = directive.content.join("\n");
 
         Ok(format!(
@@ -261,8 +267,8 @@ struct CodeBlockDirective;
 impl DirectiveProcessor for CodeBlockDirective {
     fn process(&self, directive: &Directive) -> Result<String> {
         let default_language = "text".to_string();
-        let language = directive.arguments.get(0).unwrap_or(&default_language);
-        let _linenos = directive.options.get("linenos").is_some();
+        let language = directive.arguments.first().unwrap_or(&default_language);
+        let _linenos = directive.options.contains_key("linenos");
         let _emphasize_lines = directive.options.get("emphasize-lines");
         let caption = directive.options.get("caption");
         let _name = directive.options.get("name");
@@ -312,7 +318,7 @@ impl DirectiveProcessor for LiteralIncludeDirective {
     fn process(&self, directive: &Directive) -> Result<String> {
         let filename = directive
             .arguments
-            .get(0)
+            .first()
             .ok_or_else(|| anyhow!("literalinclude directive requires a filename"))?;
 
         let language = directive
@@ -399,7 +405,7 @@ struct HighlightDirective;
 impl DirectiveProcessor for HighlightDirective {
     fn process(&self, directive: &Directive) -> Result<String> {
         let default_language = "text".to_string();
-        let language = directive.arguments.get(0).unwrap_or(&default_language);
+        let language = directive.arguments.first().unwrap_or(&default_language);
         // This directive sets the highlighting language for subsequent code blocks
         Ok(format!("<!-- highlight language set to {} -->", language))
     }
