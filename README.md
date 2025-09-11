@@ -214,6 +214,42 @@ Please see [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
 
 **Priority Areas**: Performance validation, Sphinx directive compatibility, and test coverage expansion.
 
-## 📄 License
+## � Releases
+
+This project uses an automated release system with version validation to ensure consistency.
+
+### For Users
+
+Download pre-built binaries from the [Releases page](https://github.com/salioglu/sphinx-ultra/releases).
+
+### For Maintainers
+
+```bash
+# Setup release environment (one-time)
+./scripts/setup.sh
+
+# Create a new patch release (0.1.2 → 0.1.3)
+./scripts/release.sh --patch
+
+# Create a new minor release (0.1.2 → 0.2.0)
+./scripts/release.sh --minor
+
+# Create a new major release (0.1.2 → 1.0.0)
+./scripts/release.sh --major
+
+# Preview what a release would do
+./scripts/release.sh --dry-run --patch
+```
+
+The release script automatically:
+
+- ✅ Runs tests to ensure quality
+- ✅ Updates `Cargo.toml` version  
+- ✅ Creates and pushes git tags
+- ✅ Triggers GitHub Actions to build and publish
+
+**Version Safety**: The system prevents version mismatches between git tags and `Cargo.toml`. See [`scripts/README.md`](scripts/README.md) for detailed documentation.
+
+## �📄 License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
