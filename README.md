@@ -1,5 +1,6 @@
 # Sphinx Ultra Rust Builder
 
+[![Crates.io](https://img.shields.io/crates/v/sphinx-ultra.svg)](https://crates.io/crates/sphinx-ultra)
 [![CI](https://github.com/salioglu/sphinx-ultra/actions/workflows/ci.yml/badge.svg)](https://github.com/salioglu/sphinx-ultra/actions/workflows/ci.yml)
 [![Documentation](https://github.com/salioglu/sphinx-ultra/actions/workflows/docs.yml/badge.svg)](https://salioglu.github.io/sphinx-ultra)
 [![Release](https://github.com/salioglu/sphinx-ultra/actions/workflows/release.yml/badge.svg)](https://github.com/salioglu/sphinx-ultra/releases)
