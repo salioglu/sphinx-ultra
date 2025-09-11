@@ -1,6 +1,6 @@
 [package]
 name = "sphinx-ultra"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 authors = ["Sphinx Ultra Team <sinan@alioglu.org>"]
 description = "High-performance Rust-based Sphinx documentation builder for large codebases"
