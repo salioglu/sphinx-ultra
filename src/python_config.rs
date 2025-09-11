@@ -206,8 +206,9 @@ impl PythonConfigParser {
                     .split(',')
                     .map(|item| {
                         let item = item.trim();
-                        if (item.starts_with('"') && item.ends_with('"')) 
-                           || (item.starts_with('\'') && item.ends_with('\'')) {
+                        if (item.starts_with('"') && item.ends_with('"'))
+                            || (item.starts_with('\'') && item.ends_with('\''))
+                        {
                             serde_json::Value::String(item[1..item.len() - 1].to_string())
                         } else {
                             serde_json::Value::String(item.to_string())
@@ -549,23 +550,11 @@ impl ConfPyConfig {
         config.extensions = self.extensions.clone();
 
         // Map template paths
-        config.template_dirs = self
-            .templates_path
-            .iter()
-            .map(PathBuf::from)
-            .collect();
+        config.template_dirs = self.templates_path.iter().map(PathBuf::from).collect();
 
         // Map static paths
-        config.static_dirs = self
-            .html_static_path
-            .iter()
-            .map(PathBuf::from)
-            .collect();
-        config.html_static_path = self
-            .html_static_path
-            .iter()
-            .map(PathBuf::from)
-            .collect();
+        config.static_dirs = self.html_static_path.iter().map(PathBuf::from).collect();
+        config.html_static_path = self.html_static_path.iter().map(PathBuf::from).collect();
 
         // Map HTML configuration
         if let Some(html_theme) = &self.html_theme {
@@ -614,11 +603,7 @@ impl ConfPyConfig {
         }
 
         // Map templates path
-        config.templates_path = self
-            .templates_path
-            .iter()
-            .map(PathBuf::from)
-            .collect();
+        config.templates_path = self.templates_path.iter().map(PathBuf::from).collect();
 
         config
     }

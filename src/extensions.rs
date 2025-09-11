@@ -213,10 +213,7 @@ impl SphinxEnvironment {
 
     /// Add metadata for a document
     pub fn add_metadata(&mut self, docname: String, key: String, value: String) {
-        self.metadata
-            .entry(docname)
-            .or_default()
-            .insert(key, value);
+        self.metadata.entry(docname).or_default().insert(key, value);
     }
 
     /// Get metadata for a document
