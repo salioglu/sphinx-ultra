@@ -266,6 +266,13 @@ main() {
     if [ "$DRY_RUN" = "false" ]; then
         echo -e "\n${GREEN}🎉 Release $target_version completed successfully!${NC}"
         echo -e "The GitHub Actions workflow will now build and publish the release."
+        echo -e "\n${YELLOW}Next steps:${NC}"
+        echo -e "1. 📦 Binaries will be built for multiple platforms"
+        echo -e "2. 🚀 GitHub release will be created automatically"
+        echo -e "3. 📝 Release notes can be added at: https://github.com/salioglu/sphinx-ultra/releases"
+        echo -e "\n${BLUE}Crates.io Publishing:${NC}"
+        echo -e "If CARGO_REGISTRY_TOKEN is configured, the package will be published automatically."
+        echo -e "Otherwise, you can publish manually with: ${YELLOW}cargo publish${NC}"
     else
         echo -e "\n${BLUE}🔍 Dry run completed. Use without --dry-run to execute.${NC}"
     fi

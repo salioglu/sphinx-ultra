@@ -100,7 +100,7 @@ jobs:
       if: matrix.target == 'x86_64-unknown-linux-musl'
       run: |
         sudo apt-get update
-        sudo apt-get install -y musl-tools
+        sudo apt-get install -y musl-tools musl-dev
 
     - name: Build release binary
       run: cargo build --release --target ${{ matrix.target }}
@@ -140,7 +140,31 @@ jobs:
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
 
+    - name: Check for crates.io token
+      id: check_token
+      run: |
+        if [ -z "${{ secrets.CARGO_REGISTRY_TOKEN }}" ]; then
+          echo "has_token=false" >> $GITHUB_OUTPUT
+          echo "::notice::Skipping crates.io publishing - CARGO_REGISTRY_TOKEN not set"
+        else
+          echo "has_token=true" >> $GITHUB_OUTPUT
+        fi
+
     - name: Publish to crates.io
+      if: steps.check_token.outputs.has_token == 'true'
       run: cargo publish
       env:
         CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+    - name: Show crates.io setup instructions
+      if: steps.check_token.outputs.has_token == 'false'
+      run: |
+        echo "ℹ️ Skipping crates.io publishing because CARGO_REGISTRY_TOKEN is not set"
+        echo ""
+        echo "To enable automatic crates.io publishing:"
+        echo "1. Generate a token at https://crates.io/me"
+        echo "2. Add it as a secret named CARGO_REGISTRY_TOKEN in your GitHub repository"
+        echo "3. Go to: Settings → Secrets and variables → Actions → New repository secret"
+        echo ""
+        echo "For now, you can publish manually with:"
+        echo "  cargo publish"
