@@ -73,11 +73,11 @@ pathdiff = "0.2"
 config = "0.15"
 
 # Python integration
-pyo3 = { version = "0.24.1", features = ["auto-initialize"] }
-pythonize = "0.24"
+pyo3 = { version = "0.26.0", features = ["auto-initialize"] }
+pythonize = "0.26"
 
 # TOML parsing (for pyproject.toml)
-toml = "0.8"
+toml = "0.9"
 
 # INI parsing (for setup.cfg)
 ini = "1.3"
