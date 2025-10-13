@@ -131,11 +131,11 @@ impl SphinxBuilder {
         tokio::fs::create_dir_all(&self.output_dir).await?;
 
         // Discover all source files
-        let source_files = self.discover_source_files().await?;
+        let source_files = self.discover_source_files()?;
         info!("Discovered {} source files", source_files.len());
 
         // Build dependency graph
-        let dependency_graph = self.build_dependency_graph(&source_files).await?;
+        let dependency_graph = self.build_dependency_graph(&source_files)?;
         debug!(
             "Built dependency graph with {} nodes",
             dependency_graph.len()
@@ -143,24 +143,22 @@ impl SphinxBuilder {
 
         // Process files in dependency order
         let processed_docs = self
-            .process_files_parallel(&source_files, &dependency_graph)
-            .await?;
+            .process_files_parallel(&source_files, &dependency_graph)?;
 
         // Validate documents and collect warnings/errors
-        self.validate_documents(&processed_docs, &source_files)
-            .await?;
+        self.validate_documents(&processed_docs, &source_files)?;
 
         // Generate cross-references and indices
-        self.generate_indices(&processed_docs).await?;
+        self.generate_indices(&processed_docs)?;
 
         // Copy static assets
         self.copy_static_assets().await?;
 
         // Generate sitemap and search index
-        self.generate_search_index(&processed_docs).await?;
+        self.generate_search_index(&processed_docs)?;
 
         let build_time = start_time.elapsed();
-        let output_size = utils::calculate_directory_size(&self.output_dir).await?;
+        let output_size = utils::calculate_directory_size(&self.output_dir)?;
 
         let warnings = self.warnings.lock().unwrap();
         let errors = self.errors.lock().unwrap();
@@ -181,7 +179,7 @@ impl SphinxBuilder {
         Ok(stats)
     }
 
-    async fn discover_source_files(&self) -> Result<Vec<PathBuf>> {
+    fn discover_source_files(&self) -> Result<Vec<PathBuf>> {
         // Use pattern-based file discovery like Sphinx
         let mut include_patterns = self.config.include_patterns.clone();
         let exclude_patterns = &self.config.exclude_patterns;
@@ -261,7 +259,7 @@ impl SphinxBuilder {
         }
     }
 
-    async fn build_dependency_graph(
+    fn build_dependency_graph(
         &self,
         files: &[PathBuf],
     ) -> Result<HashMap<PathBuf, Vec<PathBuf>>> {
@@ -276,7 +274,7 @@ impl SphinxBuilder {
         Ok(graph)
     }
 
-    async fn process_files_parallel(
+    fn process_files_parallel(
         &self,
         files: &[PathBuf],
         _dependency_graph: &HashMap<PathBuf, Vec<PathBuf>>,
@@ -352,7 +350,7 @@ impl SphinxBuilder {
         Ok(output_path)
     }
 
-    async fn generate_indices(&self, _documents: &[Document]) -> Result<()> {
+    fn generate_indices(&self, _documents: &[Document]) -> Result<()> {
         info!("Generating indices and cross-references");
         // TODO: Implement index generation
         Ok(())
@@ -414,7 +412,7 @@ impl SphinxBuilder {
         for static_dir in &static_dirs {
             if static_dir.exists() {
                 let dest = self.output_dir.join(static_dir.file_name().unwrap());
-                utils::copy_dir_recursive(static_dir, &dest).await?;
+                utils::copy_dir_recursive(static_dir, &dest)?;
                 debug!("Copied static directory: {:?}", static_dir);
             }
         }
@@ -445,7 +443,7 @@ impl SphinxBuilder {
         Ok(())
     }
 
-    async fn validate_documents(
+    fn validate_documents(
         &self,
         processed_docs: &[Document],
         _source_files: &[PathBuf],
@@ -554,7 +552,7 @@ impl SphinxBuilder {
         }
     }
 
-    async fn generate_search_index(&self, _documents: &[Document]) -> Result<()> {
+    fn generate_search_index(&self, _documents: &[Document]) -> Result<()> {
         info!("Generating search index");
         // TODO: Implement search index generation
         Ok(())

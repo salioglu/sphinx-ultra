@@ -435,7 +435,7 @@ impl HTMLBuilder {
         };
 
         // Local TOC
-        let toc = self.generate_local_toc(docname).await?;
+        let toc = self.generate_local_toc(docname)?;
 
         ctx.insert("parents".to_string(), json!(parents));
         if let Some(p) = prev {
@@ -468,7 +468,7 @@ impl HTMLBuilder {
     }
 
     /// Generate local table of contents
-    async fn generate_local_toc(&self, _docname: &str) -> Result<String> {
+    fn generate_local_toc(&self, _docname: &str) -> Result<String> {
         // TODO: Implement actual TOC generation
         Ok("<div class=\"toc\"></div>".to_string())
     }
@@ -595,7 +595,7 @@ impl HTMLBuilder {
         info!("Copying static files");
 
         // Copy theme static files
-        self.copy_theme_static_files().await?;
+        self.copy_theme_static_files()?;
 
         // Copy user static files
         for static_path in &self.config.html_static_path {
@@ -617,7 +617,7 @@ impl HTMLBuilder {
     }
 
     /// Copy theme static files
-    async fn copy_theme_static_files(&self) -> Result<()> {
+    fn copy_theme_static_files(&self) -> Result<()> {
         // TODO: Implement theme system
         Ok(())
     }

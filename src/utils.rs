@@ -128,7 +128,7 @@ pub fn get_file_mtime(path: &Path) -> Result<DateTime<Utc>> {
     Ok(DateTime::from(mtime))
 }
 
-pub async fn calculate_directory_size(dir: &Path) -> Result<u64> {
+pub fn calculate_directory_size(dir: &Path) -> Result<u64> {
     // Use synchronous approach
     calculate_directory_size_sync(dir)
 }
@@ -151,7 +151,7 @@ fn calculate_directory_size_sync(dir: &Path) -> Result<u64> {
     Ok(total_size)
 }
 
-pub async fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
+pub fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
     // Use synchronous approach
     copy_dir_recursive_sync(src, dst)
 }
