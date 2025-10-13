@@ -142,8 +142,7 @@ impl SphinxBuilder {
         );
 
         // Process files in dependency order
-        let processed_docs = self
-            .process_files_parallel(&source_files, &dependency_graph)?;
+        let processed_docs = self.process_files_parallel(&source_files, &dependency_graph)?;
 
         // Validate documents and collect warnings/errors
         self.validate_documents(&processed_docs, &source_files)?;
@@ -259,10 +258,7 @@ impl SphinxBuilder {
         }
     }
 
-    fn build_dependency_graph(
-        &self,
-        files: &[PathBuf],
-    ) -> Result<HashMap<PathBuf, Vec<PathBuf>>> {
+    fn build_dependency_graph(&self, files: &[PathBuf]) -> Result<HashMap<PathBuf, Vec<PathBuf>>> {
         let mut graph = HashMap::new();
 
         // For now, simple implementation - process files in alphabetical order
