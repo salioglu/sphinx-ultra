@@ -26,6 +26,19 @@ Sphinx Ultra is designed for speed:
    # Build 1000 files in under 10 seconds
    sphinx-ultra build --source . --output _build
 
+Constraint Validation
+~~~~~~~~~~~~~~~~~~~~
+
+**NEW!** Advanced constraint validation system inspired by sphinx-needs:
+
+* **Content validation** - Validate documentation items against configurable rules
+* **Expression engine** - Support for complex boolean expressions (==, !=, and, or, in)  
+* **Severity levels** - Info, warning, error, and critical failure actions
+* **Template messages** - Customizable error messages with variable substitution
+* **Auto-styling** - Automatic style application based on constraint failures
+
+See :doc:`validation-examples` for examples with both passing and failing constraints.
+
 Configuration
 ~~~~~~~~~~~~~
 
@@ -56,6 +69,17 @@ Start development server:
 
    sphinx-ultra serve --source . --port 8000
 
+Constraint Validation Demo
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Run the constraint validation example:
+
+.. code-block:: bash
+
+   cargo run --example constraint_validation
+
+This will show you working validation with both passing and failing constraints.
+
 Advanced Usage
 ~~~~~~~~~~~~~~
 
@@ -76,6 +100,7 @@ For detailed API documentation, see :doc:`api`.
 
    getting-started
    configuration
+   validation-examples
    api
    examples
 

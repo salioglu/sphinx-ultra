@@ -11,6 +11,7 @@ use crate::config::BuildConfig;
 use crate::document::Document;
 use crate::error::{BuildErrorReport, BuildWarning};
 use crate::extensions::{ExtensionLoader, SphinxApp};
+use crate::matching;
 use crate::parser::Parser;
 use crate::utils;
 
@@ -181,12 +182,52 @@ impl SphinxBuilder {
     }
 
     async fn discover_source_files(&self) -> Result<Vec<PathBuf>> {
-        // For now, use a simple synchronous approach to avoid async recursion issues
-        let mut files = Vec::new();
-        self.discover_files_sync(&self.source_dir, &mut files)?;
-        Ok(files)
+        // Use pattern-based file discovery like Sphinx
+        let mut include_patterns = self.config.include_patterns.clone();
+        let exclude_patterns = &self.config.exclude_patterns;
+
+        // Add default source file patterns if no specific patterns are configured
+        if include_patterns == vec!["**"] {
+            include_patterns = vec![
+                "**/*.rst".to_string(),
+                "**/*.md".to_string(),
+                "**/*.txt".to_string(),
+            ];
+        }
+
+        // Add built-in exclude patterns for common build artifacts and hidden files
+        let mut all_exclude_patterns = exclude_patterns.clone();
+        all_exclude_patterns.extend_from_slice(&[
+            "_build/**".to_string(),
+            "__pycache__/**".to_string(),
+            ".git/**".to_string(),
+            ".svn/**".to_string(),
+            ".hg/**".to_string(),
+            ".*/**".to_string(), // Skip all hidden directories
+            "Thumbs.db".to_string(),
+            ".DS_Store".to_string(),
+        ]);
+
+        match matching::get_matching_files(
+            &self.source_dir,
+            &include_patterns,
+            &all_exclude_patterns,
+        ) {
+            Ok(files) => Ok(files),
+            Err(e) => {
+                log::warn!(
+                    "Pattern matching failed, falling back to simple discovery: {}",
+                    e
+                );
+                // Fallback to old method if pattern matching fails
+                let mut files = Vec::new();
+                self.discover_files_sync(&self.source_dir, &mut files)?;
+                Ok(files)
+            }
+        }
     }
 
+    /// Fallback file discovery for when pattern matching fails
     fn discover_files_sync(&self, dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
         for entry in std::fs::read_dir(dir)? {
             let entry = entry?;
@@ -211,6 +252,7 @@ impl SphinxBuilder {
         Ok(())
     }
 
+    /// Fallback method to check if a file is a source file (used as backup)
     fn is_source_file(&self, path: &Path) -> bool {
         if let Some(ext) = path.extension() {
             matches!(ext.to_string_lossy().as_ref(), "rst" | "md" | "txt")

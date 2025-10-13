@@ -42,6 +42,9 @@ pub enum BuildError {
 
     #[error("Syntax highlighting error: {0}")]
     SyntaxHighlight(String),
+
+    #[error("Validation error: {0}")]
+    ValidationError(String),
 }
 
 #[derive(Debug, Clone)]

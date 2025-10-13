@@ -24,6 +24,7 @@ pub struct ConfPyConfig {
     pub extensions: Vec<String>,
     pub templates_path: Vec<String>,
     pub exclude_patterns: Vec<String>,
+    pub include_patterns: Vec<String>,
     pub source_suffix: HashMap<String, String>,
     pub root_doc: Option<String>,
     pub language: Option<String>,
@@ -277,6 +278,7 @@ impl PythonConfigParser {
         config.extensions = extract_string_list("extensions");
         config.templates_path = extract_string_list("templates_path");
         config.exclude_patterns = extract_string_list("exclude_patterns");
+        config.include_patterns = extract_string_list("include_patterns");
         config.root_doc = extract_string("root_doc").or_else(|| extract_string("master_doc"));
         config.language = extract_string("language");
         config.locale_dirs = extract_string_list("locale_dirs");
@@ -356,6 +358,7 @@ impl PythonConfigParser {
                 | "extensions"
                 | "templates_path"
                 | "exclude_patterns"
+                | "include_patterns"
                 | "source_suffix"
                 | "root_doc"
                 | "master_doc"
@@ -423,6 +426,7 @@ impl Default for ConfPyConfig {
             extensions: Vec::new(),
             templates_path: vec!["_templates".to_string()],
             exclude_patterns: Vec::new(),
+            include_patterns: vec!["**".to_string()], // Sphinx default
             source_suffix: HashMap::new(),
             root_doc: Some("index".to_string()),
             language: None,
@@ -604,6 +608,14 @@ impl ConfPyConfig {
 
         // Map templates path
         config.templates_path = self.templates_path.iter().map(PathBuf::from).collect();
+
+        // Map file patterns (Sphinx compatibility)
+        config.include_patterns = if self.include_patterns.is_empty() {
+            vec!["**".to_string()] // Sphinx default
+        } else {
+            self.include_patterns.clone()
+        };
+        config.exclude_patterns = self.exclude_patterns.clone();
 
         config
     }

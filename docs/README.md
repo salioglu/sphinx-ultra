@@ -6,6 +6,8 @@ Welcome to the Sphinx Ultra documentation! This site contains the complete API d
 
 - **[API Documentation](./api/sphinx_ultra/index.html)** - Complete Rust API documentation
 - **[Quick Start Guide](./QUICK_START.md)** - Get started with Sphinx Ultra
+- **[Implementation Status](./IMPLEMENTATION_STATUS.md)** - Current feature implementation status
+- **[Domain System Guide](./DOMAIN_SYSTEM.md)** - Cross-reference validation system documentation
 - **[GitHub Repository](https://github.com/salioglu/sphinx-ultra)** - Source code and issues
 
 ## 🚀 About Sphinx Ultra
@@ -19,7 +21,8 @@ Sphinx Ultra is a high-performance Rust-based Sphinx documentation builder desig
 - **🔄 Incremental Builds**: Smart caching system for faster rebuilds
 - **🎨 Modern Themes**: Beautiful, responsive documentation themes
 - **🔍 Full-Text Search**: Built-in search index generation
-- **🛠️ Extensible**: Plugin system for custom functionality
+- **� Domain System**: Complete cross-reference validation with Python and RST domains
+- **💡 Smart Validation**: Intelligent suggestions for broken references with fuzzy matching
 
 ## �️ Development
 

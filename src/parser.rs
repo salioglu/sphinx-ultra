@@ -11,7 +11,7 @@ use crate::document::{
     CrossReference, Document, DocumentContent, MarkdownContent, MarkdownNode, RstContent,
     RstDirective, RstNode, TocEntry,
 };
-use crate::roles::RoleRegistry;
+// use crate::roles::RoleRegistry; // TODO: Implement roles module
 use crate::utils;
 
 pub struct Parser {
@@ -19,8 +19,8 @@ pub struct Parser {
     cross_ref_regex: Regex,
     #[allow(dead_code)]
     directive_registry: DirectiveRegistry,
-    #[allow(dead_code)]
-    role_registry: RoleRegistry,
+    // #[allow(dead_code)]
+    // role_registry: RoleRegistry, // TODO: Implement roles module
 }
 
 impl Parser {
@@ -28,13 +28,13 @@ impl Parser {
         let rst_directive_regex = Regex::new(r"^\s*\.\.\s+(\w+)::\s*(.*?)$")?;
         let cross_ref_regex = Regex::new(r":(\w+):`([^`]+)`")?;
         let directive_registry = DirectiveRegistry::new();
-        let role_registry = RoleRegistry::new();
+        // let role_registry = RoleRegistry::new(); // TODO: Implement roles module
 
         Ok(Self {
             rst_directive_regex,
             cross_ref_regex,
             directive_registry,
-            role_registry,
+            // role_registry, // TODO: Implement roles module
         })
     }
 

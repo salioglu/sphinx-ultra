@@ -1,25 +1,57 @@
-# Basic configuration for Sphinx Ultra
-source_dir: "."
-output_dir: "_build"
+# Working Sphinx Ultra Configuration Example
+# This configuration works with the current implementation
+
+# Project information
+project: "Sphinx Ultra Basic Example"
+version: "1.0.0"
+copyright: "2024, Sphinx Ultra Team"
 
 # Performance settings
 parallel_jobs: 4
-cache_enabled: true
+max_cache_size_mb: 500
+cache_expiration_hours: 24
 
-# Theme configuration
-theme:
-  name: "sphinx_rtd_theme"
-  options:
-    navigation_depth: 3
-    collapse_navigation: false
+# Required directory settings
+template_dirs: []
+static_dirs: []
 
-# Extensions
+# Extensions (basic support only)
 extensions:
   - "sphinx.ext.autodoc"
   - "sphinx.ext.viewcode"
 
-# Build settings
-build:
-  incremental: true
-  minify_html: false
+# Output configuration
+output:
+  html_theme: "sphinx_rtd_theme"
   syntax_highlighting: true
+  highlight_theme: "github" 
+  search_index: true
+  minify_html: false
+  compress_output: false
+
+# Theme configuration  
+theme:
+  name: "sphinx_rtd_theme"
+  options: {}
+  custom_css: []
+  custom_js: []
+
+# Optimization settings
+optimization:
+  parallel_processing: true
+  incremental_builds: true
+  document_caching: true
+  image_optimization: false
+  asset_bundling: false
+
+# HTML settings
+html_static_path: ["_static"]
+templates_path: ["_templates"]
+html_show_copyright: true
+html_show_sphinx: true
+html_css_files: []
+html_js_files: []
+html_style: []
+
+# Build behavior
+fail_on_warning: false

@@ -3,6 +3,9 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// Directive validation module for comprehensive validation
+pub mod validation;
+
 /// Represents a parsed Sphinx directive
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Directive {

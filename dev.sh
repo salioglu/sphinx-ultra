@@ -27,6 +27,19 @@ log_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
+check_rust_installation() {
+    if ! command -v rustup &> /dev/null || ! command -v cargo &> /dev/null; then
+        log_error "Rust is not installed!"
+        log_info "To install Rust, run the following command:"
+        echo ""
+        echo "    curl https://sh.rustup.rs -sSf | sh"
+        echo ""
+        log_info "After installation, restart your shell and run the command again."
+        return 1
+    fi
+    return 0
+}
+
 show_help() {
     echo "Sphinx Ultra Development Helper"
     echo ""
@@ -54,6 +67,11 @@ show_help() {
 setup() {
     log_info "Setting up development environment..."
 
+    # Check if Rust is installed
+    if ! check_rust_installation; then
+        return 1
+    fi
+
     # Install Rust toolchain components
     rustup component add rustfmt clippy
 
@@ -73,12 +91,18 @@ setup() {
 
 build() {
     log_info "Building Sphinx Ultra in release mode..."
+    if ! check_rust_installation; then
+        return 1
+    fi
     cargo build --release
     log_success "Build complete! Binary at: target/release/sphinx-ultra"
 }
 
 test() {
     log_info "Running tests..."
+    if ! check_rust_installation; then
+        return 1
+    fi
     cargo test --all-features
     cargo test --test integration_test
     log_success "All tests passed!"
@@ -86,18 +110,27 @@ test() {
 
 bench() {
     log_info "Running benchmarks..."
+    if ! check_rust_installation; then
+        return 1
+    fi
     cargo bench
     log_success "Benchmarks complete!"
 }
 
 fmt() {
     log_info "Formatting code..."
+    if ! check_rust_installation; then
+        return 1
+    fi
     cargo fmt --all
     log_success "Code formatted!"
 }
 
 clippy() {
     log_info "Running clippy..."
+    if ! check_rust_installation; then
+        return 1
+    fi
     cargo clippy --all-targets --all-features -- -D warnings
     log_success "Clippy passed!"
 }
@@ -112,6 +145,10 @@ check() {
 
 pre_commit() {
     log_info "Running pre-commit checks..."
+
+    if ! check_rust_installation; then
+        return 1
+    fi
 
     # Check formatting
     log_info "Checking code formatting..."
@@ -171,6 +208,9 @@ EOF
 
 clean() {
     log_info "Cleaning build artifacts..."
+    if ! check_rust_installation; then
+        return 1
+    fi
     cargo clean
     rm -rf _build
     log_success "Clean complete!"
@@ -178,6 +218,10 @@ clean() {
 
 docs() {
     log_info "Generating documentation for GitHub Pages..."
+
+    if ! check_rust_installation; then
+        return 1
+    fi
 
     # Build Rust documentation
     cargo doc --all-features --no-deps
@@ -226,23 +270,36 @@ EOF
 
 docs_dev() {
     log_info "Generating documentation for development (opens in browser)..."
+    if ! check_rust_installation; then
+        return 1
+    fi
     cargo doc --all-features --no-deps --open
     log_success "Documentation generated and opened in browser!"
 }
 
 serve() {
     log_info "Starting development server..."
+    if ! check_rust_installation; then
+        return 1
+    fi
     cargo run -- serve --source examples/basic --port 8000
 }
 
 install() {
     log_info "Installing locally..."
+    if ! check_rust_installation; then
+        return 1
+    fi
     cargo install --path . --force
     log_success "Installed successfully!"
 }
 
 package() {
     log_info "Creating release package..."
+
+    if ! check_rust_installation; then
+        return 1
+    fi
 
     # Build release
     cargo build --release
