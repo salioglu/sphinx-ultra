@@ -74,8 +74,8 @@ pathdiff = "0.2"
 config = "0.15"
 
 # Python integration
-pyo3 = { version = "0.26.0", features = ["auto-initialize"] }
-pythonize = "0.26"
+pyo3 = { version = "0.27.1", features = ["auto-initialize"] }
+pythonize = "0.27"
 
 # TOML parsing (for pyproject.toml)
 toml = "0.9"
