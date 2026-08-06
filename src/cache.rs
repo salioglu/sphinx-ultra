@@ -33,8 +33,26 @@ struct CachedDocument {
 }
 
 impl BuildCache {
-    pub fn new(cache_dir: PathBuf) -> Result<Self> {
+    pub fn new(
+        cache_dir: PathBuf,
+        max_size_mb: usize,
+        expiration_hours: u64,
+        config_fingerprint: &str,
+    ) -> Result<Self> {
         std::fs::create_dir_all(&cache_dir)?;
+
+        // Cached documents were produced under a specific configuration; if
+        // the configuration changed, everything in the cache is stale.
+        let fingerprint_file = cache_dir.join(".config-fingerprint");
+        let stored = std::fs::read_to_string(&fingerprint_file).unwrap_or_default();
+        if stored.trim() != config_fingerprint {
+            if !stored.is_empty() {
+                debug!("Configuration changed; discarding cache");
+            }
+            std::fs::remove_dir_all(&cache_dir)?;
+            std::fs::create_dir_all(&cache_dir)?;
+            std::fs::write(&fingerprint_file, config_fingerprint)?;
+        }
 
         let cache = Self {
             cache_dir,
@@ -42,8 +60,8 @@ impl BuildCache {
             file_hashes: Arc::new(RwLock::new(HashMap::new())),
             hit_count: Arc::new(RwLock::new(0)),
             miss_count: Arc::new(RwLock::new(0)),
-            max_size_mb: 500, // Default 500MB cache
-            expiration_duration: Duration::from_secs(24 * 60 * 60), // 24 hours
+            max_size_mb,
+            expiration_duration: Duration::from_secs(expiration_hours * 60 * 60),
         };
 
         // Load existing cache from disk
@@ -55,8 +73,16 @@ impl BuildCache {
     pub fn get_document(&self, file_path: &Path) -> Result<Document> {
         let hash = self.calculate_file_hash(file_path)?;
 
-        if let Some(cached) = self.documents.get(file_path) {
-            if cached.hash == hash && !self.is_expired(&cached.cached_at) {
+        // Clone what we need out of the `get` guard before touching the map
+        // again: holding a DashMap `Ref` while calling `alter` on the same
+        // key deadlocks on the shard lock.
+        let cached = self
+            .documents
+            .get(file_path)
+            .map(|c| (c.hash.clone(), c.cached_at, c.document.clone()));
+
+        if let Some((cached_hash, cached_at, document)) = cached {
+            if cached_hash == hash && !self.is_expired(&cached_at) {
                 // Update access count
                 self.documents.alter(file_path, |_, mut cached| {
                     cached.access_count += 1;
@@ -65,7 +91,7 @@ impl BuildCache {
 
                 *self.hit_count.write() += 1;
                 debug!("Cache hit for {}", file_path.display());
-                return Ok(cached.document.clone());
+                return Ok(document);
             }
             // Remove expired or outdated entry
             self.documents.remove(file_path);
@@ -210,13 +236,15 @@ impl BuildCache {
         let new_size_mb = (new_size as f64) / 1024.0 / 1024.0;
 
         if current_size_mb + new_size_mb > self.max_size_mb as f64 {
-            self.evict_lru_entries(new_size_mb)?;
+            self.evict_least_accessed_entries(new_size_mb)?;
         }
 
         Ok(())
     }
 
-    fn evict_lru_entries(&self, space_needed_mb: f64) -> Result<()> {
+    /// Evict entries with the lowest access counts (LFU-style). This is not
+    /// LRU — recency is not tracked — and is named accordingly.
+    fn evict_least_accessed_entries(&self, space_needed_mb: f64) -> Result<()> {
         let mut entries: Vec<_> = self
             .documents
             .iter()
@@ -229,7 +257,7 @@ impl BuildCache {
             })
             .collect();
 
-        // Sort by access count (LRU)
+        // Sort by access count (least-accessed first)
         entries.sort_by_key(|(_, access_count, _)| *access_count);
 
         let mut space_freed_mb = 0.0;
@@ -312,5 +340,97 @@ impl BuildCache {
         let hash = blake3::hash(file_path.to_string_lossy().as_bytes());
         let filename = format!("{}.json", hash.to_hex());
         self.cache_dir.join(filename)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn make_document(source: &Path) -> Document {
+        let mut doc = Document::new(source.to_path_buf(), source.with_extension("html"));
+        doc.html = "<html><body>cached</body></html>".to_string();
+        doc.source_mtime = Utc::now();
+        doc
+    }
+
+    #[test]
+    fn roundtrip_preserves_rendered_html() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("page.rst");
+        std::fs::write(&source, "Page\n----\n").unwrap();
+
+        let cache = BuildCache::new(tmp.path().join("cache"), 500, 24, "fp-1").unwrap();
+        cache
+            .store_document(&source, &make_document(&source))
+            .unwrap();
+
+        let restored = cache.get_document(&source).unwrap();
+        assert_eq!(restored.html, "<html><body>cached</body></html>");
+        assert_eq!(cache.hit_count(), 1);
+    }
+
+    #[test]
+    fn warm_hit_does_not_deadlock() {
+        // Regression: `get` guard held across `alter` on the same DashMap key
+        // deadlocked every warm incremental rebuild.
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("page.rst");
+        std::fs::write(&source, "Page\n----\n").unwrap();
+
+        let cache = BuildCache::new(tmp.path().join("cache"), 500, 24, "fp-1").unwrap();
+        cache
+            .store_document(&source, &make_document(&source))
+            .unwrap();
+        for _ in 0..3 {
+            cache.get_document(&source).unwrap();
+        }
+        assert_eq!(cache.hit_count(), 3);
+    }
+
+    #[test]
+    fn changed_fingerprint_discards_persisted_cache() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("page.rst");
+        std::fs::write(&source, "Page\n----\n").unwrap();
+        let cache_dir = tmp.path().join("cache");
+
+        {
+            let cache = BuildCache::new(cache_dir.clone(), 500, 24, "fp-1").unwrap();
+            cache
+                .store_document(&source, &make_document(&source))
+                .unwrap();
+        }
+
+        // Same fingerprint: persisted entry survives.
+        {
+            let cache = BuildCache::new(cache_dir.clone(), 500, 24, "fp-1").unwrap();
+            assert!(cache.get_document(&source).is_ok());
+        }
+
+        // Different fingerprint: cache is wiped.
+        {
+            let cache = BuildCache::new(cache_dir, 500, 24, "fp-2").unwrap();
+            assert!(cache.get_document(&source).is_err());
+        }
+    }
+
+    #[test]
+    fn expiration_hours_are_plumbed() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("page.rst");
+        std::fs::write(&source, "Page\n----\n").unwrap();
+
+        // 0-hour expiry: everything is expired immediately.
+        let cache = BuildCache::new(tmp.path().join("cache"), 500, 0, "fp-1").unwrap();
+        cache
+            .store_document(&source, &make_document(&source))
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        assert!(
+            cache.get_document(&source).is_err(),
+            "entries must expire per the configured horizon"
+        );
     }
 }
