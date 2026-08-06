@@ -155,6 +155,21 @@ update_cargo_version() {
     fi
 }
 
+sync_cargo_lock() {
+    if [ "$DRY_RUN" = "true" ]; then
+        echo -e "${BLUE}[DRY RUN] Would sync Cargo.lock (cargo update --workspace)${NC}"
+    else
+        # Keep Cargo.lock in sync with the bumped version, otherwise the
+        # release workflow's `cargo build --locked` rejects the tag.
+        cargo update --workspace --quiet
+        if ! cargo metadata --locked --format-version 1 > /dev/null; then
+            echo -e "${RED}Error: Cargo.lock is out of sync with Cargo.toml${NC}"
+            exit 1
+        fi
+        echo -e "${GREEN}Cargo.lock synced${NC}"
+    fi
+}
+
 create_git_tag() {
     local version="$1"
     local tag_name="v$version"
@@ -170,7 +185,7 @@ create_git_tag() {
         fi
         
         # Create and push tag
-        git add Cargo.toml
+        git add Cargo.toml Cargo.lock
         git commit -m "Bump version to $version"
         git tag "$tag_name"
         git push origin main
@@ -259,8 +274,11 @@ main() {
     
     # 2. Update Cargo.toml
     update_cargo_version "$target_version"
-    
-    # 3. Create git tag and push
+
+    # 3. Sync Cargo.lock with the new version
+    sync_cargo_lock
+
+    # 4. Create git tag and push
     create_git_tag "$target_version"
     
     if [ "$DRY_RUN" = "false" ]; then

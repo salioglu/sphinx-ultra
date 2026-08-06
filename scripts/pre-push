@@ -50,6 +50,21 @@ while read local_ref local_sha remote_ref remote_sha; do
                 exit 1
             fi
             
+            # Cargo.lock must be in sync too: the release workflow builds
+            # with --locked and rejects tags carrying a stale lockfile.
+            if command -v cargo > /dev/null 2>&1; then
+                if ! cargo metadata --locked --format-version 1 > /dev/null 2>&1; then
+                    echo -e "${RED}❌ ERROR: Cargo.lock is out of sync with Cargo.toml!${NC}"
+                    echo "The release workflow builds with --locked and will fail."
+                    echo ""
+                    echo "Commands to fix:"
+                    echo "  cargo update --workspace"
+                    echo "  git add Cargo.lock && git commit --amend --no-edit"
+                    echo "  git tag -f $tag_name"
+                    exit 1
+                fi
+            fi
+
             echo -e "${GREEN}✅ Version validation passed${NC}"
         fi
     fi

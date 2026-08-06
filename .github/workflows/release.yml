@@ -58,6 +58,21 @@ jobs:
         
         echo "✅ Version consistency check passed!"
 
+    - name: Validate Cargo.lock is in sync
+      shell: bash
+      run: |
+        if ! cargo metadata --locked --format-version 1 > /dev/null; then
+          echo "❌ ERROR: Cargo.lock is out of sync with Cargo.toml!"
+          echo "The release build uses --locked and would fail on every platform."
+          echo ""
+          echo "To fix this:"
+          echo "1. Run 'cargo update --workspace' and commit Cargo.lock"
+          echo "2. Delete this tag and re-tag the fixed commit"
+          echo "3. Use scripts/release.sh to automate releases safely"
+          exit 1
+        fi
+        echo "✅ Cargo.lock is in sync!"
+
   build-release:
     name: Build Release
     needs: validate-version
