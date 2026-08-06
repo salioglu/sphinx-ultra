@@ -25,7 +25,9 @@ pub struct Parser {
 
 impl Parser {
     pub fn new(_config: &BuildConfig) -> Result<Self> {
-        let rst_directive_regex = Regex::new(r"^\s*\.\.\s+(\w+)::\s*(.*?)$")?;
+        // Directive names follow the docutils pattern: alphanumeric plus
+        // internal ._+:- (covers `code-block` and domain forms like `py:function`).
+        let rst_directive_regex = Regex::new(r"^\s*\.\.\s+([a-zA-Z][a-zA-Z0-9._+:-]*)::\s*(.*?)$")?;
         let cross_ref_regex = Regex::new(r":(\w+):`([^`]+)`")?;
         let directive_registry = DirectiveRegistry::new();
         // let role_registry = RoleRegistry::new(); // TODO: Implement roles module
@@ -84,6 +86,9 @@ impl Parser {
     fn parse_rst(&self, content: &str) -> Result<DocumentContent> {
         let mut nodes = Vec::new();
         let mut directives = Vec::new();
+        // docutils assigns section levels by order of first use of each
+        // adornment style, not by a fixed character table.
+        let mut adornment_order: Vec<char> = Vec::new();
         let lines: Vec<&str> = content.lines().collect();
 
         let mut i = 0;
@@ -124,7 +129,14 @@ impl Parser {
                     && next_line.chars().all(|c| "=-~^\"'*+#<>".contains(c))
                     && next_line.len() >= trimmed.len()
                 {
-                    let level = self.get_rst_title_level(next_line.chars().next().unwrap());
+                    let adornment = next_line.chars().next().unwrap();
+                    let level = match adornment_order.iter().position(|&c| c == adornment) {
+                        Some(pos) => pos + 1,
+                        None => {
+                            adornment_order.push(adornment);
+                            adornment_order.len()
+                        }
+                    };
                     nodes.push(RstNode::Title {
                         text: trimmed.to_string(),
                         level,
@@ -227,7 +239,10 @@ impl Parser {
                 continue;
             }
 
-            if let Some(stripped) = line.strip_prefix("   :") {
+            if let Some(stripped) = line
+                .strip_prefix("   :")
+                .or_else(|| line.strip_prefix("\t:"))
+            {
                 // This is an option
                 if let Some(colon_pos) = stripped.find(':') {
                     let option_name = &stripped[..colon_pos];
@@ -248,8 +263,14 @@ impl Parser {
         // Parse content (indented lines)
         while i < lines.len() {
             let line = lines[i];
-            if line.starts_with("   ") || line.starts_with("\t") {
-                content.push_str(&line[3..]); // Remove 3 spaces of indentation
+            if line.starts_with("   ") || line.starts_with('\t') {
+                // Dedent one indentation unit without byte-slicing (a tab is one
+                // byte; `&line[3..]` panicked on short tab-indented lines).
+                let dedented = line
+                    .strip_prefix("   ")
+                    .or_else(|| line.strip_prefix('\t'))
+                    .unwrap_or(line);
+                content.push_str(dedented);
                 content.push('\n');
                 i += 1;
                 consumed_lines += 1;
@@ -275,18 +296,6 @@ impl Parser {
         };
 
         Ok((directive, consumed_lines))
-    }
-
-    fn get_rst_title_level(&self, char: char) -> usize {
-        match char {
-            '#' => 1,
-            '*' => 2,
-            '=' => 3,
-            '-' => 4,
-            '^' => 5,
-            '"' => 6,
-            _ => 7,
-        }
     }
 
     fn parse_code_block(&self, lines: &[&str]) -> (String, usize) {
@@ -396,5 +405,81 @@ impl Parser {
         let mut output_path = source_path.to_path_buf();
         output_path.set_extension("html");
         Ok(output_path)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::BuildConfig;
+
+    fn parse_rst_ast(content: &str) -> Vec<RstNode> {
+        let parser = Parser::new(&BuildConfig::default()).unwrap();
+        match parser.parse_rst(content).unwrap() {
+            DocumentContent::RestructuredText(rst) => rst.ast,
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn hyphenated_directive_is_recognized() {
+        let ast = parse_rst_ast(".. code-block:: python\n\n   x = 1\n");
+        assert!(
+            ast.iter()
+                .any(|n| matches!(n, RstNode::Directive { name, .. } if name == "code-block")),
+            "code-block must parse as a directive, got: {ast:?}"
+        );
+    }
+
+    #[test]
+    fn domain_directive_is_recognized() {
+        let ast = parse_rst_ast(".. py:function:: foo(x)\n\n   Does foo.\n");
+        assert!(
+            ast.iter()
+                .any(|n| matches!(n, RstNode::Directive { name, .. } if name == "py:function")),
+            "py:function must parse as a directive, got: {ast:?}"
+        );
+    }
+
+    #[test]
+    fn tab_indented_directive_content_does_not_panic() {
+        let ast = parse_rst_ast(".. note::\n\n\tshort\n");
+        let content = ast.iter().find_map(|n| match n {
+            RstNode::Directive { content, .. } => Some(content.clone()),
+            _ => None,
+        });
+        assert!(
+            content.expect("directive parsed").contains("short"),
+            "tab-indented content must be captured"
+        );
+    }
+
+    #[test]
+    fn equals_underline_gets_level_one() {
+        let parser = Parser::new(&BuildConfig::default()).unwrap();
+        let content_ast = parser.parse_rst("Title\n=====\n\nBody.\n").unwrap();
+        if let DocumentContent::RestructuredText(ref rst) = content_ast {
+            assert!(
+                rst.ast
+                    .iter()
+                    .any(|n| matches!(n, RstNode::Title { level: 1, .. })),
+                "first adornment style must be level 1, got: {:?}",
+                rst.ast
+            );
+        }
+        assert_eq!(parser.extract_title(&content_ast), "Title");
+    }
+
+    #[test]
+    fn adornment_levels_by_order_of_first_use() {
+        let ast = parse_rst_ast("One\n===\n\nTwo\n---\n\nAlso One\n========\n");
+        let levels: Vec<usize> = ast
+            .iter()
+            .filter_map(|n| match n {
+                RstNode::Title { level, .. } => Some(*level),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(levels, vec![1, 2, 1], "levels follow order of first use");
     }
 }
