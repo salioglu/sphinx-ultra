@@ -50,6 +50,10 @@ sphinx-ultra build --source . --output _build
 
 # For any RST/Markdown files
 sphinx-ultra build --source docs --output _build
+
+# Or use sphinx-build syntax directly — existing Makefiles work unchanged
+sphinx-ultra docs _build/html -b html
+sphinx-ultra -M html docs _build
 ```
 
 ### 2. Check Project Statistics

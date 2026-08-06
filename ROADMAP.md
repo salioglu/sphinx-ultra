@@ -41,7 +41,7 @@ with real tests that `sphinx-ultra build` never calls.
 
 | Subsystem | Status | Reality check |
 |---|---|---|
-| File discovery & patterns | **Working, divergent** | Solid engine (matching unit tests + a 10-test compatibility suite); `**` semantics still diverge from Sphinx 9.1 (verified differentially). `[!…]` classes, literal leading `^`, and directory pruning fixed 2026-08. |
+| File discovery & patterns | **Working, verified** | `**` → `.*` and class emission now match Sphinx 9.1 exactly (2026-08); zero divergence across a committed 881-case differential suite generated against `sphinx.util.matching`. Discovery suffix-filters after matching like `Project.discover`. |
 | Parallel orchestration | **Working** | Rayon pool, `-j`; per-file failures collected as error reports, build continues (fixed 2026-08). |
 | Incremental cache | **Working** | Fixed 2026-08: hits write output, `--clean --incremental` safe, size/expiry knobs plumbed, config-change invalidation, warm-rebuild deadlock fixed, eviction honestly named. |
 | RST parser | **Prototype** | Line-scanner. Crash class fixed 2026-08 (hyphenated/domain directives, tab-safe dedent, order-of-first-use title levels); still no inline markup, lists, tables, footnotes, substitutions, comments, targets (M2). |
@@ -51,11 +51,11 @@ with real tests that `sphinx-ultra build` never calls.
 | Search | **Dead code** | In-memory index exists (non-Sphinx format); no `searchindex.js` emitted; no `searchtools.js` exists. |
 | objects.inv / intersphinx | **Dead + broken** | Writer exists (unused); reader corrupts real inventories (lossy UTF-8 over zlib bytes); no resolution anywhere. |
 | Extensions | **Stub** | Loading any extension prints one line and stores an inert record. Zero behavioral effect. (The never-used pyo3 dependency was removed 2026-08.) |
-| Validation systems | **Dead code** | Constraint engine, domain/cross-ref validation, directive/role validation: all library-only, invoked only by `examples/`. Known defects: target/display-text inversion in the reference parser; an unsound `'static` transmute in the constraint engine's template cache; validators that false-positive on valid Sphinx (`.. note:: inline text`). |
-| Build-path validation | **Working** | Toctree missing-ref + orphan checks with real line numbers and Sphinx docname resolution (relative/absolute/glob/`Title <doc>`) — fixed 2026-08. Broader validation wiring still M1-open. |
+| Validation systems | **Two of three live** | Directive/role validation runs in every build (default on, false-positive heuristics fixed/demoted, Unknown silent); domain cross-ref validation runs under `-n`/nitpicky (2026-08). Constraint engine stays library-only until sphinx-needs items exist (M4) — no `ContentItem` producer yet; its always-success placeholder trait impls were deleted so future wiring can't silently no-op. |
+| Build-path validation | **Working** | Toctree missing-ref + orphan checks with real line numbers and Sphinx docname resolution (relative/absolute/glob/`Title <doc>`); directive/role and nitpicky cross-ref passes wired 2026-08. All findings flow through the `-W`/`-w` pipeline. |
 | conf.py support | **Working (declarative subset)** | Multi-line lists/dicts/tuples, string concat, triple quotes parsed (2026-08); every dropped construct warns with its line. Dynamic values await the M5 sidecar. |
 | YAML/JSON config | **Working** | Serde defaults added 2026-08; partial configs load, both shipped YAML examples verified by tests. `--config` also accepts conf.py now. |
-| CLI | **Minimal** | `build/clean/stats`. No `-b`, `-D`, `-n`, `-q`, `-E`, `-a`, `-c`, `-t`, no positional dirs, no `sphinx-build` compatibility. Errors exit 0 (only `-W`+warnings exits 1). Relative `--source` crash fixed 2026-08. |
+| CLI | **sphinx-build compatible** | Native `build/clean/stats` plus a full `sphinx-build` argument mode (2026-08): positional dirs, `-b html`, `-M html/clean`, `-D`/`-A`, `-d`, `-n`, `-q`, `-E`, `-a`, `-T`, `-t`, `-c`, `-j auto`, `-W`/`--keep-going`/`-w`, repeatable `-v`; pre-set `RUST_LOG` respected. Exit codes: 1 on errors/`-W`, 2 on usage/unsupported-builder/config errors (measured against sphinx-build 9.1.0). |
 | CI/release | **Working** | Fixed 2026-08: publish gated on validation+build, Cargo.lock committed + `--locked` everywhere, MSRV (1.85) job, SHA-256 checksums + install.sh verification, aarch64-linux artifact built, vacuous `integration_test.rs` replaced by a real E2E suite. |
 | Dependencies | **Pruned 2026-08** | 16 zero-call-site deps removed (incl. pyo3/pythonize, which carried two RUSTSEC advisories and linked libpython into every build). minijinja/flate2/base64 remain — used by the built-not-wired stack. |
 
@@ -143,9 +143,11 @@ and CI can be trusted.
   - ✅ *(done 2026-08)* Relative `--source` crash; `[!seq]` classes (`[^/seq]`, Sphinx
     semantics); leading `^` in classes now literal (Sphinx semantics); Sphinx-parity
     directory pruning.
-  - Pattern parity: `**` translation → Sphinx's `.*` semantics (no directory-boundary
-    special case) — the sole known remaining divergence — with a differential test
-    suite generated against `sphinx.util.matching`.
+  - ✅ *(done 2026-08)* Pattern parity: `**` → Sphinx's `.*` semantics (no
+    directory-boundary special case); class emission byte-identical to
+    `_translate_pattern`; discovery suffix-filters after matching like
+    `Project.discover`. Verified by a committed 881-case differential suite
+    generated against `sphinx.util.matching` 9.1.0 — zero divergence.
   - ✅ *(done 2026-08)* Incremental cache: cache rendered output, never skip
     writing on hit, fix `--clean --incremental`, plumb
     `max_cache_size_mb`/`cache_expiration_hours`, honest eviction naming,
@@ -183,19 +185,25 @@ and CI can be trusted.
   ✅ *(done 2026-08)* `--config conf.py` routed to the conf.py parser;
   ✅ *(done 2026-08)* conf.py parser upgraded to multi-line lists/dicts **with
   warnings on anything dropped**.
-- **CLI foundation:** `sphinx-build`-compatible argument mode (positional
-  `SOURCEDIR OUTPUTDIR`, `-b html` gate, `-M` make-mode — what quickstart Makefiles
-  invoke — `-D key=value`, `-A key=value`, `-d doctreedir`, `-n`, `-q`, `-E`, `-a`,
-  `-T`, `-t`, `-c`, `-j auto`, `--keep-going`), global `--verbose`, respect
-  pre-set `RUST_LOG`. Companion executables: `sphinx-apidoc`/the 8.2+ `apidoc`
+- ✅ *(done 2026-08)* **CLI foundation:** `sphinx-build`-compatible argument mode
+  (positional `SOURCEDIR OUTPUTDIR`, `-b html` gate, `-M` make-mode — what
+  quickstart Makefiles invoke — `-D key=value`, `-A key=value`, `-d doctreedir`,
+  `-n`, `-q`, `-E`, `-a`, `-T`, `-t`, `-c`, `-j auto`, `--keep-going`, repeatable
+  `-v`), pre-set `RUST_LOG` respected. Parity measured against real sphinx-build
+  9.1.0 (exit codes incl. `-W`'s collect-then-exit-1, `-M` output layout,
+  message shapes). Companion executables: `sphinx-apidoc`/the 8.2+ `apidoc`
   extension ride M5 (autodoc bridge); `sphinx-autogen` is subsumed by M5
   autosummary stub generation; `sphinx-quickstart`-style scaffolding
   (`sphinx-ultra init`) lands in M7.
-- **Wire the existing validation systems into the build** behind flags/config
-  (`-n`/nitpicky for cross-refs; directive/role validation on by default with the
-  false-positive heuristics fixed or demoted): the three dead systems become the
-  first *live* differentiator. Route all their findings through the standard
-  warning/error pipeline so `-W`/`-w` see them.
+- ✅ *(done 2026-08)* **Wire the existing validation systems into the build**:
+  directive/role validation on by default (`validate_directives`; Unknown stays
+  silent; the `.. note:: inline` false-positive class fixed at parser+validator
+  level, over-aggressive heuristics demoted) and `-n`/nitpicky cross-reference
+  validation via the domain registry (`unknown document:`/`undefined label:`
+  with line numbers; python-domain refs reported once as unvalidatable until
+  the M5 sidecar). All findings flow through the standard warning pipeline so
+  `-W`/`-w` see them. The constraint engine deliberately stays library-only
+  until sphinx-needs items exist (M4) — nothing can produce `ContentItem`s yet.
 - ✅ *(done 2026-08)* **End-to-end test harness** (the piece whose absence let the
   relative-path crash ship): `tests/e2e_cli.rs` runs the actual binary against
   fixture projects, asserting exit codes, warnings, and output tree. The

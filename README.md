@@ -36,14 +36,18 @@ not yet invoke. The full, file-and-line-level status audit lives in
 
 - **🚀 Parallel build pipeline**: Rayon-based, scales across cores (`-j`)
 - **📂 Pattern-based file discovery**: Sphinx-style `include_patterns` /
-  `exclude_patterns` engine with directory pruning (the one known remaining
-  divergence from Sphinx 9.1 — `**` semantics — is tracked in ROADMAP M1 with
-  differential tests; `[!…]` classes, literal leading `^`, and directory-pruning
-  semantics were fixed in 2026-08)
-- **🔄 Change detection**: blake3-based staleness checks work; **output caching is
-  currently broken** (a cache hit skips writing output, so `--clean --incremental`
-  produces missing files) — fix is ROADMAP M1
-- **⚠️ Toctree validation**: missing-reference and orphan detection with
+  `exclude_patterns` engine, verified against `sphinx.util.matching` 9.1.0 by a
+  committed 881-case differential suite (zero divergence)
+- **🧰 sphinx-build compatible CLI**: `sphinx-ultra SOURCEDIR OUTPUTDIR` with
+  `-b html`, `-M html`/`-M clean` make-mode, `-D`/`-A` overrides, `-d`, `-n`,
+  `-q`, `-E`, `-a`, `-T`, `-t`, `-c`, `-j auto`, `-W`/`--keep-going`/`-w` —
+  quickstart Makefiles work unchanged
+- **🔄 Incremental cache**: cache hits write their output, `--clean
+  --incremental` is safe, config changes invalidate automatically (blake3
+  fingerprint); sphinx-build mode is incremental by default
+- **⚠️ Build validation**: toctree missing-reference and orphan detection;
+  directive/role validation on every build; `-n` nitpicky cross-reference
+  checking (`unknown document:` / `undefined label:`) — all through
   Sphinx-style warnings, `-W`, and `-w warnfile`
 - **🔧 Config auto-detection**: conf.py (simple assignments only, for now) →
   sphinx-ultra.yaml → .yml → .json → defaults
@@ -107,14 +111,40 @@ cargo build --release
 - `clean`: Remove build artifacts and output files  
 - `stats`: Display project statistics and analysis
 
+### sphinx-build Compatible Mode
+
+Invocations that don't start with a subcommand are parsed exactly like
+`sphinx-build`, so existing Makefiles and CI scripts work by swapping the
+binary name:
+
+```bash
+# Classic sphinx-build style
+sphinx-ultra docs _build/html -b html
+
+# Make-mode (what sphinx-quickstart Makefiles invoke): output goes to _build/html
+sphinx-ultra -M html docs _build
+
+# Overrides, nitpicky mode, fresh environment, quiet
+sphinx-ultra docs _build -D project=MyDocs -n -E -q -j auto
+```
+
+Supported: positional `SOURCEDIR OUTPUTDIR`, `-b html` (other builders exit 2
+until their milestones land), `-M html`/`-M clean`, `-D key=value`,
+`-A name=value`, `-d doctreedir`, `-n`, `-q`, `-E`, `-a`, `-T`, `-t tag`,
+`-c confdir`, `-j N|auto`, `-W`, `--keep-going`, `-w file`, repeatable `-v`.
+sphinx-build mode is incremental by default (`-E` discards the saved
+environment, `-a` rewrites everything), and a pre-set `RUST_LOG` always wins
+over the verbosity flags. One caveat: a source directory literally named
+`build`, `clean`, or `stats` must be written with a path prefix
+(`sphinx-ultra ./build _build`).
+
 ### Build Options
 
 ```bash
 # Parallel processing
 sphinx-ultra build --jobs 8 --source docs --output _build
 
-# Incremental builds (currently not recommended: cached documents skip output
-# writing — fix is ROADMAP M1)
+# Incremental builds
 sphinx-ultra build --incremental --source docs --output _build
 
 # Clean before build
@@ -371,7 +401,6 @@ sphinx-ultra --verbose build --source docs --output _build
 
 **Performance Issues**
 - Reduce parallel jobs if memory-constrained: `--jobs 1`
-- Avoid `--incremental` until the ROADMAP M1 cache fix lands
 - Check for large files that may slow processing
 
 ### Getting Help
