@@ -2,6 +2,17 @@
 
 use super::{DirectiveValidationResult, DirectiveValidator, ParsedDirective};
 
+/// A docutils length: a number with an optional unit (bare numbers default
+/// to pixels).
+fn is_valid_length(value: &str) -> bool {
+    const UNITS: &[&str] = &["em", "ex", "px", "in", "cm", "mm", "pt", "pc", "%"];
+    let number = UNITS
+        .iter()
+        .find_map(|u| value.strip_suffix(u))
+        .unwrap_or(value);
+    !number.trim().is_empty() && number.trim().parse::<f64>().is_ok()
+}
+
 /// Validator for code-block directive
 #[derive(Default)]
 pub struct CodeBlockValidator;
@@ -18,20 +29,8 @@ impl DirectiveValidator for CodeBlockValidator {
     }
 
     fn validate(&self, directive: &ParsedDirective) -> DirectiveValidationResult {
-        // Check if language is specified
-        if directive.arguments.is_empty() {
-            return DirectiveValidationResult::Warning(
-                "No language specified for code-block directive".to_string(),
-            );
-        }
-
-        // Check for valid language
-        let language = &directive.arguments[0];
-        if language.is_empty() {
-            return DirectiveValidationResult::Error(
-                "Empty language specification in code-block directive".to_string(),
-            );
-        }
+        // A bare `.. code-block::` is valid Sphinx: the language falls back to
+        // highlight_language. Only the content check below applies then.
 
         // Check if content is provided
         if directive.content.trim().is_empty() {
@@ -116,16 +115,10 @@ impl DirectiveValidator for NoteValidator {
     }
 
     fn validate(&self, directive: &ParsedDirective) -> DirectiveValidationResult {
-        // Note directive should have content
+        // Note directive should have content (the parser routes directive-line
+        // text into content, so a one-line `.. note:: text` passes here)
         if directive.content.trim().is_empty() {
             return DirectiveValidationResult::Error("Note directive requires content".to_string());
-        }
-
-        // Note directive typically doesn't take arguments
-        if !directive.arguments.is_empty() {
-            return DirectiveValidationResult::Warning(
-                "Note directive does not expect arguments".to_string(),
-            );
         }
 
         // Validate options
@@ -179,17 +172,11 @@ impl DirectiveValidator for WarningValidator {
     }
 
     fn validate(&self, directive: &ParsedDirective) -> DirectiveValidationResult {
-        // Warning directive should have content
+        // Warning directive should have content (directive-line text counts,
+        // same as note)
         if directive.content.trim().is_empty() {
             return DirectiveValidationResult::Error(
                 "Warning directive requires content".to_string(),
-            );
-        }
-
-        // Warning directive typically doesn't take arguments
-        if !directive.arguments.is_empty() {
-            return DirectiveValidationResult::Warning(
-                "Warning directive does not expect arguments".to_string(),
             );
         }
 
@@ -274,11 +261,10 @@ impl DirectiveValidator for ImageValidator {
                     // Valid text options
                 }
                 "width" | "height" => {
-                    // Should be length units
-                    if !value.ends_with("px") && !value.ends_with("%") && !value.ends_with("em") {
+                    if !is_valid_length(value) {
                         return DirectiveValidationResult::Warning(format!(
-                            "{} should include units (px, %, em)",
-                            option
+                            "{} is not a valid length: '{}'",
+                            option, value
                         ));
                     }
                 }
@@ -817,17 +803,29 @@ mod tests {
             DirectiveValidationResult::Valid
         );
 
-        // Missing language
+        // No language is valid Sphinx (falls back to highlight_language)
         let directive = create_test_directive(
             "code-block",
             vec![],
             HashMap::new(),
             "print('Hello, world!')",
         );
-        assert!(matches!(
+        assert_eq!(
             validator.validate(&directive),
-            DirectiveValidationResult::Warning(_)
-        ));
+            DirectiveValidationResult::Valid
+        );
+
+        // Bare numbers and all docutils units are valid lengths
+        for width in ["100", "2cm", "50%", "1.5em", "12pt"] {
+            let mut options = HashMap::new();
+            options.insert("width".to_string(), width.to_string());
+            let directive = create_test_directive("image", vec!["x.png".to_string()], options, "");
+            assert_eq!(
+                ImageValidator::new().validate(&directive),
+                DirectiveValidationResult::Valid,
+                "width '{width}' must be accepted"
+            );
+        }
     }
 
     #[test]
