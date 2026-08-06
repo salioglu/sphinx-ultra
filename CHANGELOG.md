@@ -26,6 +26,18 @@ everything forward is [ROADMAP.md](ROADMAP.md).
 
 ### Fixed
 
+- **Incremental cache overhauled**: warm-cache rebuilds no longer deadlock
+  (every second `--incremental` run previously hung forever); cache hits
+  write the rendered page to the output tree; `--clean --incremental`
+  produces a complete build; `max_cache_size_mb`/`cache_expiration_hours`
+  are honored (previously hardcoded); any config change invalidates the
+  cache; eviction renamed to match its actual least-accessed policy
+- **conf.py parsing rewritten** for the declarative subset: multi-line
+  lists/dicts/tuples, nested literals, adjacent string concatenation, and
+  triple-quoted strings now parse (multi-line `extensions`/
+  `exclude_patterns` — the normal style — previously dropped silently);
+  every construct the parser cannot handle now warns with its
+  `conf.py:line`
 - **Builds with errors now exit 1** (sphinx-build parity); per-file failures
   are reported as errors while the rest of the build continues (previously the
   first failing file aborted the whole build, and error exits were 0)

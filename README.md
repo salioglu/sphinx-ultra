@@ -279,9 +279,10 @@ Enable faster rebuilds by only processing changed files:
 sphinx-ultra build --incremental --source docs --output _build
 ```
 
-> **Warning:** output caching is currently broken — documents served from cache do
-> not get written to the output directory (worst with `--clean --incremental`).
-> Avoid `--incremental` until the ROADMAP M1 cache fix lands.
+Cache hits always write their output (a cached rebuild produces a complete
+output tree), `--clean --incremental` is safe, and any configuration change
+invalidates the cache automatically. `max_cache_size_mb` and
+`cache_expiration_hours` in the config control retention.
 
 ### Parallel Processing
 
