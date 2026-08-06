@@ -26,6 +26,25 @@ everything forward is [ROADMAP.md](ROADMAP.md).
 
 ### Fixed
 
+- **Builds with errors now exit 1** (sphinx-build parity); per-file failures
+  are reported as errors while the rest of the build continues (previously the
+  first failing file aborted the whole build, and error exits were 0)
+- Toctree warnings carry the entry's real line number (previously hardcoded
+  to 10) and follow Sphinx resolution semantics: document-relative and
+  `/`-absolute targets, `Title <target>` entries, external URLs, `self`, and
+  `:glob:` patterns (dead globs get Sphinx's "didn't match any documents"
+  warning) — eliminating the caption/`Title <doc>`/glob/relative-path false
+  positives
+- RST parser crash class: hyphenated and domain directive names
+  (`code-block`, `py:function`) are recognized, tab-indented directive content
+  no longer hits a byte-slicing panic path, and section levels follow
+  docutils' order-of-first-use rule (so `=`-underlined titles are no longer
+  "Untitled")
+- Reference parser: `` :doc:`Title <target>` `` now resolves the
+  angle-bracket target (target and display text were inverted)
+- Constraint engine: removed a memory-unsound `'static` transmute in the
+  template cache; compiled templates are now owned by the minijinja
+  environment
 - Partial YAML/JSON configs now load: all `BuildConfig` fields have serde
   defaults (previously every field was required, and both YAML examples shipped
   in this repo failed to load)
