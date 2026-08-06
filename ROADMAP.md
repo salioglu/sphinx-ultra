@@ -43,7 +43,7 @@ with real tests that `sphinx-ultra build` never calls.
 |---|---|---|
 | File discovery & patterns | **Working, divergent** | Solid engine (matching unit tests + a 10-test compatibility suite); `**` semantics still diverge from Sphinx 9.1 (verified differentially). `[!…]` classes, literal leading `^`, and directory pruning fixed 2026-08. |
 | Parallel orchestration | **Working** | Rayon pool, `-j`; per-file failures collected as error reports, build continues (fixed 2026-08). |
-| Incremental cache | **Broken** | Cache hit skips writing output; `--clean --incremental` produces missing files; config knobs (size/expiry) ignored; "LRU" is actually access-count eviction. |
+| Incremental cache | **Working** | Fixed 2026-08: hits write output, `--clean --incremental` safe, size/expiry knobs plumbed, config-change invalidation, warm-rebuild deadlock fixed, eviction honestly named. |
 | RST parser | **Prototype** | Line-scanner. Crash class fixed 2026-08 (hyphenated/domain directives, tab-safe dedent, order-of-first-use title levels); still no inline markup, lists, tables, footnotes, substitutions, comments, targets (M2). |
 | Markdown parser | **Prototype** | pulldown-cmark events discarded except text; no headings/code/lists → `.md` titles and TOCs are always empty. |
 | HTML rendering | **Placeholder** | Escaped raw source in `<html><body>`. `HTMLBuilder` (800 lines) + `TemplateEngine` (minijinja) exist but are never invoked. |
@@ -53,7 +53,7 @@ with real tests that `sphinx-ultra build` never calls.
 | Extensions | **Stub** | Loading any extension prints one line and stores an inert record. Zero behavioral effect. (The never-used pyo3 dependency was removed 2026-08.) |
 | Validation systems | **Dead code** | Constraint engine, domain/cross-ref validation, directive/role validation: all library-only, invoked only by `examples/`. Known defects: target/display-text inversion in the reference parser; an unsound `'static` transmute in the constraint engine's template cache; validators that false-positive on valid Sphinx (`.. note:: inline text`). |
 | Build-path validation | **Working** | Toctree missing-ref + orphan checks with real line numbers and Sphinx docname resolution (relative/absolute/glob/`Title <doc>`) — fixed 2026-08. Broader validation wiring still M1-open. |
-| conf.py support | **Minimal** | Line-scraper for single-line assignments only. Multi-line lists (the normal style) silently drop; dicts never parse; no warning on dropped config. |
+| conf.py support | **Working (declarative subset)** | Multi-line lists/dicts/tuples, string concat, triple quotes parsed (2026-08); every dropped construct warns with its line. Dynamic values await the M5 sidecar. |
 | YAML/JSON config | **Working** | Serde defaults added 2026-08; partial configs load, both shipped YAML examples verified by tests. `--config` also accepts conf.py now. |
 | CLI | **Minimal** | `build/clean/stats`. No `-b`, `-D`, `-n`, `-q`, `-E`, `-a`, `-c`, `-t`, no positional dirs, no `sphinx-build` compatibility. Errors exit 0 (only `-W`+warnings exits 1). Relative `--source` crash fixed 2026-08. |
 | CI/release | **Working** | Fixed 2026-08: publish gated on validation+build, Cargo.lock committed + `--locked` everywhere, MSRV (1.85) job, SHA-256 checksums + install.sh verification, aarch64-linux artifact built, vacuous `integration_test.rs` replaced by a real E2E suite. |
@@ -146,9 +146,12 @@ and CI can be trusted.
   - Pattern parity: `**` translation → Sphinx's `.*` semantics (no directory-boundary
     special case) — the sole known remaining divergence — with a differential test
     suite generated against `sphinx.util.matching`.
-  - Incremental cache: cache rendered output, never skip writing on hit, fix
-    `--clean --incremental`, plumb `max_cache_size_mb`/`cache_expiration_hours`,
-    honest eviction naming, config-change invalidation.
+  - ✅ *(done 2026-08)* Incremental cache: cache rendered output, never skip
+    writing on hit, fix `--clean --incremental`, plumb
+    `max_cache_size_mb`/`cache_expiration_hours`, honest eviction naming,
+    config-change invalidation. (Also fixed in passing: warm-cache rebuilds
+    deadlocked on a DashMap guard held across `alter` — caught by the E2E
+    suite the moment `--incremental` got its first end-to-end test.)
   - ✅ *(done 2026-08)* Error pipeline: per-file failures become
     `BuildErrorReport`s (build continues), **non-zero exit code on errors**
     (sphinx-build parity: 1/2), real line numbers in toctree warnings, fix
@@ -177,9 +180,9 @@ and CI can be trusted.
     (supported versions; delete claims about nonexistent subsystems).
 - **Config loading that works:** ✅ *(done 2026-08)* `#[serde(default)]` across
   `BuildConfig` (partial YAML/JSON loads — verified on the repo's own examples);
-  ✅ *(done 2026-08)* `--config conf.py` routed to the conf.py parser. Still open:
-  conf.py parser upgraded to multi-line lists/dicts **with warnings on anything
-  dropped**.
+  ✅ *(done 2026-08)* `--config conf.py` routed to the conf.py parser;
+  ✅ *(done 2026-08)* conf.py parser upgraded to multi-line lists/dicts **with
+  warnings on anything dropped**.
 - **CLI foundation:** `sphinx-build`-compatible argument mode (positional
   `SOURCEDIR OUTPUTDIR`, `-b html` gate, `-M` make-mode — what quickstart Makefiles
   invoke — `-D key=value`, `-A key=value`, `-d doctreedir`, `-n`, `-q`, `-E`, `-a`,
