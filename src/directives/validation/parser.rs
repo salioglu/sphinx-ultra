@@ -186,6 +186,9 @@ impl DirectiveRoleParser {
         let mut content_lines = Vec::new();
         let mut current_line = start_line;
         let mut in_content = false;
+        // docutils accepts any consistent indent >= 1; the first body line
+        // fixes the block's indent prefix.
+        let mut body_indent: Option<String> = None;
 
         while current_line < lines.len() {
             let line = lines[current_line];
@@ -211,16 +214,15 @@ impl DirectiveRoleParser {
             }
 
             // Check if line is indented (content)
-            if line.starts_with("   ") || line.starts_with('\t') {
-                in_content = true;
-                // Remove common indentation
-                let content_line = if let Some(stripped) = line.strip_prefix("   ") {
-                    stripped
-                } else if let Some(stripped) = line.strip_prefix('\t') {
-                    stripped
-                } else {
-                    line
+            let leading_len = line.len() - line.trim_start_matches([' ', '\t']).len();
+            if leading_len > 0 {
+                let prefix = body_indent.get_or_insert_with(|| line[..leading_len].to_string());
+                let content_line = match line.strip_prefix(prefix.as_str()) {
+                    Some(stripped) => stripped,
+                    // A line indented differently than the block ends it.
+                    None => break,
                 };
+                in_content = true;
                 content_lines.push(content_line.to_string());
                 current_line += 1;
                 continue;
@@ -512,6 +514,20 @@ See :doc:`test` and :ref:`section`.
         // Argument-taking directives keep argument semantics
         let directives = parser.extract_directives(".. code-block:: python");
         assert_eq!(directives[0].arguments, vec!["python".to_string()]);
+    }
+
+    #[test]
+    fn test_any_body_indent_is_content() {
+        let parser = DirectiveRoleParser::new("test.rst".to_string());
+
+        // 2-space indent is valid docutils; must not read as "no content"
+        let directives = parser.extract_directives(".. note::\n\n  Two-space indented body.\n");
+        assert_eq!(directives.len(), 1);
+        assert_eq!(directives[0].content, "Two-space indented body.");
+
+        // 4-space indent works the same way
+        let directives = parser.extract_directives(".. note::\n\n    Four spaces.\n");
+        assert_eq!(directives[0].content, "Four spaces.");
     }
 
     #[test]

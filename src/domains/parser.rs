@@ -9,9 +9,12 @@ use std::collections::HashMap;
 
 lazy_static! {
     /// Regex for matching Sphinx cross-references
-    /// Matches patterns like :ref:`target`, :doc:`target`, :func:`module.function`
+    /// Matches :ref:`target`, :doc:`target`, and domain-qualified forms like
+    /// :py:func:`module.function`. Backtick form only: bare ':name:word' is
+    /// not role syntax, and matching it made prose, code samples, and
+    /// line-wrapped roles parse as (then "broken") references.
     static ref CROSS_REF_REGEX: Regex = Regex::new(
-        r":([a-zA-Z][a-zA-Z0-9_-]*):(`[^`]+`|[^\s]+)"
+        r":([a-zA-Z][a-zA-Z0-9_.-]*(?::[a-zA-Z][a-zA-Z0-9_.-]*)*):(`[^`]+`)"
     ).unwrap();
 
     /// Regex for extracting target and display text from backtick format
@@ -129,11 +132,13 @@ impl ReferenceParser {
         column: usize,
         source_path: Option<String>,
     ) -> Option<CrossReference> {
+        // Domain-qualified roles (:py:func:) map through their base role.
+        let base_role = role.rsplit(':').next().unwrap_or(role);
         let ref_type = self
             .role_mapping
-            .get(role)
+            .get(base_role)
             .cloned()
-            .unwrap_or_else(|| ReferenceType::Custom(role.to_string()));
+            .unwrap_or_else(|| ReferenceType::Custom(base_role.to_string()));
 
         let (target, display_text) = self.extract_target_and_display(target_text);
 
@@ -260,6 +265,28 @@ mod tests {
         let ref_obj = &refs[0];
         assert_eq!(ref_obj.target, "installation");
         assert_eq!(ref_obj.display_text, Some("Installation Guide".to_string()));
+    }
+
+    #[test]
+    fn test_domain_qualified_role_maps_through_base() {
+        let parser = ReferenceParser::new();
+        let refs = parser.parse_content("Call :py:func:`missing.fn` here.", "api", None);
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].ref_type, ReferenceType::Function);
+        assert_eq!(refs[0].target, "missing.fn");
+    }
+
+    #[test]
+    fn test_bare_and_wrapped_roles_do_not_parse() {
+        let parser = ReferenceParser::new();
+        // Bare ':word:text' is not role syntax
+        assert!(parser
+            .parse_content("a timestamp 12:30:45 and :this:that", "t", None)
+            .is_empty());
+        // A role wrapped across lines must not half-match as a broken target
+        assert!(parser
+            .parse_content("See :ref:`my long\nlabel` here.", "t", None)
+            .is_empty());
     }
 
     #[test]
