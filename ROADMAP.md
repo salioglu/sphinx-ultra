@@ -42,9 +42,9 @@ with real tests that `sphinx-ultra build` never calls.
 | Subsystem | Status | Reality check |
 |---|---|---|
 | File discovery & patterns | **Working, divergent** | Solid engine (matching unit tests + a 10-test compatibility suite); `**` semantics still diverge from Sphinx 9.1 (verified differentially). `[!…]` classes, literal leading `^`, and directory pruning fixed 2026-08. |
-| Parallel orchestration | **Working** | Rayon pool, `-j`; one file error aborts the whole build (must collect instead). |
+| Parallel orchestration | **Working** | Rayon pool, `-j`; per-file failures collected as error reports, build continues (fixed 2026-08). |
 | Incremental cache | **Broken** | Cache hit skips writing output; `--clean --incremental` produces missing files; config knobs (size/expiry) ignored; "LRU" is actually access-count eviction. |
-| RST parser | **Prototype** | Line-scanner: hyphenated directives (`code-block`!) unrecognized; hardcoded title-level map breaks `=`-underlined titles; no inline markup, lists, tables, footnotes, substitutions, comments, targets; panic path on tab-indented content. |
+| RST parser | **Prototype** | Line-scanner. Crash class fixed 2026-08 (hyphenated/domain directives, tab-safe dedent, order-of-first-use title levels); still no inline markup, lists, tables, footnotes, substitutions, comments, targets (M2). |
 | Markdown parser | **Prototype** | pulldown-cmark events discarded except text; no headings/code/lists → `.md` titles and TOCs are always empty. |
 | HTML rendering | **Placeholder** | Escaped raw source in `<html><body>`. `HTMLBuilder` (800 lines) + `TemplateEngine` (minijinja) exist but are never invoked. |
 | Themes | **None** | `html_theme` is parsed and then ignored; no theme loading, no templates rendered, static shims copied but unreferenced. |
@@ -52,7 +52,7 @@ with real tests that `sphinx-ultra build` never calls.
 | objects.inv / intersphinx | **Dead + broken** | Writer exists (unused); reader corrupts real inventories (lossy UTF-8 over zlib bytes); no resolution anywhere. |
 | Extensions | **Stub** | Loading any extension prints one line and stores an inert record. Zero behavioral effect. (The never-used pyo3 dependency was removed 2026-08.) |
 | Validation systems | **Dead code** | Constraint engine, domain/cross-ref validation, directive/role validation: all library-only, invoked only by `examples/`. Known defects: target/display-text inversion in the reference parser; an unsound `'static` transmute in the constraint engine's template cache; validators that false-positive on valid Sphinx (`.. note:: inline text`). |
-| Build-path validation | **Partial** | Only toctree missing-ref + orphan checks run; line numbers hardcoded to `10`; false positives on captions, `Title <doc>` entries, `:glob:`, and subdirectory-relative refs. |
+| Build-path validation | **Working** | Toctree missing-ref + orphan checks with real line numbers and Sphinx docname resolution (relative/absolute/glob/`Title <doc>`) — fixed 2026-08. Broader validation wiring still M1-open. |
 | conf.py support | **Minimal** | Line-scraper for single-line assignments only. Multi-line lists (the normal style) silently drop; dicts never parse; no warning on dropped config. |
 | YAML/JSON config | **Working** | Serde defaults added 2026-08; partial configs load, both shipped YAML examples verified by tests. `--config` also accepts conf.py now. |
 | CLI | **Minimal** | `build/clean/stats`. No `-b`, `-D`, `-n`, `-q`, `-E`, `-a`, `-c`, `-t`, no positional dirs, no `sphinx-build` compatibility. Errors exit 0 (only `-W`+warnings exits 1). Relative `--source` crash fixed 2026-08. |
@@ -149,15 +149,16 @@ and CI can be trusted.
   - Incremental cache: cache rendered output, never skip writing on hit, fix
     `--clean --incremental`, plumb `max_cache_size_mb`/`cache_expiration_hours`,
     honest eviction naming, config-change invalidation.
-  - Error pipeline: per-file failures become `BuildErrorReport`s (build continues),
-    **non-zero exit code on errors** (sphinx-build parity: 1/2), real line numbers in
-    toctree warnings, fix toctree false positives (captions, `Title <doc>`, `:glob:`,
+  - ✅ *(done 2026-08)* Error pipeline: per-file failures become
+    `BuildErrorReport`s (build continues), **non-zero exit code on errors**
+    (sphinx-build parity: 1/2), real line numbers in toctree warnings, fix
+    toctree false positives (captions, `Title <doc>`, `:glob:`,
     document-relative resolution).
-  - Parser crash fixes: tab-indent panic, hyphenated directive names, `=`-underline
-    title levels (docutils order-of-first-use).
-  - Fix the two latent correctness defects in library code: reference-parser
-    target/display inversion; constraint-engine `'static` transmute (use owned
-    template storage).
+  - ✅ *(done 2026-08)* Parser crash fixes: tab-indent panic, hyphenated directive
+    names, `=`-underline title levels (docutils order-of-first-use).
+  - ✅ *(done 2026-08)* Fix the two latent correctness defects in library code:
+    reference-parser target/display inversion; constraint-engine `'static`
+    transmute (templates now owned by the minijinja environment).
 - **Repo & release hygiene:**
   - ✅ *(done 2026-08)* Commit `Cargo.lock`; `--locked` in CI/release. Delete
     `Cargo.toml.new`, `Cargo.lock.template`, `.packagename` after merging the useful

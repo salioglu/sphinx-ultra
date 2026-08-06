@@ -24,15 +24,15 @@ The plan to move everything to ✅ is [ROADMAP.md](../ROADMAP.md).
 | Feature | Status | Evidence / gaps |
 |---|---|---|
 | File discovery w/ include/exclude patterns | ✅ (one divergence) | `src/builder.rs` `discover_source_files`, `src/matching.rs`. One verified remaining divergence vs Sphinx 9.1: `**` translates to `(?:[^/]+/)*` where Sphinx uses `.*` (so `**/index.rst` matches `index.rst` here but not in Sphinx) — differential parity suite is ROADMAP M1. Fixed 2026-08: `[!…]` → `[^/…]` (negated classes never match `/`), leading `^` now literal, Sphinx-parity directory pruning. |
-| Parallel orchestration | ✅ | rayon pool sized by `-j`/config. Gap: one file error aborts the whole build (`builder.rs` collect); per-file error collection is M1. |
+| Parallel orchestration | ✅ | rayon pool sized by `-j`/config. Per-file failures become `BuildErrorReport`s and the build continues (2026-08). |
 | Incremental cache | ❌ | Sound staleness check (blake3), but a cache hit returns **before writing output**, and `--clean --incremental` yields an output dir with no HTML for cached docs (cache loaded pre-clean). `max_cache_size_mb`/`cache_expiration_hours` config never plumbed (hardcoded 500MB/24h); eviction is access-count (not LRU as documented). |
 | Dependency graph | 🔴 | `build_dependency_graph` returns empty vecs (TODO) and its result is ignored. No include/toctree-driven invalidation. |
-| RST parsing | ❌ | Line-scanner (`src/parser.rs`): directive regex `\w+` misses hyphenated names — **`code-block` is not recognized**; options require exactly-3-space indent; content dedent `&line[3..]` can panic on short tab-indented lines; hardcoded underline→level map breaks `=`-titled docs (title becomes "Untitled"); no inline markup, lists, tables, footnotes, substitutions, comments, targets, transitions; the `::` literal-block branch drops the introducing paragraph. |
+| RST parsing | 🟡 | Line-scanner (`src/parser.rs`). Fixed 2026-08: hyphenated/domain directive names (`code-block`, `py:function`) recognized; tab-safe content dedent (no more panic path); title levels by docutils order-of-first-use (`=`-titled docs get real titles). Still missing (M2): inline markup, lists, tables, footnotes, substitutions, comments, targets, transitions; the `::` literal-block branch drops the introducing paragraph; options require 3-space/tab indent. |
 | Markdown parsing | ❌ | Only `Event::Text` survives pulldown-cmark; headings/code/lists/tables discarded; `.md` titles/TOCs always empty; front matter TODO. |
 | HTML rendering | 🔴 | `builder.rs` "Simple document rendering (placeholder)": output is `<html><body>{escaped raw source}</body></html>`. `DocumentContent::Display` returns the raw source. No AST rendering, layout, navigation, or asset links. |
-| Toctree validation (missing refs, orphans) | 🟡 | The only validation that runs. False positives on captions, `Title <doc>` entries, `:glob:`, and subdirectory-relative refs; warning line numbers hardcoded to `10`; orphan check uses a path-prefix heuristic. |
+| Toctree validation (missing refs, orphans) | ✅ | Real per-entry line numbers; Sphinx docname resolution (document-relative, `/`-absolute, `.`/`..`); `Title <doc>`, captions, URLs, `self` handled; `:glob:` patterns expand with Sphinx's dead-pattern warning; orphan check is exact membership (2026-08). |
 | Warning pipeline (`-W`, `-w`) | 🟡 | Works; only two warning types are ever emitted. |
-| Error pipeline | 🔴 | `BuildErrorReport` plumbing exists end-to-end but nothing ever pushes an error; **builds with errors exit 0** (only `-W`+warnings exits 1). |
+| Error pipeline | ✅ | Per-file failures are collected as `BuildErrorReport`s while the build continues; **builds with errors exit 1** (sphinx-build parity), `-W`+warnings exits 1, usage errors exit 2 via clap (2026-08). |
 | Static asset copying | 🟡 | Copies 5 handwritten shim files (incl. a 61-line fake jquery.js) + project `_static`/`_templates`; generated pages reference none of them; `html_static_path` ignored by the live path. |
 | Search index / genindex / objects.inv emission | 🔴 | `generate_search_index`/`generate_indices` are TODO no-ops. No searchindex.js, genindex.html, or objects.inv in output (verified empirically). |
 | Extension loading | 🔴 | Loading any extension fabricates a stub record and prints one line. Zero behavioral effect. (The never-used pyo3 dependency was removed 2026-08; Python interop arrives as a sidecar in ROADMAP M5.) |
@@ -51,9 +51,9 @@ sites in the binary** — they run only from `examples/` and unit tests:
 | `search.rs` (in-memory index) | 🧩 | Output format is not Sphinx's `Search.setIndex` schema; 3-rule stemmer; title weighting inert. |
 | `inventory.rs` (objects.inv) | 🧩 / ❌ | Writer plausible; **reader corrupts real inventories** (lossy UTF-8 conversion + line-splitting over binary zlib bytes). |
 | `environment.rs` (BuildEnvironment) | 🧩 | Never constructed in the binary; `collect_relations` returns empty TODO. |
-| `domains/` (Python + RST domain validation) | 🧩 / ❌ | **Reference parser inverts target/display-text for `` :doc:`Title <target>` `` (its own test locks in the wrong order)**; external-ref detection is a hardcoded stdlib prefix whitelist; duplicate labels silently overwrite. |
+| `domains/` (Python + RST domain validation) | 🧩 | Target/display inversion fixed 2026-08 (`Title <target>` resolves the angle-bracket target). Remaining: external-ref detection is a hardcoded stdlib prefix whitelist; duplicate labels silently overwrite. |
 | `directives/validation/` (10+10 validators) | 🧩 | Heuristic rules that false-positive on valid Sphinx (e.g. `.. note:: inline text` triggers both an arguments warning and a missing-content error). |
-| `validation/` (constraint engine) | 🧩 / ❌ | Expression evaluator supports only `==`/`!=`/`in list`/`and`/`or`/`not`; **memory-unsound `'static` transmute in the template cache** (use-after-free hazard); trait impls are placeholders; no way to declare constraints in any config file. |
+| `validation/` (constraint engine) | 🧩 | Unsound `'static` transmute removed 2026-08 (templates now owned by the minijinja environment). Remaining: expression evaluator supports only `==`/`!=`/`in list`/`and`/`or`/`not`; trait impls are placeholders; no way to declare constraints in any config file. |
 | `directives.rs` (HTML processor registry) | 🧩 | ~40 processors registered, 28 are stubs emitting HTML comments; `process_directive` has zero call sites; name-collides with the validation `DirectiveRegistry`. |
 | `roles.rs` | ⬜ | **Not declared in any module tree — never compiled** (orphaned source file). Ironically its `text <target>` parsing is correct, unlike the compiled domains parser. |
 
@@ -73,7 +73,7 @@ sites in the binary** — they run only from `examples/` and unit tests:
 |---|---|
 | `build --source/--output`, `-j`, `--clean`, `--incremental`, `-W`, `-w` | ✅ (relative `--source` crash fixed 2026-08) |
 | Positional `SOURCEDIR OUTPUTDIR`, `-b`, `-M`, `-D`, `-A`, `-n`, `-q`, `-E`, `-a`, `-c`, `-t`, `-T`, `--keep-going`, `-j auto` | ⬜ (ROADMAP M1) |
-| Non-zero exit on build errors | ❌ (errors exit 0 today; M1) |
+| Non-zero exit on build errors | ✅ exit 1 on build errors, 2 on usage errors (2026-08) |
 | `--verbose` position | 🟡 global flag only before the subcommand; `RUST_LOG` is overwritten at startup |
 | `serve` (advertised by dev.sh/build.sh) | ⬜ does not exist (ROADMAP M3) |
 
