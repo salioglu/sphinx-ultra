@@ -52,7 +52,10 @@ fn build_succeeds_and_writes_html_tree() {
     assert!(index.is_file(), "missing {}", index.display());
     assert!(installation.is_file(), "missing {}", installation.display());
     let html = std::fs::read_to_string(&index).unwrap();
-    assert!(html.contains("Welcome"), "index.html should carry the title text");
+    assert!(
+        html.contains("Welcome"),
+        "index.html should carry the title text"
+    );
 }
 
 #[test]
@@ -91,7 +94,11 @@ fn fail_on_warning_exits_one() {
     let out = out_dir("fail-on-warning");
     let result = build(&fixture("basic_missing_ref"), &out, &["-W"]);
 
-    assert_eq!(result.status.code(), Some(1), "-W must turn warnings into a failing exit");
+    assert_eq!(
+        result.status.code(),
+        Some(1),
+        "-W must turn warnings into a failing exit"
+    );
 }
 
 #[test]
@@ -186,8 +193,5 @@ fn stats_prints_source_file_count() {
 
     assert!(result.status.success());
     let stdout = String::from_utf8_lossy(&result.stdout);
-    assert!(
-        stdout.contains("Source files: 2"),
-        "stats stdout: {stdout}"
-    );
+    assert!(stdout.contains("Source files: 2"), "stats stdout: {stdout}");
 }

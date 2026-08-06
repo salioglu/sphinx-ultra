@@ -54,9 +54,9 @@ with real tests that `sphinx-ultra build` never calls.
 | Validation systems | **Dead code** | Constraint engine, domain/cross-ref validation, directive/role validation: all library-only, invoked only by `examples/`. Known defects: target/display-text inversion in the reference parser; an unsound `'static` transmute in the constraint engine's template cache; validators that false-positive on valid Sphinx (`.. note:: inline text`). |
 | Build-path validation | **Partial** | Only toctree missing-ref + orphan checks run; line numbers hardcoded to `10`; false positives on captions, `Title <doc>` entries, `:glob:`, and subdirectory-relative refs. |
 | conf.py support | **Minimal** | Line-scraper for single-line assignments only. Multi-line lists (the normal style) silently drop; dicts never parse; no warning on dropped config. |
-| YAML/JSON config | **Broken** | No serde defaults → both YAML files shipped in this repo fail to load ("missing field"). |
+| YAML/JSON config | **Working** | Serde defaults added 2026-08; partial configs load, both shipped YAML examples verified by tests. `--config` also accepts conf.py now. |
 | CLI | **Minimal** | `build/clean/stats`. No `-b`, `-D`, `-n`, `-q`, `-E`, `-a`, `-c`, `-t`, no positional dirs, no `sphinx-build` compatibility. Errors exit 0 (only `-W`+warnings exits 1). Relative `--source` crash fixed 2026-08. |
-| CI/release | **Partial** | Good matrix + clippy/fmt/audit/coverage; but crates.io publish job isn't gated on validation/build, Cargo.lock is gitignored (non-reproducible releases), no MSRV job, install.sh advertises an ARM-Linux artifact that is never built, `integration_test.rs` is 100% commented out yet runs green in CI. |
+| CI/release | **Working** | Fixed 2026-08: publish gated on validation+build, Cargo.lock committed + `--locked` everywhere, MSRV (1.85) job, SHA-256 checksums + install.sh verification, aarch64-linux artifact built, vacuous `integration_test.rs` replaced by a real E2E suite. |
 | Dependencies | **Pruned 2026-08** | 16 zero-call-site deps removed (incl. pyo3/pythonize, which carried two RUSTSEC advisories and linked libpython into every build). minijinja/flate2/base64 remain — used by the built-not-wired stack. |
 
 Full evidence (file:line per finding) lives in [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md).
@@ -159,24 +159,26 @@ and CI can be trusted.
     target/display inversion; constraint-engine `'static` transmute (use owned
     template storage).
 - **Repo & release hygiene:**
-  - Commit `Cargo.lock`; `--locked` in CI/release. Delete `Cargo.toml.new`,
-    `Cargo.lock.template`, `.packagename` after merging the useful metadata
-    (`rust-version`, `keywords`, `categories`, `exclude`) into `Cargo.toml`.
+  - ✅ *(done 2026-08)* Commit `Cargo.lock`; `--locked` in CI/release. Delete
+    `Cargo.toml.new`, `Cargo.lock.template`, `.packagename` after merging the useful
+    metadata (`rust-version`, `keywords`, `categories`, `exclude`) into `Cargo.toml`.
   - ✅ *(done 2026-08)* Remove `pyo3`/`pythonize` (two RUSTSEC advisories, unblocks
     musl, drops the undocumented Python build dependency) and prune the other 14
     unused dependencies (syntect returns when actually wired, in M2/M3).
-  - Gate `publish-crate` on `needs: [validate-version, build-release]`; add checksums;
-    build the advertised `aarch64-unknown-linux-gnu` artifact or stop advertising it.
-  - MSRV: declare `rust-version`, add an MSRV CI job. Delete the vacuous
-    `integration_test.rs` step or make it real (see below). Merge the three open
-    dependabot PRs (actions/cache 5, actions/checkout 6, criterion 0.7).
-  - Fix `dev.sh serve` / `build.sh` references to the nonexistent `serve` command;
-    backfill CHANGELOG entries for 0.2.0/0.3.0; update SECURITY.md (supported
-    versions; delete claims about nonexistent subsystems).
-- **Config loading that works:** `#[serde(default)]` across `BuildConfig` (partial
-  YAML/JSON must load — the repo's own examples currently fail); `--config conf.py`
-  routed to the conf.py parser; conf.py parser upgraded to multi-line lists/dicts
-  **with warnings on anything dropped**.
+  - ✅ *(done 2026-08)* Gate `publish-crate` on `needs: [validate-version,
+    build-release]`; add checksums (emitted per artifact, verified by install.sh);
+    build the advertised `aarch64-unknown-linux-gnu` artifact.
+  - ✅ *(done 2026-08)* MSRV: `rust-version = "1.85"` + MSRV CI job. Vacuous
+    `integration_test.rs` step deleted, replaced by the E2E harness. Dependabot
+    bumps applied in-repo (actions/cache 5, actions/checkout 6, criterion 0.7).
+  - ✅ *(done 2026-08)* Fix `dev.sh serve` / `build.sh` references to the nonexistent
+    `serve` command; backfill CHANGELOG entries for 0.2.0/0.3.0; update SECURITY.md
+    (supported versions; delete claims about nonexistent subsystems).
+- **Config loading that works:** ✅ *(done 2026-08)* `#[serde(default)]` across
+  `BuildConfig` (partial YAML/JSON loads — verified on the repo's own examples);
+  ✅ *(done 2026-08)* `--config conf.py` routed to the conf.py parser. Still open:
+  conf.py parser upgraded to multi-line lists/dicts **with warnings on anything
+  dropped**.
 - **CLI foundation:** `sphinx-build`-compatible argument mode (positional
   `SOURCEDIR OUTPUTDIR`, `-b html` gate, `-M` make-mode — what quickstart Makefiles
   invoke — `-D key=value`, `-A key=value`, `-d doctreedir`, `-n`, `-q`, `-E`, `-a`,
@@ -190,9 +192,11 @@ and CI can be trusted.
   false-positive heuristics fixed or demoted): the three dead systems become the
   first *live* differentiator. Route all their findings through the standard
   warning/error pipeline so `-W`/`-w` see them.
-- **End-to-end test harness** (the piece whose absence let the relative-path crash
-  ship): run the actual binary against fixture projects in `tests/`, assert on exit
-  codes, warnings, and output tree. Replace the commented-out `integration_test.rs`.
+- ✅ *(done 2026-08)* **End-to-end test harness** (the piece whose absence let the
+  relative-path crash ship): `tests/e2e_cli.rs` runs the actual binary against
+  fixture projects, asserting exit codes, warnings, and output tree. The
+  commented-out `integration_test.rs` is deleted. (Grows with every subsequent
+  M1 item.)
 
 **Acceptance:** every command in README/QUICK_START works as written; both shipped
 YAML examples load; `cargo test` includes E2E; pattern behavior matches Sphinx 9.1 in
