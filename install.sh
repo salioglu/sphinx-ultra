@@ -18,20 +18,21 @@ BINARY_NAME="sphinx-ultra"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 
 # Functions
+# Logs go to stderr so functions can return values via stdout ($(...) capture).
 log_info() {
-    echo -e "${BLUE}[INFO]${NC} $1"
+    echo -e "${BLUE}[INFO]${NC} $1" >&2
 }
 
 log_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
+    echo -e "${GREEN}[SUCCESS]${NC} $1" >&2
 }
 
 log_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1"
+    echo -e "${YELLOW}[WARNING]${NC} $1" >&2
 }
 
 log_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
+    echo -e "${RED}[ERROR]${NC} $1" >&2
 }
 
 check_dependencies() {
@@ -94,15 +95,47 @@ download_binary() {
     log_info "Downloading Sphinx Ultra $version for $platform..."
 
     if command -v curl &> /dev/null; then
-        curl -L "$download_url" -o "$temp_dir/$archive_name"
+        curl -fL "$download_url" -o "$temp_dir/$archive_name"
     else
         wget "$download_url" -O "$temp_dir/$archive_name"
     fi
+
+    verify_checksum "$temp_dir" "$archive_name" "$download_url.sha256"
 
     log_info "Extracting archive..."
     tar -xzf "$temp_dir/$archive_name" -C "$temp_dir"
 
     echo "$temp_dir/sphinx-ultra-${version}-${platform}/$BINARY_NAME"
+}
+
+verify_checksum() {
+    local temp_dir=$1
+    local archive_name=$2
+    local checksum_url=$3
+
+    local fetched=""
+    if command -v curl &> /dev/null; then
+        curl -fsL "$checksum_url" -o "$temp_dir/$archive_name.sha256" && fetched=1
+    else
+        wget -q "$checksum_url" -O "$temp_dir/$archive_name.sha256" && fetched=1
+    fi
+
+    if [[ -z "$fetched" ]]; then
+        log_warning "No checksum published for this release; skipping verification"
+        return 0
+    fi
+
+    log_info "Verifying checksum..."
+    if command -v sha256sum &> /dev/null; then
+        (cd "$temp_dir" && sha256sum -c "$archive_name.sha256") >&2
+    elif command -v shasum &> /dev/null; then
+        (cd "$temp_dir" && shasum -a 256 -c "$archive_name.sha256") >&2
+    else
+        log_warning "sha256sum/shasum not available; skipping verification"
+        return 0
+    fi
+
+    log_success "Checksum verified"
 }
 
 install_binary() {

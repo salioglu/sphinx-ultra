@@ -5,74 +5,95 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+Implementation reality per subsystem lives in
+[docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md); the plan to move
+everything forward is [ROADMAP.md](ROADMAP.md).
+
 ## [Unreleased]
 
 ### Added
-- High-performance parallel documentation building ✅
-- Smart caching system with LRU eviction ✅  
-- Incremental builds for faster rebuilds ✅
-- Support for RST and Markdown parsing ✅
-- Template-based HTML generation framework (basic implementation) ⚠️
-- File system monitoring for automatic rebuilds (planned)
-- Configurable themes and extensions (framework only) ⚠️
-- Comprehensive CLI interface ✅
-- Performance benchmarking tools ✅
-- Warning file output support (`--warning-file` / `-w` option) ✅
-- Document validation with orphan and reference checking ✅
-- **Domain System & Cross-Reference Validation** ✅
-  - Pluggable domain architecture with trait-based validators
-  - Python domain for :func:, :class:, :mod:, :meth:, :attr:, :data:, :exc: references
-  - RST domain for :doc:, :ref:, :numref: references
-  - Comprehensive reference parser with regex-based extraction
-  - External reference detection (URLs, email addresses)
-  - Intelligent suggestion system for broken references using fuzzy matching
-  - Validation statistics and detailed reporting
-  - 21 comprehensive domain-specific tests
-- **Constraint Validation System** ✅
-  - Content item validation framework inspired by sphinx-needs
-  - Expression evaluator for constraint logic (supports ==, !=, and, or, in)
-  - Severity-based failure actions (info, warning, error, critical)
-  - Template-based error messages with variable substitution
-  - Automatic style application based on constraint failures
-  - Comprehensive validation configuration system
-- Multi-format configuration support (conf.py, YAML, JSON) ✅
-- Project statistics and analysis tools ✅
 
-### Implementation Status Legend
-- ✅ **Fully Implemented**: Feature is working and tested
-- ⚠️ **Partially Implemented**: Basic framework exists, needs development  
-- ❌ **Planned**: Not yet implemented
+- End-to-end CLI test harness: the binary now runs against fixture projects in CI,
+  asserting exit codes, warnings, and output trees (replaces the fully
+  commented-out `integration_test.rs`)
+- MSRV declared (`rust-version = "1.85"`) and verified by a dedicated CI job
+- Release artifacts now ship SHA-256 checksums, and `install.sh` verifies them
+- `aarch64-unknown-linux-gnu` release artifact (previously advertised by
+  `install.sh` but never built)
+- `--config` now accepts a `conf.py` path (previously YAML/JSON only)
+- Crate metadata for crates.io: `keywords`, `categories`, `documentation`,
+  `exclude`
 
-### Currently Working Features
-- Fast parallel builds (1000+ files/second processing rate)
-- RST and Markdown file processing
-- Incremental caching with change detection
-- Comprehensive CLI with build, clean, and stats commands
-- Configuration auto-detection (conf.py, YAML, JSON)
-- Document validation and warning reporting
-- Static asset copying and management
+### Fixed
 
-### In Development
-- Full-text search index generation ⚠️
-- Live reload development server ❌
-- Advanced theming system ⚠️ 
-- Sphinx extension compatibility ⚠️
-- Modern responsive themes ❌
+- Partial YAML/JSON configs now load: all `BuildConfig` fields have serde
+  defaults (previously every field was required, and both YAML examples shipped
+  in this repo failed to load)
+- `install.sh` no longer corrupts captured values with log output (logs now go
+  to stderr) and fails cleanly on download errors (`curl -f`)
+- Source paths canonicalized so relative `--source` values (including the
+  default `.`) no longer crash the build *(2026-08)*
+- Sphinx-parity pattern semantics: `[!…]` character classes, literal leading
+  `^`, and directory pruning *(2026-08)*
 
 ### Changed
-- Updated documentation to clearly separate implemented vs planned features
-- Improved performance benchmarking and reporting
-- Enhanced error messages and validation feedback
 
-### Performance Metrics
-- 2 files: ~8ms build time
-- 51 files: ~44ms build time  
-- Processing rate: ~1,159 files/second
-- Memory usage: 10-20MB for typical projects
+- `Cargo.lock` is committed; CI and releases build with `--locked`
+  (reproducible builds)
+- crates.io publishing is gated on version validation and release builds
+  succeeding
+- Removed `pyo3`/`pythonize` (zero call sites, two RUSTSEC advisories, linked
+  libpython into every build) and 14 other unused dependencies *(2026-08)*;
+  Python interop returns as a sidecar process (ROADMAP M5)
+- Removed references to the not-yet-implemented `serve` command from dev
+  scripts (planned for ROADMAP M3)
+- Deleted scaffold leftovers: `Cargo.toml.new`, `Cargo.lock.template`,
+  `.packagename`
 
-## [0.1.0] - 2024-09-07
+## [0.3.0] - 2025-10-13
 
 ### Added
-- Initial project setup
-- Core architecture implementation
-- Basic documentation and configuration
+
+- Sphinx-style `include_patterns`/`exclude_patterns` file discovery with a
+  pattern-translation engine and compatibility test suite
+- Directive & role validation system (library): validators for common RST
+  directives and roles with severity levels *(library-only in this release;
+  not yet invoked by `sphinx-ultra build` — wiring is ROADMAP M1)*
+
+### Fixed
+
+- Granular GitHub token permissions in workflows (code-scanning alert)
+
+## [0.2.1] - 2025-10-13
+
+### Added
+
+- Domain system & cross-reference validation (library): pluggable domain
+  architecture with Python (`:func:`, `:class:`, …) and RST (`:doc:`, `:ref:`,
+  `:numref:`) domains, reference parser, fuzzy suggestions for broken
+  references *(library-only in this release; not yet invoked by
+  `sphinx-ultra build`)*
+
+## [0.2.0] - 2025-10-13
+
+### Added
+
+- Constraint validation system inspired by sphinx-needs (library): expression
+  evaluator (`==`, `!=`, `in`, `and`, `or`, `not`), severity-based failure
+  actions, template-based messages *(library-only in this release)*
+- musl release targets and release-script publishing instructions
+
+### Changed
+
+- Dependency updates (dependabot: production dependencies, actions/cache 4,
+  action-gh-release 2)
+
+## [0.1.0] - 2025-09-07
+
+### Added
+
+- Initial project setup: parallel build pipeline (rayon), incremental cache
+  with blake3 change detection, RST/Markdown line-scanning parsers, CLI
+  (`build`/`clean`/`stats`) with `-W`/`-w` warning handling, toctree
+  missing-reference and orphan checks, configuration auto-detection
+  (conf.py subset → YAML → JSON → defaults)

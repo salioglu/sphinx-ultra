@@ -1,7 +1,8 @@
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use sphinx_ultra::builder::SphinxBuilder;
 use sphinx_ultra::config::BuildConfig;
 use sphinx_ultra::parser::Parser;
+use std::hint::black_box;
 use std::path::PathBuf;
 use tempfile::TempDir;
 

@@ -62,9 +62,9 @@ sites in the binary** — they run only from `examples/` and unit tests:
 | Feature | Status | Evidence / gaps |
 |---|---|---|
 | conf.py parsing | 🟡 | Line-scanner for single-line assignments (self-described stub). Multi-line lists (the normal style for `extensions`/`exclude_patterns`) silently dropped — verified: a multi-line `exclude_patterns` leaves excluded files in the build. Dicts never parse (so `html_theme_options` is always empty). No warnings for dropped config. Half of `ConfPyConfig` (latex_*/epub_*/source_suffix/nitpick_*…) is declared but never populated. |
-| YAML/JSON config | ❌ | No serde defaults → every field required. **Both YAML files shipped in this repo fail to load** ("missing field"), incl. `examples/basic/sphinx-ultra.yaml`. |
+| YAML/JSON config | ✅ | Serde defaults across all config structs (2026-08): partial configs load; both shipped YAML examples verified by unit + E2E tests. |
 | Config auto-detection order | ✅ | conf.py → yaml → yml → json → default. |
-| `--config` flag | 🟡 | Cannot point at a conf.py (YAML/JSON only) — inconsistent with auto-detect. |
+| `--config` flag | ✅ | Routes `conf.py`/`.py` to the Python config parser (2026-08); YAML/JSON as before. |
 | Config knobs actually consumed | ❌ | `html_theme`, `theme.*`, `output.syntax_highlighting`/`highlight_theme`/`minify_html`/`search_index`, `optimization.*`, `max_cache_size_mb`, `cache_expiration_hours`, `html_static_path` are parsed and then **never read by any consumer** — configuration is largely decorative today. |
 
 ## CLI vs sphinx-build
@@ -81,13 +81,13 @@ sites in the binary** — they run only from `examples/` and unit tests:
 
 | Area | Status | Notes |
 |---|---|---|
-| CI (fmt, clippy -D warnings, tests, audit, coverage, 3-OS) | ✅ | No MSRV job; `--all-features` is vacuous; `integration_test.rs` is 100% commented out yet runs as a green CI step. |
-| E2E tests of the binary | ⬜ | Absent — which is how the relative-path crash and unloadable YAML examples shipped. ROADMAP M1. |
-| Cargo.lock | ❌ | Gitignored for a binary crate → non-reproducible CI/releases; cache keys hash nothing. |
-| Release workflow | 🟡 | Solid tag/version validation, but `publish-crate` has no `needs:` gate (can publish before validation/builds); no checksums; no aarch64-linux artifact despite install.sh advertising one. |
+| CI (fmt, clippy -D warnings, tests, audit, coverage, 3-OS) | ✅ | MSRV job added (1.85, `--locked`); vacuous `integration_test.rs` step removed (2026-08). |
+| E2E tests of the binary | ✅ | `tests/e2e_cli.rs` (2026-08): runs the real binary against fixture projects; asserts exit codes, warning text, output tree, `--config` routing. |
+| Cargo.lock | ✅ | Committed (2026-08); CI/release/publish all run `--locked`. |
+| Release workflow | ✅ | `publish-crate` gated on `needs: [validate-version, build-release]`; SHA-256 checksums published per artifact and verified by install.sh; aarch64-unknown-linux-gnu built on `ubuntu-24.04-arm` (2026-08). |
 | pyo3/pythonize | ✅ removed (2026-08) | Had zero call sites while linking libpython into every build (two RUSTSEC advisories, broken musl target, undocumented Python build dependency). Python interop returns as a venv **sidecar process** in ROADMAP M5 — not as a link-time dependency. |
 | Unused dependencies | ✅ pruned (2026-08) | Removed: pyo3, pythonize, syntect, cssparser, minifier, tar, bincode, crossbeam, lru, config, glob, walkdir, indexmap, toml, ini, handlebars. syntect returns when highlighting is actually wired (M2/M3). |
-| Repo hygiene | 🟡 | `Cargo.toml.new` / `Cargo.lock.template` / `.packagename` are scaffold leftovers that ship inside the crates.io package; the useful metadata (`rust-version`, keywords, categories, exclude) lives only in the dead `Cargo.toml.new`. CHANGELOG has no 0.2.0/0.3.0 entries. SECURITY.md describes subsystems that do not exist. |
+| Repo hygiene | ✅ | Scaffold leftovers deleted; metadata (`rust-version = "1.85"`, keywords, categories, exclude) merged into `Cargo.toml`; CHANGELOG backfilled (0.2.0/0.2.1/0.3.0); SECURITY.md describes the real attack surface (2026-08). |
 
 ## Testing status
 
@@ -95,8 +95,7 @@ sites in the binary** — they run only from `examples/` and unit tests:
 |---|---|
 | Unit tests (lib) | ✅ 74 passing |
 | Pattern compatibility tests | ✅ 10 passing — but several assert the **divergent** (non-Sphinx) `**` semantics while labeled "from Sphinx documentation"; differential regeneration is M1 |
-| `tests/integration_test.rs` | ❌ 0 tests — entire file commented out ("disabled to avoid compilation errors") |
-| E2E CLI tests | ⬜ none |
+| `tests/e2e_cli.rs` | ✅ 9 passing — replaces the fully commented-out `integration_test.rs` (deleted 2026-08) |
 | Benchmarks | 🟡 exercise the placeholder pipeline (numbers measure escaped-text copying); cache benchmark is `black_box(42)` |
 
 ## Historical note

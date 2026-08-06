@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use crate::python_config::PythonConfigParser;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
 pub struct BuildConfig {
     /// Number of parallel jobs to use (defaults to number of CPU cores)
     pub parallel_jobs: Option<usize>,
@@ -117,6 +118,7 @@ pub struct BuildConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
 pub struct OutputConfig {
     /// Output HTML format
     pub html_theme: String,
@@ -138,6 +140,7 @@ pub struct OutputConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
 pub struct ThemeConfig {
     /// Theme name
     pub name: String,
@@ -153,6 +156,7 @@ pub struct ThemeConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
 pub struct OptimizationConfig {
     /// Enable parallel processing
     pub parallel_processing: bool,
@@ -261,13 +265,25 @@ impl Default for OptimizationConfig {
 impl BuildConfig {
     pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
         let path = path.as_ref();
-        let content = std::fs::read_to_string(path)?;
+
+        // Sphinx projects configure via conf.py; route it to the Python
+        // config parser so `--config conf.py` behaves like auto-detection.
+        let is_python = path.file_name().and_then(|s| s.to_str()) == Some("conf.py")
+            || path.extension().and_then(|s| s.to_str()) == Some("py");
+        if is_python {
+            return Self::from_conf_py(path);
+        }
+
+        let content = std::fs::read_to_string(path)
+            .map_err(|e| anyhow::anyhow!("cannot read config file {}: {e}", path.display()))?;
         let config = if path.extension().and_then(|s| s.to_str()) == Some("yaml")
             || path.extension().and_then(|s| s.to_str()) == Some("yml")
         {
-            serde_yaml::from_str(&content)?
+            serde_yaml::from_str(&content)
+                .map_err(|e| anyhow::anyhow!("invalid config file {}: {e}", path.display()))?
         } else {
-            serde_json::from_str(&content)?
+            serde_json::from_str(&content)
+                .map_err(|e| anyhow::anyhow!("invalid config file {}: {e}", path.display()))?
         };
         Ok(config)
     }
@@ -328,7 +344,38 @@ impl BuildConfig {
 mod tests {
     use super::*;
     use std::fs;
+    use std::path::Path;
     use tempfile::TempDir;
+
+    #[test]
+    fn minimal_yaml_loads_with_defaults() {
+        let temp_dir = TempDir::new().unwrap();
+        let p = temp_dir.path().join("sphinx-ultra.yaml");
+        fs::write(&p, "project: 'Tiny'\n").unwrap();
+
+        let config = BuildConfig::from_file(&p).unwrap();
+        assert_eq!(config.project, "Tiny");
+        assert_eq!(config.max_cache_size_mb, 500); // default filled in
+        assert_eq!(config.include_patterns, vec!["**".to_string()]);
+    }
+
+    #[test]
+    fn from_file_routes_conf_py() {
+        let temp_dir = TempDir::new().unwrap();
+        let p = temp_dir.path().join("conf.py");
+        fs::write(&p, "project = 'PyProject'\n").unwrap();
+
+        let config = BuildConfig::from_file(&p).unwrap();
+        assert_eq!(config.project, "PyProject");
+    }
+
+    #[test]
+    fn shipped_yaml_examples_load() {
+        for rel in ["sphinx-ultra.yaml", "examples/basic/sphinx-ultra.yaml"] {
+            let p = Path::new(env!("CARGO_MANIFEST_DIR")).join(rel);
+            BuildConfig::from_file(&p).unwrap_or_else(|e| panic!("{rel} failed to load: {e}"));
+        }
+    }
 
     #[test]
     fn test_auto_detect_conf_py() {
@@ -346,41 +393,10 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let root = temp_dir.path();
 
-        // A complete sphinx-ultra.yaml: every field is currently required
-        // because BuildConfig has no serde defaults (tracked as a roadmap item).
         let yaml_content = r#"
 project: 'YAML Project'
-max_cache_size_mb: 500
-cache_expiration_hours: 24
 output:
-  html_theme: 'sphinx_rtd_theme'
-  syntax_highlighting: true
-  highlight_theme: 'github'
-  search_index: true
-  minify_html: false
-  compress_output: false
-theme:
-  name: 'sphinx_rtd_theme'
-  options: {}
-  custom_css: []
-  custom_js: []
-optimization:
-  parallel_processing: true
-  incremental_builds: true
-  document_caching: true
-  image_optimization: false
-  asset_bundling: false
-extensions: []
-template_dirs: []
-static_dirs: []
-html_style: []
-html_css_files: []
-html_js_files: []
-html_static_path: []
-templates_path: []
-fail_on_warning: false
-include_patterns: ['**']
-exclude_patterns: []
+  html_theme: 'alabaster'
 "#;
         fs::write(root.join("sphinx-ultra.yaml"), yaml_content).unwrap();
 
