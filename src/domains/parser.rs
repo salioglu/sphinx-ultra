@@ -155,13 +155,21 @@ impl ReferenceParser {
     }
 
     /// Extract target and display text from target string
+    ///
+    /// Sphinx semantics for `` `Display Text <target>` ``: the angle brackets
+    /// carry the target and the leading text is the display text. Without
+    /// angle brackets the whole text is the target.
     fn extract_target_and_display(&self, target_text: &str) -> (String, Option<String>) {
         // Handle backtick format
         if target_text.starts_with('`') && target_text.ends_with('`') {
             if let Some(cap) = TARGET_REGEX.captures(target_text) {
-                let target = cap.get(1).unwrap().as_str().trim().to_string();
-                let display_text = cap.get(2).map(|m| m.as_str().trim().to_string());
-                return (target, display_text);
+                let leading_text = cap.get(1).unwrap().as_str().trim().to_string();
+                return match cap.get(2) {
+                    Some(angle_target) => {
+                        (angle_target.as_str().trim().to_string(), Some(leading_text))
+                    }
+                    None => (leading_text, None),
+                };
             }
         }
 
@@ -241,6 +249,8 @@ mod tests {
 
     #[test]
     fn test_reference_with_display_text() {
+        // Sphinx semantics: `Display Text <target>` — the angle brackets
+        // carry the target, the leading text is what gets displayed.
         let parser = ReferenceParser::new();
         let content = "See :doc:`Installation Guide <installation>` for details.";
 
@@ -248,8 +258,8 @@ mod tests {
         assert_eq!(refs.len(), 1);
 
         let ref_obj = &refs[0];
-        assert_eq!(ref_obj.target, "Installation Guide");
-        assert_eq!(ref_obj.display_text, Some("installation".to_string()));
+        assert_eq!(ref_obj.target, "installation");
+        assert_eq!(ref_obj.display_text, Some("Installation Guide".to_string()));
     }
 
     #[test]
