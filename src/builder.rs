@@ -15,6 +15,48 @@ use crate::matching;
 use crate::parser::Parser;
 use crate::utils;
 
+/// A single toctree entry with its real source position.
+#[derive(Debug, Clone)]
+struct ToctreeEntry {
+    /// The target as written (title stripped, angle-bracket target extracted).
+    target: String,
+    /// 1-based line number of the entry in its source file.
+    line: usize,
+    /// True when the containing toctree has `:glob:` and the target contains
+    /// glob metacharacters.
+    is_glob: bool,
+}
+
+/// Resolve a toctree target against the document that references it, the way
+/// Sphinx does: a leading `/` means source-root-relative, anything else is
+/// relative to the referencing document's directory. `.`/`..` segments are
+/// normalized.
+fn resolve_docname(target: &str, referencing_doc: &str) -> String {
+    let (base, target) = if let Some(stripped) = target.strip_prefix('/') {
+        ("", stripped)
+    } else {
+        (
+            referencing_doc
+                .rsplit_once('/')
+                .map(|(d, _)| d)
+                .unwrap_or(""),
+            target,
+        )
+    };
+
+    let mut segments: Vec<&str> = Vec::new();
+    for seg in base.split('/').chain(target.split('/')) {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                segments.pop();
+            }
+            s => segments.push(s),
+        }
+    }
+    segments.join("/")
+}
+
 #[derive(Debug, Clone)]
 pub struct BuildStats {
     pub files_processed: usize,
@@ -450,6 +492,18 @@ impl SphinxBuilder {
         Ok(())
     }
 
+    /// Root-relative docname (no extension, forward slashes) for a document.
+    fn docname_of(&self, doc: &Document) -> String {
+        let relative = doc
+            .source_path
+            .strip_prefix(&self.source_dir)
+            .unwrap_or(&doc.source_path);
+        relative
+            .with_extension("")
+            .to_string_lossy()
+            .replace('\\', "/")
+    }
+
     async fn validate_documents(
         &self,
         processed_docs: &[Document],
@@ -457,66 +511,61 @@ impl SphinxBuilder {
     ) -> Result<()> {
         info!("Validating documents and checking for warnings...");
 
-        let mut toctree_references = HashSet::new();
-        let mut referenced_files = HashSet::new();
         let mut all_documents = HashSet::new();
+        let mut toctree_refs: Vec<(PathBuf, String, ToctreeEntry)> = Vec::new();
 
-        // Collect all documents and their toctree references
         for doc in processed_docs {
-            // Get relative path for comparison
-            let doc_path_relative = doc
-                .source_path
-                .strip_prefix(&self.source_dir)
-                .unwrap_or(&doc.source_path);
-            let doc_path_no_ext = doc_path_relative.with_extension("");
-            all_documents.insert(doc_path_no_ext.to_string_lossy().to_string());
+            let docname = self.docname_of(doc);
+            for entry in self.extract_toctree_references(doc) {
+                toctree_refs.push((doc.source_path.clone(), docname.clone(), entry));
+            }
+            all_documents.insert(docname);
+        }
 
-            // Check for toctree directives and collect their references
-            if let Some(toctree_refs) = self.extract_toctree_references(doc) {
-                for toc_ref in toctree_refs {
-                    toctree_references.insert((doc.source_path.clone(), toc_ref.clone()));
-                    referenced_files.insert(toc_ref);
+        // Resolve every entry the way Sphinx does and warn on the misses.
+        let mut referenced: HashSet<String> = HashSet::new();
+        for (source_file, referencing_doc, entry) in &toctree_refs {
+            let resolved = resolve_docname(&entry.target, referencing_doc);
+
+            if entry.is_glob {
+                let matches: Vec<String> = all_documents
+                    .iter()
+                    .filter(|d| matching::pattern_match(d, &resolved).unwrap_or(false))
+                    .cloned()
+                    .collect();
+                if matches.is_empty() {
+                    self.warnings
+                        .lock()
+                        .unwrap()
+                        .push(BuildWarning::toctree_glob_no_match(
+                            source_file.clone(),
+                            Some(entry.line),
+                            &entry.target,
+                        ));
+                } else {
+                    referenced.extend(matches);
                 }
+            } else if all_documents.contains(&resolved) {
+                referenced.insert(resolved);
+            } else {
+                self.warnings
+                    .lock()
+                    .unwrap()
+                    .push(BuildWarning::missing_toctree_ref(
+                        source_file.clone(),
+                        Some(entry.line),
+                        &resolved,
+                    ));
             }
         }
 
-        // Check for missing toctree references
-        for (source_file, reference) in &toctree_references {
-            let ref_path = format!("{}/index", reference);
-            let alt_ref_path = reference.clone();
-
-            if !all_documents.contains(&ref_path) && !all_documents.contains(&alt_ref_path) {
-                let warning = BuildWarning::missing_toctree_ref(
-                    source_file.clone(),
-                    Some(10), // TODO: Extract actual line number
-                    reference,
-                );
-                self.warnings.lock().unwrap().push(warning);
-            }
-        }
-
-        // Check for orphaned documents
+        // Orphan check: exact membership of the resolved reference set.
         for doc in processed_docs {
-            let doc_path_relative = doc
-                .source_path
-                .strip_prefix(&self.source_dir)
-                .unwrap_or(&doc.source_path);
-            let doc_path_no_ext = doc_path_relative.with_extension("");
-            let doc_path_str = doc_path_no_ext.to_string_lossy().to_string();
-
-            // Skip the main index file
-            if doc_path_str == "index" {
+            let docname = self.docname_of(doc);
+            if docname == "index" {
                 continue;
             }
-
-            // Check if this document is referenced in any toctree
-            let is_referenced = referenced_files.iter().any(|ref_path| {
-                ref_path == &doc_path_str
-                    || ref_path == &format!("{}/index", doc_path_str)
-                    || doc_path_str.starts_with(&format!("{}/", ref_path))
-            });
-
-            if !is_referenced {
+            if !referenced.contains(&docname) {
                 let warning = BuildWarning::orphaned_document(doc.source_path.clone());
                 self.warnings.lock().unwrap().push(warning);
             }
@@ -528,35 +577,70 @@ impl SphinxBuilder {
         Ok(())
     }
 
-    fn extract_toctree_references(&self, doc: &Document) -> Option<Vec<String>> {
+    /// Extract toctree entries with their real line numbers by re-scanning the
+    /// raw source from each toctree directive's position (the parsed directive
+    /// content has lost its line offsets).
+    fn extract_toctree_references(&self, doc: &Document) -> Vec<ToctreeEntry> {
         use crate::document::DocumentContent;
 
-        let mut references = Vec::new();
+        let mut entries = Vec::new();
 
-        if let DocumentContent::RestructuredText(rst_content) = &doc.content {
-            for node in &rst_content.ast {
-                if let crate::document::RstNode::Directive { name, content, .. } = node {
-                    if name == "toctree" {
-                        // Extract references from toctree content
-                        for line in content.lines() {
-                            let trimmed = line.trim();
-                            if !trimmed.is_empty()
-                                && !trimmed.starts_with(':')
-                                && !trimmed.starts_with("..")
-                            {
-                                references.push(trimmed.to_string());
-                            }
-                        }
-                    }
+        let rst_content = match &doc.content {
+            DocumentContent::RestructuredText(rst) => rst,
+            _ => return entries,
+        };
+
+        let raw_lines: Vec<&str> = rst_content.raw.lines().collect();
+
+        for node in &rst_content.ast {
+            let (options, directive_line) = match node {
+                crate::document::RstNode::Directive {
+                    name,
+                    options,
+                    line,
+                    ..
+                } if name == "toctree" => (options, *line),
+                _ => continue,
+            };
+            let glob_enabled = options.contains_key("glob");
+
+            // Scan the block following the `.. toctree::` marker line.
+            for (idx, raw_line) in raw_lines.iter().enumerate().skip(directive_line) {
+                let trimmed = raw_line.trim();
+                if trimmed.is_empty() {
+                    continue;
                 }
+                if !raw_line.starts_with(' ') && !raw_line.starts_with('\t') {
+                    break; // dedent ends the directive block
+                }
+                if trimmed.starts_with(':') {
+                    continue; // option line (docnames cannot start with ':')
+                }
+
+                // `Title <target>` form: the angle brackets carry the target.
+                let target = match (trimmed.rfind('<'), trimmed.ends_with('>')) {
+                    (Some(pos), true) => trimmed[pos + 1..trimmed.len() - 1].trim(),
+                    _ => trimmed,
+                };
+
+                // External URLs and the `self` keyword are valid entries that
+                // do not reference source documents.
+                if target.starts_with("http://")
+                    || target.starts_with("https://")
+                    || target == "self"
+                {
+                    continue;
+                }
+
+                entries.push(ToctreeEntry {
+                    target: target.to_string(),
+                    line: idx + 1,
+                    is_glob: glob_enabled && target.contains(['*', '?', '[']),
+                });
             }
         }
 
-        if references.is_empty() {
-            None
-        } else {
-            Some(references)
-        }
+        entries
     }
 
     async fn generate_search_index(&self, _documents: &[Document]) -> Result<()> {
