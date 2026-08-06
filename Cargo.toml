@@ -8,6 +8,23 @@ license = "MIT"
 readme = "README.md"
 homepage = "https://salioglu.github.io/sphinx-ultra"
 repository = "https://github.com/salioglu/sphinx-ultra"
+documentation = "https://salioglu.github.io/sphinx-ultra"
+rust-version = "1.85"
+keywords = ["documentation", "sphinx", "rst", "markdown", "builder"]
+categories = ["command-line-utilities", "development-tools", "text-processing"]
+exclude = [
+    "/target",
+    "/.github",
+    "/docs",
+    "/benches",
+    "/scripts",
+    "/dist",
+    "/examples/basic",
+    "/tests",
+    "*.sh",
+    "/sphinx-ultra.yaml",
+    "/static/*.md",
+]
 
 [dependencies]
 # Core dependencies
