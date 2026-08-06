@@ -1,194 +1,109 @@
 # Implementation Status
 
-This document provides a comprehensive overview of what features are currently implemented, partially implemented, or planned in Sphinx Ultra.
+**Audit-verified status as of 2026-08-06** (v0.3.0 + the 2026-08 pattern/path fixes).
+Method: every status below was established by tracing call graphs from the binary's
+entry point (`src/main.rs` → `SphinxBuilder::build`), running the built binary
+against fixture projects, and — for compatibility claims — differential comparison
+against real Sphinx 9.1.0. Statuses describe **what `sphinx-ultra build` actually
+executes**, not what modules exist.
 
-## 🟢 Fully Implemented Features
+Status legend:
 
-### Core Build System
-- ✅ **File Discovery**: Recursively finds RST and Markdown files
-- ✅ **Parallel Processing**: Multi-threaded file processing using Rayon
-- ✅ **Basic Parsing**: RST and Markdown parsing with pulldown-cmark
-- ✅ **HTML Generation**: Simple HTML output from parsed content
-- ✅ **Static Asset Copying**: Copies CSS, JS, and other static files
-- ✅ **Build Statistics**: Tracks processing time, file counts, cache hits
+- ✅ **working** — implemented and exercised by the binary's execution path
+- 🟡 **partial** — some paths work; documented gaps
+- 🧩 **built-not-wired** — real, tested library code with **zero call sites** in the
+  build path (runs only from `examples/` or unit tests)
+- 🔴 **stub** — placeholder that does nothing useful
+- ❌ **broken** — exists but incorrect (verified)
+- ⬜ **missing** — not implemented
 
-### CLI Interface
-- ✅ **Build Command**: `sphinx-ultra build` with full option support
-- ✅ **Clean Command**: `sphinx-ultra clean` removes build artifacts
-- ✅ **Stats Command**: `sphinx-ultra stats` shows project analysis
-- ✅ **Help System**: Comprehensive help for all commands and options
-- ✅ **Verbose Logging**: Debug-level logging with `--verbose` flag
+The plan to move everything to ✅ is [ROADMAP.md](../ROADMAP.md).
 
-### Configuration System  
-- ✅ **conf.py Support**: Parses existing Sphinx configuration files
-- ✅ **YAML Configuration**: Native sphinx-ultra.yaml format
-- ✅ **JSON Configuration**: Alternative JSON configuration format
-- ✅ **Auto-detection**: Automatically finds and loads configuration
-- ✅ **Default Fallback**: Works without any configuration file
+## Core build pipeline
 
-### Caching and Performance
-- ✅ **Document Caching**: LRU cache for parsed documents
-- ✅ **Incremental Builds**: Only processes changed files
-- ✅ **File Modification Tracking**: Uses mtime for change detection
-- ✅ **Memory Efficient**: Low memory footprint during builds
-- ✅ **Cache Statistics**: Reports cache hit rates
+| Feature | Status | Evidence / gaps |
+|---|---|---|
+| File discovery w/ include/exclude patterns | ✅ (one divergence) | `src/builder.rs` `discover_source_files`, `src/matching.rs`. One verified remaining divergence vs Sphinx 9.1: `**` translates to `(?:[^/]+/)*` where Sphinx uses `.*` (so `**/index.rst` matches `index.rst` here but not in Sphinx) — differential parity suite is ROADMAP M1. Fixed 2026-08: `[!…]` → `[^/…]` (negated classes never match `/`), leading `^` now literal, Sphinx-parity directory pruning. |
+| Parallel orchestration | ✅ | rayon pool sized by `-j`/config. Gap: one file error aborts the whole build (`builder.rs` collect); per-file error collection is M1. |
+| Incremental cache | ❌ | Sound staleness check (blake3), but a cache hit returns **before writing output**, and `--clean --incremental` yields an output dir with no HTML for cached docs (cache loaded pre-clean). `max_cache_size_mb`/`cache_expiration_hours` config never plumbed (hardcoded 500MB/24h); eviction is access-count (not LRU as documented). |
+| Dependency graph | 🔴 | `build_dependency_graph` returns empty vecs (TODO) and its result is ignored. No include/toctree-driven invalidation. |
+| RST parsing | ❌ | Line-scanner (`src/parser.rs`): directive regex `\w+` misses hyphenated names — **`code-block` is not recognized**; options require exactly-3-space indent; content dedent `&line[3..]` can panic on short tab-indented lines; hardcoded underline→level map breaks `=`-titled docs (title becomes "Untitled"); no inline markup, lists, tables, footnotes, substitutions, comments, targets, transitions; the `::` literal-block branch drops the introducing paragraph. |
+| Markdown parsing | ❌ | Only `Event::Text` survives pulldown-cmark; headings/code/lists/tables discarded; `.md` titles/TOCs always empty; front matter TODO. |
+| HTML rendering | 🔴 | `builder.rs` "Simple document rendering (placeholder)": output is `<html><body>{escaped raw source}</body></html>`. `DocumentContent::Display` returns the raw source. No AST rendering, layout, navigation, or asset links. |
+| Toctree validation (missing refs, orphans) | 🟡 | The only validation that runs. False positives on captions, `Title <doc>` entries, `:glob:`, and subdirectory-relative refs; warning line numbers hardcoded to `10`; orphan check uses a path-prefix heuristic. |
+| Warning pipeline (`-W`, `-w`) | 🟡 | Works; only two warning types are ever emitted. |
+| Error pipeline | 🔴 | `BuildErrorReport` plumbing exists end-to-end but nothing ever pushes an error; **builds with errors exit 0** (only `-W`+warnings exits 1). |
+| Static asset copying | 🟡 | Copies 5 handwritten shim files (incl. a 61-line fake jquery.js) + project `_static`/`_templates`; generated pages reference none of them; `html_static_path` ignored by the live path. |
+| Search index / genindex / objects.inv emission | 🔴 | `generate_search_index`/`generate_indices` are TODO no-ops. No searchindex.js, genindex.html, or objects.inv in output (verified empirically). |
+| Extension loading | 🔴 | Loading any extension fabricates a stub record and prints one line. Zero behavioral effect. No pyo3 usage anywhere despite the dependency. |
+| Build stats | 🟡 | `files_skipped` hardcoded 0; `errors` always 0; cache hits only counted under `--incremental`. |
+| `clean` / `stats` commands | ✅ | `stats` cross-ref count is naive substring counting. |
 
-### Document Validation
-- ✅ **Orphaned Document Detection**: Finds documents not in toctrees
-- ✅ **Missing Reference Detection**: Identifies broken toctree references
-- ✅ **Domain System & Cross-Reference Validation**: Complete domain-based validation system
-- ✅ **Python Domain Validation**: Validates :func:, :class:, :mod:, :meth:, :attr:, :data:, :exc: references
-- ✅ **RST Domain Validation**: Validates :doc:, :ref:, :numref: references
-- ✅ **Reference Parser**: Comprehensive cross-reference extraction from RST content
-- ✅ **External Reference Detection**: Automatic identification of external vs internal references
-- ✅ **Broken Reference Suggestions**: Intelligent suggestions for fixing broken references
-- ✅ **Directive & Role Validation**: Complete directive and role validation system
-- ✅ **Built-in Directive Validators**: 10 validators for code-block, note, warning, image, figure, toctree, include, literalinclude, admonition, math
-- ✅ **Built-in Role Validators**: 10 validators for doc, ref, download, math, abbr, command, file, kbd, menuselection, guilabel
-- ✅ **Directive/Role Parser**: Advanced regex-based extraction with display text support
-- ✅ **Validation Statistics**: Comprehensive statistics with success rates and issue categorization
-- ✅ **Warning Collection**: Gathers and reports all warnings
-- ✅ **Error Reporting**: Sphinx-style error message formatting
-- ✅ **Warning File Output**: Save warnings/errors to file with `-w`
+## Built-but-not-wired stack (the "second codebase")
 
-### File Processing
-- ✅ **RST Parsing**: Basic reStructuredText parsing
-- ✅ **Markdown Parsing**: Full Markdown support via pulldown-cmark
-- ✅ **Cross-reference Extraction**: Finds and tracks document references  
-- ✅ **Title Extraction**: Automatically extracts document titles
-- ✅ **Table of Contents**: Basic TOC generation from headings
+These are real modules with passing tests, exported from `lib.rs`, with **no call
+sites in the binary** — they run only from `examples/` and unit tests:
 
-## 🟡 Partially Implemented Features
+| Module | Status | Notes |
+|---|---|---|
+| `html_builder.rs` (Sphinx `StandaloneHTMLBuilder` mirror, 800 lines) | 🧩 | Internally placeholder-grade even if wired: doc titles TODO, empty local TOC, empty search dump, `.buildinfo` in wrong format. |
+| `template.rs` (minijinja engine + templates/) | 🧩 | User `templates_path` loading commented out ("lifetime issues"); `toctree()` returns an empty div; `pathto` ignores page depth; genindex/search templates use Python-only constructs (unregistered `_()`, `count.append(count.pop()+1)`) that fail at render time. |
+| `search.rs` (in-memory index) | 🧩 | Output format is not Sphinx's `Search.setIndex` schema; 3-rule stemmer; title weighting inert. |
+| `inventory.rs` (objects.inv) | 🧩 / ❌ | Writer plausible; **reader corrupts real inventories** (lossy UTF-8 conversion + line-splitting over binary zlib bytes). |
+| `environment.rs` (BuildEnvironment) | 🧩 | Never constructed in the binary; `collect_relations` returns empty TODO. |
+| `domains/` (Python + RST domain validation) | 🧩 / ❌ | **Reference parser inverts target/display-text for `` :doc:`Title <target>` `` (its own test locks in the wrong order)**; external-ref detection is a hardcoded stdlib prefix whitelist; duplicate labels silently overwrite. |
+| `directives/validation/` (10+10 validators) | 🧩 | Heuristic rules that false-positive on valid Sphinx (e.g. `.. note:: inline text` triggers both an arguments warning and a missing-content error). |
+| `validation/` (constraint engine) | 🧩 / ❌ | Expression evaluator supports only `==`/`!=`/`in list`/`and`/`or`/`not`; **memory-unsound `'static` transmute in the template cache** (use-after-free hazard); trait impls are placeholders; no way to declare constraints in any config file. |
+| `directives.rs` (HTML processor registry) | 🧩 | ~40 processors registered, 28 are stubs emitting HTML comments; `process_directive` has zero call sites; name-collides with the validation `DirectiveRegistry`. |
+| `roles.rs` | ⬜ | **Not declared in any module tree — never compiled** (orphaned source file). Ironically its `text <target>` parsing is correct, unlike the compiled domains parser. |
 
-### Extension System
-- ⚠️ **Extension Loading**: Framework exists but limited functionality
-- ⚠️ **Sphinx Extension Support**: Basic stub implementations only
-- ⚠️ **Python Integration**: PyO3 dependency included but minimal usage
-- ⚠️ **Extension Configuration**: Structure in place but not functional
+## Configuration
 
-### Theme System
-- ⚠️ **Theme Configuration**: Basic theme config parsing
-- ⚠️ **Template Engine**: Handlebars included but not used
-- ⚠️ **CSS/JS Handling**: Basic static file copying only
-- ⚠️ **Theme Options**: Structure exists but no actual theming
+| Feature | Status | Evidence / gaps |
+|---|---|---|
+| conf.py parsing | 🟡 | Line-scanner for single-line assignments (self-described stub). Multi-line lists (the normal style for `extensions`/`exclude_patterns`) silently dropped — verified: a multi-line `exclude_patterns` leaves excluded files in the build. Dicts never parse (so `html_theme_options` is always empty). No warnings for dropped config. Half of `ConfPyConfig` (latex_*/epub_*/source_suffix/nitpick_*…) is declared but never populated. |
+| YAML/JSON config | ❌ | No serde defaults → every field required. **Both YAML files shipped in this repo fail to load** ("missing field"), incl. `examples/basic/sphinx-ultra.yaml`. |
+| Config auto-detection order | ✅ | conf.py → yaml → yml → json → default. |
+| `--config` flag | 🟡 | Cannot point at a conf.py (YAML/JSON only) — inconsistent with auto-detect. |
+| Config knobs actually consumed | ❌ | `html_theme`, `theme.*`, `output.syntax_highlighting`/`highlight_theme`/`minify_html`/`search_index`, `optimization.*`, `max_cache_size_mb`, `cache_expiration_hours`, `html_static_path` are parsed and then **never read by any consumer** — configuration is largely decorative today. |
 
-### Search Features
-- ⚠️ **Search Index Structure**: Framework in place
-- ⚠️ **Index Generation**: Stub implementation exists
-- ⚠️ **Search Interface**: Not implemented
+## CLI vs sphinx-build
 
-### HTML Output
-- ⚠️ **Template System**: Very basic HTML generation
-- ⚠️ **Syntax Highlighting**: Syntect included but not integrated
-- ⚠️ **HTML Optimization**: Minification support exists but not active
+| Capability | Status |
+|---|---|
+| `build --source/--output`, `-j`, `--clean`, `--incremental`, `-W`, `-w` | ✅ (relative `--source` crash fixed 2026-08) |
+| Positional `SOURCEDIR OUTPUTDIR`, `-b`, `-M`, `-D`, `-A`, `-n`, `-q`, `-E`, `-a`, `-c`, `-t`, `-T`, `--keep-going`, `-j auto` | ⬜ (ROADMAP M1) |
+| Non-zero exit on build errors | ❌ (errors exit 0 today; M1) |
+| `--verbose` position | 🟡 global flag only before the subcommand; `RUST_LOG` is overwritten at startup |
+| `serve` (advertised by dev.sh/build.sh) | ⬜ does not exist (ROADMAP M3) |
 
-## 🔴 Not Implemented (Planned)
+## Infrastructure & release
 
-### Development Server
-- ❌ **Live Server**: HTTP server for development preview
-- ❌ **WebSocket Support**: Live reload functionality
-- ❌ **File Watching**: Automatic rebuild on file changes
-- ❌ **Hot Module Replacement**: Real-time content updates
+| Area | Status | Notes |
+|---|---|---|
+| CI (fmt, clippy -D warnings, tests, audit, coverage, 3-OS) | ✅ | No MSRV job; `--all-features` is vacuous; `integration_test.rs` is 100% commented out yet runs as a green CI step. |
+| E2E tests of the binary | ⬜ | Absent — which is how the relative-path crash and unloadable YAML examples shipped. ROADMAP M1. |
+| Cargo.lock | ❌ | Gitignored for a binary crate → non-reproducible CI/releases; cache keys hash nothing. |
+| Release workflow | 🟡 | Solid tag/version validation, but `publish-crate` has no `needs:` gate (can publish before validation/builds); no checksums; musl target almost certainly broken by pyo3; no aarch64-linux artifact despite install.sh advertising one. |
+| pyo3/pythonize | ❌ | Zero call sites, yet compiled into every build with `auto-initialize` — links libpython, makes Python an undocumented build dependency, breaks static/musl distribution. Removal is ROADMAP M1; Python interop returns as a sidecar process (M5). |
+| Unused dependencies | ❌ | syntect, cssparser, minifier, tar, bincode, crossbeam, lru, config, glob, walkdir, indexmap, toml, ini, handlebars (+pyo3/pythonize) have zero effective call sites. |
+| Repo hygiene | 🟡 | `Cargo.toml.new` / `Cargo.lock.template` / `.packagename` are scaffold leftovers that ship inside the crates.io package; the useful metadata (`rust-version`, keywords, categories, exclude) lives only in the dead `Cargo.toml.new`. CHANGELOG has no 0.2.0/0.3.0 entries. SECURITY.md describes subsystems that do not exist. |
 
-### Advanced Theming
-- ❌ **Responsive Themes**: Mobile-friendly theme system
-- ❌ **Theme Customization**: Advanced theme configuration
-- ❌ **Custom CSS/JS Injection**: Dynamic asset management
-- ❌ **Theme Inheritance**: Base theme extension system
+## Testing status
 
-### Full Sphinx Compatibility
-- ❌ **Directive Processing**: Most Sphinx directives not implemented
-- ❌ **Role Processing**: Limited role support
-- ❌ **Domain Support**: Python, C++, etc. domains not implemented
-- ❌ **Cross-reference Resolution**: Advanced linking not implemented
+| Suite | Status |
+|---|---|
+| Unit tests (lib) | ✅ 74 passing |
+| Pattern compatibility tests | ✅ 10 passing — but several assert the **divergent** (non-Sphinx) `**` semantics while labeled "from Sphinx documentation"; differential regeneration is M1 |
+| `tests/integration_test.rs` | ❌ 0 tests — entire file commented out ("disabled to avoid compilation errors") |
+| E2E CLI tests | ⬜ none |
+| Benchmarks | 🟡 exercise the placeholder pipeline (numbers measure escaped-text copying); cache benchmark is `black_box(42)` |
 
-### Search System
-- ❌ **Full-text Search**: Searchable content index
-- ❌ **Search Interface**: HTML search functionality
-- ❌ **Search Optimization**: Ranking and relevance scoring
-- ❌ **Search API**: JSON search endpoints
+## Historical note
 
-### Advanced Features
-- ❌ **Image Optimization**: Automatic image processing
-- ❌ **Asset Bundling**: CSS/JS optimization and bundling
-- ❌ **Internationalization**: Multi-language support
-- ❌ **PDF Generation**: LaTeX/PDF output support
-- ❌ **Plugin System**: Third-party plugin architecture
-
-### Output Formats
-- ❌ **LaTeX Output**: PDF generation via LaTeX
-- ❌ **EPUB Output**: E-book format generation
-- ❌ **JSON Output**: Structured data export
-- ❌ **XML Output**: DocBook or custom XML formats
-
-## 🎯 Implementation Priorities
-
-### High Priority (Next Release)
-1. **Advanced HTML Templating**: Proper template system with Handlebars
-2. **Syntax Highlighting**: Integrate Syntect for code blocks
-3. **Basic Theme Support**: Implement at least one complete theme
-4. **Search Index**: Functional search index generation
-
-### Medium Priority
-1. **Development Server**: Live preview and reload
-2. **Common Directives**: Implement frequently used Sphinx directives
-3. **Extension Loading**: Functional Python extension support
-4. **Advanced Validation**: More comprehensive document checking
-
-### Low Priority
-1. **Alternative Output Formats**: PDF, EPUB support
-2. **Plugin Architecture**: Third-party plugin system
-3. **Advanced Optimization**: Image processing, asset bundling
-4. **Full Sphinx Compatibility**: Complete directive/role support
-
-## 🧪 Testing Status
-
-### Tested Scenarios
-- ✅ Basic RST projects (2-50 files)
-- ✅ Markdown projects
-- ✅ Mixed RST/Markdown projects
-- ✅ Projects with toctrees
-- ✅ Incremental builds
-- ✅ Configuration file loading
-- ✅ Error handling and validation
-
-### Needs Testing
-- ❌ Large projects (1000+ files)
-- ❌ Complex toctree structures
-- ❌ Memory usage under load
-- ❌ Windows/macOS compatibility
-- ❌ Different Python configurations
-- ❌ Various file encodings
-
-## 🚀 Performance Characteristics
-
-### Current Performance
-- **Small Projects** (2-10 files): <10ms build time
-- **Medium Projects** (50 files): ~44ms build time  
-- **Processing Rate**: ~1,100+ files/second
-- **Memory Usage**: 10-20MB for most projects
-- **Cache Efficiency**: 100% hit rate on unchanged files
-
-### Performance Goals
-- **Large Projects** (1000 files): <1 second build time
-- **Extra Large** (10,000 files): <10 second build time
-- **Memory Limit**: <100MB even for largest projects
-- **Cache Performance**: Sub-millisecond cache lookups
-
-## 📊 Code Quality Metrics
-
-### Implementation Quality
-- **Core Features**: 80% complete, well-tested
-- **Configuration**: 90% complete, robust
-- **CLI Interface**: 95% complete, fully functional
-- **Documentation**: 70% complete, needs examples
-- **Error Handling**: 85% complete, good coverage
-
-### Technical Debt
-- Basic HTML output needs templating system
-- Extension system needs refactoring
-- Search functionality is stubbed out
-- Theme system needs complete implementation
-- Python integration underutilized
-
-This status document is updated as of December 2024 and reflects the current state of the project.
+Previous versions of this document (and the README/VALIDATION_FEATURES_PLAN) marked
+the domain system, directive/role validation, and constraint engine as "Fully
+Implemented ✅". That was true of the *library code and its unit tests* but not of
+the product: none of the three systems has ever been invoked by `sphinx-ultra build`.
+This document now tracks binary-reachable behavior only; wiring those systems into
+the build is ROADMAP M1.

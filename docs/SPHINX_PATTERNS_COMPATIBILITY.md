@@ -1,10 +1,20 @@
 # Sphinx Include/Exclude Patterns Compatibility
 
+> **⚠️ Accuracy note (2026-08).** Differential testing against Sphinx 9.1.0
+> falsified this document's original "100% compatibility" claim. Verified status:
+> `*`, `?`, `[abc]`, `[!abc]` (never matches `/`), literal leading `^`, and
+> excluded-directory pruning now match Sphinx exactly; **`**` semantics still
+> diverge** (sphinx-ultra treats `**` gitignore-style with directory boundaries,
+> Sphinx translates it to `.*` — e.g. `**/index.rst` matches a top-level
+> `index.rst` here but not in Sphinx). Full parity with a generated differential
+> test suite is [ROADMAP.md](../ROADMAP.md) milestone M1. Claims below should be
+> read subject to this note.
+
 This document describes sphinx-ultra's compatibility with Sphinx's `include_patterns` and `exclude_patterns` functionality.
 
 ## Overview
 
-sphinx-ultra now fully supports Sphinx's file pattern matching system, providing 100% compatibility with `include_patterns` and `exclude_patterns` configuration options. This allows you to use the same configuration files and expect the same file discovery behavior as standard Sphinx.
+sphinx-ultra supports Sphinx's file pattern matching system for `include_patterns` and `exclude_patterns` configuration options, with the divergences listed in the accuracy note above.
 
 ## Configuration
 
