@@ -17,11 +17,11 @@ lazy_static::lazy_static! {
 /// Translates shell-style glob pattern to regex pattern.
 ///
 /// This implements the same logic as Sphinx's _translate_pattern function:
-/// - ** matches any files and zero or more directories and subdirectories  
+/// - ** matches everything, including directory separators
 /// - * matches everything except a directory separator
 /// - ? matches any single character except a directory separator
 /// - [seq] matches any character in seq
-/// - [!seq] matches any character not in seq
+/// - [!seq] matches any character not in seq (never a directory separator)
 ///
 /// Based on Python's fnmatch.translate but with modifications for path handling.
 pub fn translate_pattern(pattern: &str) -> String {
@@ -35,20 +35,12 @@ pub fn translate_pattern(pattern: &str) -> String {
         match c {
             '*' => {
                 if i + 1 < n && chars[i + 1] == '*' {
-                    // Handle ** - matches any files and directories
-                    if i + 2 < n && chars[i + 2] == '/' {
-                        // **/
-                        regex_pattern.push_str("(?:[^/]+/)*");
-                        i += 3;
-                    } else if i + 2 == n {
-                        // ** at end
-                        regex_pattern.push_str(".*");
-                        i += 2;
-                    } else {
-                        // **something
-                        regex_pattern.push_str(".*");
-                        i += 2;
-                    }
+                    // ** matches everything, including '/'. Sphinx has no
+                    // directory-boundary special case: a following '/' is an
+                    // ordinary literal, so 'foo/**/bar' requires at least one
+                    // intermediate path component.
+                    regex_pattern.push_str(".*");
+                    i += 2;
                 } else {
                     // Single * - matches everything except directory separator
                     regex_pattern.push_str("[^/]*");
@@ -61,9 +53,11 @@ pub fn translate_pattern(pattern: &str) -> String {
                 i += 1;
             }
             '[' => {
-                // Character class
+                // Character class: scan for the closing ']' like Sphinx,
+                // skipping a leading '!' and then a leading ']' (a ']' in
+                // first position is a literal member)
                 let mut j = i + 1;
-                if j < n && (chars[j] == '!' || chars[j] == '^') {
+                if j < n && chars[j] == '!' {
                     j += 1;
                 }
                 if j < n && chars[j] == ']' {
@@ -78,34 +72,21 @@ pub fn translate_pattern(pattern: &str) -> String {
                     i += 1;
                 } else {
                     // Valid character class.
-                    // Sphinx semantics (sphinx/util/matching.py): only '[!...]'
-                    // negates, and a negated class never matches '/'; a leading
-                    // '^' is an ordinary literal character.
-                    let mut class_content = String::new();
-                    let mut k = i + 1;
-
-                    if k < n && chars[k] == '!' {
-                        class_content.push_str("^/");
-                        k += 1;
-                    } else if k < n && chars[k] == '^' {
-                        class_content.push_str("\\^");
-                        k += 1;
-                    }
-
-                    while k < j {
-                        let ch = chars[k];
-                        if ch == '\\' && k + 1 < j {
-                            class_content.push('\\');
-                            class_content.push(chars[k + 1]);
-                            k += 2;
-                        } else {
-                            class_content.push(ch);
-                            k += 1;
-                        }
+                    // Sphinx semantics (sphinx/util/matching.py): backslashes
+                    // in the class body are doubled (so '[\d]' is a literal
+                    // backslash or 'd', never the digit class), only '[!...]'
+                    // negates and never matches '/', and a leading '^' is an
+                    // escaped literal character.
+                    let body: String = chars[i + 1..j].iter().collect();
+                    let mut stuff = body.replace('\\', "\\\\");
+                    if let Some(rest) = stuff.strip_prefix('!') {
+                        stuff = format!("^/{rest}");
+                    } else if stuff.starts_with('^') {
+                        stuff.insert(0, '\\');
                     }
 
                     regex_pattern.push('[');
-                    regex_pattern.push_str(&class_content);
+                    regex_pattern.push_str(&stuff);
                     regex_pattern.push(']');
                     i = j + 1;
                 }
@@ -287,15 +268,59 @@ mod tests {
         // Basic patterns
         assert_eq!(translate_pattern("*.rst"), "^[^/]*\\.rst$");
         assert_eq!(translate_pattern("**"), "^.*$");
-        assert_eq!(
-            translate_pattern("**/index.rst"),
-            "^(?:[^/]+/)*index\\.rst$"
-        );
+        assert_eq!(translate_pattern("**/index.rst"), "^.*/index\\.rst$");
         assert_eq!(translate_pattern("docs/*.rst"), "^docs/[^/]*\\.rst$");
+        assert_eq!(translate_pattern("***"), "^.*[^/]*$");
 
         // Character classes
         assert_eq!(translate_pattern("[abc].rst"), "^[abc]\\.rst$");
         assert_eq!(translate_pattern("[!abc].rst"), "^[^/abc]\\.rst$");
+        assert_eq!(translate_pattern("[^abc].rst"), "^[\\^abc]\\.rst$");
+        assert_eq!(translate_pattern("[\\d]x"), "^[\\\\d]x$");
+    }
+
+    #[test]
+    fn test_double_star_matches_sphinx() {
+        // Sphinx translates '**' to plain '.*' with no directory-boundary
+        // special case, so 'foo/**/bar' requires at least one intermediate
+        // component and '**/x' never matches a top-level 'x'.
+        assert!(!pattern_match("foo/bar", "foo/**/bar").unwrap());
+        assert!(pattern_match("foo/x/bar", "foo/**/bar").unwrap());
+        assert!(pattern_match("foo/x/y/bar", "foo/**/bar").unwrap());
+        assert!(!pattern_match("bar", "**/bar").unwrap());
+        assert!(pattern_match("x/bar", "**/bar").unwrap());
+        assert!(!pattern_match("foo", "foo/**").unwrap());
+        assert!(pattern_match("foo/x/y", "foo/**").unwrap());
+        assert!(pattern_match("foo/bar.rst", "**").unwrap());
+        assert!(!pattern_match("foo/bar", "*").unwrap());
+        assert!(pattern_match("foo", "*").unwrap());
+        assert!(!pattern_match("a/b.rst", "*.rst").unwrap());
+        assert!(pattern_match("a/b.rst", "**.rst").unwrap());
+        assert!(pattern_match("ab", "a**b").unwrap());
+        assert!(pattern_match("axx/yyb", "a**b").unwrap());
+    }
+
+    #[test]
+    fn test_character_class_matches_sphinx() {
+        assert!(pattern_match("bx", "[!a]x").unwrap());
+        assert!(!pattern_match("/x", "[!a]x").unwrap());
+        // '[^...]' does not negate: the caret is an escaped literal member
+        assert!(pattern_match("^x", "[^a]x").unwrap());
+        assert!(pattern_match("ax", "[^a]x").unwrap());
+        assert!(!pattern_match("bx", "[^a]x").unwrap());
+        // Sphinx doubles in-class backslashes, so '[\d]' is a class of a
+        // literal backslash and 'd', never the regex digit class
+        assert!(pattern_match("dx", "[\\d]x").unwrap());
+        assert!(!pattern_match("5x", "[\\d]x").unwrap());
+        assert!(pattern_match("\\x", "[\\d]x").unwrap());
+        // A ']' first in the class body is a literal member, exactly as
+        // Python's re parses Sphinx's output
+        assert!(pattern_match("]", "[]a]").unwrap());
+        assert!(pattern_match("a", "[]a]").unwrap());
+        // '[!]a]' becomes '[^/]a]': the ']' closes the class early,
+        // leaving a literal 'a]' tail
+        assert!(pattern_match("]a]", "[!]a]").unwrap());
+        assert!(pattern_match("xa]", "[!]a]").unwrap());
     }
 
     #[test]
@@ -380,10 +405,11 @@ mod tests {
         fs::write(base_path.join("_build/index.html"), "content").unwrap();
         fs::write(base_path.join("README.md"), "content").unwrap();
 
-        // Test include all RST files
+        // Test include nested RST files: '**/*.rst' requires a directory
+        // component in Sphinx, so top-level index.rst is not matched
         let files = get_matching_files(base_path, &["**/*.rst".to_string()], &[]).unwrap();
-        assert_eq!(files.len(), 2);
-        assert!(files.iter().any(|p| p.file_name().unwrap() == "index.rst"));
+        assert_eq!(files.len(), 1);
+        assert!(!files.iter().any(|p| p.file_name().unwrap() == "index.rst"));
         assert!(files.iter().any(|p| p.file_name().unwrap() == "api.rst"));
 
         // Test exclude _build directory
@@ -391,15 +417,15 @@ mod tests {
             get_matching_files(base_path, &["**".to_string()], &["_build/**".to_string()]).unwrap();
         assert!(!files.iter().any(|p| p.to_string_lossy().contains("_build")));
 
-        // Test include RST files but exclude docs directory
+        // Test include RST files but exclude docs directory: with Sphinx
+        // '**' semantics the include only matches docs/api.rst, which the
+        // exclusion then removes
         let files = get_matching_files(
             base_path,
             &["**/*.rst".to_string()],
             &["docs/**".to_string()],
         )
         .unwrap();
-        assert_eq!(files.len(), 1);
-        assert!(files.iter().any(|p| p.file_name().unwrap() == "index.rst"));
-        assert!(!files.iter().any(|p| p.file_name().unwrap() == "api.rst"));
+        assert!(files.is_empty());
     }
 }

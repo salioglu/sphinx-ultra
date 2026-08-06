@@ -21,14 +21,10 @@ fn test_pattern_translation_compatibility() {
     // Test patterns that should work the same as Sphinx
     assert_eq!(translate_pattern("*.rst"), "^[^/]*\\.rst$");
     assert_eq!(translate_pattern("**"), "^.*$");
-    assert_eq!(
-        translate_pattern("**/index.rst"),
-        "^(?:[^/]+/)*index\\.rst$"
-    );
-    assert_eq!(
-        translate_pattern("docs/**/*.rst"),
-        "^docs/(?:[^/]+/)*[^/]*\\.rst$"
-    );
+    // '**' is plain '.*' in Sphinx: '**/index.rst' does not match a
+    // top-level index.rst, and 'docs/**/*.rst' does not match docs/a.rst
+    assert_eq!(translate_pattern("**/index.rst"), "^.*/index\\.rst$");
+    assert_eq!(translate_pattern("docs/**/*.rst"), "^docs/.*/[^/]*\\.rst$");
 
     // Test character classes (fnmatch style)
     assert_eq!(translate_pattern("[abc].rst"), "^[abc]\\.rst$");
@@ -44,9 +40,9 @@ fn test_pattern_matching_sphinx_examples() {
     assert!(pattern_match("chapter1.rst", "chapter?.rst").unwrap());
     assert!(!pattern_match("chapter10.rst", "chapter?.rst").unwrap());
 
-    // Double star patterns
+    // Double star patterns: '**/' requires at least one leading component
     assert!(pattern_match("docs/api/module.rst", "**/api/*.rst").unwrap());
-    assert!(pattern_match("api/module.rst", "**/api/*.rst").unwrap());
+    assert!(!pattern_match("api/module.rst", "**/api/*.rst").unwrap());
     assert!(pattern_match("deep/nested/api/module.rst", "**/api/*.rst").unwrap());
 
     // Exclude patterns
@@ -77,15 +73,16 @@ fn test_file_discovery_with_patterns() {
     fs::write(base_path.join("README.md"), "Readme").unwrap();
     fs::write(base_path.join("Thumbs.db"), "Windows thumbnail").unwrap();
 
-    // Test 1: Include all RST files
+    // Test 1: Include nested RST files ('**/*.rst' requires a directory
+    // component in Sphinx, so top-level index.rst is not matched)
     let files = get_matching_files(base_path, &["**/*.rst".to_string()], &[]).unwrap();
 
-    assert_eq!(files.len(), 3);
+    assert_eq!(files.len(), 2);
     let file_names: Vec<_> = files
         .iter()
         .map(|p| p.file_name().unwrap().to_string_lossy())
         .collect();
-    assert!(file_names.contains(&"index.rst".into()));
+    assert!(!file_names.contains(&"index.rst".into()));
     assert!(file_names.contains(&"guide.rst".into()));
     assert!(file_names.contains(&"reference.rst".into()));
 
@@ -223,17 +220,17 @@ fn test_pattern_priority_exclude_over_include() {
     fs::write(base_path.join("index.rst"), "Main file").unwrap();
     fs::write(base_path.join("drafts/unfinished.rst"), "Draft file").unwrap();
 
-    // Include all RST files but exclude drafts directory
+    // Include nested RST files but exclude drafts directory
     let files = get_matching_files(
         base_path,
-        &["**/*.rst".to_string()],  // Include all RST files
+        &["**/*.rst".to_string()],  // Include nested RST files
         &["drafts/**".to_string()], // Exclude drafts directory
     )
     .unwrap();
 
-    // Should only include index.rst, not the draft
-    assert_eq!(files.len(), 1);
-    assert_eq!(files[0].file_name().unwrap(), "index.rst");
+    // The include only matches drafts/unfinished.rst (top-level index.rst
+    // has no directory component), and the exclusion wins over it
+    assert!(files.is_empty());
 }
 
 #[test]

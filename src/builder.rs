@@ -252,17 +252,8 @@ impl SphinxBuilder {
 
     async fn discover_source_files(&self) -> Result<Vec<PathBuf>> {
         // Use pattern-based file discovery like Sphinx
-        let mut include_patterns = self.config.include_patterns.clone();
+        let include_patterns = &self.config.include_patterns;
         let exclude_patterns = &self.config.exclude_patterns;
-
-        // Add default source file patterns if no specific patterns are configured
-        if include_patterns == vec!["**"] {
-            include_patterns = vec![
-                "**/*.rst".to_string(),
-                "**/*.md".to_string(),
-                "**/*.txt".to_string(),
-            ];
-        }
 
         // Add built-in exclude patterns for common build artifacts and hidden files
         let mut all_exclude_patterns = exclude_patterns.clone();
@@ -279,10 +270,15 @@ impl SphinxBuilder {
 
         match matching::get_matching_files(
             &self.source_dir,
-            &include_patterns,
+            include_patterns,
             &all_exclude_patterns,
         ) {
-            Ok(files) => Ok(files),
+            // Sphinx's Project.discover keeps only files with a configured
+            // source suffix, regardless of include_patterns
+            Ok(files) => Ok(files
+                .into_iter()
+                .filter(|path| self.is_source_file(path))
+                .collect()),
             Err(e) => {
                 log::warn!(
                     "Pattern matching failed, falling back to simple discovery: {}",
