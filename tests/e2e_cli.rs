@@ -722,3 +722,164 @@ fn preset_rust_log_is_respected() {
         "RUST_LOG=error must silence warn/info logging (pre-set RUST_LOG wins), stderr: {stderr}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Validation systems wired into the build (ROADMAP M1: directive/role
+// validation on by default with false-positive heuristics fixed or demoted;
+// cross-reference validation behind -n/nitpicky).
+// ---------------------------------------------------------------------------
+
+/// Write an inline source tree and return its dir.
+fn temp_source(test_name: &str, files: &[(&str, &str)]) -> PathBuf {
+    let dir = out_dir(&format!("{test_name}-src"));
+    std::fs::create_dir_all(&dir).unwrap();
+    for (name, content) in files {
+        let path = dir.join(name);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(path, content).unwrap();
+    }
+    dir
+}
+
+#[test]
+fn directive_validation_reports_real_problems() {
+    let src = temp_source(
+        "dv-problems",
+        &[(
+            "index.rst",
+            "Title\n=====\n\n.. note::\n\n.. toctree::\n   :bogus:\n\n   self\n",
+        )],
+    );
+    let out = out_dir("dv-problems");
+    let result = build(&src, &out, &[]);
+
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    let stderr = stderr_of(&result);
+    assert!(
+        stderr.contains("index.rst:4: WARNING: Note directive requires content"),
+        "empty note must be flagged with file:line, stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("Unknown option 'bogus' for toctree directive"),
+        "bogus toctree option must be flagged, stderr: {stderr}"
+    );
+
+    // -W promotes validation warnings to a failing exit
+    let out_w = out_dir("dv-problems-W");
+    let result_w = build(&src, &out_w, &["-W"]);
+    assert_eq!(
+        result_w.status.code(),
+        Some(1),
+        "-W must see validation warnings, stderr: {}",
+        stderr_of(&result_w)
+    );
+}
+
+#[test]
+fn directive_validation_silent_on_valid_sphinx() {
+    let src = temp_source(
+        "dv-valid",
+        &[(
+            "index.rst",
+            "Title\n=====\n\n.. note:: One-line inline note.\n\n.. code-block::\n\n   no language, still fine\n\nSee :ref:`A Label With Spaces` in prose.\n\n.. _a label with spaces:\n\nSection\n-------\n\nBody.\n",
+        )],
+    );
+    let out = out_dir("dv-valid");
+    let result = build(&src, &out, &[]);
+
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    let stderr = stderr_of(&result);
+    for needle in [
+        "Note directive",
+        "No language",
+        "cannot contain spaces",
+        "lowercase",
+    ] {
+        assert!(
+            !stderr.contains(needle),
+            "valid Sphinx must not trigger '{needle}', stderr: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn directive_validation_off_switch() {
+    let src = temp_source("dv-off", &[("index.rst", "Title\n=====\n\n.. note::\n")]);
+    let out = out_dir("dv-off");
+    let result = sphinx_build(&[
+        src.to_str().unwrap(),
+        out.to_str().unwrap(),
+        "-D",
+        "validate_directives=0",
+    ]);
+
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert!(
+        !stderr_of(&result).contains("Note directive requires content"),
+        "-D validate_directives=0 must disable the pass, stderr: {}",
+        stderr_of(&result)
+    );
+}
+
+#[test]
+fn nitpicky_flags_broken_refs() {
+    let src = temp_source(
+        "nitpicky-broken",
+        &[(
+            "index.rst",
+            "Title\n=====\n\nSee :doc:`missing_doc` and :ref:`missing-label`.\n",
+        )],
+    );
+
+    // Without -n: silent (the heuristics are opt-in)
+    let out_quiet = out_dir("nitpicky-broken-off");
+    let result = build(&src, &out_quiet, &[]);
+    assert!(result.status.success());
+    assert!(
+        !stderr_of(&result).contains("unknown document"),
+        "cross-ref validation must be opt-in, stderr: {}",
+        stderr_of(&result)
+    );
+
+    // With -n (compat mode): both broken refs warn, with line numbers
+    let out = out_dir("nitpicky-broken-on");
+    let result = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap(), "-n"]);
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    let stderr = stderr_of(&result);
+    assert!(
+        stderr.contains("index.rst:4: WARNING: unknown document: 'missing_doc'"),
+        "stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("index.rst:4: WARNING: undefined label: 'missing-label'"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn nitpicky_resolves_real_refs() {
+    let src = temp_source(
+        "nitpicky-good",
+        &[
+            (
+                "index.rst",
+                "Title\n=====\n\n.. toctree::\n\n   installation\n\nSee :doc:`installation` and :ref:`setup-label` and :doc:`/installation`.\n",
+            ),
+            (
+                "installation.rst",
+                "Install\n=======\n\n.. _setup-label:\n\nSetup\n-----\n\nSteps.\n",
+            ),
+        ],
+    );
+    let out = out_dir("nitpicky-good");
+    let result = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap(), "-n"]);
+
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    let stderr = stderr_of(&result);
+    assert!(
+        !stderr.contains("unknown document") && !stderr.contains("undefined label"),
+        "resolvable refs must not warn under -n, stderr: {stderr}"
+    );
+}

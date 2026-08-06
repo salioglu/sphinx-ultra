@@ -219,6 +219,18 @@ impl SphinxBuilder {
         self.validate_documents(&processed_docs, &source_files)
             .await?;
 
+        // Directive/role validation runs in every build unless disabled
+        if self.config.validate_directives {
+            self.validate_directives_and_roles(&processed_docs);
+        }
+
+        // Cross-reference validation is opt-in (-n/nitpicky): its heuristics
+        // still false-positive on refs we cannot resolve yet (intersphinx,
+        // python objects before the M5 sidecar).
+        if self.config.nitpicky {
+            self.validate_cross_references(&processed_docs)?;
+        }
+
         // Generate cross-references and indices
         self.generate_indices(&processed_docs).await?;
 
@@ -616,6 +628,232 @@ impl SphinxBuilder {
 
         let warning_count = self.warnings.lock().unwrap().len();
         info!("Validation completed. Found {} warnings", warning_count);
+
+        Ok(())
+    }
+
+    /// Run the directive/role validation system over every RST document.
+    ///
+    /// Findings surface as build *warnings* (so `-W`/`-w` govern promotion);
+    /// `Unknown` results stay silent — the built-in validators cover a
+    /// fraction of real Sphinx, and reporting the rest would drown every
+    /// real project in noise.
+    fn validate_directives_and_roles(&self, processed_docs: &[Document]) {
+        use crate::directives::validation::{
+            DirectiveRoleParser, DirectiveValidationResult, DirectiveValidationSystem,
+            RoleValidationResult,
+        };
+        use crate::document::DocumentContent;
+
+        let results: Vec<(Vec<BuildWarning>, usize)> = processed_docs
+            .par_iter()
+            .filter_map(|doc| {
+                let raw = match &doc.content {
+                    DocumentContent::RestructuredText(rst) => &rst.raw,
+                    _ => return None,
+                };
+
+                let mut warnings = Vec::new();
+                let mut unknown = 0usize;
+                // Statistics make validate_* take &mut self, so each document
+                // gets its own (cheap) system instance for the parallel pass.
+                let mut system = DirectiveValidationSystem::new();
+                let parser = DirectiveRoleParser::new(doc.source_path.display().to_string());
+                let (directives, roles) = parser.parse_content(raw);
+
+                for directive in &directives {
+                    match system.validate_directive(directive) {
+                        DirectiveValidationResult::Valid => {}
+                        DirectiveValidationResult::Unknown => unknown += 1,
+                        DirectiveValidationResult::Warning(msg)
+                        | DirectiveValidationResult::Error(msg) => {
+                            warnings.push(BuildWarning::new(
+                                doc.source_path.clone(),
+                                Some(directive.location.line),
+                                msg,
+                                crate::error::WarningType::Other,
+                            ));
+                        }
+                    }
+                }
+
+                for role in &roles {
+                    match system.validate_role(role) {
+                        RoleValidationResult::Valid => {}
+                        RoleValidationResult::Unknown => unknown += 1,
+                        RoleValidationResult::Warning(msg) | RoleValidationResult::Error(msg) => {
+                            warnings.push(BuildWarning::new(
+                                doc.source_path.clone(),
+                                Some(role.location.line),
+                                msg,
+                                crate::error::WarningType::Other,
+                            ));
+                        }
+                    }
+                }
+
+                Some((warnings, unknown))
+            })
+            .collect();
+
+        let mut unknown_total = 0usize;
+        for (warnings, unknown) in results {
+            unknown_total += unknown;
+            for warning in warnings {
+                self.add_warning(warning);
+            }
+        }
+        if unknown_total > 0 {
+            debug!(
+                "{} directive/role occurrence(s) had no validator and were not checked",
+                unknown_total
+            );
+        }
+    }
+
+    /// Nitpicky cross-reference validation (`-n`): resolve every `:doc:` and
+    /// `:ref:` against the documents and labels this build actually produced,
+    /// via the domain registry. Python-domain references are counted but not
+    /// validated (no object inventory until the M5 sidecar) — silently
+    /// reporting them broken would false-positive on every third-party ref.
+    fn validate_cross_references(&self, processed_docs: &[Document]) -> Result<()> {
+        use crate::document::DocumentContent;
+        use crate::domains::parser::ReferenceParser;
+        use crate::domains::rst::RstDomain;
+        use crate::domains::{DomainRegistry, ReferenceType};
+
+        // docutils label matching is case-insensitive: normalize both sides.
+        let normalize_label = |label: &str| label.trim().to_lowercase();
+        // `.. _label:` and `.. _label: target` both define `label`.
+        let label_regex = regex::Regex::new(r"^\.\.\s+_([^:]+):").expect("static regex");
+
+        let mut rst_domain = RstDomain::new();
+        for doc in processed_docs {
+            let docname = self.docname_of(doc);
+            let location = crate::domains::ReferenceLocation {
+                docname: docname.clone(),
+                lineno: None,
+                column: None,
+                source_path: Some(doc.source_path.display().to_string()),
+            };
+            rst_domain.register_document(docname.clone(), doc.title.clone(), location.clone())?;
+
+            // Explicit `.. _label:` targets from the raw source (the prototype
+            // parser has no target nodes until M2).
+            if let DocumentContent::RestructuredText(rst) = &doc.content {
+                for (idx, line) in rst.raw.lines().enumerate() {
+                    if let Some(cap) = label_regex.captures(line) {
+                        let label = normalize_label(&cap[1]);
+                        rst_domain.register_label(
+                            label,
+                            "section".to_string(),
+                            None,
+                            docname.clone(),
+                            crate::domains::ReferenceLocation {
+                                lineno: Some(idx + 1),
+                                ..location.clone()
+                            },
+                        )?;
+                    }
+                }
+            }
+
+            // Section anchors double as :ref: targets (autosectionlabel-style;
+            // better than false-positives on every section reference).
+            let mut stack: Vec<&crate::document::TocEntry> = doc.toc.iter().collect();
+            while let Some(entry) = stack.pop() {
+                stack.extend(entry.children.iter());
+                rst_domain.register_section(
+                    normalize_label(&entry.anchor),
+                    entry.title.clone(),
+                    docname.clone(),
+                    crate::domains::ReferenceLocation {
+                        lineno: Some(entry.line_number),
+                        ..location.clone()
+                    },
+                )?;
+            }
+        }
+
+        let mut registry = DomainRegistry::new();
+        registry.register_domain(Box::new(rst_domain))?;
+
+        let reference_parser = ReferenceParser::new();
+        let mut python_refs = 0usize;
+        for doc in processed_docs {
+            let raw = match &doc.content {
+                DocumentContent::RestructuredText(rst) => &rst.raw,
+                _ => continue,
+            };
+            let docname = self.docname_of(doc);
+            let refs = reference_parser.parse_content(
+                raw,
+                &docname,
+                Some(doc.source_path.display().to_string()),
+            );
+            for mut reference in refs {
+                if reference.is_external {
+                    continue;
+                }
+                match reference.ref_type {
+                    ReferenceType::Document => {
+                        // :doc: targets resolve like toctree entries: leading
+                        // `/` is source-root-relative, else current-doc-relative.
+                        reference.target = resolve_docname(&reference.target, &docname);
+                        registry.add_cross_reference(reference);
+                    }
+                    ReferenceType::Section => {
+                        reference.target = normalize_label(&reference.target);
+                        registry.add_cross_reference(reference);
+                    }
+                    ReferenceType::Function
+                    | ReferenceType::Class
+                    | ReferenceType::Module
+                    | ReferenceType::Method
+                    | ReferenceType::Attribute
+                    | ReferenceType::Data
+                    | ReferenceType::Exception => python_refs += 1,
+                    // numref/envvar/option and friends: no resolver yet.
+                    ReferenceType::Custom(_) => {}
+                }
+            }
+        }
+
+        // Validate exactly once; stats/broken helpers re-validate internally.
+        for result in registry.validate_all_references() {
+            if result.is_valid {
+                continue;
+            }
+            let reference = &result.reference;
+            let message = match reference.ref_type {
+                ReferenceType::Document => {
+                    format!("unknown document: '{}'", reference.target)
+                }
+                ReferenceType::Section => {
+                    format!("undefined label: '{}'", reference.target)
+                }
+                _ => continue,
+            };
+            let file = reference
+                .source_location
+                .source_path
+                .as_deref()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(&reference.source_location.docname));
+            self.add_warning(BuildWarning::new(
+                file,
+                reference.source_location.lineno,
+                message,
+                crate::error::WarningType::BrokenCrossReference,
+            ));
+        }
+
+        if python_refs > 0 {
+            info!(
+                "{} python-domain reference(s) not validated (no object inventory until M5)",
+                python_refs
+            );
+        }
 
         Ok(())
     }
