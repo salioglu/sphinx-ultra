@@ -377,3 +377,348 @@ fn stats_prints_source_file_count() {
     let stdout = String::from_utf8_lossy(&result.stdout);
     assert!(stdout.contains("Source files: 2"), "stats stdout: {stdout}");
 }
+
+// ---------------------------------------------------------------------------
+// sphinx-build-compatible argument mode (ROADMAP M1 "CLI foundation").
+//
+// Parity targets below were measured against real sphinx-build 9.1.0
+// (2026-08-07): -W collects all warnings and exits 1 with "(with warnings
+// treated as errors)" — keep-going has been the default since Sphinx 8.1 and
+// --keep-going is an accepted no-op; an unknown builder exits 2; -M html
+// writes into OUTPUTDIR/html and prints "The HTML pages are in <dir>.";
+// -M clean prints "Removing everything under '<dir>'..."; -q suppresses
+// progress output but keeps WARNING lines; an unknown -D key warns
+// "unknown config value 'x' in override, ignoring" and the build goes on.
+// ---------------------------------------------------------------------------
+
+/// sphinx-build style: `sphinx-ultra SOURCEDIR OUTPUTDIR [opts]`.
+fn sphinx_build(args: &[&str]) -> Output {
+    bin().args(args).output().expect("binary should run")
+}
+
+#[test]
+fn sphinx_build_mode_positional() {
+    let out = out_dir("sb-positional");
+    let src = fixture("basic");
+    let result = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap(), "-b", "html"]);
+
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert!(out.join("index.html").is_file());
+    assert!(out.join("installation.html").is_file());
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    assert!(
+        stdout.contains("The HTML pages are in"),
+        "sphinx-build prints the final location line, stdout: {stdout}"
+    );
+}
+
+#[test]
+fn sphinx_build_mode_default_builder_is_html() {
+    let out = out_dir("sb-default-builder");
+    let src = fixture("basic");
+    let result = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap()]);
+
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert!(out.join("index.html").is_file());
+}
+
+#[test]
+fn sphinx_build_mode_unsupported_builder_exits_two() {
+    let out = out_dir("sb-bad-builder");
+    let src = fixture("basic");
+    let result = sphinx_build(&["-b", "latex", src.to_str().unwrap(), out.to_str().unwrap()]);
+
+    assert_eq!(
+        result.status.code(),
+        Some(2),
+        "unknown builder exits 2 (sphinx-build parity), stderr: {}",
+        stderr_of(&result)
+    );
+    assert!(
+        stderr_of(&result).contains("latex"),
+        "error must name the builder, stderr: {}",
+        stderr_of(&result)
+    );
+}
+
+#[test]
+fn sphinx_build_make_mode_html_and_clean() {
+    let out = out_dir("sb-make-mode");
+    let src = fixture("basic");
+
+    let result = sphinx_build(&["-M", "html", src.to_str().unwrap(), out.to_str().unwrap()]);
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert!(
+        out.join("html/index.html").is_file(),
+        "-M html writes into OUTPUTDIR/html (sphinx-build parity)"
+    );
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    assert!(stdout.contains("The HTML pages are in"), "stdout: {stdout}");
+
+    let clean = sphinx_build(&["-M", "clean", src.to_str().unwrap(), out.to_str().unwrap()]);
+    assert!(clean.status.success(), "stderr: {}", stderr_of(&clean));
+    assert!(
+        !out.join("html").exists(),
+        "-M clean removes everything under OUTPUTDIR"
+    );
+
+    let bad = sphinx_build(&[
+        "-M",
+        "latexpdf",
+        src.to_str().unwrap(),
+        out.to_str().unwrap(),
+    ]);
+    assert_eq!(
+        bad.status.code(),
+        Some(2),
+        "unsupported make-mode target exits 2, stderr: {}",
+        stderr_of(&bad)
+    );
+}
+
+#[test]
+fn sphinx_build_d_override_excludes_file() {
+    let out = out_dir("sb-D-exclude");
+    let src = fixture("basic");
+    let result = sphinx_build(&[
+        src.to_str().unwrap(),
+        out.to_str().unwrap(),
+        "-D",
+        "exclude_patterns=installation.rst",
+    ]);
+
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert!(out.join("index.html").is_file());
+    assert!(
+        !out.join("installation.html").exists(),
+        "-D exclude_patterns must reach file discovery"
+    );
+}
+
+#[test]
+fn sphinx_build_d_unknown_key_warns_and_continues() {
+    let out = out_dir("sb-D-unknown");
+    let src = fixture("basic");
+    let result = sphinx_build(&[
+        src.to_str().unwrap(),
+        out.to_str().unwrap(),
+        "-D",
+        "totally_unknown_key=1",
+    ]);
+
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert!(
+        stderr_of(&result)
+            .contains("unknown config value 'totally_unknown_key' in override, ignoring"),
+        "sphinx-build warning text, stderr: {}",
+        stderr_of(&result)
+    );
+}
+
+#[test]
+fn sphinx_build_w_exits_one_with_sphinx_message() {
+    let out = out_dir("sb-W");
+    let src = fixture("basic_missing_ref");
+    let result = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap(), "-W"]);
+
+    assert_eq!(
+        result.status.code(),
+        Some(1),
+        "stderr: {}",
+        stderr_of(&result)
+    );
+    assert!(
+        stderr_of(&result).contains("with warnings treated as errors"),
+        "sphinx 9.1 -W message, stderr: {}",
+        stderr_of(&result)
+    );
+
+    // keep-going is the default since Sphinx 8.1; the flag is an accepted no-op.
+    let out2 = out_dir("sb-W-keep-going");
+    let result2 = sphinx_build(&[
+        src.to_str().unwrap(),
+        out2.to_str().unwrap(),
+        "-W",
+        "--keep-going",
+    ]);
+    assert_eq!(result2.status.code(), Some(1));
+}
+
+#[test]
+fn sphinx_build_confdir_flag() {
+    let sandbox = out_dir("sb-confdir");
+    let confdir = sandbox.join("conf");
+    std::fs::create_dir_all(&confdir).unwrap();
+    std::fs::write(
+        confdir.join("conf.py"),
+        "project = 'Confdir Probe'\nexclude_patterns = ['installation.rst']\n",
+    )
+    .unwrap();
+    let out = sandbox.join("out");
+    let src = fixture("basic");
+    let result = sphinx_build(&[
+        src.to_str().unwrap(),
+        out.to_str().unwrap(),
+        "-c",
+        confdir.to_str().unwrap(),
+    ]);
+
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert!(
+        !out.join("installation.html").exists(),
+        "-c confdir conf.py must be honored"
+    );
+}
+
+#[test]
+fn sphinx_build_doctreedir_flag() {
+    let sandbox = out_dir("sb-doctreedir");
+    let doctrees = sandbox.join("trees");
+    let out = sandbox.join("out");
+    let src = fixture("basic");
+    let result = sphinx_build(&[
+        src.to_str().unwrap(),
+        out.to_str().unwrap(),
+        "-d",
+        doctrees.to_str().unwrap(),
+    ]);
+
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert!(
+        doctrees.join(".config-fingerprint").is_file(),
+        "-d must relocate the cache dir"
+    );
+    assert!(
+        !out.join(".sphinx-ultra-cache").exists(),
+        "default cache location must not be used when -d is given"
+    );
+}
+
+#[test]
+fn sphinx_build_incremental_by_default_and_fresh_env() {
+    let sandbox = out_dir("sb-incremental");
+    let out = sandbox.join("out");
+    let src = fixture("basic");
+    let s = src.to_str().unwrap();
+
+    let run1 = sphinx_build(&[s, out.to_str().unwrap()]);
+    assert!(run1.status.success(), "stderr: {}", stderr_of(&run1));
+
+    let run2 = sphinx_build(&[s, out.to_str().unwrap()]);
+    assert!(
+        stderr_of(&run2).contains("Cache hits: 2"),
+        "compat mode is incremental by default (sphinx-build parity), stderr: {}",
+        stderr_of(&run2)
+    );
+
+    let run3 = sphinx_build(&[s, out.to_str().unwrap(), "-E"]);
+    assert!(
+        stderr_of(&run3).contains("Cache hits: 0"),
+        "-E discards the saved environment, stderr: {}",
+        stderr_of(&run3)
+    );
+
+    let run4 = sphinx_build(&[s, out.to_str().unwrap(), "-a"]);
+    assert!(
+        stderr_of(&run4).contains("Cache hits: 0"),
+        "-a rewrites all files, stderr: {}",
+        stderr_of(&run4)
+    );
+}
+
+#[test]
+fn sphinx_build_quiet_keeps_warnings() {
+    let out = out_dir("sb-quiet");
+    let src = fixture("basic_missing_ref");
+    let result = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap(), "-q"]);
+
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    let stderr = stderr_of(&result);
+    assert!(
+        stderr.contains("WARNING: toctree contains reference"),
+        "-q keeps warnings, stderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("Build completed successfully"),
+        "-q suppresses progress output, stderr: {stderr}"
+    );
+}
+
+#[test]
+fn sphinx_build_j_auto_and_a_flag_accepted() {
+    let out = out_dir("sb-j-auto");
+    let src = fixture("basic");
+    let result = sphinx_build(&[
+        src.to_str().unwrap(),
+        out.to_str().unwrap(),
+        "-j",
+        "auto",
+        "-A",
+        "release_banner=1",
+        "-t",
+        "mytag",
+        "-T",
+    ]);
+
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert!(out.join("index.html").is_file());
+}
+
+#[test]
+fn sphinx_build_filenames_accepted_with_warning() {
+    let out = out_dir("sb-filenames");
+    let src = fixture("basic");
+    let file = src.join("index.rst");
+    let result = sphinx_build(&[
+        src.to_str().unwrap(),
+        out.to_str().unwrap(),
+        file.to_str().unwrap(),
+    ]);
+
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert!(
+        stderr_of(&result).contains("not supported yet"),
+        "specific-file builds are honestly reported as unsupported, stderr: {}",
+        stderr_of(&result)
+    );
+}
+
+#[test]
+fn source_dir_named_build_works_via_dot_slash() {
+    let sandbox = out_dir("sb-dir-named-build");
+    let src = sandbox.join("build");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(src.join("index.rst"), "Title\n=====\n\nBody.\n").unwrap();
+    let out = sandbox.join("out");
+
+    let result = bin()
+        .current_dir(&sandbox)
+        .arg("./build")
+        .arg(out.to_str().unwrap())
+        .output()
+        .expect("binary should run");
+
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert!(out.join("index.html").is_file());
+}
+
+#[test]
+fn preset_rust_log_is_respected() {
+    let out = out_dir("rust-log-respected");
+    let result = bin()
+        .env("RUST_LOG", "error")
+        .arg("build")
+        .arg("--source")
+        .arg(fixture("basic_missing_ref"))
+        .arg("--output")
+        .arg(&out)
+        .output()
+        .expect("binary should run");
+
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    let stderr = stderr_of(&result);
+    assert!(
+        !stderr.contains("WARNING") && !stderr.contains("INFO"),
+        "RUST_LOG=error must silence warn/info logging (pre-set RUST_LOG wins), stderr: {stderr}"
+    );
+}
