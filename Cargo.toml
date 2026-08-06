@@ -63,8 +63,8 @@ html-escape = "0.2"
 # Compression (objects.inv inventory format)
 flate2 = "1.0"
 
-# Template engine
-minijinja = "2.12"
+# Template engine ("loader" enables owned template storage in the Environment)
+minijinja = { version = "2.12", features = ["loader"] }
 
 # Base64 encoding
 base64 = "0.22"
