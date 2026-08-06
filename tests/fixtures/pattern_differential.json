@@ -1,0 +1,4411 @@
+{
+  "cases": [
+    {
+      "match": false,
+      "path": ".git/config",
+      "pattern": "*"
+    },
+    {
+      "match": true,
+      "path": "5x",
+      "pattern": "*"
+    },
+    {
+      "match": true,
+      "path": "Thumbs.db",
+      "pattern": "*"
+    },
+    {
+      "match": true,
+      "path": "[a].rst",
+      "pattern": "*"
+    },
+    {
+      "match": true,
+      "path": "]a]",
+      "pattern": "*"
+    },
+    {
+      "match": true,
+      "path": "^x",
+      "pattern": "*"
+    },
+    {
+      "match": false,
+      "path": "_build/a/b",
+      "pattern": "*"
+    },
+    {
+      "match": false,
+      "path": "_build/x",
+      "pattern": "*"
+    },
+    {
+      "match": true,
+      "path": "a-z",
+      "pattern": "*"
+    },
+    {
+      "match": true,
+      "path": "a.rst",
+      "pattern": "*"
+    },
+    {
+      "match": false,
+      "path": "a/b/c/d/e.rst",
+      "pattern": "*"
+    },
+    {
+      "match": true,
+      "path": "ab",
+      "pattern": "*"
+    },
+    {
+      "match": true,
+      "path": "axb",
+      "pattern": "*"
+    },
+    {
+      "match": false,
+      "path": "axx/yyb",
+      "pattern": "*"
+    },
+    {
+      "match": true,
+      "path": "bx",
+      "pattern": "*"
+    },
+    {
+      "match": true,
+      "path": "chapter1.rst",
+      "pattern": "*"
+    },
+    {
+      "match": true,
+      "path": "chapterX.rst",
+      "pattern": "*"
+    },
+    {
+      "match": false,
+      "path": "docs/a/b.rst",
+      "pattern": "*"
+    },
+    {
+      "match": false,
+      "path": "docs/api.rst",
+      "pattern": "*"
+    },
+    {
+      "match": true,
+      "path": "dx",
+      "pattern": "*"
+    },
+    {
+      "match": true,
+      "path": "foo",
+      "pattern": "*"
+    },
+    {
+      "match": false,
+      "path": "foo/bar",
+      "pattern": "*"
+    },
+    {
+      "match": false,
+      "path": "foo/bar.rst",
+      "pattern": "*"
+    },
+    {
+      "match": false,
+      "path": "foo/x/bar",
+      "pattern": "*"
+    },
+    {
+      "match": false,
+      "path": "foo/x/y/bar",
+      "pattern": "*"
+    },
+    {
+      "match": true,
+      "path": "index.rst",
+      "pattern": "*"
+    },
+    {
+      "match": false,
+      "path": "src/code.py",
+      "pattern": "*"
+    },
+    {
+      "match": false,
+      "path": "x/Thumbs.db",
+      "pattern": "*"
+    },
+    {
+      "match": true,
+      "path": ".git/config",
+      "pattern": "**"
+    },
+    {
+      "match": true,
+      "path": "5x",
+      "pattern": "**"
+    },
+    {
+      "match": true,
+      "path": "Thumbs.db",
+      "pattern": "**"
+    },
+    {
+      "match": true,
+      "path": "[a].rst",
+      "pattern": "**"
+    },
+    {
+      "match": true,
+      "path": "]a]",
+      "pattern": "**"
+    },
+    {
+      "match": true,
+      "path": "^x",
+      "pattern": "**"
+    },
+    {
+      "match": true,
+      "path": "_build/a/b",
+      "pattern": "**"
+    },
+    {
+      "match": true,
+      "path": "_build/x",
+      "pattern": "**"
+    },
+    {
+      "match": true,
+      "path": "a-z",
+      "pattern": "**"
+    },
+    {
+      "match": true,
+      "path": "a.rst",
+      "pattern": "**"
+    },
+    {
+      "match": true,
+      "path": "a/b/c/d/e.rst",
+      "pattern": "**"
+    },
+    {
+      "match": true,
+      "path": "ab",
+      "pattern": "**"
+    },
+    {
+      "match": true,
+      "path": "axb",
+      "pattern": "**"
+    },
+    {
+      "match": true,
+      "path": "axx/yyb",
+      "pattern": "**"
+    },
+    {
+      "match": true,
+      "path": "bx",
+      "pattern": "**"
+    },
+    {
+      "match": true,
+      "path": "chapter1.rst",
+      "pattern": "**"
+    },
+    {
+      "match": true,
+      "path": "chapterX.rst",
+      "pattern": "**"
+    },
+    {
+      "match": true,
+      "path": "docs/a/b.rst",
+      "pattern": "**"
+    },
+    {
+      "match": true,
+      "path": "docs/api.rst",
+      "pattern": "**"
+    },
+    {
+      "match": true,
+      "path": "dx",
+      "pattern": "**"
+    },
+    {
+      "match": true,
+      "path": "foo",
+      "pattern": "**"
+    },
+    {
+      "match": true,
+      "path": "foo/bar",
+      "pattern": "**"
+    },
+    {
+      "match": true,
+      "path": "foo/bar.rst",
+      "pattern": "**"
+    },
+    {
+      "match": true,
+      "path": "foo/x/bar",
+      "pattern": "**"
+    },
+    {
+      "match": true,
+      "path": "foo/x/y/bar",
+      "pattern": "**"
+    },
+    {
+      "match": true,
+      "path": "index.rst",
+      "pattern": "**"
+    },
+    {
+      "match": true,
+      "path": "src/code.py",
+      "pattern": "**"
+    },
+    {
+      "match": true,
+      "path": "x/Thumbs.db",
+      "pattern": "**"
+    },
+    {
+      "match": true,
+      "path": ".git/config",
+      "pattern": "***"
+    },
+    {
+      "match": true,
+      "path": "5x",
+      "pattern": "***"
+    },
+    {
+      "match": true,
+      "path": "Thumbs.db",
+      "pattern": "***"
+    },
+    {
+      "match": true,
+      "path": "[a].rst",
+      "pattern": "***"
+    },
+    {
+      "match": true,
+      "path": "]a]",
+      "pattern": "***"
+    },
+    {
+      "match": true,
+      "path": "^x",
+      "pattern": "***"
+    },
+    {
+      "match": true,
+      "path": "_build/a/b",
+      "pattern": "***"
+    },
+    {
+      "match": true,
+      "path": "_build/x",
+      "pattern": "***"
+    },
+    {
+      "match": true,
+      "path": "a-z",
+      "pattern": "***"
+    },
+    {
+      "match": true,
+      "path": "a.rst",
+      "pattern": "***"
+    },
+    {
+      "match": true,
+      "path": "a/b/c/d/e.rst",
+      "pattern": "***"
+    },
+    {
+      "match": true,
+      "path": "ab",
+      "pattern": "***"
+    },
+    {
+      "match": true,
+      "path": "axb",
+      "pattern": "***"
+    },
+    {
+      "match": true,
+      "path": "axx/yyb",
+      "pattern": "***"
+    },
+    {
+      "match": true,
+      "path": "bx",
+      "pattern": "***"
+    },
+    {
+      "match": true,
+      "path": "chapter1.rst",
+      "pattern": "***"
+    },
+    {
+      "match": true,
+      "path": "chapterX.rst",
+      "pattern": "***"
+    },
+    {
+      "match": true,
+      "path": "docs/a/b.rst",
+      "pattern": "***"
+    },
+    {
+      "match": true,
+      "path": "docs/api.rst",
+      "pattern": "***"
+    },
+    {
+      "match": true,
+      "path": "dx",
+      "pattern": "***"
+    },
+    {
+      "match": true,
+      "path": "foo",
+      "pattern": "***"
+    },
+    {
+      "match": true,
+      "path": "foo/bar",
+      "pattern": "***"
+    },
+    {
+      "match": true,
+      "path": "foo/bar.rst",
+      "pattern": "***"
+    },
+    {
+      "match": true,
+      "path": "foo/x/bar",
+      "pattern": "***"
+    },
+    {
+      "match": true,
+      "path": "foo/x/y/bar",
+      "pattern": "***"
+    },
+    {
+      "match": true,
+      "path": "index.rst",
+      "pattern": "***"
+    },
+    {
+      "match": true,
+      "path": "src/code.py",
+      "pattern": "***"
+    },
+    {
+      "match": true,
+      "path": "x/Thumbs.db",
+      "pattern": "***"
+    },
+    {
+      "match": false,
+      "path": ".git/config",
+      "pattern": "**.rst"
+    },
+    {
+      "match": false,
+      "path": "5x",
+      "pattern": "**.rst"
+    },
+    {
+      "match": false,
+      "path": "Thumbs.db",
+      "pattern": "**.rst"
+    },
+    {
+      "match": true,
+      "path": "[a].rst",
+      "pattern": "**.rst"
+    },
+    {
+      "match": false,
+      "path": "]a]",
+      "pattern": "**.rst"
+    },
+    {
+      "match": false,
+      "path": "^x",
+      "pattern": "**.rst"
+    },
+    {
+      "match": false,
+      "path": "_build/a/b",
+      "pattern": "**.rst"
+    },
+    {
+      "match": false,
+      "path": "_build/x",
+      "pattern": "**.rst"
+    },
+    {
+      "match": false,
+      "path": "a-z",
+      "pattern": "**.rst"
+    },
+    {
+      "match": true,
+      "path": "a.rst",
+      "pattern": "**.rst"
+    },
+    {
+      "match": true,
+      "path": "a/b/c/d/e.rst",
+      "pattern": "**.rst"
+    },
+    {
+      "match": false,
+      "path": "ab",
+      "pattern": "**.rst"
+    },
+    {
+      "match": false,
+      "path": "axb",
+      "pattern": "**.rst"
+    },
+    {
+      "match": false,
+      "path": "axx/yyb",
+      "pattern": "**.rst"
+    },
+    {
+      "match": false,
+      "path": "bx",
+      "pattern": "**.rst"
+    },
+    {
+      "match": true,
+      "path": "chapter1.rst",
+      "pattern": "**.rst"
+    },
+    {
+      "match": true,
+      "path": "chapterX.rst",
+      "pattern": "**.rst"
+    },
+    {
+      "match": true,
+      "path": "docs/a/b.rst",
+      "pattern": "**.rst"
+    },
+    {
+      "match": true,
+      "path": "docs/api.rst",
+      "pattern": "**.rst"
+    },
+    {
+      "match": false,
+      "path": "dx",
+      "pattern": "**.rst"
+    },
+    {
+      "match": false,
+      "path": "foo",
+      "pattern": "**.rst"
+    },
+    {
+      "match": false,
+      "path": "foo/bar",
+      "pattern": "**.rst"
+    },
+    {
+      "match": true,
+      "path": "foo/bar.rst",
+      "pattern": "**.rst"
+    },
+    {
+      "match": false,
+      "path": "foo/x/bar",
+      "pattern": "**.rst"
+    },
+    {
+      "match": false,
+      "path": "foo/x/y/bar",
+      "pattern": "**.rst"
+    },
+    {
+      "match": true,
+      "path": "index.rst",
+      "pattern": "**.rst"
+    },
+    {
+      "match": false,
+      "path": "src/code.py",
+      "pattern": "**.rst"
+    },
+    {
+      "match": false,
+      "path": "x/Thumbs.db",
+      "pattern": "**.rst"
+    },
+    {
+      "match": true,
+      "path": ".git/config",
+      "pattern": "**/**"
+    },
+    {
+      "match": false,
+      "path": "5x",
+      "pattern": "**/**"
+    },
+    {
+      "match": false,
+      "path": "Thumbs.db",
+      "pattern": "**/**"
+    },
+    {
+      "match": false,
+      "path": "[a].rst",
+      "pattern": "**/**"
+    },
+    {
+      "match": false,
+      "path": "]a]",
+      "pattern": "**/**"
+    },
+    {
+      "match": false,
+      "path": "^x",
+      "pattern": "**/**"
+    },
+    {
+      "match": true,
+      "path": "_build/a/b",
+      "pattern": "**/**"
+    },
+    {
+      "match": true,
+      "path": "_build/x",
+      "pattern": "**/**"
+    },
+    {
+      "match": false,
+      "path": "a-z",
+      "pattern": "**/**"
+    },
+    {
+      "match": false,
+      "path": "a.rst",
+      "pattern": "**/**"
+    },
+    {
+      "match": true,
+      "path": "a/b/c/d/e.rst",
+      "pattern": "**/**"
+    },
+    {
+      "match": false,
+      "path": "ab",
+      "pattern": "**/**"
+    },
+    {
+      "match": false,
+      "path": "axb",
+      "pattern": "**/**"
+    },
+    {
+      "match": true,
+      "path": "axx/yyb",
+      "pattern": "**/**"
+    },
+    {
+      "match": false,
+      "path": "bx",
+      "pattern": "**/**"
+    },
+    {
+      "match": false,
+      "path": "chapter1.rst",
+      "pattern": "**/**"
+    },
+    {
+      "match": false,
+      "path": "chapterX.rst",
+      "pattern": "**/**"
+    },
+    {
+      "match": true,
+      "path": "docs/a/b.rst",
+      "pattern": "**/**"
+    },
+    {
+      "match": true,
+      "path": "docs/api.rst",
+      "pattern": "**/**"
+    },
+    {
+      "match": false,
+      "path": "dx",
+      "pattern": "**/**"
+    },
+    {
+      "match": false,
+      "path": "foo",
+      "pattern": "**/**"
+    },
+    {
+      "match": true,
+      "path": "foo/bar",
+      "pattern": "**/**"
+    },
+    {
+      "match": true,
+      "path": "foo/bar.rst",
+      "pattern": "**/**"
+    },
+    {
+      "match": true,
+      "path": "foo/x/bar",
+      "pattern": "**/**"
+    },
+    {
+      "match": true,
+      "path": "foo/x/y/bar",
+      "pattern": "**/**"
+    },
+    {
+      "match": false,
+      "path": "index.rst",
+      "pattern": "**/**"
+    },
+    {
+      "match": true,
+      "path": "src/code.py",
+      "pattern": "**/**"
+    },
+    {
+      "match": true,
+      "path": "x/Thumbs.db",
+      "pattern": "**/**"
+    },
+    {
+      "match": false,
+      "path": ".git/config",
+      "pattern": "**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "5x",
+      "pattern": "**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "Thumbs.db",
+      "pattern": "**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "[a].rst",
+      "pattern": "**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "]a]",
+      "pattern": "**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "^x",
+      "pattern": "**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "_build/a/b",
+      "pattern": "**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "_build/x",
+      "pattern": "**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "a-z",
+      "pattern": "**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "a.rst",
+      "pattern": "**/*.rst"
+    },
+    {
+      "match": true,
+      "path": "a/b/c/d/e.rst",
+      "pattern": "**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "ab",
+      "pattern": "**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "axb",
+      "pattern": "**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "axx/yyb",
+      "pattern": "**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "bx",
+      "pattern": "**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "chapter1.rst",
+      "pattern": "**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "chapterX.rst",
+      "pattern": "**/*.rst"
+    },
+    {
+      "match": true,
+      "path": "docs/a/b.rst",
+      "pattern": "**/*.rst"
+    },
+    {
+      "match": true,
+      "path": "docs/api.rst",
+      "pattern": "**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "dx",
+      "pattern": "**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "foo",
+      "pattern": "**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "foo/bar",
+      "pattern": "**/*.rst"
+    },
+    {
+      "match": true,
+      "path": "foo/bar.rst",
+      "pattern": "**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "foo/x/bar",
+      "pattern": "**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "foo/x/y/bar",
+      "pattern": "**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "index.rst",
+      "pattern": "**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "src/code.py",
+      "pattern": "**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "x/Thumbs.db",
+      "pattern": "**/*.rst"
+    },
+    {
+      "match": false,
+      "path": ".git/config",
+      "pattern": "**/bar"
+    },
+    {
+      "match": false,
+      "path": "5x",
+      "pattern": "**/bar"
+    },
+    {
+      "match": false,
+      "path": "Thumbs.db",
+      "pattern": "**/bar"
+    },
+    {
+      "match": false,
+      "path": "[a].rst",
+      "pattern": "**/bar"
+    },
+    {
+      "match": false,
+      "path": "]a]",
+      "pattern": "**/bar"
+    },
+    {
+      "match": false,
+      "path": "^x",
+      "pattern": "**/bar"
+    },
+    {
+      "match": false,
+      "path": "_build/a/b",
+      "pattern": "**/bar"
+    },
+    {
+      "match": false,
+      "path": "_build/x",
+      "pattern": "**/bar"
+    },
+    {
+      "match": false,
+      "path": "a-z",
+      "pattern": "**/bar"
+    },
+    {
+      "match": false,
+      "path": "a.rst",
+      "pattern": "**/bar"
+    },
+    {
+      "match": false,
+      "path": "a/b/c/d/e.rst",
+      "pattern": "**/bar"
+    },
+    {
+      "match": false,
+      "path": "ab",
+      "pattern": "**/bar"
+    },
+    {
+      "match": false,
+      "path": "axb",
+      "pattern": "**/bar"
+    },
+    {
+      "match": false,
+      "path": "axx/yyb",
+      "pattern": "**/bar"
+    },
+    {
+      "match": false,
+      "path": "bx",
+      "pattern": "**/bar"
+    },
+    {
+      "match": false,
+      "path": "chapter1.rst",
+      "pattern": "**/bar"
+    },
+    {
+      "match": false,
+      "path": "chapterX.rst",
+      "pattern": "**/bar"
+    },
+    {
+      "match": false,
+      "path": "docs/a/b.rst",
+      "pattern": "**/bar"
+    },
+    {
+      "match": false,
+      "path": "docs/api.rst",
+      "pattern": "**/bar"
+    },
+    {
+      "match": false,
+      "path": "dx",
+      "pattern": "**/bar"
+    },
+    {
+      "match": false,
+      "path": "foo",
+      "pattern": "**/bar"
+    },
+    {
+      "match": true,
+      "path": "foo/bar",
+      "pattern": "**/bar"
+    },
+    {
+      "match": false,
+      "path": "foo/bar.rst",
+      "pattern": "**/bar"
+    },
+    {
+      "match": true,
+      "path": "foo/x/bar",
+      "pattern": "**/bar"
+    },
+    {
+      "match": true,
+      "path": "foo/x/y/bar",
+      "pattern": "**/bar"
+    },
+    {
+      "match": false,
+      "path": "index.rst",
+      "pattern": "**/bar"
+    },
+    {
+      "match": false,
+      "path": "src/code.py",
+      "pattern": "**/bar"
+    },
+    {
+      "match": false,
+      "path": "x/Thumbs.db",
+      "pattern": "**/bar"
+    },
+    {
+      "match": false,
+      "path": ".git/config",
+      "pattern": "**/index.rst"
+    },
+    {
+      "match": false,
+      "path": "5x",
+      "pattern": "**/index.rst"
+    },
+    {
+      "match": false,
+      "path": "Thumbs.db",
+      "pattern": "**/index.rst"
+    },
+    {
+      "match": false,
+      "path": "[a].rst",
+      "pattern": "**/index.rst"
+    },
+    {
+      "match": false,
+      "path": "]a]",
+      "pattern": "**/index.rst"
+    },
+    {
+      "match": false,
+      "path": "^x",
+      "pattern": "**/index.rst"
+    },
+    {
+      "match": false,
+      "path": "_build/a/b",
+      "pattern": "**/index.rst"
+    },
+    {
+      "match": false,
+      "path": "_build/x",
+      "pattern": "**/index.rst"
+    },
+    {
+      "match": false,
+      "path": "a-z",
+      "pattern": "**/index.rst"
+    },
+    {
+      "match": false,
+      "path": "a.rst",
+      "pattern": "**/index.rst"
+    },
+    {
+      "match": false,
+      "path": "a/b/c/d/e.rst",
+      "pattern": "**/index.rst"
+    },
+    {
+      "match": false,
+      "path": "ab",
+      "pattern": "**/index.rst"
+    },
+    {
+      "match": false,
+      "path": "axb",
+      "pattern": "**/index.rst"
+    },
+    {
+      "match": false,
+      "path": "axx/yyb",
+      "pattern": "**/index.rst"
+    },
+    {
+      "match": false,
+      "path": "bx",
+      "pattern": "**/index.rst"
+    },
+    {
+      "match": false,
+      "path": "chapter1.rst",
+      "pattern": "**/index.rst"
+    },
+    {
+      "match": false,
+      "path": "chapterX.rst",
+      "pattern": "**/index.rst"
+    },
+    {
+      "match": false,
+      "path": "docs/a/b.rst",
+      "pattern": "**/index.rst"
+    },
+    {
+      "match": false,
+      "path": "docs/api.rst",
+      "pattern": "**/index.rst"
+    },
+    {
+      "match": true,
+      "path": "docs/index.rst",
+      "pattern": "**/index.rst"
+    },
+    {
+      "match": false,
+      "path": "dx",
+      "pattern": "**/index.rst"
+    },
+    {
+      "match": false,
+      "path": "foo",
+      "pattern": "**/index.rst"
+    },
+    {
+      "match": false,
+      "path": "foo/bar",
+      "pattern": "**/index.rst"
+    },
+    {
+      "match": false,
+      "path": "foo/bar.rst",
+      "pattern": "**/index.rst"
+    },
+    {
+      "match": false,
+      "path": "foo/x/bar",
+      "pattern": "**/index.rst"
+    },
+    {
+      "match": false,
+      "path": "foo/x/y/bar",
+      "pattern": "**/index.rst"
+    },
+    {
+      "match": false,
+      "path": "index.rst",
+      "pattern": "**/index.rst"
+    },
+    {
+      "match": false,
+      "path": "src/code.py",
+      "pattern": "**/index.rst"
+    },
+    {
+      "match": false,
+      "path": "x/Thumbs.db",
+      "pattern": "**/index.rst"
+    },
+    {
+      "match": false,
+      "path": ".git/config",
+      "pattern": "*.rst"
+    },
+    {
+      "match": false,
+      "path": "5x",
+      "pattern": "*.rst"
+    },
+    {
+      "match": false,
+      "path": "Thumbs.db",
+      "pattern": "*.rst"
+    },
+    {
+      "match": true,
+      "path": "[a].rst",
+      "pattern": "*.rst"
+    },
+    {
+      "match": false,
+      "path": "]a]",
+      "pattern": "*.rst"
+    },
+    {
+      "match": false,
+      "path": "^x",
+      "pattern": "*.rst"
+    },
+    {
+      "match": false,
+      "path": "_build/a/b",
+      "pattern": "*.rst"
+    },
+    {
+      "match": false,
+      "path": "_build/x",
+      "pattern": "*.rst"
+    },
+    {
+      "match": false,
+      "path": "a-z",
+      "pattern": "*.rst"
+    },
+    {
+      "match": true,
+      "path": "a.rst",
+      "pattern": "*.rst"
+    },
+    {
+      "match": false,
+      "path": "a/b/c/d/e.rst",
+      "pattern": "*.rst"
+    },
+    {
+      "match": false,
+      "path": "ab",
+      "pattern": "*.rst"
+    },
+    {
+      "match": false,
+      "path": "axb",
+      "pattern": "*.rst"
+    },
+    {
+      "match": false,
+      "path": "axx/yyb",
+      "pattern": "*.rst"
+    },
+    {
+      "match": false,
+      "path": "bx",
+      "pattern": "*.rst"
+    },
+    {
+      "match": true,
+      "path": "chapter1.rst",
+      "pattern": "*.rst"
+    },
+    {
+      "match": true,
+      "path": "chapterX.rst",
+      "pattern": "*.rst"
+    },
+    {
+      "match": false,
+      "path": "docs/a/b.rst",
+      "pattern": "*.rst"
+    },
+    {
+      "match": false,
+      "path": "docs/api.rst",
+      "pattern": "*.rst"
+    },
+    {
+      "match": false,
+      "path": "dx",
+      "pattern": "*.rst"
+    },
+    {
+      "match": false,
+      "path": "foo",
+      "pattern": "*.rst"
+    },
+    {
+      "match": false,
+      "path": "foo/bar",
+      "pattern": "*.rst"
+    },
+    {
+      "match": false,
+      "path": "foo/bar.rst",
+      "pattern": "*.rst"
+    },
+    {
+      "match": false,
+      "path": "foo/x/bar",
+      "pattern": "*.rst"
+    },
+    {
+      "match": false,
+      "path": "foo/x/y/bar",
+      "pattern": "*.rst"
+    },
+    {
+      "match": true,
+      "path": "index.rst",
+      "pattern": "*.rst"
+    },
+    {
+      "match": false,
+      "path": "src/code.py",
+      "pattern": "*.rst"
+    },
+    {
+      "match": false,
+      "path": "x/Thumbs.db",
+      "pattern": "*.rst"
+    },
+    {
+      "match": true,
+      "path": ".git/config",
+      "pattern": ".*/**"
+    },
+    {
+      "match": false,
+      "path": "5x",
+      "pattern": ".*/**"
+    },
+    {
+      "match": false,
+      "path": "Thumbs.db",
+      "pattern": ".*/**"
+    },
+    {
+      "match": false,
+      "path": "[a].rst",
+      "pattern": ".*/**"
+    },
+    {
+      "match": false,
+      "path": "]a]",
+      "pattern": ".*/**"
+    },
+    {
+      "match": false,
+      "path": "^x",
+      "pattern": ".*/**"
+    },
+    {
+      "match": false,
+      "path": "_build/a/b",
+      "pattern": ".*/**"
+    },
+    {
+      "match": false,
+      "path": "_build/x",
+      "pattern": ".*/**"
+    },
+    {
+      "match": false,
+      "path": "a-z",
+      "pattern": ".*/**"
+    },
+    {
+      "match": false,
+      "path": "a.rst",
+      "pattern": ".*/**"
+    },
+    {
+      "match": false,
+      "path": "a/b/c/d/e.rst",
+      "pattern": ".*/**"
+    },
+    {
+      "match": false,
+      "path": "ab",
+      "pattern": ".*/**"
+    },
+    {
+      "match": false,
+      "path": "axb",
+      "pattern": ".*/**"
+    },
+    {
+      "match": false,
+      "path": "axx/yyb",
+      "pattern": ".*/**"
+    },
+    {
+      "match": false,
+      "path": "bx",
+      "pattern": ".*/**"
+    },
+    {
+      "match": false,
+      "path": "chapter1.rst",
+      "pattern": ".*/**"
+    },
+    {
+      "match": false,
+      "path": "chapterX.rst",
+      "pattern": ".*/**"
+    },
+    {
+      "match": false,
+      "path": "docs/a/b.rst",
+      "pattern": ".*/**"
+    },
+    {
+      "match": false,
+      "path": "docs/api.rst",
+      "pattern": ".*/**"
+    },
+    {
+      "match": false,
+      "path": "dx",
+      "pattern": ".*/**"
+    },
+    {
+      "match": false,
+      "path": "foo",
+      "pattern": ".*/**"
+    },
+    {
+      "match": false,
+      "path": "foo/bar",
+      "pattern": ".*/**"
+    },
+    {
+      "match": false,
+      "path": "foo/bar.rst",
+      "pattern": ".*/**"
+    },
+    {
+      "match": false,
+      "path": "foo/x/bar",
+      "pattern": ".*/**"
+    },
+    {
+      "match": false,
+      "path": "foo/x/y/bar",
+      "pattern": ".*/**"
+    },
+    {
+      "match": false,
+      "path": "index.rst",
+      "pattern": ".*/**"
+    },
+    {
+      "match": false,
+      "path": "src/code.py",
+      "pattern": ".*/**"
+    },
+    {
+      "match": false,
+      "path": "x/Thumbs.db",
+      "pattern": ".*/**"
+    },
+    {
+      "match": false,
+      "path": ".git/config",
+      "pattern": "?"
+    },
+    {
+      "match": false,
+      "path": "5x",
+      "pattern": "?"
+    },
+    {
+      "match": false,
+      "path": "Thumbs.db",
+      "pattern": "?"
+    },
+    {
+      "match": false,
+      "path": "[a].rst",
+      "pattern": "?"
+    },
+    {
+      "match": false,
+      "path": "]a]",
+      "pattern": "?"
+    },
+    {
+      "match": false,
+      "path": "^x",
+      "pattern": "?"
+    },
+    {
+      "match": false,
+      "path": "_build/a/b",
+      "pattern": "?"
+    },
+    {
+      "match": false,
+      "path": "_build/x",
+      "pattern": "?"
+    },
+    {
+      "match": false,
+      "path": "a-z",
+      "pattern": "?"
+    },
+    {
+      "match": false,
+      "path": "a.rst",
+      "pattern": "?"
+    },
+    {
+      "match": false,
+      "path": "a/b/c/d/e.rst",
+      "pattern": "?"
+    },
+    {
+      "match": false,
+      "path": "ab",
+      "pattern": "?"
+    },
+    {
+      "match": false,
+      "path": "axb",
+      "pattern": "?"
+    },
+    {
+      "match": false,
+      "path": "axx/yyb",
+      "pattern": "?"
+    },
+    {
+      "match": false,
+      "path": "bx",
+      "pattern": "?"
+    },
+    {
+      "match": false,
+      "path": "chapter1.rst",
+      "pattern": "?"
+    },
+    {
+      "match": false,
+      "path": "chapterX.rst",
+      "pattern": "?"
+    },
+    {
+      "match": false,
+      "path": "docs/a/b.rst",
+      "pattern": "?"
+    },
+    {
+      "match": false,
+      "path": "docs/api.rst",
+      "pattern": "?"
+    },
+    {
+      "match": false,
+      "path": "dx",
+      "pattern": "?"
+    },
+    {
+      "match": false,
+      "path": "foo",
+      "pattern": "?"
+    },
+    {
+      "match": false,
+      "path": "foo/bar",
+      "pattern": "?"
+    },
+    {
+      "match": false,
+      "path": "foo/bar.rst",
+      "pattern": "?"
+    },
+    {
+      "match": false,
+      "path": "foo/x/bar",
+      "pattern": "?"
+    },
+    {
+      "match": false,
+      "path": "foo/x/y/bar",
+      "pattern": "?"
+    },
+    {
+      "match": false,
+      "path": "index.rst",
+      "pattern": "?"
+    },
+    {
+      "match": false,
+      "path": "src/code.py",
+      "pattern": "?"
+    },
+    {
+      "match": false,
+      "path": "x/Thumbs.db",
+      "pattern": "?"
+    },
+    {
+      "match": false,
+      "path": ".git/config",
+      "pattern": "Thumbs.db"
+    },
+    {
+      "match": false,
+      "path": "5x",
+      "pattern": "Thumbs.db"
+    },
+    {
+      "match": true,
+      "path": "Thumbs.db",
+      "pattern": "Thumbs.db"
+    },
+    {
+      "match": false,
+      "path": "[a].rst",
+      "pattern": "Thumbs.db"
+    },
+    {
+      "match": false,
+      "path": "]a]",
+      "pattern": "Thumbs.db"
+    },
+    {
+      "match": false,
+      "path": "^x",
+      "pattern": "Thumbs.db"
+    },
+    {
+      "match": false,
+      "path": "_build/a/b",
+      "pattern": "Thumbs.db"
+    },
+    {
+      "match": false,
+      "path": "_build/x",
+      "pattern": "Thumbs.db"
+    },
+    {
+      "match": false,
+      "path": "a-z",
+      "pattern": "Thumbs.db"
+    },
+    {
+      "match": false,
+      "path": "a.rst",
+      "pattern": "Thumbs.db"
+    },
+    {
+      "match": false,
+      "path": "a/b/c/d/e.rst",
+      "pattern": "Thumbs.db"
+    },
+    {
+      "match": false,
+      "path": "ab",
+      "pattern": "Thumbs.db"
+    },
+    {
+      "match": false,
+      "path": "axb",
+      "pattern": "Thumbs.db"
+    },
+    {
+      "match": false,
+      "path": "axx/yyb",
+      "pattern": "Thumbs.db"
+    },
+    {
+      "match": false,
+      "path": "bx",
+      "pattern": "Thumbs.db"
+    },
+    {
+      "match": false,
+      "path": "chapter1.rst",
+      "pattern": "Thumbs.db"
+    },
+    {
+      "match": false,
+      "path": "chapterX.rst",
+      "pattern": "Thumbs.db"
+    },
+    {
+      "match": false,
+      "path": "docs/a/b.rst",
+      "pattern": "Thumbs.db"
+    },
+    {
+      "match": false,
+      "path": "docs/api.rst",
+      "pattern": "Thumbs.db"
+    },
+    {
+      "match": false,
+      "path": "dx",
+      "pattern": "Thumbs.db"
+    },
+    {
+      "match": false,
+      "path": "foo",
+      "pattern": "Thumbs.db"
+    },
+    {
+      "match": false,
+      "path": "foo/bar",
+      "pattern": "Thumbs.db"
+    },
+    {
+      "match": false,
+      "path": "foo/bar.rst",
+      "pattern": "Thumbs.db"
+    },
+    {
+      "match": false,
+      "path": "foo/x/bar",
+      "pattern": "Thumbs.db"
+    },
+    {
+      "match": false,
+      "path": "foo/x/y/bar",
+      "pattern": "Thumbs.db"
+    },
+    {
+      "match": false,
+      "path": "index.rst",
+      "pattern": "Thumbs.db"
+    },
+    {
+      "match": false,
+      "path": "src/code.py",
+      "pattern": "Thumbs.db"
+    },
+    {
+      "match": false,
+      "path": "x/Thumbs.db",
+      "pattern": "Thumbs.db"
+    },
+    {
+      "match": false,
+      "path": ".git/config",
+      "pattern": "[!]a]"
+    },
+    {
+      "match": false,
+      "path": "5x",
+      "pattern": "[!]a]"
+    },
+    {
+      "match": false,
+      "path": "Thumbs.db",
+      "pattern": "[!]a]"
+    },
+    {
+      "match": false,
+      "path": "[a].rst",
+      "pattern": "[!]a]"
+    },
+    {
+      "match": true,
+      "path": "]a]",
+      "pattern": "[!]a]"
+    },
+    {
+      "match": false,
+      "path": "^x",
+      "pattern": "[!]a]"
+    },
+    {
+      "match": false,
+      "path": "_build/a/b",
+      "pattern": "[!]a]"
+    },
+    {
+      "match": false,
+      "path": "_build/x",
+      "pattern": "[!]a]"
+    },
+    {
+      "match": false,
+      "path": "a-z",
+      "pattern": "[!]a]"
+    },
+    {
+      "match": false,
+      "path": "a.rst",
+      "pattern": "[!]a]"
+    },
+    {
+      "match": false,
+      "path": "a/b/c/d/e.rst",
+      "pattern": "[!]a]"
+    },
+    {
+      "match": false,
+      "path": "ab",
+      "pattern": "[!]a]"
+    },
+    {
+      "match": false,
+      "path": "axb",
+      "pattern": "[!]a]"
+    },
+    {
+      "match": false,
+      "path": "axx/yyb",
+      "pattern": "[!]a]"
+    },
+    {
+      "match": false,
+      "path": "bx",
+      "pattern": "[!]a]"
+    },
+    {
+      "match": false,
+      "path": "chapter1.rst",
+      "pattern": "[!]a]"
+    },
+    {
+      "match": false,
+      "path": "chapterX.rst",
+      "pattern": "[!]a]"
+    },
+    {
+      "match": false,
+      "path": "docs/a/b.rst",
+      "pattern": "[!]a]"
+    },
+    {
+      "match": false,
+      "path": "docs/api.rst",
+      "pattern": "[!]a]"
+    },
+    {
+      "match": false,
+      "path": "dx",
+      "pattern": "[!]a]"
+    },
+    {
+      "match": false,
+      "path": "foo",
+      "pattern": "[!]a]"
+    },
+    {
+      "match": false,
+      "path": "foo/bar",
+      "pattern": "[!]a]"
+    },
+    {
+      "match": false,
+      "path": "foo/bar.rst",
+      "pattern": "[!]a]"
+    },
+    {
+      "match": false,
+      "path": "foo/x/bar",
+      "pattern": "[!]a]"
+    },
+    {
+      "match": false,
+      "path": "foo/x/y/bar",
+      "pattern": "[!]a]"
+    },
+    {
+      "match": false,
+      "path": "index.rst",
+      "pattern": "[!]a]"
+    },
+    {
+      "match": false,
+      "path": "src/code.py",
+      "pattern": "[!]a]"
+    },
+    {
+      "match": false,
+      "path": "x/Thumbs.db",
+      "pattern": "[!]a]"
+    },
+    {
+      "match": true,
+      "path": "xa]",
+      "pattern": "[!]a]"
+    },
+    {
+      "match": false,
+      "path": ".git/config",
+      "pattern": "[!a-z]x"
+    },
+    {
+      "match": true,
+      "path": "5x",
+      "pattern": "[!a-z]x"
+    },
+    {
+      "match": false,
+      "path": "Thumbs.db",
+      "pattern": "[!a-z]x"
+    },
+    {
+      "match": false,
+      "path": "[a].rst",
+      "pattern": "[!a-z]x"
+    },
+    {
+      "match": false,
+      "path": "]a]",
+      "pattern": "[!a-z]x"
+    },
+    {
+      "match": true,
+      "path": "^x",
+      "pattern": "[!a-z]x"
+    },
+    {
+      "match": false,
+      "path": "_build/a/b",
+      "pattern": "[!a-z]x"
+    },
+    {
+      "match": false,
+      "path": "_build/x",
+      "pattern": "[!a-z]x"
+    },
+    {
+      "match": false,
+      "path": "a-z",
+      "pattern": "[!a-z]x"
+    },
+    {
+      "match": false,
+      "path": "a.rst",
+      "pattern": "[!a-z]x"
+    },
+    {
+      "match": false,
+      "path": "a/b/c/d/e.rst",
+      "pattern": "[!a-z]x"
+    },
+    {
+      "match": false,
+      "path": "ab",
+      "pattern": "[!a-z]x"
+    },
+    {
+      "match": false,
+      "path": "axb",
+      "pattern": "[!a-z]x"
+    },
+    {
+      "match": false,
+      "path": "axx/yyb",
+      "pattern": "[!a-z]x"
+    },
+    {
+      "match": false,
+      "path": "bx",
+      "pattern": "[!a-z]x"
+    },
+    {
+      "match": false,
+      "path": "chapter1.rst",
+      "pattern": "[!a-z]x"
+    },
+    {
+      "match": false,
+      "path": "chapterX.rst",
+      "pattern": "[!a-z]x"
+    },
+    {
+      "match": false,
+      "path": "docs/a/b.rst",
+      "pattern": "[!a-z]x"
+    },
+    {
+      "match": false,
+      "path": "docs/api.rst",
+      "pattern": "[!a-z]x"
+    },
+    {
+      "match": false,
+      "path": "dx",
+      "pattern": "[!a-z]x"
+    },
+    {
+      "match": false,
+      "path": "foo",
+      "pattern": "[!a-z]x"
+    },
+    {
+      "match": false,
+      "path": "foo/bar",
+      "pattern": "[!a-z]x"
+    },
+    {
+      "match": false,
+      "path": "foo/bar.rst",
+      "pattern": "[!a-z]x"
+    },
+    {
+      "match": false,
+      "path": "foo/x/bar",
+      "pattern": "[!a-z]x"
+    },
+    {
+      "match": false,
+      "path": "foo/x/y/bar",
+      "pattern": "[!a-z]x"
+    },
+    {
+      "match": false,
+      "path": "index.rst",
+      "pattern": "[!a-z]x"
+    },
+    {
+      "match": false,
+      "path": "src/code.py",
+      "pattern": "[!a-z]x"
+    },
+    {
+      "match": false,
+      "path": "x/Thumbs.db",
+      "pattern": "[!a-z]x"
+    },
+    {
+      "match": false,
+      "path": ".git/config",
+      "pattern": "[!abc].rst"
+    },
+    {
+      "match": false,
+      "path": "5x",
+      "pattern": "[!abc].rst"
+    },
+    {
+      "match": false,
+      "path": "Thumbs.db",
+      "pattern": "[!abc].rst"
+    },
+    {
+      "match": false,
+      "path": "[a].rst",
+      "pattern": "[!abc].rst"
+    },
+    {
+      "match": false,
+      "path": "]a]",
+      "pattern": "[!abc].rst"
+    },
+    {
+      "match": false,
+      "path": "^x",
+      "pattern": "[!abc].rst"
+    },
+    {
+      "match": false,
+      "path": "_build/a/b",
+      "pattern": "[!abc].rst"
+    },
+    {
+      "match": false,
+      "path": "_build/x",
+      "pattern": "[!abc].rst"
+    },
+    {
+      "match": false,
+      "path": "a-z",
+      "pattern": "[!abc].rst"
+    },
+    {
+      "match": false,
+      "path": "a.rst",
+      "pattern": "[!abc].rst"
+    },
+    {
+      "match": false,
+      "path": "a/b/c/d/e.rst",
+      "pattern": "[!abc].rst"
+    },
+    {
+      "match": false,
+      "path": "ab",
+      "pattern": "[!abc].rst"
+    },
+    {
+      "match": false,
+      "path": "axb",
+      "pattern": "[!abc].rst"
+    },
+    {
+      "match": false,
+      "path": "axx/yyb",
+      "pattern": "[!abc].rst"
+    },
+    {
+      "match": false,
+      "path": "bx",
+      "pattern": "[!abc].rst"
+    },
+    {
+      "match": false,
+      "path": "chapter1.rst",
+      "pattern": "[!abc].rst"
+    },
+    {
+      "match": false,
+      "path": "chapterX.rst",
+      "pattern": "[!abc].rst"
+    },
+    {
+      "match": true,
+      "path": "d.rst",
+      "pattern": "[!abc].rst"
+    },
+    {
+      "match": false,
+      "path": "docs/a/b.rst",
+      "pattern": "[!abc].rst"
+    },
+    {
+      "match": false,
+      "path": "docs/api.rst",
+      "pattern": "[!abc].rst"
+    },
+    {
+      "match": false,
+      "path": "dx",
+      "pattern": "[!abc].rst"
+    },
+    {
+      "match": false,
+      "path": "foo",
+      "pattern": "[!abc].rst"
+    },
+    {
+      "match": false,
+      "path": "foo/bar",
+      "pattern": "[!abc].rst"
+    },
+    {
+      "match": false,
+      "path": "foo/bar.rst",
+      "pattern": "[!abc].rst"
+    },
+    {
+      "match": false,
+      "path": "foo/x/bar",
+      "pattern": "[!abc].rst"
+    },
+    {
+      "match": false,
+      "path": "foo/x/y/bar",
+      "pattern": "[!abc].rst"
+    },
+    {
+      "match": false,
+      "path": "index.rst",
+      "pattern": "[!abc].rst"
+    },
+    {
+      "match": false,
+      "path": "src/code.py",
+      "pattern": "[!abc].rst"
+    },
+    {
+      "match": false,
+      "path": "x/Thumbs.db",
+      "pattern": "[!abc].rst"
+    },
+    {
+      "match": false,
+      "path": ".git/config",
+      "pattern": "[\\d]x"
+    },
+    {
+      "match": false,
+      "path": "5x",
+      "pattern": "[\\d]x"
+    },
+    {
+      "match": false,
+      "path": "Thumbs.db",
+      "pattern": "[\\d]x"
+    },
+    {
+      "match": false,
+      "path": "[a].rst",
+      "pattern": "[\\d]x"
+    },
+    {
+      "match": true,
+      "path": "\\x",
+      "pattern": "[\\d]x"
+    },
+    {
+      "match": false,
+      "path": "]a]",
+      "pattern": "[\\d]x"
+    },
+    {
+      "match": false,
+      "path": "^x",
+      "pattern": "[\\d]x"
+    },
+    {
+      "match": false,
+      "path": "_build/a/b",
+      "pattern": "[\\d]x"
+    },
+    {
+      "match": false,
+      "path": "_build/x",
+      "pattern": "[\\d]x"
+    },
+    {
+      "match": false,
+      "path": "a-z",
+      "pattern": "[\\d]x"
+    },
+    {
+      "match": false,
+      "path": "a.rst",
+      "pattern": "[\\d]x"
+    },
+    {
+      "match": false,
+      "path": "a/b/c/d/e.rst",
+      "pattern": "[\\d]x"
+    },
+    {
+      "match": false,
+      "path": "ab",
+      "pattern": "[\\d]x"
+    },
+    {
+      "match": false,
+      "path": "axb",
+      "pattern": "[\\d]x"
+    },
+    {
+      "match": false,
+      "path": "axx/yyb",
+      "pattern": "[\\d]x"
+    },
+    {
+      "match": false,
+      "path": "bx",
+      "pattern": "[\\d]x"
+    },
+    {
+      "match": false,
+      "path": "chapter1.rst",
+      "pattern": "[\\d]x"
+    },
+    {
+      "match": false,
+      "path": "chapterX.rst",
+      "pattern": "[\\d]x"
+    },
+    {
+      "match": false,
+      "path": "docs/a/b.rst",
+      "pattern": "[\\d]x"
+    },
+    {
+      "match": false,
+      "path": "docs/api.rst",
+      "pattern": "[\\d]x"
+    },
+    {
+      "match": true,
+      "path": "dx",
+      "pattern": "[\\d]x"
+    },
+    {
+      "match": false,
+      "path": "foo",
+      "pattern": "[\\d]x"
+    },
+    {
+      "match": false,
+      "path": "foo/bar",
+      "pattern": "[\\d]x"
+    },
+    {
+      "match": false,
+      "path": "foo/bar.rst",
+      "pattern": "[\\d]x"
+    },
+    {
+      "match": false,
+      "path": "foo/x/bar",
+      "pattern": "[\\d]x"
+    },
+    {
+      "match": false,
+      "path": "foo/x/y/bar",
+      "pattern": "[\\d]x"
+    },
+    {
+      "match": false,
+      "path": "index.rst",
+      "pattern": "[\\d]x"
+    },
+    {
+      "match": false,
+      "path": "src/code.py",
+      "pattern": "[\\d]x"
+    },
+    {
+      "match": false,
+      "path": "x/Thumbs.db",
+      "pattern": "[\\d]x"
+    },
+    {
+      "match": false,
+      "path": ".git/config",
+      "pattern": "[]a]"
+    },
+    {
+      "match": false,
+      "path": "5x",
+      "pattern": "[]a]"
+    },
+    {
+      "match": false,
+      "path": "Thumbs.db",
+      "pattern": "[]a]"
+    },
+    {
+      "match": false,
+      "path": "[a].rst",
+      "pattern": "[]a]"
+    },
+    {
+      "match": true,
+      "path": "]",
+      "pattern": "[]a]"
+    },
+    {
+      "match": false,
+      "path": "]a]",
+      "pattern": "[]a]"
+    },
+    {
+      "match": false,
+      "path": "^x",
+      "pattern": "[]a]"
+    },
+    {
+      "match": false,
+      "path": "_build/a/b",
+      "pattern": "[]a]"
+    },
+    {
+      "match": false,
+      "path": "_build/x",
+      "pattern": "[]a]"
+    },
+    {
+      "match": true,
+      "path": "a",
+      "pattern": "[]a]"
+    },
+    {
+      "match": false,
+      "path": "a-z",
+      "pattern": "[]a]"
+    },
+    {
+      "match": false,
+      "path": "a.rst",
+      "pattern": "[]a]"
+    },
+    {
+      "match": false,
+      "path": "a/b/c/d/e.rst",
+      "pattern": "[]a]"
+    },
+    {
+      "match": false,
+      "path": "ab",
+      "pattern": "[]a]"
+    },
+    {
+      "match": false,
+      "path": "axb",
+      "pattern": "[]a]"
+    },
+    {
+      "match": false,
+      "path": "axx/yyb",
+      "pattern": "[]a]"
+    },
+    {
+      "match": false,
+      "path": "bx",
+      "pattern": "[]a]"
+    },
+    {
+      "match": false,
+      "path": "chapter1.rst",
+      "pattern": "[]a]"
+    },
+    {
+      "match": false,
+      "path": "chapterX.rst",
+      "pattern": "[]a]"
+    },
+    {
+      "match": false,
+      "path": "docs/a/b.rst",
+      "pattern": "[]a]"
+    },
+    {
+      "match": false,
+      "path": "docs/api.rst",
+      "pattern": "[]a]"
+    },
+    {
+      "match": false,
+      "path": "dx",
+      "pattern": "[]a]"
+    },
+    {
+      "match": false,
+      "path": "foo",
+      "pattern": "[]a]"
+    },
+    {
+      "match": false,
+      "path": "foo/bar",
+      "pattern": "[]a]"
+    },
+    {
+      "match": false,
+      "path": "foo/bar.rst",
+      "pattern": "[]a]"
+    },
+    {
+      "match": false,
+      "path": "foo/x/bar",
+      "pattern": "[]a]"
+    },
+    {
+      "match": false,
+      "path": "foo/x/y/bar",
+      "pattern": "[]a]"
+    },
+    {
+      "match": false,
+      "path": "index.rst",
+      "pattern": "[]a]"
+    },
+    {
+      "match": false,
+      "path": "src/code.py",
+      "pattern": "[]a]"
+    },
+    {
+      "match": false,
+      "path": "x/Thumbs.db",
+      "pattern": "[]a]"
+    },
+    {
+      "match": false,
+      "path": ".git/config",
+      "pattern": "[^abc].rst"
+    },
+    {
+      "match": false,
+      "path": "5x",
+      "pattern": "[^abc].rst"
+    },
+    {
+      "match": false,
+      "path": "Thumbs.db",
+      "pattern": "[^abc].rst"
+    },
+    {
+      "match": false,
+      "path": "[a].rst",
+      "pattern": "[^abc].rst"
+    },
+    {
+      "match": false,
+      "path": "]a]",
+      "pattern": "[^abc].rst"
+    },
+    {
+      "match": true,
+      "path": "^.rst",
+      "pattern": "[^abc].rst"
+    },
+    {
+      "match": false,
+      "path": "^x",
+      "pattern": "[^abc].rst"
+    },
+    {
+      "match": false,
+      "path": "_build/a/b",
+      "pattern": "[^abc].rst"
+    },
+    {
+      "match": false,
+      "path": "_build/x",
+      "pattern": "[^abc].rst"
+    },
+    {
+      "match": false,
+      "path": "a-z",
+      "pattern": "[^abc].rst"
+    },
+    {
+      "match": true,
+      "path": "a.rst",
+      "pattern": "[^abc].rst"
+    },
+    {
+      "match": false,
+      "path": "a/b/c/d/e.rst",
+      "pattern": "[^abc].rst"
+    },
+    {
+      "match": false,
+      "path": "ab",
+      "pattern": "[^abc].rst"
+    },
+    {
+      "match": false,
+      "path": "axb",
+      "pattern": "[^abc].rst"
+    },
+    {
+      "match": false,
+      "path": "axx/yyb",
+      "pattern": "[^abc].rst"
+    },
+    {
+      "match": false,
+      "path": "bx",
+      "pattern": "[^abc].rst"
+    },
+    {
+      "match": false,
+      "path": "chapter1.rst",
+      "pattern": "[^abc].rst"
+    },
+    {
+      "match": false,
+      "path": "chapterX.rst",
+      "pattern": "[^abc].rst"
+    },
+    {
+      "match": false,
+      "path": "docs/a/b.rst",
+      "pattern": "[^abc].rst"
+    },
+    {
+      "match": false,
+      "path": "docs/api.rst",
+      "pattern": "[^abc].rst"
+    },
+    {
+      "match": false,
+      "path": "dx",
+      "pattern": "[^abc].rst"
+    },
+    {
+      "match": false,
+      "path": "foo",
+      "pattern": "[^abc].rst"
+    },
+    {
+      "match": false,
+      "path": "foo/bar",
+      "pattern": "[^abc].rst"
+    },
+    {
+      "match": false,
+      "path": "foo/bar.rst",
+      "pattern": "[^abc].rst"
+    },
+    {
+      "match": false,
+      "path": "foo/x/bar",
+      "pattern": "[^abc].rst"
+    },
+    {
+      "match": false,
+      "path": "foo/x/y/bar",
+      "pattern": "[^abc].rst"
+    },
+    {
+      "match": false,
+      "path": "index.rst",
+      "pattern": "[^abc].rst"
+    },
+    {
+      "match": false,
+      "path": "src/code.py",
+      "pattern": "[^abc].rst"
+    },
+    {
+      "match": false,
+      "path": "x/Thumbs.db",
+      "pattern": "[^abc].rst"
+    },
+    {
+      "match": false,
+      "path": ".git/config",
+      "pattern": "[a-z]x"
+    },
+    {
+      "match": false,
+      "path": "5x",
+      "pattern": "[a-z]x"
+    },
+    {
+      "match": false,
+      "path": "Thumbs.db",
+      "pattern": "[a-z]x"
+    },
+    {
+      "match": false,
+      "path": "[a].rst",
+      "pattern": "[a-z]x"
+    },
+    {
+      "match": false,
+      "path": "]a]",
+      "pattern": "[a-z]x"
+    },
+    {
+      "match": false,
+      "path": "^x",
+      "pattern": "[a-z]x"
+    },
+    {
+      "match": false,
+      "path": "_build/a/b",
+      "pattern": "[a-z]x"
+    },
+    {
+      "match": false,
+      "path": "_build/x",
+      "pattern": "[a-z]x"
+    },
+    {
+      "match": false,
+      "path": "a-z",
+      "pattern": "[a-z]x"
+    },
+    {
+      "match": false,
+      "path": "a.rst",
+      "pattern": "[a-z]x"
+    },
+    {
+      "match": false,
+      "path": "a/b/c/d/e.rst",
+      "pattern": "[a-z]x"
+    },
+    {
+      "match": false,
+      "path": "ab",
+      "pattern": "[a-z]x"
+    },
+    {
+      "match": false,
+      "path": "axb",
+      "pattern": "[a-z]x"
+    },
+    {
+      "match": false,
+      "path": "axx/yyb",
+      "pattern": "[a-z]x"
+    },
+    {
+      "match": true,
+      "path": "bx",
+      "pattern": "[a-z]x"
+    },
+    {
+      "match": false,
+      "path": "chapter1.rst",
+      "pattern": "[a-z]x"
+    },
+    {
+      "match": false,
+      "path": "chapterX.rst",
+      "pattern": "[a-z]x"
+    },
+    {
+      "match": false,
+      "path": "docs/a/b.rst",
+      "pattern": "[a-z]x"
+    },
+    {
+      "match": false,
+      "path": "docs/api.rst",
+      "pattern": "[a-z]x"
+    },
+    {
+      "match": true,
+      "path": "dx",
+      "pattern": "[a-z]x"
+    },
+    {
+      "match": false,
+      "path": "foo",
+      "pattern": "[a-z]x"
+    },
+    {
+      "match": false,
+      "path": "foo/bar",
+      "pattern": "[a-z]x"
+    },
+    {
+      "match": false,
+      "path": "foo/bar.rst",
+      "pattern": "[a-z]x"
+    },
+    {
+      "match": false,
+      "path": "foo/x/bar",
+      "pattern": "[a-z]x"
+    },
+    {
+      "match": false,
+      "path": "foo/x/y/bar",
+      "pattern": "[a-z]x"
+    },
+    {
+      "match": false,
+      "path": "index.rst",
+      "pattern": "[a-z]x"
+    },
+    {
+      "match": false,
+      "path": "src/code.py",
+      "pattern": "[a-z]x"
+    },
+    {
+      "match": false,
+      "path": "x/Thumbs.db",
+      "pattern": "[a-z]x"
+    },
+    {
+      "match": false,
+      "path": ".git/config",
+      "pattern": "[abc"
+    },
+    {
+      "match": false,
+      "path": "5x",
+      "pattern": "[abc"
+    },
+    {
+      "match": false,
+      "path": "Thumbs.db",
+      "pattern": "[abc"
+    },
+    {
+      "match": false,
+      "path": "[a].rst",
+      "pattern": "[abc"
+    },
+    {
+      "match": true,
+      "path": "[abc",
+      "pattern": "[abc"
+    },
+    {
+      "match": false,
+      "path": "]a]",
+      "pattern": "[abc"
+    },
+    {
+      "match": false,
+      "path": "^x",
+      "pattern": "[abc"
+    },
+    {
+      "match": false,
+      "path": "_build/a/b",
+      "pattern": "[abc"
+    },
+    {
+      "match": false,
+      "path": "_build/x",
+      "pattern": "[abc"
+    },
+    {
+      "match": false,
+      "path": "a-z",
+      "pattern": "[abc"
+    },
+    {
+      "match": false,
+      "path": "a.rst",
+      "pattern": "[abc"
+    },
+    {
+      "match": false,
+      "path": "a/b/c/d/e.rst",
+      "pattern": "[abc"
+    },
+    {
+      "match": false,
+      "path": "ab",
+      "pattern": "[abc"
+    },
+    {
+      "match": false,
+      "path": "axb",
+      "pattern": "[abc"
+    },
+    {
+      "match": false,
+      "path": "axx/yyb",
+      "pattern": "[abc"
+    },
+    {
+      "match": false,
+      "path": "bx",
+      "pattern": "[abc"
+    },
+    {
+      "match": false,
+      "path": "chapter1.rst",
+      "pattern": "[abc"
+    },
+    {
+      "match": false,
+      "path": "chapterX.rst",
+      "pattern": "[abc"
+    },
+    {
+      "match": false,
+      "path": "docs/a/b.rst",
+      "pattern": "[abc"
+    },
+    {
+      "match": false,
+      "path": "docs/api.rst",
+      "pattern": "[abc"
+    },
+    {
+      "match": false,
+      "path": "dx",
+      "pattern": "[abc"
+    },
+    {
+      "match": false,
+      "path": "foo",
+      "pattern": "[abc"
+    },
+    {
+      "match": false,
+      "path": "foo/bar",
+      "pattern": "[abc"
+    },
+    {
+      "match": false,
+      "path": "foo/bar.rst",
+      "pattern": "[abc"
+    },
+    {
+      "match": false,
+      "path": "foo/x/bar",
+      "pattern": "[abc"
+    },
+    {
+      "match": false,
+      "path": "foo/x/y/bar",
+      "pattern": "[abc"
+    },
+    {
+      "match": false,
+      "path": "index.rst",
+      "pattern": "[abc"
+    },
+    {
+      "match": false,
+      "path": "src/code.py",
+      "pattern": "[abc"
+    },
+    {
+      "match": false,
+      "path": "x/Thumbs.db",
+      "pattern": "[abc"
+    },
+    {
+      "match": false,
+      "path": ".git/config",
+      "pattern": "[abc].rst"
+    },
+    {
+      "match": false,
+      "path": "5x",
+      "pattern": "[abc].rst"
+    },
+    {
+      "match": false,
+      "path": "Thumbs.db",
+      "pattern": "[abc].rst"
+    },
+    {
+      "match": false,
+      "path": "[a].rst",
+      "pattern": "[abc].rst"
+    },
+    {
+      "match": false,
+      "path": "]a]",
+      "pattern": "[abc].rst"
+    },
+    {
+      "match": false,
+      "path": "^x",
+      "pattern": "[abc].rst"
+    },
+    {
+      "match": false,
+      "path": "_build/a/b",
+      "pattern": "[abc].rst"
+    },
+    {
+      "match": false,
+      "path": "_build/x",
+      "pattern": "[abc].rst"
+    },
+    {
+      "match": false,
+      "path": "a-z",
+      "pattern": "[abc].rst"
+    },
+    {
+      "match": true,
+      "path": "a.rst",
+      "pattern": "[abc].rst"
+    },
+    {
+      "match": false,
+      "path": "a/b/c/d/e.rst",
+      "pattern": "[abc].rst"
+    },
+    {
+      "match": false,
+      "path": "ab",
+      "pattern": "[abc].rst"
+    },
+    {
+      "match": false,
+      "path": "axb",
+      "pattern": "[abc].rst"
+    },
+    {
+      "match": false,
+      "path": "axx/yyb",
+      "pattern": "[abc].rst"
+    },
+    {
+      "match": false,
+      "path": "bx",
+      "pattern": "[abc].rst"
+    },
+    {
+      "match": false,
+      "path": "chapter1.rst",
+      "pattern": "[abc].rst"
+    },
+    {
+      "match": false,
+      "path": "chapterX.rst",
+      "pattern": "[abc].rst"
+    },
+    {
+      "match": false,
+      "path": "docs/a/b.rst",
+      "pattern": "[abc].rst"
+    },
+    {
+      "match": false,
+      "path": "docs/api.rst",
+      "pattern": "[abc].rst"
+    },
+    {
+      "match": false,
+      "path": "dx",
+      "pattern": "[abc].rst"
+    },
+    {
+      "match": false,
+      "path": "foo",
+      "pattern": "[abc].rst"
+    },
+    {
+      "match": false,
+      "path": "foo/bar",
+      "pattern": "[abc].rst"
+    },
+    {
+      "match": false,
+      "path": "foo/bar.rst",
+      "pattern": "[abc].rst"
+    },
+    {
+      "match": false,
+      "path": "foo/x/bar",
+      "pattern": "[abc].rst"
+    },
+    {
+      "match": false,
+      "path": "foo/x/y/bar",
+      "pattern": "[abc].rst"
+    },
+    {
+      "match": false,
+      "path": "index.rst",
+      "pattern": "[abc].rst"
+    },
+    {
+      "match": false,
+      "path": "src/code.py",
+      "pattern": "[abc].rst"
+    },
+    {
+      "match": false,
+      "path": "x/Thumbs.db",
+      "pattern": "[abc].rst"
+    },
+    {
+      "match": false,
+      "path": ".git/config",
+      "pattern": "_build/**"
+    },
+    {
+      "match": false,
+      "path": "5x",
+      "pattern": "_build/**"
+    },
+    {
+      "match": false,
+      "path": "Thumbs.db",
+      "pattern": "_build/**"
+    },
+    {
+      "match": false,
+      "path": "[a].rst",
+      "pattern": "_build/**"
+    },
+    {
+      "match": false,
+      "path": "]a]",
+      "pattern": "_build/**"
+    },
+    {
+      "match": false,
+      "path": "^x",
+      "pattern": "_build/**"
+    },
+    {
+      "match": true,
+      "path": "_build/a/b",
+      "pattern": "_build/**"
+    },
+    {
+      "match": true,
+      "path": "_build/x",
+      "pattern": "_build/**"
+    },
+    {
+      "match": false,
+      "path": "a-z",
+      "pattern": "_build/**"
+    },
+    {
+      "match": false,
+      "path": "a.rst",
+      "pattern": "_build/**"
+    },
+    {
+      "match": false,
+      "path": "a/b/c/d/e.rst",
+      "pattern": "_build/**"
+    },
+    {
+      "match": false,
+      "path": "ab",
+      "pattern": "_build/**"
+    },
+    {
+      "match": false,
+      "path": "axb",
+      "pattern": "_build/**"
+    },
+    {
+      "match": false,
+      "path": "axx/yyb",
+      "pattern": "_build/**"
+    },
+    {
+      "match": false,
+      "path": "bx",
+      "pattern": "_build/**"
+    },
+    {
+      "match": false,
+      "path": "chapter1.rst",
+      "pattern": "_build/**"
+    },
+    {
+      "match": false,
+      "path": "chapterX.rst",
+      "pattern": "_build/**"
+    },
+    {
+      "match": false,
+      "path": "docs/a/b.rst",
+      "pattern": "_build/**"
+    },
+    {
+      "match": false,
+      "path": "docs/api.rst",
+      "pattern": "_build/**"
+    },
+    {
+      "match": false,
+      "path": "dx",
+      "pattern": "_build/**"
+    },
+    {
+      "match": false,
+      "path": "foo",
+      "pattern": "_build/**"
+    },
+    {
+      "match": false,
+      "path": "foo/bar",
+      "pattern": "_build/**"
+    },
+    {
+      "match": false,
+      "path": "foo/bar.rst",
+      "pattern": "_build/**"
+    },
+    {
+      "match": false,
+      "path": "foo/x/bar",
+      "pattern": "_build/**"
+    },
+    {
+      "match": false,
+      "path": "foo/x/y/bar",
+      "pattern": "_build/**"
+    },
+    {
+      "match": false,
+      "path": "index.rst",
+      "pattern": "_build/**"
+    },
+    {
+      "match": false,
+      "path": "src/code.py",
+      "pattern": "_build/**"
+    },
+    {
+      "match": false,
+      "path": "x/Thumbs.db",
+      "pattern": "_build/**"
+    },
+    {
+      "match": false,
+      "path": ".git/config",
+      "pattern": "a(b).rst"
+    },
+    {
+      "match": false,
+      "path": "5x",
+      "pattern": "a(b).rst"
+    },
+    {
+      "match": false,
+      "path": "Thumbs.db",
+      "pattern": "a(b).rst"
+    },
+    {
+      "match": false,
+      "path": "[a].rst",
+      "pattern": "a(b).rst"
+    },
+    {
+      "match": false,
+      "path": "]a]",
+      "pattern": "a(b).rst"
+    },
+    {
+      "match": false,
+      "path": "^x",
+      "pattern": "a(b).rst"
+    },
+    {
+      "match": false,
+      "path": "_build/a/b",
+      "pattern": "a(b).rst"
+    },
+    {
+      "match": false,
+      "path": "_build/x",
+      "pattern": "a(b).rst"
+    },
+    {
+      "match": true,
+      "path": "a(b).rst",
+      "pattern": "a(b).rst"
+    },
+    {
+      "match": false,
+      "path": "a-z",
+      "pattern": "a(b).rst"
+    },
+    {
+      "match": false,
+      "path": "a.rst",
+      "pattern": "a(b).rst"
+    },
+    {
+      "match": false,
+      "path": "a/b/c/d/e.rst",
+      "pattern": "a(b).rst"
+    },
+    {
+      "match": false,
+      "path": "ab",
+      "pattern": "a(b).rst"
+    },
+    {
+      "match": false,
+      "path": "axb",
+      "pattern": "a(b).rst"
+    },
+    {
+      "match": false,
+      "path": "axx/yyb",
+      "pattern": "a(b).rst"
+    },
+    {
+      "match": false,
+      "path": "bx",
+      "pattern": "a(b).rst"
+    },
+    {
+      "match": false,
+      "path": "chapter1.rst",
+      "pattern": "a(b).rst"
+    },
+    {
+      "match": false,
+      "path": "chapterX.rst",
+      "pattern": "a(b).rst"
+    },
+    {
+      "match": false,
+      "path": "docs/a/b.rst",
+      "pattern": "a(b).rst"
+    },
+    {
+      "match": false,
+      "path": "docs/api.rst",
+      "pattern": "a(b).rst"
+    },
+    {
+      "match": false,
+      "path": "dx",
+      "pattern": "a(b).rst"
+    },
+    {
+      "match": false,
+      "path": "foo",
+      "pattern": "a(b).rst"
+    },
+    {
+      "match": false,
+      "path": "foo/bar",
+      "pattern": "a(b).rst"
+    },
+    {
+      "match": false,
+      "path": "foo/bar.rst",
+      "pattern": "a(b).rst"
+    },
+    {
+      "match": false,
+      "path": "foo/x/bar",
+      "pattern": "a(b).rst"
+    },
+    {
+      "match": false,
+      "path": "foo/x/y/bar",
+      "pattern": "a(b).rst"
+    },
+    {
+      "match": false,
+      "path": "index.rst",
+      "pattern": "a(b).rst"
+    },
+    {
+      "match": false,
+      "path": "src/code.py",
+      "pattern": "a(b).rst"
+    },
+    {
+      "match": false,
+      "path": "x/Thumbs.db",
+      "pattern": "a(b).rst"
+    },
+    {
+      "match": false,
+      "path": ".git/config",
+      "pattern": "a**b"
+    },
+    {
+      "match": false,
+      "path": "5x",
+      "pattern": "a**b"
+    },
+    {
+      "match": false,
+      "path": "Thumbs.db",
+      "pattern": "a**b"
+    },
+    {
+      "match": false,
+      "path": "[a].rst",
+      "pattern": "a**b"
+    },
+    {
+      "match": false,
+      "path": "]a]",
+      "pattern": "a**b"
+    },
+    {
+      "match": false,
+      "path": "^x",
+      "pattern": "a**b"
+    },
+    {
+      "match": false,
+      "path": "_build/a/b",
+      "pattern": "a**b"
+    },
+    {
+      "match": false,
+      "path": "_build/x",
+      "pattern": "a**b"
+    },
+    {
+      "match": false,
+      "path": "a-z",
+      "pattern": "a**b"
+    },
+    {
+      "match": false,
+      "path": "a.rst",
+      "pattern": "a**b"
+    },
+    {
+      "match": false,
+      "path": "a/b/c/d/e.rst",
+      "pattern": "a**b"
+    },
+    {
+      "match": true,
+      "path": "ab",
+      "pattern": "a**b"
+    },
+    {
+      "match": true,
+      "path": "axb",
+      "pattern": "a**b"
+    },
+    {
+      "match": true,
+      "path": "axx/yyb",
+      "pattern": "a**b"
+    },
+    {
+      "match": false,
+      "path": "bx",
+      "pattern": "a**b"
+    },
+    {
+      "match": false,
+      "path": "chapter1.rst",
+      "pattern": "a**b"
+    },
+    {
+      "match": false,
+      "path": "chapterX.rst",
+      "pattern": "a**b"
+    },
+    {
+      "match": false,
+      "path": "docs/a/b.rst",
+      "pattern": "a**b"
+    },
+    {
+      "match": false,
+      "path": "docs/api.rst",
+      "pattern": "a**b"
+    },
+    {
+      "match": false,
+      "path": "dx",
+      "pattern": "a**b"
+    },
+    {
+      "match": false,
+      "path": "foo",
+      "pattern": "a**b"
+    },
+    {
+      "match": false,
+      "path": "foo/bar",
+      "pattern": "a**b"
+    },
+    {
+      "match": false,
+      "path": "foo/bar.rst",
+      "pattern": "a**b"
+    },
+    {
+      "match": false,
+      "path": "foo/x/bar",
+      "pattern": "a**b"
+    },
+    {
+      "match": false,
+      "path": "foo/x/y/bar",
+      "pattern": "a**b"
+    },
+    {
+      "match": false,
+      "path": "index.rst",
+      "pattern": "a**b"
+    },
+    {
+      "match": false,
+      "path": "src/code.py",
+      "pattern": "a**b"
+    },
+    {
+      "match": false,
+      "path": "x/Thumbs.db",
+      "pattern": "a**b"
+    },
+    {
+      "match": false,
+      "path": ".git/config",
+      "pattern": "a+b.rst"
+    },
+    {
+      "match": false,
+      "path": "5x",
+      "pattern": "a+b.rst"
+    },
+    {
+      "match": false,
+      "path": "Thumbs.db",
+      "pattern": "a+b.rst"
+    },
+    {
+      "match": false,
+      "path": "[a].rst",
+      "pattern": "a+b.rst"
+    },
+    {
+      "match": false,
+      "path": "]a]",
+      "pattern": "a+b.rst"
+    },
+    {
+      "match": false,
+      "path": "^x",
+      "pattern": "a+b.rst"
+    },
+    {
+      "match": false,
+      "path": "_build/a/b",
+      "pattern": "a+b.rst"
+    },
+    {
+      "match": false,
+      "path": "_build/x",
+      "pattern": "a+b.rst"
+    },
+    {
+      "match": true,
+      "path": "a+b.rst",
+      "pattern": "a+b.rst"
+    },
+    {
+      "match": false,
+      "path": "a-z",
+      "pattern": "a+b.rst"
+    },
+    {
+      "match": false,
+      "path": "a.rst",
+      "pattern": "a+b.rst"
+    },
+    {
+      "match": false,
+      "path": "a/b/c/d/e.rst",
+      "pattern": "a+b.rst"
+    },
+    {
+      "match": false,
+      "path": "ab",
+      "pattern": "a+b.rst"
+    },
+    {
+      "match": false,
+      "path": "axb",
+      "pattern": "a+b.rst"
+    },
+    {
+      "match": false,
+      "path": "axx/yyb",
+      "pattern": "a+b.rst"
+    },
+    {
+      "match": false,
+      "path": "bx",
+      "pattern": "a+b.rst"
+    },
+    {
+      "match": false,
+      "path": "chapter1.rst",
+      "pattern": "a+b.rst"
+    },
+    {
+      "match": false,
+      "path": "chapterX.rst",
+      "pattern": "a+b.rst"
+    },
+    {
+      "match": false,
+      "path": "docs/a/b.rst",
+      "pattern": "a+b.rst"
+    },
+    {
+      "match": false,
+      "path": "docs/api.rst",
+      "pattern": "a+b.rst"
+    },
+    {
+      "match": false,
+      "path": "dx",
+      "pattern": "a+b.rst"
+    },
+    {
+      "match": false,
+      "path": "foo",
+      "pattern": "a+b.rst"
+    },
+    {
+      "match": false,
+      "path": "foo/bar",
+      "pattern": "a+b.rst"
+    },
+    {
+      "match": false,
+      "path": "foo/bar.rst",
+      "pattern": "a+b.rst"
+    },
+    {
+      "match": false,
+      "path": "foo/x/bar",
+      "pattern": "a+b.rst"
+    },
+    {
+      "match": false,
+      "path": "foo/x/y/bar",
+      "pattern": "a+b.rst"
+    },
+    {
+      "match": false,
+      "path": "index.rst",
+      "pattern": "a+b.rst"
+    },
+    {
+      "match": false,
+      "path": "src/code.py",
+      "pattern": "a+b.rst"
+    },
+    {
+      "match": false,
+      "path": "x/Thumbs.db",
+      "pattern": "a+b.rst"
+    },
+    {
+      "match": false,
+      "path": ".git/config",
+      "pattern": "a{b}.rst"
+    },
+    {
+      "match": false,
+      "path": "5x",
+      "pattern": "a{b}.rst"
+    },
+    {
+      "match": false,
+      "path": "Thumbs.db",
+      "pattern": "a{b}.rst"
+    },
+    {
+      "match": false,
+      "path": "[a].rst",
+      "pattern": "a{b}.rst"
+    },
+    {
+      "match": false,
+      "path": "]a]",
+      "pattern": "a{b}.rst"
+    },
+    {
+      "match": false,
+      "path": "^x",
+      "pattern": "a{b}.rst"
+    },
+    {
+      "match": false,
+      "path": "_build/a/b",
+      "pattern": "a{b}.rst"
+    },
+    {
+      "match": false,
+      "path": "_build/x",
+      "pattern": "a{b}.rst"
+    },
+    {
+      "match": false,
+      "path": "a-z",
+      "pattern": "a{b}.rst"
+    },
+    {
+      "match": false,
+      "path": "a.rst",
+      "pattern": "a{b}.rst"
+    },
+    {
+      "match": false,
+      "path": "a/b/c/d/e.rst",
+      "pattern": "a{b}.rst"
+    },
+    {
+      "match": false,
+      "path": "ab",
+      "pattern": "a{b}.rst"
+    },
+    {
+      "match": false,
+      "path": "axb",
+      "pattern": "a{b}.rst"
+    },
+    {
+      "match": false,
+      "path": "axx/yyb",
+      "pattern": "a{b}.rst"
+    },
+    {
+      "match": true,
+      "path": "a{b}.rst",
+      "pattern": "a{b}.rst"
+    },
+    {
+      "match": false,
+      "path": "bx",
+      "pattern": "a{b}.rst"
+    },
+    {
+      "match": false,
+      "path": "chapter1.rst",
+      "pattern": "a{b}.rst"
+    },
+    {
+      "match": false,
+      "path": "chapterX.rst",
+      "pattern": "a{b}.rst"
+    },
+    {
+      "match": false,
+      "path": "docs/a/b.rst",
+      "pattern": "a{b}.rst"
+    },
+    {
+      "match": false,
+      "path": "docs/api.rst",
+      "pattern": "a{b}.rst"
+    },
+    {
+      "match": false,
+      "path": "dx",
+      "pattern": "a{b}.rst"
+    },
+    {
+      "match": false,
+      "path": "foo",
+      "pattern": "a{b}.rst"
+    },
+    {
+      "match": false,
+      "path": "foo/bar",
+      "pattern": "a{b}.rst"
+    },
+    {
+      "match": false,
+      "path": "foo/bar.rst",
+      "pattern": "a{b}.rst"
+    },
+    {
+      "match": false,
+      "path": "foo/x/bar",
+      "pattern": "a{b}.rst"
+    },
+    {
+      "match": false,
+      "path": "foo/x/y/bar",
+      "pattern": "a{b}.rst"
+    },
+    {
+      "match": false,
+      "path": "index.rst",
+      "pattern": "a{b}.rst"
+    },
+    {
+      "match": false,
+      "path": "src/code.py",
+      "pattern": "a{b}.rst"
+    },
+    {
+      "match": false,
+      "path": "x/Thumbs.db",
+      "pattern": "a{b}.rst"
+    },
+    {
+      "match": false,
+      "path": ".git/config",
+      "pattern": "a|b"
+    },
+    {
+      "match": false,
+      "path": "5x",
+      "pattern": "a|b"
+    },
+    {
+      "match": false,
+      "path": "Thumbs.db",
+      "pattern": "a|b"
+    },
+    {
+      "match": false,
+      "path": "[a].rst",
+      "pattern": "a|b"
+    },
+    {
+      "match": false,
+      "path": "]a]",
+      "pattern": "a|b"
+    },
+    {
+      "match": false,
+      "path": "^x",
+      "pattern": "a|b"
+    },
+    {
+      "match": false,
+      "path": "_build/a/b",
+      "pattern": "a|b"
+    },
+    {
+      "match": false,
+      "path": "_build/x",
+      "pattern": "a|b"
+    },
+    {
+      "match": false,
+      "path": "a-z",
+      "pattern": "a|b"
+    },
+    {
+      "match": false,
+      "path": "a.rst",
+      "pattern": "a|b"
+    },
+    {
+      "match": false,
+      "path": "a/b/c/d/e.rst",
+      "pattern": "a|b"
+    },
+    {
+      "match": false,
+      "path": "ab",
+      "pattern": "a|b"
+    },
+    {
+      "match": false,
+      "path": "axb",
+      "pattern": "a|b"
+    },
+    {
+      "match": false,
+      "path": "axx/yyb",
+      "pattern": "a|b"
+    },
+    {
+      "match": true,
+      "path": "a|b",
+      "pattern": "a|b"
+    },
+    {
+      "match": false,
+      "path": "bx",
+      "pattern": "a|b"
+    },
+    {
+      "match": false,
+      "path": "chapter1.rst",
+      "pattern": "a|b"
+    },
+    {
+      "match": false,
+      "path": "chapterX.rst",
+      "pattern": "a|b"
+    },
+    {
+      "match": false,
+      "path": "docs/a/b.rst",
+      "pattern": "a|b"
+    },
+    {
+      "match": false,
+      "path": "docs/api.rst",
+      "pattern": "a|b"
+    },
+    {
+      "match": false,
+      "path": "dx",
+      "pattern": "a|b"
+    },
+    {
+      "match": false,
+      "path": "foo",
+      "pattern": "a|b"
+    },
+    {
+      "match": false,
+      "path": "foo/bar",
+      "pattern": "a|b"
+    },
+    {
+      "match": false,
+      "path": "foo/bar.rst",
+      "pattern": "a|b"
+    },
+    {
+      "match": false,
+      "path": "foo/x/bar",
+      "pattern": "a|b"
+    },
+    {
+      "match": false,
+      "path": "foo/x/y/bar",
+      "pattern": "a|b"
+    },
+    {
+      "match": false,
+      "path": "index.rst",
+      "pattern": "a|b"
+    },
+    {
+      "match": false,
+      "path": "src/code.py",
+      "pattern": "a|b"
+    },
+    {
+      "match": false,
+      "path": "x/Thumbs.db",
+      "pattern": "a|b"
+    },
+    {
+      "match": false,
+      "path": ".git/config",
+      "pattern": "chapter?.rst"
+    },
+    {
+      "match": false,
+      "path": "5x",
+      "pattern": "chapter?.rst"
+    },
+    {
+      "match": false,
+      "path": "Thumbs.db",
+      "pattern": "chapter?.rst"
+    },
+    {
+      "match": false,
+      "path": "[a].rst",
+      "pattern": "chapter?.rst"
+    },
+    {
+      "match": false,
+      "path": "]a]",
+      "pattern": "chapter?.rst"
+    },
+    {
+      "match": false,
+      "path": "^x",
+      "pattern": "chapter?.rst"
+    },
+    {
+      "match": false,
+      "path": "_build/a/b",
+      "pattern": "chapter?.rst"
+    },
+    {
+      "match": false,
+      "path": "_build/x",
+      "pattern": "chapter?.rst"
+    },
+    {
+      "match": false,
+      "path": "a-z",
+      "pattern": "chapter?.rst"
+    },
+    {
+      "match": false,
+      "path": "a.rst",
+      "pattern": "chapter?.rst"
+    },
+    {
+      "match": false,
+      "path": "a/b/c/d/e.rst",
+      "pattern": "chapter?.rst"
+    },
+    {
+      "match": false,
+      "path": "ab",
+      "pattern": "chapter?.rst"
+    },
+    {
+      "match": false,
+      "path": "axb",
+      "pattern": "chapter?.rst"
+    },
+    {
+      "match": false,
+      "path": "axx/yyb",
+      "pattern": "chapter?.rst"
+    },
+    {
+      "match": false,
+      "path": "bx",
+      "pattern": "chapter?.rst"
+    },
+    {
+      "match": true,
+      "path": "chapter1.rst",
+      "pattern": "chapter?.rst"
+    },
+    {
+      "match": false,
+      "path": "chapter10.rst",
+      "pattern": "chapter?.rst"
+    },
+    {
+      "match": true,
+      "path": "chapterX.rst",
+      "pattern": "chapter?.rst"
+    },
+    {
+      "match": false,
+      "path": "docs/a/b.rst",
+      "pattern": "chapter?.rst"
+    },
+    {
+      "match": false,
+      "path": "docs/api.rst",
+      "pattern": "chapter?.rst"
+    },
+    {
+      "match": false,
+      "path": "dx",
+      "pattern": "chapter?.rst"
+    },
+    {
+      "match": false,
+      "path": "foo",
+      "pattern": "chapter?.rst"
+    },
+    {
+      "match": false,
+      "path": "foo/bar",
+      "pattern": "chapter?.rst"
+    },
+    {
+      "match": false,
+      "path": "foo/bar.rst",
+      "pattern": "chapter?.rst"
+    },
+    {
+      "match": false,
+      "path": "foo/x/bar",
+      "pattern": "chapter?.rst"
+    },
+    {
+      "match": false,
+      "path": "foo/x/y/bar",
+      "pattern": "chapter?.rst"
+    },
+    {
+      "match": false,
+      "path": "index.rst",
+      "pattern": "chapter?.rst"
+    },
+    {
+      "match": false,
+      "path": "src/code.py",
+      "pattern": "chapter?.rst"
+    },
+    {
+      "match": false,
+      "path": "x/Thumbs.db",
+      "pattern": "chapter?.rst"
+    },
+    {
+      "match": false,
+      "path": ".git/config",
+      "pattern": "docs/**"
+    },
+    {
+      "match": false,
+      "path": "5x",
+      "pattern": "docs/**"
+    },
+    {
+      "match": false,
+      "path": "Thumbs.db",
+      "pattern": "docs/**"
+    },
+    {
+      "match": false,
+      "path": "[a].rst",
+      "pattern": "docs/**"
+    },
+    {
+      "match": false,
+      "path": "]a]",
+      "pattern": "docs/**"
+    },
+    {
+      "match": false,
+      "path": "^x",
+      "pattern": "docs/**"
+    },
+    {
+      "match": false,
+      "path": "_build/a/b",
+      "pattern": "docs/**"
+    },
+    {
+      "match": false,
+      "path": "_build/x",
+      "pattern": "docs/**"
+    },
+    {
+      "match": false,
+      "path": "a-z",
+      "pattern": "docs/**"
+    },
+    {
+      "match": false,
+      "path": "a.rst",
+      "pattern": "docs/**"
+    },
+    {
+      "match": false,
+      "path": "a/b/c/d/e.rst",
+      "pattern": "docs/**"
+    },
+    {
+      "match": false,
+      "path": "ab",
+      "pattern": "docs/**"
+    },
+    {
+      "match": false,
+      "path": "axb",
+      "pattern": "docs/**"
+    },
+    {
+      "match": false,
+      "path": "axx/yyb",
+      "pattern": "docs/**"
+    },
+    {
+      "match": false,
+      "path": "bx",
+      "pattern": "docs/**"
+    },
+    {
+      "match": false,
+      "path": "chapter1.rst",
+      "pattern": "docs/**"
+    },
+    {
+      "match": false,
+      "path": "chapterX.rst",
+      "pattern": "docs/**"
+    },
+    {
+      "match": true,
+      "path": "docs/a/b.rst",
+      "pattern": "docs/**"
+    },
+    {
+      "match": true,
+      "path": "docs/api.rst",
+      "pattern": "docs/**"
+    },
+    {
+      "match": false,
+      "path": "dx",
+      "pattern": "docs/**"
+    },
+    {
+      "match": false,
+      "path": "foo",
+      "pattern": "docs/**"
+    },
+    {
+      "match": false,
+      "path": "foo/bar",
+      "pattern": "docs/**"
+    },
+    {
+      "match": false,
+      "path": "foo/bar.rst",
+      "pattern": "docs/**"
+    },
+    {
+      "match": false,
+      "path": "foo/x/bar",
+      "pattern": "docs/**"
+    },
+    {
+      "match": false,
+      "path": "foo/x/y/bar",
+      "pattern": "docs/**"
+    },
+    {
+      "match": false,
+      "path": "index.rst",
+      "pattern": "docs/**"
+    },
+    {
+      "match": false,
+      "path": "src/code.py",
+      "pattern": "docs/**"
+    },
+    {
+      "match": false,
+      "path": "x/Thumbs.db",
+      "pattern": "docs/**"
+    },
+    {
+      "match": false,
+      "path": ".git/config",
+      "pattern": "docs/**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "5x",
+      "pattern": "docs/**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "Thumbs.db",
+      "pattern": "docs/**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "[a].rst",
+      "pattern": "docs/**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "]a]",
+      "pattern": "docs/**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "^x",
+      "pattern": "docs/**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "_build/a/b",
+      "pattern": "docs/**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "_build/x",
+      "pattern": "docs/**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "a-z",
+      "pattern": "docs/**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "a.rst",
+      "pattern": "docs/**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "a/b/c/d/e.rst",
+      "pattern": "docs/**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "ab",
+      "pattern": "docs/**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "axb",
+      "pattern": "docs/**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "axx/yyb",
+      "pattern": "docs/**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "bx",
+      "pattern": "docs/**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "chapter1.rst",
+      "pattern": "docs/**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "chapterX.rst",
+      "pattern": "docs/**/*.rst"
+    },
+    {
+      "match": true,
+      "path": "docs/a/b.rst",
+      "pattern": "docs/**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "docs/api.rst",
+      "pattern": "docs/**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "dx",
+      "pattern": "docs/**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "foo",
+      "pattern": "docs/**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "foo/bar",
+      "pattern": "docs/**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "foo/bar.rst",
+      "pattern": "docs/**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "foo/x/bar",
+      "pattern": "docs/**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "foo/x/y/bar",
+      "pattern": "docs/**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "index.rst",
+      "pattern": "docs/**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "src/code.py",
+      "pattern": "docs/**/*.rst"
+    },
+    {
+      "match": false,
+      "path": "x/Thumbs.db",
+      "pattern": "docs/**/*.rst"
+    },
+    {
+      "match": false,
+      "path": ".git/config",
+      "pattern": "foo/**/bar"
+    },
+    {
+      "match": false,
+      "path": "5x",
+      "pattern": "foo/**/bar"
+    },
+    {
+      "match": false,
+      "path": "Thumbs.db",
+      "pattern": "foo/**/bar"
+    },
+    {
+      "match": false,
+      "path": "[a].rst",
+      "pattern": "foo/**/bar"
+    },
+    {
+      "match": false,
+      "path": "]a]",
+      "pattern": "foo/**/bar"
+    },
+    {
+      "match": false,
+      "path": "^x",
+      "pattern": "foo/**/bar"
+    },
+    {
+      "match": false,
+      "path": "_build/a/b",
+      "pattern": "foo/**/bar"
+    },
+    {
+      "match": false,
+      "path": "_build/x",
+      "pattern": "foo/**/bar"
+    },
+    {
+      "match": false,
+      "path": "a-z",
+      "pattern": "foo/**/bar"
+    },
+    {
+      "match": false,
+      "path": "a.rst",
+      "pattern": "foo/**/bar"
+    },
+    {
+      "match": false,
+      "path": "a/b/c/d/e.rst",
+      "pattern": "foo/**/bar"
+    },
+    {
+      "match": false,
+      "path": "ab",
+      "pattern": "foo/**/bar"
+    },
+    {
+      "match": false,
+      "path": "axb",
+      "pattern": "foo/**/bar"
+    },
+    {
+      "match": false,
+      "path": "axx/yyb",
+      "pattern": "foo/**/bar"
+    },
+    {
+      "match": false,
+      "path": "bx",
+      "pattern": "foo/**/bar"
+    },
+    {
+      "match": false,
+      "path": "chapter1.rst",
+      "pattern": "foo/**/bar"
+    },
+    {
+      "match": false,
+      "path": "chapterX.rst",
+      "pattern": "foo/**/bar"
+    },
+    {
+      "match": false,
+      "path": "docs/a/b.rst",
+      "pattern": "foo/**/bar"
+    },
+    {
+      "match": false,
+      "path": "docs/api.rst",
+      "pattern": "foo/**/bar"
+    },
+    {
+      "match": false,
+      "path": "dx",
+      "pattern": "foo/**/bar"
+    },
+    {
+      "match": false,
+      "path": "foo",
+      "pattern": "foo/**/bar"
+    },
+    {
+      "match": false,
+      "path": "foo/bar",
+      "pattern": "foo/**/bar"
+    },
+    {
+      "match": false,
+      "path": "foo/bar.rst",
+      "pattern": "foo/**/bar"
+    },
+    {
+      "match": true,
+      "path": "foo/x/bar",
+      "pattern": "foo/**/bar"
+    },
+    {
+      "match": true,
+      "path": "foo/x/y/bar",
+      "pattern": "foo/**/bar"
+    },
+    {
+      "match": false,
+      "path": "index.rst",
+      "pattern": "foo/**/bar"
+    },
+    {
+      "match": false,
+      "path": "src/code.py",
+      "pattern": "foo/**/bar"
+    },
+    {
+      "match": false,
+      "path": "x/Thumbs.db",
+      "pattern": "foo/**/bar"
+    }
+  ],
+  "generator": "tools/gen_pattern_fixture.py",
+  "sphinx_version": "9.1.0"
+}

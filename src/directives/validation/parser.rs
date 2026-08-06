@@ -16,9 +16,11 @@ lazy_static! {
         r"(?m)^\s+:([a-zA-Z][a-zA-Z0-9_-]*): ?(.*?)$"
     ).unwrap();
 
-    /// Regex for matching role patterns
+    /// Regex for matching role patterns. Backtick form only: the bare
+    /// ':name:word' form is not role syntax, and matching it made ordinary
+    /// prose and code samples parse as roles.
     static ref ROLE_REGEX: Regex = Regex::new(
-        r":([a-zA-Z][a-zA-Z0-9_-]*):(`[^`]+`|[^\s]+)"
+        r":([a-zA-Z][a-zA-Z0-9_-]*):(`[^`]+`)"
     ).unwrap();
 
     /// Regex for parsing role with display text
@@ -26,6 +28,21 @@ lazy_static! {
         r"`([^<]+)<([^>]+)>`"
     ).unwrap();
 }
+
+/// Directives whose directive-line text is body content, not arguments
+/// (docutils admonition semantics: `.. note:: inline text` is a one-line note).
+const INLINE_CONTENT_DIRECTIVES: &[&str] = &[
+    "note",
+    "warning",
+    "tip",
+    "hint",
+    "important",
+    "caution",
+    "danger",
+    "error",
+    "attention",
+    "seealso",
+];
 
 /// Parser for extracting directives and roles from RST content
 pub struct DirectiveRoleParser {
@@ -49,16 +66,30 @@ impl DirectiveRoleParser {
                 let directive_name = captures.get(1).unwrap().as_str().to_string();
                 let args_str = captures.get(2).unwrap().as_str().trim();
 
-                // Parse arguments
-                let arguments: Vec<String> = if args_str.is_empty() {
+                let is_inline_content =
+                    INLINE_CONTENT_DIRECTIVES.contains(&directive_name.as_str());
+
+                // Parse arguments (admonitions take none: directive-line text
+                // is their content)
+                let arguments: Vec<String> = if args_str.is_empty() || is_inline_content {
                     Vec::new()
                 } else {
                     args_str.split_whitespace().map(|s| s.to_string()).collect()
                 };
 
                 // Look for options and content in following lines
-                let (options, content, _content_end_line) =
+                let (options, body, _content_end_line) =
                     self.parse_directive_body(&lines, line_num + 1);
+
+                let content = if is_inline_content && !args_str.is_empty() {
+                    if body.is_empty() {
+                        args_str.to_string()
+                    } else {
+                        format!("{}\n{}", args_str, body)
+                    }
+                } else {
+                    body
+                };
 
                 let directive = ParsedDirective {
                     name: directive_name,
@@ -155,6 +186,9 @@ impl DirectiveRoleParser {
         let mut content_lines = Vec::new();
         let mut current_line = start_line;
         let mut in_content = false;
+        // docutils accepts any consistent indent >= 1; the first body line
+        // fixes the block's indent prefix.
+        let mut body_indent: Option<String> = None;
 
         while current_line < lines.len() {
             let line = lines[current_line];
@@ -180,16 +214,15 @@ impl DirectiveRoleParser {
             }
 
             // Check if line is indented (content)
-            if line.starts_with("   ") || line.starts_with('\t') {
-                in_content = true;
-                // Remove common indentation
-                let content_line = if let Some(stripped) = line.strip_prefix("   ") {
-                    stripped
-                } else if let Some(stripped) = line.strip_prefix('\t') {
-                    stripped
-                } else {
-                    line
+            let leading_len = line.len() - line.trim_start_matches([' ', '\t']).len();
+            if leading_len > 0 {
+                let prefix = body_indent.get_or_insert_with(|| line[..leading_len].to_string());
+                let content_line = match line.strip_prefix(prefix.as_str()) {
+                    Some(stripped) => stripped,
+                    // A line indented differently than the block ends it.
+                    None => break,
                 };
+                in_content = true;
                 content_lines.push(content_line.to_string());
                 current_line += 1;
                 continue;
@@ -359,13 +392,11 @@ mod tests {
         let directives = parser.extract_directives(content);
         assert_eq!(directives.len(), 2);
 
-        // Check note directive
+        // Check note directive — docutils semantics: directive-line text is
+        // the first line of the admonition's content, never arguments
         assert_eq!(directives[0].name, "note");
-        assert_eq!(directives[0].arguments.len(), 4); // "This", "is", "a", "note"
-        assert_eq!(directives[0].arguments[0], "This");
-        assert_eq!(directives[0].arguments[1], "is");
-        assert_eq!(directives[0].arguments[2], "a");
-        assert_eq!(directives[0].arguments[3], "note");
+        assert!(directives[0].arguments.is_empty());
+        assert!(directives[0].content.starts_with("This is a note"));
         assert!(directives[0].content.contains("content of the note"));
 
         // Check code-block directive
@@ -458,6 +489,58 @@ See :doc:`test` and :ref:`section`.
         let content = ".. note:: Test\n.. warning:: Another\nSee :doc:`test` and :ref:`section`.";
         assert_eq!(DirectiveRoleParser::count_directives(content), 2);
         assert_eq!(DirectiveRoleParser::count_roles(content), 2);
+    }
+
+    #[test]
+    fn test_inline_admonition_content() {
+        let parser = DirectiveRoleParser::new("test.rst".to_string());
+
+        // One-line admonition: valid Sphinx, the text is the whole content
+        let directives = parser.extract_directives(".. note:: Everything on one line.");
+        assert_eq!(directives.len(), 1);
+        assert!(directives[0].arguments.is_empty());
+        assert_eq!(directives[0].content, "Everything on one line.");
+
+        // warning behaves the same way
+        let directives = parser.extract_directives(".. warning:: Watch out.");
+        assert!(directives[0].arguments.is_empty());
+        assert_eq!(directives[0].content, "Watch out.");
+
+        // Truly empty admonition has no content (a real docutils error)
+        let directives = parser.extract_directives(".. note::");
+        assert!(directives[0].arguments.is_empty());
+        assert!(directives[0].content.is_empty());
+
+        // Argument-taking directives keep argument semantics
+        let directives = parser.extract_directives(".. code-block:: python");
+        assert_eq!(directives[0].arguments, vec!["python".to_string()]);
+    }
+
+    #[test]
+    fn test_any_body_indent_is_content() {
+        let parser = DirectiveRoleParser::new("test.rst".to_string());
+
+        // 2-space indent is valid docutils; must not read as "no content"
+        let directives = parser.extract_directives(".. note::\n\n  Two-space indented body.\n");
+        assert_eq!(directives.len(), 1);
+        assert_eq!(directives[0].content, "Two-space indented body.");
+
+        // 4-space indent works the same way
+        let directives = parser.extract_directives(".. note::\n\n    Four spaces.\n");
+        assert_eq!(directives[0].content, "Four spaces.");
+    }
+
+    #[test]
+    fn test_roles_require_backticks() {
+        let parser = DirectiveRoleParser::new("test.rst".to_string());
+
+        // Bare ':word:text' is not role syntax and must not parse as one
+        let roles = parser.extract_roles("compare a:b:c and :this:that in prose");
+        assert!(roles.is_empty());
+
+        let roles = parser.extract_roles("but :ref:`real-target` is a role");
+        assert_eq!(roles.len(), 1);
+        assert_eq!(roles[0].target, "real-target");
     }
 
     #[test]

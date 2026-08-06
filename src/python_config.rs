@@ -5,9 +5,25 @@ use std::path::{Path, PathBuf};
 
 use crate::config::BuildConfig;
 
-/// Python configuration parser that can execute conf.py files
+/// Python configuration parser for conf.py files.
+///
+/// This is a *parser*, not an executor: it handles the declarative subset of
+/// Python used by typical conf.py files (assignments of literals, including
+/// multi-line lists/dicts/tuples, string concatenation, and triple-quoted
+/// strings). Every construct it cannot handle produces a [`ConfigWarning`] —
+/// silent dropping is banned. Full execution arrives with the Python sidecar
+/// (ROADMAP M5).
 pub struct PythonConfigParser {
     conf_namespace: HashMap<String, serde_json::Value>,
+    warnings: Vec<ConfigWarning>,
+}
+
+/// A conf.py construct that could not be parsed and was dropped.
+#[derive(Debug, Clone)]
+pub struct ConfigWarning {
+    /// 1-based line in conf.py where the construct starts.
+    pub line: usize,
+    pub message: String,
 }
 
 /// Represents a parsed conf.py configuration
@@ -138,9 +154,15 @@ pub struct ConfPyConfig {
 impl PythonConfigParser {
     /// Create a new Python configuration parser
     pub fn new() -> Result<Self> {
-        let conf_namespace = HashMap::new();
+        Ok(Self {
+            conf_namespace: HashMap::new(),
+            warnings: Vec::new(),
+        })
+    }
 
-        Ok(Self { conf_namespace })
+    /// Constructs dropped during the last parse (never silently discarded).
+    pub fn warnings(&self) -> &[ConfigWarning] {
+        &self.warnings
     }
 
     /// Parse a conf.py file and extract configuration
@@ -153,73 +175,49 @@ impl PythonConfigParser {
         // Read the conf.py file
         let conf_py_content = std::fs::read_to_string(conf_py_path)?;
 
-        // For now, implement a simple parser that extracts basic configuration
-        // In a full implementation, this would execute the Python code
-        self.simple_parse_conf_py(&conf_py_content)?;
+        self.parse_statements(&conf_py_content)?;
 
         // Extract configuration values
         self.extract_configuration()
     }
 
-    /// Simple parser for basic conf.py configurations (stub implementation)
-    fn simple_parse_conf_py(&mut self, content: &str) -> Result<()> {
-        // Parse simple assignment statements like: variable = "value"
-        for line in content.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
+    /// Parse the declarative subset of a conf.py: literal assignments, with a
+    /// warning recorded for every construct that had to be dropped.
+    fn parse_statements(&mut self, content: &str) -> Result<()> {
+        for (line, stmt) in logical_statements(content) {
+            let stmt = stmt.trim();
+            if stmt.is_empty() {
                 continue;
             }
 
-            // Parse simple assignments
-            if let Some((key, value)) = self.parse_simple_assignment(line) {
-                self.conf_namespace.insert(key, value);
+            // Imports set no configuration values; ignoring them loses nothing.
+            if stmt.starts_with("import ") || stmt.starts_with("from ") {
+                continue;
+            }
+
+            match split_assignment(stmt) {
+                Some((name, value_src)) => match parse_python_literal(value_src) {
+                    Ok(value) => {
+                        self.conf_namespace.insert(name.to_string(), value);
+                    }
+                    Err(reason) => self.warnings.push(ConfigWarning {
+                        line,
+                        message: format!(
+                            "unsupported value for '{}' dropped ({}): {}",
+                            name,
+                            reason,
+                            snippet(value_src)
+                        ),
+                    }),
+                },
+                None => self.warnings.push(ConfigWarning {
+                    line,
+                    message: format!("unsupported statement dropped: {}", snippet(stmt)),
+                }),
             }
         }
 
         Ok(())
-    }
-
-    /// Parse simple Python assignments
-    fn parse_simple_assignment(&self, line: &str) -> Option<(String, serde_json::Value)> {
-        if let Some(eq_pos) = line.find('=') {
-            let key = line[..eq_pos].trim().to_string();
-            let value_str = line[eq_pos + 1..].trim();
-
-            // Parse common value types
-            if value_str.starts_with('"') && value_str.ends_with('"') {
-                // String value
-                let value = value_str[1..value_str.len() - 1].to_string();
-                return Some((key, serde_json::Value::String(value)));
-            } else if value_str.starts_with('\'') && value_str.ends_with('\'') {
-                // String value with single quotes
-                let value = value_str[1..value_str.len() - 1].to_string();
-                return Some((key, serde_json::Value::String(value)));
-            } else if value_str == "True" {
-                return Some((key, serde_json::Value::Bool(true)));
-            } else if value_str == "False" {
-                return Some((key, serde_json::Value::Bool(false)));
-            } else if let Ok(num) = value_str.parse::<i64>() {
-                return Some((key, serde_json::Value::Number(num.into())));
-            } else if value_str.starts_with('[') && value_str.ends_with(']') {
-                // Simple list parsing
-                let list_content = &value_str[1..value_str.len() - 1];
-                let items: Vec<serde_json::Value> = list_content
-                    .split(',')
-                    .map(|item| {
-                        let item = item.trim();
-                        if (item.starts_with('"') && item.ends_with('"'))
-                            || (item.starts_with('\'') && item.ends_with('\''))
-                        {
-                            serde_json::Value::String(item[1..item.len() - 1].to_string())
-                        } else {
-                            serde_json::Value::String(item.to_string())
-                        }
-                    })
-                    .collect();
-                return Some((key, serde_json::Value::Array(items)));
-            }
-        }
-        None
     }
 
     /// Extract configuration values from the parsed Python namespace
@@ -412,6 +410,414 @@ impl PythonConfigParser {
                 | "gettext_auto_build"
                 | "gettext_additional_targets"
         )
+    }
+}
+
+/// First ~60 chars of a construct, for warning messages.
+fn snippet(s: &str) -> String {
+    let s = s.trim();
+    match s.char_indices().nth(60) {
+        Some((idx, _)) => format!("{}…", &s[..idx]),
+        None => s.to_string(),
+    }
+}
+
+/// Split Python source into logical statements: physical lines joined while
+/// brackets are open, a string (incl. triple-quoted) is unterminated, or a
+/// trailing backslash continues the line. Comments outside strings are
+/// stripped. Yields `(1-based start line, statement text)`.
+fn logical_statements(content: &str) -> Vec<(usize, String)> {
+    let chars: Vec<char> = content.chars().collect();
+    let mut statements = Vec::new();
+
+    let mut buf = String::new();
+    let mut start_line = 1usize;
+    let mut line = 1usize;
+    let mut depth = 0i32;
+    // (quote char, is_triple)
+    let mut string_state: Option<(char, bool)> = None;
+    let mut escaped = false;
+
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+
+        if let Some((quote, triple)) = string_state {
+            buf.push(c);
+            if c == '\n' {
+                line += 1;
+            }
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == quote {
+                if triple {
+                    if i + 2 < chars.len() && chars[i + 1] == quote && chars[i + 2] == quote {
+                        buf.push(quote);
+                        buf.push(quote);
+                        i += 2;
+                        string_state = None;
+                    }
+                } else {
+                    string_state = None;
+                }
+            }
+            i += 1;
+            continue;
+        }
+
+        match c {
+            '\'' | '"' => {
+                let triple = i + 2 < chars.len() && chars[i + 1] == c && chars[i + 2] == c;
+                buf.push(c);
+                if triple {
+                    buf.push(c);
+                    buf.push(c);
+                    i += 2;
+                }
+                string_state = Some((c, triple));
+            }
+            '#' => {
+                // Comment: skip to (but not past) end of line.
+                while i + 1 < chars.len() && chars[i + 1] != '\n' {
+                    i += 1;
+                }
+            }
+            '(' | '[' | '{' => {
+                depth += 1;
+                buf.push(c);
+            }
+            ')' | ']' | '}' => {
+                depth -= 1;
+                buf.push(c);
+            }
+            '\\' if i + 1 < chars.len() && chars[i + 1] == '\n' => {
+                // Explicit line continuation: join without the backslash.
+                buf.push(' ');
+                line += 1;
+                i += 1;
+            }
+            '\n' => {
+                line += 1;
+                if depth > 0 {
+                    buf.push('\n');
+                } else {
+                    if !buf.trim().is_empty() {
+                        statements.push((start_line, std::mem::take(&mut buf)));
+                    } else {
+                        buf.clear();
+                    }
+                    start_line = line;
+                }
+            }
+            _ => {
+                if buf.trim().is_empty() && !c.is_whitespace() && buf.is_empty() {
+                    start_line = line;
+                }
+                buf.push(c);
+            }
+        }
+        i += 1;
+    }
+
+    if !buf.trim().is_empty() {
+        statements.push((start_line, buf));
+    }
+
+    statements
+}
+
+/// Split `identifier = <value>` at the first top-level `=` that is a plain
+/// assignment (not `==`, `!=`, `<=`, `>=`, or an augmented assignment).
+/// Returns `None` for anything that is not a simple assignment to a bare name.
+fn split_assignment(stmt: &str) -> Option<(&str, &str)> {
+    let bytes = stmt.as_bytes();
+    let mut depth = 0i32;
+    let mut string_quote: Option<u8> = None;
+
+    for i in 0..bytes.len() {
+        let b = bytes[i];
+        if let Some(q) = string_quote {
+            if b == q && (i == 0 || bytes[i - 1] != b'\\') {
+                string_quote = None;
+            }
+            continue;
+        }
+        match b {
+            b'\'' | b'"' => string_quote = Some(b),
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            b'=' if depth == 0 => {
+                let next_eq = bytes.get(i + 1) == Some(&b'=');
+                let prev = if i > 0 { bytes[i - 1] } else { 0 };
+                if next_eq || matches!(prev, b'=' | b'!' | b'<' | b'>') {
+                    return None; // comparison
+                }
+                if matches!(
+                    prev,
+                    b'+' | b'-' | b'*' | b'/' | b'%' | b'&' | b'|' | b'^' | b'@'
+                ) {
+                    return None; // augmented assignment
+                }
+                let name = stmt[..i].trim();
+                let is_identifier = !name.is_empty()
+                    && name
+                        .chars()
+                        .next()
+                        .map(|c| c.is_ascii_alphabetic() || c == '_')
+                        .unwrap_or(false)
+                    && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+                if !is_identifier {
+                    return None;
+                }
+                return Some((name, stmt[i + 1..].trim()));
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Recursive-descent parser for Python literals → JSON values.
+/// Supports: strings (escapes, implicit adjacent concatenation, triple
+/// quotes), ints/floats, True/False/None, lists, tuples (as arrays), dicts
+/// with string keys, arbitrary nesting, trailing commas.
+fn parse_python_literal(src: &str) -> std::result::Result<serde_json::Value, String> {
+    let chars: Vec<char> = src.chars().collect();
+    let mut p = PyLiteralParser {
+        chars,
+        pos: 0,
+        saw_comma: false,
+    };
+    let value = p.parse_value()?;
+    p.skip_ws();
+    if p.pos < p.chars.len() {
+        return Err("trailing expression".to_string());
+    }
+    Ok(value)
+}
+
+struct PyLiteralParser {
+    chars: Vec<char>,
+    pos: usize,
+    /// Whether the most recently closed sequence contained a comma — used to
+    /// tell a parenthesized grouping `(x)` from a one-element tuple `(x,)`.
+    saw_comma: bool,
+}
+
+impl PyLiteralParser {
+    fn peek(&self) -> Option<char> {
+        self.chars.get(self.pos).copied()
+    }
+
+    fn skip_ws(&mut self) {
+        while matches!(self.peek(), Some(c) if c.is_whitespace()) {
+            self.pos += 1;
+        }
+    }
+
+    fn parse_value(&mut self) -> std::result::Result<serde_json::Value, String> {
+        self.skip_ws();
+        match self.peek() {
+            Some('\'') | Some('"') => {
+                let mut s = self.parse_string()?;
+                // Implicit adjacent string concatenation: 'a' 'b' == 'ab'
+                loop {
+                    self.skip_ws();
+                    match self.peek() {
+                        Some('\'') | Some('"') => s.push_str(&self.parse_string()?),
+                        _ => break,
+                    }
+                }
+                Ok(serde_json::Value::String(s))
+            }
+            Some('[') => self.parse_sequence('[', ']'),
+            Some('(') => {
+                // Python: `(x)` is grouping, `(x,)` / `(x, y)` is a tuple.
+                // Either way an array (or the inner value) serves config needs.
+                let value = self.parse_sequence('(', ')')?;
+                match value {
+                    serde_json::Value::Array(items) if items.len() == 1 && !self.saw_comma => {
+                        Ok(items.into_iter().next().unwrap())
+                    }
+                    other => Ok(other),
+                }
+            }
+            Some('{') => self.parse_dict(),
+            Some(c) if c.is_ascii_digit() || c == '-' || c == '+' || c == '.' => {
+                self.parse_number()
+            }
+            Some(_) => {
+                if self.eat_keyword("True") {
+                    Ok(serde_json::Value::Bool(true))
+                } else if self.eat_keyword("False") {
+                    Ok(serde_json::Value::Bool(false))
+                } else if self.eat_keyword("None") {
+                    Ok(serde_json::Value::Null)
+                } else {
+                    Err("unsupported expression".to_string())
+                }
+            }
+            None => Err("empty value".to_string()),
+        }
+    }
+
+    fn eat_keyword(&mut self, kw: &str) -> bool {
+        let end = self.pos + kw.len();
+        if end <= self.chars.len() && self.chars[self.pos..end].iter().collect::<String>() == kw {
+            let boundary = self
+                .chars
+                .get(end)
+                .map(|c| !c.is_ascii_alphanumeric() && *c != '_')
+                .unwrap_or(true);
+            if boundary {
+                self.pos = end;
+                return true;
+            }
+        }
+        false
+    }
+
+    fn parse_string(&mut self) -> std::result::Result<String, String> {
+        let quote = self.peek().ok_or("expected string")?;
+        self.pos += 1;
+        let triple = self.chars.get(self.pos) == Some(&quote)
+            && self.chars.get(self.pos + 1) == Some(&quote);
+        if triple {
+            self.pos += 2;
+        }
+
+        let mut out = String::new();
+        loop {
+            let c = *self
+                .chars
+                .get(self.pos)
+                .ok_or("unterminated string literal")?;
+            if c == '\\' {
+                let next = *self
+                    .chars
+                    .get(self.pos + 1)
+                    .ok_or("unterminated escape sequence")?;
+                let translated = match next {
+                    'n' => '\n',
+                    't' => '\t',
+                    'r' => '\r',
+                    '\\' => '\\',
+                    '\'' => '\'',
+                    '"' => '"',
+                    other => {
+                        // Unknown escape: Python keeps the backslash.
+                        out.push('\\');
+                        other
+                    }
+                };
+                out.push(translated);
+                self.pos += 2;
+                continue;
+            }
+            if c == quote {
+                if triple {
+                    if self.chars.get(self.pos + 1) == Some(&quote)
+                        && self.chars.get(self.pos + 2) == Some(&quote)
+                    {
+                        self.pos += 3;
+                        return Ok(out);
+                    }
+                } else {
+                    self.pos += 1;
+                    return Ok(out);
+                }
+            }
+            out.push(c);
+            self.pos += 1;
+        }
+    }
+
+    fn parse_number(&mut self) -> std::result::Result<serde_json::Value, String> {
+        let start = self.pos;
+        if matches!(self.peek(), Some('-') | Some('+')) {
+            self.pos += 1;
+        }
+        while matches!(self.peek(), Some(c) if c.is_ascii_digit() || c == '.' || c == '_' || c == 'e' || c == 'E')
+        {
+            self.pos += 1;
+        }
+        let text: String = self.chars[start..self.pos]
+            .iter()
+            .filter(|c| **c != '_')
+            .collect();
+        if let Ok(i) = text.parse::<i64>() {
+            return Ok(serde_json::Value::Number(i.into()));
+        }
+        if let Ok(f) = text.parse::<f64>() {
+            if let Some(n) = serde_json::Number::from_f64(f) {
+                return Ok(serde_json::Value::Number(n));
+            }
+        }
+        Err(format!("invalid number '{text}'"))
+    }
+
+    fn parse_sequence(
+        &mut self,
+        open: char,
+        close: char,
+    ) -> std::result::Result<serde_json::Value, String> {
+        debug_assert_eq!(self.peek(), Some(open));
+        self.pos += 1;
+        self.saw_comma = false;
+        let mut items = Vec::new();
+        let mut saw_comma = false;
+        loop {
+            self.skip_ws();
+            if self.peek() == Some(close) {
+                self.pos += 1;
+                self.saw_comma = saw_comma;
+                return Ok(serde_json::Value::Array(items));
+            }
+            items.push(self.parse_value()?);
+            self.skip_ws();
+            match self.peek() {
+                Some(',') => {
+                    saw_comma = true;
+                    self.pos += 1;
+                }
+                Some(c) if c == close => {}
+                _ => return Err(format!("expected ',' or '{close}'")),
+            }
+        }
+    }
+
+    fn parse_dict(&mut self) -> std::result::Result<serde_json::Value, String> {
+        debug_assert_eq!(self.peek(), Some('{'));
+        self.pos += 1;
+        let mut map = serde_json::Map::new();
+        loop {
+            self.skip_ws();
+            if self.peek() == Some('}') {
+                self.pos += 1;
+                return Ok(serde_json::Value::Object(map));
+            }
+            let key = match self.parse_value()? {
+                serde_json::Value::String(s) => s,
+                other => return Err(format!("non-string dict key {other}")),
+            };
+            self.skip_ws();
+            if self.peek() != Some(':') {
+                return Err("expected ':' in dict".to_string());
+            }
+            self.pos += 1;
+            let value = self.parse_value()?;
+            map.insert(key, value);
+            self.skip_ws();
+            match self.peek() {
+                Some(',') => {
+                    self.pos += 1;
+                }
+                Some('}') => {}
+                _ => return Err("expected ',' or '}'".to_string()),
+            }
+        }
     }
 }
 
@@ -617,6 +1023,118 @@ impl ConfPyConfig {
         };
         config.exclude_patterns = self.exclude_patterns.clone();
 
+        config.nitpicky = self.nitpicky.unwrap_or(false);
+        config.html_context = self.html_context.clone();
+
         config
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(content: &str) -> PythonConfigParser {
+        let mut parser = PythonConfigParser::new().unwrap();
+        parser.parse_statements(content).unwrap();
+        parser
+    }
+
+    #[test]
+    fn multiline_list_parses() {
+        let p = parse("extensions = [\n    'sphinx.ext.autodoc',\n    'sphinx.ext.viewcode',\n]\n");
+        let v = p.conf_namespace.get("extensions").expect("extensions set");
+        let items: Vec<&str> = v
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i.as_str().unwrap())
+            .collect();
+        assert_eq!(items, vec!["sphinx.ext.autodoc", "sphinx.ext.viewcode"]);
+        assert!(p.warnings().is_empty(), "warnings: {:?}", p.warnings());
+    }
+
+    #[test]
+    fn multiline_dict_parses() {
+        let p = parse(
+            "html_theme_options = {\n    'collapse_navigation': False,\n    'navigation_depth': 4,\n}\n",
+        );
+        let v = p
+            .conf_namespace
+            .get("html_theme_options")
+            .expect("dict set");
+        let obj = v.as_object().unwrap();
+        assert_eq!(
+            obj.get("collapse_navigation"),
+            Some(&serde_json::Value::Bool(false))
+        );
+        assert_eq!(
+            obj.get("navigation_depth").and_then(|n| n.as_i64()),
+            Some(4)
+        );
+    }
+
+    #[test]
+    fn adjacent_string_concat_parses() {
+        let p = parse("copyright = ('2024, ' 'Team')\n");
+        assert_eq!(
+            p.conf_namespace.get("copyright").and_then(|v| v.as_str()),
+            Some("2024, Team")
+        );
+    }
+
+    #[test]
+    fn triple_quoted_string_parses() {
+        let p = parse("project = \"\"\"Multi\nLine\"\"\"\n");
+        assert_eq!(
+            p.conf_namespace.get("project").and_then(|v| v.as_str()),
+            Some("Multi\nLine")
+        );
+    }
+
+    #[test]
+    fn trailing_comment_stripped() {
+        let p = parse("version = '1.0'  # the version\n");
+        assert_eq!(
+            p.conf_namespace.get("version").and_then(|v| v.as_str()),
+            Some("1.0")
+        );
+    }
+
+    #[test]
+    fn unsupported_value_warns_and_drops() {
+        let p = parse("project = os.environ['P']\n");
+        assert!(!p.conf_namespace.contains_key("project"));
+        assert_eq!(p.warnings().len(), 1);
+        assert_eq!(p.warnings()[0].line, 1);
+        assert!(
+            p.warnings()[0].message.contains("project"),
+            "warning names the variable: {}",
+            p.warnings()[0].message
+        );
+    }
+
+    #[test]
+    fn unsupported_statement_warns_but_imports_do_not() {
+        let p = parse("import os\nfrom pathlib import Path\nsys.path.insert(0, 'x')\n");
+        assert_eq!(p.warnings().len(), 1, "warnings: {:?}", p.warnings());
+        assert_eq!(p.warnings()[0].line, 3);
+    }
+
+    #[test]
+    fn nested_structures_parse() {
+        let p = parse(
+            "intersphinx_mapping = {\n    'python': ('https://docs.python.org/3', None),\n}\n",
+        );
+        let v = p.conf_namespace.get("intersphinx_mapping").unwrap();
+        let python = v
+            .as_object()
+            .unwrap()
+            .get("python")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        assert_eq!(python[0].as_str(), Some("https://docs.python.org/3"));
+        assert!(python[1].is_null());
     }
 }

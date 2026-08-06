@@ -5,22 +5,21 @@
 
 use std::collections::HashMap;
 
-use minijinja::{Environment, Template};
+use minijinja::Environment;
 
 use crate::error::BuildError;
 use crate::validation::expression_evaluator::ExpressionEvaluator;
 use crate::validation::{
-    ActionResult, ConstraintActions, ConstraintValidator, ContentItem, FailureAction,
-    ValidationContext, ValidationFailure, ValidationResult, ValidationRule, ValidationSeverity,
-    Validator,
+    ConstraintActions, ContentItem, FailureAction, ValidationContext, ValidationFailure,
+    ValidationResult, ValidationRule,
 };
 
 /// Core constraint validation engine
 pub struct ConstraintEngine {
-    /// Template environment for processing constraint expressions
+    /// Template environment for processing constraint expressions.
+    /// Compiled error-message templates are stored in the environment itself
+    /// (keyed by their source), which owns them soundly.
     template_env: Environment<'static>,
-    /// Cache for compiled templates
-    template_cache: HashMap<String, Template<'static, 'static>>,
 }
 
 impl ConstraintEngine {
@@ -39,10 +38,7 @@ impl ConstraintEngine {
 
         env.add_function("not_empty", |value: String| -> bool { !value.is_empty() });
 
-        Self {
-            template_env: env,
-            template_cache: HashMap::new(),
-        }
+        Self { template_env: env }
     }
 
     /// Process all constraints for a given content item
@@ -223,31 +219,6 @@ impl ConstraintEngine {
         }
     }
 
-    /// Get or compile a template for the given expression
-    #[allow(mismatched_lifetime_syntaxes)]
-    fn get_or_compile_template(&mut self, expression: &str) -> Result<&Template, BuildError> {
-        if !self.template_cache.contains_key(expression) {
-            let template = self
-                .template_env
-                .template_from_str(expression)
-                .map_err(|e| {
-                    BuildError::ValidationError(format!(
-                        "Failed to compile constraint template '{}': {}",
-                        expression, e
-                    ))
-                })?;
-
-            // Store template in cache
-            let owned_template = unsafe {
-                std::mem::transmute::<Template<'_, '_>, Template<'static, 'static>>(template)
-            };
-            self.template_cache
-                .insert(expression.to_string(), owned_template);
-        }
-
-        Ok(self.template_cache.get(expression).unwrap())
-    }
-
     /// Create template context from content item
     fn create_template_context(&self, item: &ContentItem) -> minijinja::Value {
         let mut item_data = HashMap::new();
@@ -310,7 +281,28 @@ impl ConstraintEngine {
     ) -> Result<String, BuildError> {
         if let Some(error_template) = &rule.error_template {
             let context = self.create_template_context(item);
-            let template = self.get_or_compile_template(error_template)?;
+
+            // The environment owns template storage (loader feature); the
+            // template source doubles as its name, mirroring the old cache key.
+            if self.template_env.get_template(error_template).is_err() {
+                self.template_env
+                    .add_template_owned(error_template.clone(), error_template.clone())
+                    .map_err(|e| {
+                        BuildError::ValidationError(format!(
+                            "Failed to compile constraint template '{}': {}",
+                            error_template, e
+                        ))
+                    })?;
+            }
+            let template = self
+                .template_env
+                .get_template(error_template)
+                .map_err(|e| {
+                    BuildError::ValidationError(format!(
+                        "Failed to compile constraint template '{}': {}",
+                        error_template, e
+                    ))
+                })?;
 
             template.render(context).map_err(|e| {
                 BuildError::ValidationError(format!(
@@ -333,79 +325,16 @@ impl Default for ConstraintEngine {
     }
 }
 
-impl Validator for ConstraintEngine {
-    fn validate(&self, _context: &ValidationContext) -> ValidationResult {
-        // This is a simple implementation - in practice, you'd want to
-        // validate all constraints for the current item
-        ValidationResult::success()
-    }
-
-    fn get_validation_rules(&self) -> Vec<ValidationRule> {
-        // Return all rules from the configuration
-        Vec::new() // Placeholder
-    }
-
-    fn get_severity(&self) -> ValidationSeverity {
-        ValidationSeverity::Warning
-    }
-
-    fn supports_incremental(&self) -> bool {
-        true
-    }
-}
-
-impl ConstraintValidator for ConstraintEngine {
-    fn validate_constraint(&self, _rule: &ValidationRule, _item: &ContentItem) -> ValidationResult {
-        // This would need to be implemented with mutable access
-        // For now, return a placeholder
-        ValidationResult::success()
-    }
-
-    fn apply_actions(
-        &self,
-        _failures: &[ValidationFailure],
-        actions: &ConstraintActions,
-    ) -> ActionResult {
-        // Apply the specified actions
-        let mut warnings = Vec::new();
-        let mut errors = Vec::new();
-
-        for action in &actions.on_fail {
-            match action {
-                FailureAction::Warn => {
-                    warnings.push("Constraint validation warning".to_string());
-                }
-                FailureAction::Break => {
-                    errors.push(BuildError::ValidationError(
-                        "Constraint validation failed critically".to_string(),
-                    ));
-                }
-                FailureAction::Style => {
-                    // Style changes are applied separately
-                }
-            }
-        }
-
-        if errors.is_empty() {
-            ActionResult {
-                success: true,
-                warnings,
-                errors,
-            }
-        } else {
-            ActionResult {
-                success: false,
-                warnings,
-                errors,
-            }
-        }
-    }
-}
+// NOTE: ConstraintEngine deliberately does NOT implement the Validator /
+// ConstraintValidator traits. Earlier placeholder impls always returned
+// success, and auto-ref resolution silently picked the trait method over the
+// real inherent `validate_constraint` — wiring code would then validate
+// nothing. Call the inherent methods directly.
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::validation::ItemLocation;
+    use crate::validation::{ItemLocation, ValidationSeverity};
 
     fn create_test_item() -> ContentItem {
         let mut metadata = HashMap::new();
@@ -435,10 +364,31 @@ mod tests {
     }
 
     #[test]
-    fn test_constraint_engine_creation() {
-        let engine = ConstraintEngine::new();
-        assert!(!engine.template_cache.is_empty() || engine.template_cache.is_empty());
-        // Just test creation
+    fn test_error_template_renders_item_fields() {
+        let mut engine = ConstraintEngine::new();
+        let item = create_test_item();
+        let rule = ValidationRule {
+            name: "status_check::closed".to_string(),
+            description: Some("status must be closed".to_string()),
+            constraint: "status == \"closed\"".to_string(),
+            severity: ValidationSeverity::Warning,
+            actions: Default::default(),
+            error_template: Some("Item {{ id }} failed: status is {{ status }}".to_string()),
+        };
+
+        // Call the inherent method explicitly: the ConstraintValidator trait
+        // has a same-named placeholder that auto-ref resolution would pick.
+        let result = ConstraintEngine::validate_constraint(&mut engine, &rule, &item).unwrap();
+        assert!(!result.passed, "status is 'open', constraint must fail");
+        let msg = result.error_message.expect("templated message");
+        assert!(
+            msg.contains("TEST-001") && msg.contains("open"),
+            "template must render item fields, got: {msg}"
+        );
+
+        // Render twice: the second pass hits the cached template.
+        let again = ConstraintEngine::validate_constraint(&mut engine, &rule, &item).unwrap();
+        assert_eq!(again.error_message, Some(msg));
     }
 
     #[test]

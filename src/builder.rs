@@ -9,11 +9,53 @@ use std::time::{Duration, Instant};
 use crate::cache::BuildCache;
 use crate::config::BuildConfig;
 use crate::document::Document;
-use crate::error::{BuildErrorReport, BuildWarning};
+use crate::error::{BuildErrorReport, BuildWarning, ErrorType};
 use crate::extensions::{ExtensionLoader, SphinxApp};
 use crate::matching;
 use crate::parser::Parser;
 use crate::utils;
+
+/// A single toctree entry with its real source position.
+#[derive(Debug, Clone)]
+struct ToctreeEntry {
+    /// The target as written (title stripped, angle-bracket target extracted).
+    target: String,
+    /// 1-based line number of the entry in its source file.
+    line: usize,
+    /// True when the containing toctree has `:glob:` and the target contains
+    /// glob metacharacters.
+    is_glob: bool,
+}
+
+/// Resolve a toctree target against the document that references it, the way
+/// Sphinx does: a leading `/` means source-root-relative, anything else is
+/// relative to the referencing document's directory. `.`/`..` segments are
+/// normalized.
+fn resolve_docname(target: &str, referencing_doc: &str) -> String {
+    let (base, target) = if let Some(stripped) = target.strip_prefix('/') {
+        ("", stripped)
+    } else {
+        (
+            referencing_doc
+                .rsplit_once('/')
+                .map(|(d, _)| d)
+                .unwrap_or(""),
+            target,
+        )
+    };
+
+    let mut segments: Vec<&str> = Vec::new();
+    for seg in base.split('/').chain(target.split('/')) {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                segments.pop();
+            }
+            s => segments.push(s),
+        }
+    }
+    segments.join("/")
+}
 
 #[derive(Debug, Clone)]
 pub struct BuildStats {
@@ -46,8 +88,22 @@ pub struct SphinxBuilder {
 
 impl SphinxBuilder {
     pub fn new(config: BuildConfig, source_dir: PathBuf, output_dir: PathBuf) -> Result<Self> {
-        let cache_dir = output_dir.join(".sphinx-ultra-cache");
-        let cache = BuildCache::new(cache_dir)?;
+        // -d/doctree_dir relocates the cache (sphinx-build's doctree dir).
+        let cache_dir = config
+            .doctree_dir
+            .clone()
+            .unwrap_or_else(|| output_dir.join(".sphinx-ultra-cache"));
+        // Any config change invalidates cached documents (they were rendered
+        // under the old configuration).
+        let config_fingerprint = blake3::hash(serde_json::to_string(&config)?.as_bytes())
+            .to_hex()
+            .to_string();
+        let cache = BuildCache::new(
+            cache_dir,
+            config.max_cache_size_mb,
+            config.cache_expiration_hours,
+            &config_fingerprint,
+        )?;
 
         // Canonicalize source_dir so it matches the canonicalized absolute paths
         // returned by matching::get_matching_files; without this, relative
@@ -103,6 +159,11 @@ impl SphinxBuilder {
         self.incremental = true;
     }
 
+    /// Discard the saved environment before building (sphinx-build `-E`).
+    pub fn fresh_env(&self) -> Result<()> {
+        self.cache.clear()
+    }
+
     /// Add a warning to the collection
     #[allow(dead_code)]
     pub fn add_warning(&self, warning: BuildWarning) {
@@ -125,6 +186,9 @@ impl SphinxBuilder {
         if self.output_dir.exists() {
             tokio::fs::remove_dir_all(&self.output_dir).await?;
         }
+        // A clean build must not reuse documents cached before the clean
+        // (the on-disk cache lived inside the output dir we just removed).
+        self.cache.clear()?;
         Ok(())
     }
 
@@ -154,6 +218,18 @@ impl SphinxBuilder {
         // Validate documents and collect warnings/errors
         self.validate_documents(&processed_docs, &source_files)
             .await?;
+
+        // Directive/role validation runs in every build unless disabled
+        if self.config.validate_directives {
+            self.validate_directives_and_roles(&processed_docs);
+        }
+
+        // Cross-reference validation is opt-in (-n/nitpicky): its heuristics
+        // still false-positive on refs we cannot resolve yet (intersphinx,
+        // python objects before the M5 sidecar).
+        if self.config.nitpicky {
+            self.validate_cross_references(&processed_docs)?;
+        }
 
         // Generate cross-references and indices
         self.generate_indices(&processed_docs).await?;
@@ -188,17 +264,8 @@ impl SphinxBuilder {
 
     async fn discover_source_files(&self) -> Result<Vec<PathBuf>> {
         // Use pattern-based file discovery like Sphinx
-        let mut include_patterns = self.config.include_patterns.clone();
+        let include_patterns = &self.config.include_patterns;
         let exclude_patterns = &self.config.exclude_patterns;
-
-        // Add default source file patterns if no specific patterns are configured
-        if include_patterns == vec!["**"] {
-            include_patterns = vec![
-                "**/*.rst".to_string(),
-                "**/*.md".to_string(),
-                "**/*.txt".to_string(),
-            ];
-        }
 
         // Add built-in exclude patterns for common build artifacts and hidden files
         let mut all_exclude_patterns = exclude_patterns.clone();
@@ -215,10 +282,15 @@ impl SphinxBuilder {
 
         match matching::get_matching_files(
             &self.source_dir,
-            &include_patterns,
+            include_patterns,
             &all_exclude_patterns,
         ) {
-            Ok(files) => Ok(files),
+            // Sphinx's Project.discover keeps only files with a configured
+            // source suffix, regardless of include_patterns
+            Ok(files) => Ok(files
+                .into_iter()
+                .filter(|path| self.is_source_file(path))
+                .collect()),
             Err(e) => {
                 log::warn!(
                     "Pattern matching failed, falling back to simple discovery: {}",
@@ -297,26 +369,50 @@ impl SphinxBuilder {
             .num_threads(self.parallel_jobs)
             .build()?;
 
-        let documents: Result<Vec<_>, _> = pool.install(|| {
+        // One file failing must not abort the build: failures become
+        // BuildErrorReports (and a non-zero exit) while the rest continue.
+        let results: Vec<(PathBuf, Result<Document>)> = pool.install(|| {
             files
                 .par_iter()
-                .map(|file_path| self.process_single_file(file_path))
+                .map(|file_path| (file_path.clone(), self.process_single_file(file_path)))
                 .collect()
         });
 
-        documents
+        let mut documents = Vec::with_capacity(results.len());
+        for (file_path, result) in results {
+            match result {
+                Ok(document) => documents.push(document),
+                Err(e) => {
+                    self.errors.lock().unwrap().push(BuildErrorReport::new(
+                        file_path,
+                        None,
+                        format!("{e:#}"),
+                        ErrorType::ParseError,
+                    ));
+                }
+            }
+        }
+
+        Ok(documents)
     }
 
     fn process_single_file(&self, file_path: &Path) -> Result<Document> {
         let relative_path = file_path.strip_prefix(&self.source_dir)?;
         debug!("Processing file: {}", relative_path.display());
 
-        // Check cache if incremental build is enabled
+        // Check cache if incremental build is enabled. A cache hit still
+        // writes the rendered output — skipping the write is how cached pages
+        // went missing from the output tree.
         if self.incremental {
             if let Ok(cached_doc) = self.cache.get_document(file_path) {
                 let file_mtime = utils::get_file_mtime(file_path)?;
-                if cached_doc.source_mtime >= file_mtime {
+                if cached_doc.source_mtime >= file_mtime && !cached_doc.html.is_empty() {
                     debug!("Using cached version of {}", relative_path.display());
+                    let output_path = self.get_output_path(file_path)?;
+                    if let Some(parent) = output_path.parent() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    std::fs::write(&output_path, &cached_doc.html)?;
                     return Ok(cached_doc);
                 }
             }
@@ -324,20 +420,21 @@ impl SphinxBuilder {
 
         // Read and parse the file
         let content = std::fs::read_to_string(file_path)?;
-        let document = self.parser.parse(file_path, &content)?;
+        let mut document = self.parser.parse(file_path, &content)?;
 
         // Simple document rendering (placeholder)
         let rendered_html = format!(
             "<html><body>{}</body></html>",
             html_escape::encode_text(&document.content.to_string())
         );
+        document.html = rendered_html;
 
         // Write output file
         let output_path = self.get_output_path(file_path)?;
         if let Some(parent) = output_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(&output_path, &rendered_html)?;
+        std::fs::write(&output_path, &document.html)?;
 
         // Cache the document
         if self.incremental {
@@ -450,6 +547,18 @@ impl SphinxBuilder {
         Ok(())
     }
 
+    /// Root-relative docname (no extension, forward slashes) for a document.
+    fn docname_of(&self, doc: &Document) -> String {
+        let relative = doc
+            .source_path
+            .strip_prefix(&self.source_dir)
+            .unwrap_or(&doc.source_path);
+        relative
+            .with_extension("")
+            .to_string_lossy()
+            .replace('\\', "/")
+    }
+
     async fn validate_documents(
         &self,
         processed_docs: &[Document],
@@ -457,66 +566,61 @@ impl SphinxBuilder {
     ) -> Result<()> {
         info!("Validating documents and checking for warnings...");
 
-        let mut toctree_references = HashSet::new();
-        let mut referenced_files = HashSet::new();
         let mut all_documents = HashSet::new();
+        let mut toctree_refs: Vec<(PathBuf, String, ToctreeEntry)> = Vec::new();
 
-        // Collect all documents and their toctree references
         for doc in processed_docs {
-            // Get relative path for comparison
-            let doc_path_relative = doc
-                .source_path
-                .strip_prefix(&self.source_dir)
-                .unwrap_or(&doc.source_path);
-            let doc_path_no_ext = doc_path_relative.with_extension("");
-            all_documents.insert(doc_path_no_ext.to_string_lossy().to_string());
+            let docname = self.docname_of(doc);
+            for entry in self.extract_toctree_references(doc) {
+                toctree_refs.push((doc.source_path.clone(), docname.clone(), entry));
+            }
+            all_documents.insert(docname);
+        }
 
-            // Check for toctree directives and collect their references
-            if let Some(toctree_refs) = self.extract_toctree_references(doc) {
-                for toc_ref in toctree_refs {
-                    toctree_references.insert((doc.source_path.clone(), toc_ref.clone()));
-                    referenced_files.insert(toc_ref);
+        // Resolve every entry the way Sphinx does and warn on the misses.
+        let mut referenced: HashSet<String> = HashSet::new();
+        for (source_file, referencing_doc, entry) in &toctree_refs {
+            let resolved = resolve_docname(&entry.target, referencing_doc);
+
+            if entry.is_glob {
+                let matches: Vec<String> = all_documents
+                    .iter()
+                    .filter(|d| matching::pattern_match(d, &resolved).unwrap_or(false))
+                    .cloned()
+                    .collect();
+                if matches.is_empty() {
+                    self.warnings
+                        .lock()
+                        .unwrap()
+                        .push(BuildWarning::toctree_glob_no_match(
+                            source_file.clone(),
+                            Some(entry.line),
+                            &entry.target,
+                        ));
+                } else {
+                    referenced.extend(matches);
                 }
+            } else if all_documents.contains(&resolved) {
+                referenced.insert(resolved);
+            } else {
+                self.warnings
+                    .lock()
+                    .unwrap()
+                    .push(BuildWarning::missing_toctree_ref(
+                        source_file.clone(),
+                        Some(entry.line),
+                        &resolved,
+                    ));
             }
         }
 
-        // Check for missing toctree references
-        for (source_file, reference) in &toctree_references {
-            let ref_path = format!("{}/index", reference);
-            let alt_ref_path = reference.clone();
-
-            if !all_documents.contains(&ref_path) && !all_documents.contains(&alt_ref_path) {
-                let warning = BuildWarning::missing_toctree_ref(
-                    source_file.clone(),
-                    Some(10), // TODO: Extract actual line number
-                    reference,
-                );
-                self.warnings.lock().unwrap().push(warning);
-            }
-        }
-
-        // Check for orphaned documents
+        // Orphan check: exact membership of the resolved reference set.
         for doc in processed_docs {
-            let doc_path_relative = doc
-                .source_path
-                .strip_prefix(&self.source_dir)
-                .unwrap_or(&doc.source_path);
-            let doc_path_no_ext = doc_path_relative.with_extension("");
-            let doc_path_str = doc_path_no_ext.to_string_lossy().to_string();
-
-            // Skip the main index file
-            if doc_path_str == "index" {
+            let docname = self.docname_of(doc);
+            if docname == "index" {
                 continue;
             }
-
-            // Check if this document is referenced in any toctree
-            let is_referenced = referenced_files.iter().any(|ref_path| {
-                ref_path == &doc_path_str
-                    || ref_path == &format!("{}/index", doc_path_str)
-                    || doc_path_str.starts_with(&format!("{}/", ref_path))
-            });
-
-            if !is_referenced {
+            if !referenced.contains(&docname) {
                 let warning = BuildWarning::orphaned_document(doc.source_path.clone());
                 self.warnings.lock().unwrap().push(warning);
             }
@@ -528,35 +632,296 @@ impl SphinxBuilder {
         Ok(())
     }
 
-    fn extract_toctree_references(&self, doc: &Document) -> Option<Vec<String>> {
+    /// Run the directive/role validation system over every RST document.
+    ///
+    /// Findings surface as build *warnings* (so `-W`/`-w` govern promotion);
+    /// `Unknown` results stay silent — the built-in validators cover a
+    /// fraction of real Sphinx, and reporting the rest would drown every
+    /// real project in noise.
+    fn validate_directives_and_roles(&self, processed_docs: &[Document]) {
+        use crate::directives::validation::{
+            DirectiveRoleParser, DirectiveValidationResult, DirectiveValidationSystem,
+            RoleValidationResult,
+        };
         use crate::document::DocumentContent;
 
-        let mut references = Vec::new();
+        let results: Vec<(Vec<BuildWarning>, usize)> = processed_docs
+            .par_iter()
+            .filter_map(|doc| {
+                let raw = match &doc.content {
+                    DocumentContent::RestructuredText(rst) => &rst.raw,
+                    _ => return None,
+                };
 
-        if let DocumentContent::RestructuredText(rst_content) = &doc.content {
-            for node in &rst_content.ast {
-                if let crate::document::RstNode::Directive { name, content, .. } = node {
-                    if name == "toctree" {
-                        // Extract references from toctree content
-                        for line in content.lines() {
-                            let trimmed = line.trim();
-                            if !trimmed.is_empty()
-                                && !trimmed.starts_with(':')
-                                && !trimmed.starts_with("..")
-                            {
-                                references.push(trimmed.to_string());
-                            }
+                let mut warnings = Vec::new();
+                let mut unknown = 0usize;
+                // Statistics make validate_* take &mut self, so each document
+                // gets its own (cheap) system instance for the parallel pass.
+                let mut system = DirectiveValidationSystem::new();
+                let parser = DirectiveRoleParser::new(doc.source_path.display().to_string());
+                let (directives, roles) = parser.parse_content(raw);
+
+                for directive in &directives {
+                    match system.validate_directive(directive) {
+                        DirectiveValidationResult::Valid => {}
+                        DirectiveValidationResult::Unknown => unknown += 1,
+                        DirectiveValidationResult::Warning(msg)
+                        | DirectiveValidationResult::Error(msg) => {
+                            warnings.push(BuildWarning::new(
+                                doc.source_path.clone(),
+                                Some(directive.location.line),
+                                msg,
+                                crate::error::WarningType::Other,
+                            ));
                         }
                     }
+                }
+
+                for role in &roles {
+                    match system.validate_role(role) {
+                        RoleValidationResult::Valid => {}
+                        RoleValidationResult::Unknown => unknown += 1,
+                        RoleValidationResult::Warning(msg) | RoleValidationResult::Error(msg) => {
+                            warnings.push(BuildWarning::new(
+                                doc.source_path.clone(),
+                                Some(role.location.line),
+                                msg,
+                                crate::error::WarningType::Other,
+                            ));
+                        }
+                    }
+                }
+
+                Some((warnings, unknown))
+            })
+            .collect();
+
+        let mut unknown_total = 0usize;
+        for (warnings, unknown) in results {
+            unknown_total += unknown;
+            for warning in warnings {
+                self.add_warning(warning);
+            }
+        }
+        if unknown_total > 0 {
+            debug!(
+                "{} directive/role occurrence(s) had no validator and were not checked",
+                unknown_total
+            );
+        }
+    }
+
+    /// Nitpicky cross-reference validation (`-n`): resolve every `:doc:` and
+    /// `:ref:` against the documents and labels this build actually produced,
+    /// via the domain registry. Python-domain references are counted but not
+    /// validated (no object inventory until the M5 sidecar) — silently
+    /// reporting them broken would false-positive on every third-party ref.
+    fn validate_cross_references(&self, processed_docs: &[Document]) -> Result<()> {
+        use crate::document::DocumentContent;
+        use crate::domains::parser::ReferenceParser;
+        use crate::domains::rst::RstDomain;
+        use crate::domains::{DomainRegistry, ReferenceType};
+
+        // docutils label matching is case-insensitive: normalize both sides.
+        let normalize_label = |label: &str| label.trim().to_lowercase();
+        // `.. _label:` and `.. _label: target` both define `label`.
+        let label_regex = regex::Regex::new(r"^\.\.\s+_([^:]+):").expect("static regex");
+
+        let mut rst_domain = RstDomain::new();
+        for doc in processed_docs {
+            let docname = self.docname_of(doc);
+            let location = crate::domains::ReferenceLocation {
+                docname: docname.clone(),
+                lineno: None,
+                column: None,
+                source_path: Some(doc.source_path.display().to_string()),
+            };
+            rst_domain.register_document(docname.clone(), doc.title.clone(), location.clone())?;
+
+            // Explicit `.. _label:` targets from the raw source (the prototype
+            // parser has no target nodes until M2).
+            if let DocumentContent::RestructuredText(rst) = &doc.content {
+                for (idx, line) in rst.raw.lines().enumerate() {
+                    if let Some(cap) = label_regex.captures(line) {
+                        let label = normalize_label(&cap[1]);
+                        rst_domain.register_label(
+                            label,
+                            "section".to_string(),
+                            None,
+                            docname.clone(),
+                            crate::domains::ReferenceLocation {
+                                lineno: Some(idx + 1),
+                                ..location.clone()
+                            },
+                        )?;
+                    }
+                }
+            }
+
+            // Section anchors double as :ref: targets (autosectionlabel-style;
+            // better than false-positives on every section reference).
+            let mut stack: Vec<&crate::document::TocEntry> = doc.toc.iter().collect();
+            while let Some(entry) = stack.pop() {
+                stack.extend(entry.children.iter());
+                rst_domain.register_section(
+                    normalize_label(&entry.anchor),
+                    entry.title.clone(),
+                    docname.clone(),
+                    crate::domains::ReferenceLocation {
+                        lineno: Some(entry.line_number),
+                        ..location.clone()
+                    },
+                )?;
+            }
+        }
+
+        let mut registry = DomainRegistry::new();
+        registry.register_domain(Box::new(rst_domain))?;
+
+        let reference_parser = ReferenceParser::new();
+        let mut python_refs = 0usize;
+        for doc in processed_docs {
+            let raw = match &doc.content {
+                DocumentContent::RestructuredText(rst) => &rst.raw,
+                _ => continue,
+            };
+            let docname = self.docname_of(doc);
+            let refs = reference_parser.parse_content(
+                raw,
+                &docname,
+                Some(doc.source_path.display().to_string()),
+            );
+            for mut reference in refs {
+                if reference.is_external {
+                    continue;
+                }
+                match reference.ref_type {
+                    ReferenceType::Document => {
+                        // :doc: targets resolve like toctree entries: leading
+                        // `/` is source-root-relative, else current-doc-relative.
+                        reference.target = resolve_docname(&reference.target, &docname);
+                        registry.add_cross_reference(reference);
+                    }
+                    ReferenceType::Section => {
+                        reference.target = normalize_label(&reference.target);
+                        registry.add_cross_reference(reference);
+                    }
+                    ReferenceType::Function
+                    | ReferenceType::Class
+                    | ReferenceType::Module
+                    | ReferenceType::Method
+                    | ReferenceType::Attribute
+                    | ReferenceType::Data
+                    | ReferenceType::Exception => python_refs += 1,
+                    // numref/envvar/option and friends: no resolver yet.
+                    ReferenceType::Custom(_) => {}
                 }
             }
         }
 
-        if references.is_empty() {
-            None
-        } else {
-            Some(references)
+        // Validate exactly once; stats/broken helpers re-validate internally.
+        for result in registry.validate_all_references() {
+            if result.is_valid {
+                continue;
+            }
+            let reference = &result.reference;
+            let message = match reference.ref_type {
+                ReferenceType::Document => {
+                    format!("unknown document: '{}'", reference.target)
+                }
+                ReferenceType::Section => {
+                    format!("undefined label: '{}'", reference.target)
+                }
+                _ => continue,
+            };
+            let file = reference
+                .source_location
+                .source_path
+                .as_deref()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(&reference.source_location.docname));
+            self.add_warning(BuildWarning::new(
+                file,
+                reference.source_location.lineno,
+                message,
+                crate::error::WarningType::BrokenCrossReference,
+            ));
         }
+
+        if python_refs > 0 {
+            info!(
+                "{} python-domain reference(s) not validated (no object inventory until M5)",
+                python_refs
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Extract toctree entries with their real line numbers by re-scanning the
+    /// raw source from each toctree directive's position (the parsed directive
+    /// content has lost its line offsets).
+    fn extract_toctree_references(&self, doc: &Document) -> Vec<ToctreeEntry> {
+        use crate::document::DocumentContent;
+
+        let mut entries = Vec::new();
+
+        let rst_content = match &doc.content {
+            DocumentContent::RestructuredText(rst) => rst,
+            _ => return entries,
+        };
+
+        let raw_lines: Vec<&str> = rst_content.raw.lines().collect();
+
+        for node in &rst_content.ast {
+            let (options, directive_line) = match node {
+                crate::document::RstNode::Directive {
+                    name,
+                    options,
+                    line,
+                    ..
+                } if name == "toctree" => (options, *line),
+                _ => continue,
+            };
+            let glob_enabled = options.contains_key("glob");
+
+            // Scan the block following the `.. toctree::` marker line.
+            for (idx, raw_line) in raw_lines.iter().enumerate().skip(directive_line) {
+                let trimmed = raw_line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                if !raw_line.starts_with(' ') && !raw_line.starts_with('\t') {
+                    break; // dedent ends the directive block
+                }
+                if trimmed.starts_with(':') {
+                    continue; // option line (docnames cannot start with ':')
+                }
+
+                // `Title <target>` form: the angle brackets carry the target.
+                let target = match (trimmed.rfind('<'), trimmed.ends_with('>')) {
+                    (Some(pos), true) => trimmed[pos + 1..trimmed.len() - 1].trim(),
+                    _ => trimmed,
+                };
+
+                // External URLs and the `self` keyword are valid entries that
+                // do not reference source documents.
+                if target.starts_with("http://")
+                    || target.starts_with("https://")
+                    || target == "self"
+                {
+                    continue;
+                }
+
+                entries.push(ToctreeEntry {
+                    target: target.to_string(),
+                    line: idx + 1,
+                    is_glob: glob_enabled && target.contains(['*', '?', '[']),
+                });
+            }
+        }
+
+        entries
     }
 
     async fn generate_search_index(&self, _documents: &[Document]) -> Result<()> {

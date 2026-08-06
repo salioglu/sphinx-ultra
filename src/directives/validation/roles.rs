@@ -22,12 +22,7 @@ impl RoleValidator for DocRoleValidator {
             return RoleValidationResult::Error("Doc role requires a document target".to_string());
         }
 
-        // Check for valid document path format
-        if role.target.contains("..") {
-            return RoleValidationResult::Warning(
-                "Document path contains parent directory references".to_string(),
-            );
-        }
+        // Relative paths (../index) are valid :doc: targets — no warning.
 
         // Check for common document extensions
         if role.target.ends_with(".rst") || role.target.ends_with(".md") {
@@ -68,25 +63,8 @@ impl RoleValidator for RefRoleValidator {
             return RoleValidationResult::Error("Ref role requires a reference target".to_string());
         }
 
-        // Check for spaces first (this is an error)
-        if role.target.contains(' ') {
-            return RoleValidationResult::Error(
-                "Reference targets cannot contain spaces".to_string(),
-            );
-        }
-
-        // Check for valid reference format (lowercase, hyphens/underscores)
-        if !role
-            .target
-            .chars()
-            .all(|c| c.is_lowercase() || c.is_numeric() || c == '-' || c == '_')
-        {
-            return RoleValidationResult::Warning(
-                "Reference targets should use lowercase letters, numbers, hyphens, and underscores"
-                    .to_string(),
-            );
-        }
-
+        // docutils labels may contain spaces and uppercase (`.. _My Label:`
+        // is valid, matching is case-insensitive) — no format policing here.
         RoleValidationResult::Valid
     }
 
@@ -348,45 +326,7 @@ impl RoleValidator for KbdRoleValidator {
             return RoleValidationResult::Error("Kbd role requires key combination".to_string());
         }
 
-        // Check for common key patterns
-        let common_keys = [
-            "Ctrl",
-            "Alt",
-            "Shift",
-            "Enter",
-            "Escape",
-            "Tab",
-            "Space",
-            "F1",
-            "F2",
-            "F3",
-            "F4",
-            "F5",
-            "F6",
-            "F7",
-            "F8",
-            "F9",
-            "F10",
-            "F11",
-            "F12",
-            "Home",
-            "End",
-            "Page Up",
-            "Page Down",
-            "Delete",
-            "Insert",
-        ];
-
-        // Split by common separators
-        let keys: Vec<&str> = role.target.split(['+', '-']).collect();
-
-        for key in &keys {
-            let key = key.trim();
-            if !key.is_empty() && !common_keys.contains(&key) && key.len() > 1 {
-                return RoleValidationResult::Warning(format!("Unusual key name: {}", key));
-            }
-        }
-
+        // Any key name is legal (:kbd:`Cmd`, :kbd:`PgUp`, …) — no whitelist.
         RoleValidationResult::Valid
     }
 
@@ -421,13 +361,7 @@ impl RoleValidator for MenuSelectionRoleValidator {
             );
         }
 
-        // Check for typical menu separator
-        if !role.target.contains("-->") && !role.target.contains(" > ") {
-            return RoleValidationResult::Warning(
-                "Menu selection should use '-->' or ' > ' as separator".to_string(),
-            );
-        }
-
+        // A single menu item without separators is legal — no separator check.
         RoleValidationResult::Valid
     }
 
@@ -528,19 +462,13 @@ mod tests {
         let role = create_test_role("ref", "advanced-usage", None);
         assert_eq!(validator.validate(&role), RoleValidationResult::Valid);
 
-        // With spaces
+        // Labels with spaces are valid docutils (`.. _advanced usage:`)
         let role = create_test_role("ref", "advanced usage", None);
-        assert!(matches!(
-            validator.validate(&role),
-            RoleValidationResult::Error(_)
-        ));
+        assert_eq!(validator.validate(&role), RoleValidationResult::Valid);
 
-        // With uppercase
+        // Uppercase is fine too (label matching is case-insensitive)
         let role = create_test_role("ref", "Advanced-Usage", None);
-        assert!(matches!(
-            validator.validate(&role),
-            RoleValidationResult::Warning(_)
-        ));
+        assert_eq!(validator.validate(&role), RoleValidationResult::Valid);
     }
 
     #[test]
