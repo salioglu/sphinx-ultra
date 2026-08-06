@@ -362,9 +362,13 @@ impl BuildConfig {
 
     /// Apply a `-D key=value` override (sphinx-build semantics): the value is
     /// coerced to the type the field already has, dotted keys reach the nested
-    /// sections (`output.*`, `theme.*`, `optimization.*`), and an unknown key
-    /// warns and is ignored rather than failing the build.
-    pub fn apply_override(&mut self, key: &str, value: &str) -> Result<()> {
+    /// sections (`output.*`, `theme.*`) and map-typed settings
+    /// (`html_context.name`), and an unknown key warns and is ignored rather
+    /// than failing the build.
+    ///
+    /// Returns the sphinx-style warning message when the override was ignored
+    /// — the caller decides how to report it (it must count toward `-W`).
+    pub fn apply_override(&mut self, key: &str, value: &str) -> Result<Option<String>> {
         // `html_theme` is the Sphinx name; it lives in two places here.
         // Fan aliases out first so both copies stay in sync.
         match key {
@@ -385,23 +389,82 @@ impl BuildConfig {
 
         let mut tree = serde_json::to_value(&*self)?;
 
-        // Resolve the dotted path to the existing slot; unknown keys warn
-        // (sphinx-build behavior) instead of erroring.
+        // Resolve the dotted path. A key missing from its parent object is
+        // inserted as Null (map-typed settings like html_context accept new
+        // keys); whether it truly landed is checked after the round-trip —
+        // structs silently drop unknown fields, which we report as unknown.
         let mut slot = &mut tree;
         for part in key.split('.') {
-            match slot.get_mut(part) {
-                Some(next) => slot = next,
-                None => {
-                    log::warn!("unknown config value '{}' in override, ignoring", key);
-                    return Ok(());
+            slot = match slot {
+                serde_json::Value::Object(map) => map
+                    .entry(part.to_string())
+                    .or_insert(serde_json::Value::Null),
+                _ => {
+                    return Ok(Some(format!(
+                        "unknown config value '{}' in override, ignoring",
+                        key
+                    )))
                 }
-            }
+            };
         }
 
-        *slot = Self::coerce_override_value(slot, key, value)?;
-        *self = serde_json::from_value(tree)
-            .map_err(|e| anyhow::anyhow!("invalid value for -D {}={}: {}", key, value, e))?;
-        Ok(())
+        // Whole-dict overrides are not expressible on the command line
+        // (sphinx-build warns and continues too).
+        if slot.is_object() {
+            return Ok(Some(format!(
+                "cannot override dictionary config setting '{}', ignoring (use -D {}.key=value)",
+                key, key
+            )));
+        }
+
+        let coerced = Self::coerce_override_value(slot, key, value)?;
+        let retry_as_string = matches!(coerced, serde_json::Value::Number(_))
+            && matches!(slot, serde_json::Value::Null);
+        *slot = coerced;
+
+        let applied: Self = match serde_json::from_value(tree.clone()) {
+            Ok(config) => config,
+            // A Null slot gave no type information and the numeric guess was
+            // wrong (e.g. -D html_title=2024 targets an Option<String>):
+            // retry with the raw string before giving up.
+            Err(first_err) => {
+                if retry_as_string {
+                    let mut retry_tree = tree;
+                    let mut retry_slot = &mut retry_tree;
+                    for part in key.split('.') {
+                        retry_slot = retry_slot.get_mut(part).expect("path resolved above");
+                    }
+                    *retry_slot = serde_json::Value::String(value.to_string());
+                    serde_json::from_value(retry_tree).map_err(|e| {
+                        anyhow::anyhow!("invalid value for -D {}={}: {}", key, value, e)
+                    })?
+                } else {
+                    return Err(anyhow::anyhow!(
+                        "invalid value for -D {}={}: {}",
+                        key,
+                        value,
+                        first_err
+                    ));
+                }
+            }
+        };
+
+        // Did the key survive the round-trip? Structs drop unknown fields
+        // silently; a vanished key means the setting doesn't exist.
+        let check = serde_json::to_value(&applied)?;
+        let mut probe = Some(&check);
+        for part in key.split('.') {
+            probe = probe.and_then(|v| v.get(part));
+        }
+        if probe.is_none() {
+            return Ok(Some(format!(
+                "unknown config value '{}' in override, ignoring",
+                key
+            )));
+        }
+
+        *self = applied;
+        Ok(None)
     }
 
     /// Coerce a CLI string to the JSON type currently occupying the slot.
@@ -578,14 +641,24 @@ output:
     fn override_unknown_key_is_ignored_not_error() {
         let mut config = BuildConfig::default();
         let before = config.clone();
-        config.apply_override("totally_unknown_key", "1").unwrap();
+        let warning = config.apply_override("totally_unknown_key", "1").unwrap();
         assert_eq!(config, before);
+        assert!(warning.unwrap().contains("unknown config value"));
+
+        // Unknown nested keys are dropped by the struct round-trip and
+        // reported the same way.
+        let warning = config.apply_override("output.bogus_knob", "1").unwrap();
+        assert_eq!(config, before);
+        assert!(warning.unwrap().contains("unknown config value"));
     }
 
     #[test]
     fn override_option_number_field() {
         let mut config = BuildConfig::default();
-        config.apply_override("parallel_jobs", "3").unwrap();
+        assert!(config
+            .apply_override("parallel_jobs", "3")
+            .unwrap()
+            .is_none());
         assert_eq!(config.parallel_jobs, Some(3));
     }
 
@@ -593,5 +666,40 @@ output:
     fn override_bad_bool_is_an_error() {
         let mut config = BuildConfig::default();
         assert!(config.apply_override("nitpicky", "maybe").is_err());
+    }
+
+    #[test]
+    fn override_numeric_value_for_unset_string_option_stays_a_string() {
+        // sphinx-build sets html_title="2024"; the numeric guess for the
+        // Null slot must fall back to a string instead of failing the build.
+        let mut config = BuildConfig::default();
+        assert!(config
+            .apply_override("html_title", "2024")
+            .unwrap()
+            .is_none());
+        assert_eq!(config.html_title, Some("2024".to_string()));
+    }
+
+    #[test]
+    fn override_dict_member_and_whole_dict() {
+        let mut config = BuildConfig::default();
+
+        // -D html_context.banner=on inserts into the map (sphinx-build syntax)
+        assert!(config
+            .apply_override("html_context.banner", "on")
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            config.html_context.get("banner"),
+            Some(&serde_json::Value::String("on".to_string()))
+        );
+
+        // A whole-dict override warns and is ignored, like sphinx-build
+        let before = config.clone();
+        let warning = config.apply_override("html_context", "x").unwrap();
+        assert_eq!(config, before);
+        assert!(warning
+            .unwrap()
+            .contains("cannot override dictionary config setting"));
     }
 }

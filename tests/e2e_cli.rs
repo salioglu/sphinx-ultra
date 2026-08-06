@@ -9,7 +9,11 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 fn bin() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_sphinx-ultra"))
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_sphinx-ultra"));
+    // Stderr assertions must not depend on the developer/CI environment;
+    // the dedicated RUST_LOG test re-sets it explicitly via .env().
+    cmd.env_remove("RUST_LOG");
+    cmd
 }
 
 fn fixture(name: &str) -> PathBuf {
@@ -461,6 +465,20 @@ fn sphinx_build_make_mode_html_and_clean() {
         !out.join("html").exists(),
         "-M clean removes everything under OUTPUTDIR"
     );
+    assert!(out.exists(), "-M clean keeps OUTPUTDIR itself");
+    assert!(
+        String::from_utf8_lossy(&clean.stdout).contains("Removing everything under"),
+        "-M clean prints sphinx-build's removal message"
+    );
+
+    // Nothing to clean: sphinx-build returns 0 silently.
+    let gone = out_dir("sb-make-mode-gone");
+    let noop = sphinx_build(&["-M", "clean", src.to_str().unwrap(), gone.to_str().unwrap()]);
+    assert!(noop.status.success());
+    assert!(
+        !String::from_utf8_lossy(&noop.stdout).contains("Removing"),
+        "-M clean on a missing dir is silent"
+    );
 
     let bad = sphinx_build(&[
         "-M",
@@ -512,6 +530,22 @@ fn sphinx_build_d_unknown_key_warns_and_continues() {
             .contains("unknown config value 'totally_unknown_key' in override, ignoring"),
         "sphinx-build warning text, stderr: {}",
         stderr_of(&result)
+    );
+
+    // Config-time warnings count toward -W, like every other warning.
+    let out_w = out_dir("sb-D-unknown-W");
+    let result_w = sphinx_build(&[
+        src.to_str().unwrap(),
+        out_w.to_str().unwrap(),
+        "-D",
+        "totally_unknown_key=1",
+        "-W",
+    ]);
+    assert_eq!(
+        result_w.status.code(),
+        Some(1),
+        "-W must see override warnings, stderr: {}",
+        stderr_of(&result_w)
     );
 }
 
@@ -689,6 +723,7 @@ fn source_dir_named_build_works_via_dot_slash() {
     let src = sandbox.join("build");
     std::fs::create_dir_all(&src).unwrap();
     std::fs::write(src.join("index.rst"), "Title\n=====\n\nBody.\n").unwrap();
+    std::fs::write(src.join("conf.py"), "project = 'Named Build'\n").unwrap();
     let out = sandbox.join("out");
 
     let result = bin()
@@ -729,7 +764,8 @@ fn preset_rust_log_is_respected() {
 // cross-reference validation behind -n/nitpicky).
 // ---------------------------------------------------------------------------
 
-/// Write an inline source tree and return its dir.
+/// Write an inline source tree and return its dir. A minimal conf.py is
+/// added unless the caller provides one (sphinx-build mode requires it).
 fn temp_source(test_name: &str, files: &[(&str, &str)]) -> PathBuf {
     let dir = out_dir(&format!("{test_name}-src"));
     std::fs::create_dir_all(&dir).unwrap();
@@ -739,6 +775,9 @@ fn temp_source(test_name: &str, files: &[(&str, &str)]) -> PathBuf {
             std::fs::create_dir_all(parent).unwrap();
         }
         std::fs::write(path, content).unwrap();
+    }
+    if !files.iter().any(|(name, _)| *name == "conf.py") {
+        std::fs::write(dir.join("conf.py"), "project = 'Temp'\n").unwrap();
     }
     dir
 }
@@ -855,6 +894,110 @@ fn nitpicky_flags_broken_refs() {
     assert!(
         stderr.contains("index.rst:4: WARNING: undefined label: 'missing-label'"),
         "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn nitpicky_skips_python_and_external_refs() {
+    let src = temp_source(
+        "nitpicky-skips",
+        &[(
+            "index.rst",
+            "Title\n=====\n\nCall :py:func:`missing.fn` and :func:`also.missing`.\nSee `docs <https://example.com>`_ and :doc:`https://example.com/page`.\n",
+        )],
+    );
+    let out = out_dir("nitpicky-skips");
+    let result = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap(), "-n"]);
+
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    let stderr = stderr_of(&result);
+    assert!(
+        !stderr.contains("unknown document") && !stderr.contains("undefined label"),
+        "python-domain and external refs must not be reported broken, stderr: {stderr}"
+    );
+    let aggregate_count = stderr
+        .matches("python-domain reference(s) not validated")
+        .count();
+    assert_eq!(
+        aggregate_count, 1,
+        "the unvalidatable-python-refs notice appears exactly once, stderr: {stderr}"
+    );
+}
+
+#[test]
+fn sphinx_build_refuses_output_overlapping_source() {
+    let src = temp_source("sb-overlap", &[("index.rst", "Title\n=====\n\nBody.\n")]);
+
+    // OUTPUTDIR == SOURCEDIR: sphinx-build refuses; sources must survive.
+    let same = sphinx_build(&["-M", "clean", src.to_str().unwrap(), src.to_str().unwrap()]);
+    assert_eq!(
+        same.status.code(),
+        Some(1),
+        "-M clean into the source dir must refuse, stderr: {}",
+        stderr_of(&same)
+    );
+    assert!(
+        stderr_of(&same).contains("is same as source directory"),
+        "stderr: {}",
+        stderr_of(&same)
+    );
+    assert!(
+        src.join("index.rst").is_file() && src.join("conf.py").is_file(),
+        "sources must be untouched after the refused clean"
+    );
+
+    // Plain build into the source dir is refused the same way.
+    let build_same = sphinx_build(&[src.to_str().unwrap(), src.to_str().unwrap()]);
+    assert_eq!(build_same.status.code(), Some(1));
+
+    // OUTPUTDIR being an ancestor of SOURCEDIR is refused too.
+    let parent = src.parent().unwrap();
+    let contains = sphinx_build(&[
+        "-M",
+        "clean",
+        src.to_str().unwrap(),
+        parent.to_str().unwrap(),
+    ]);
+    assert_eq!(
+        contains.status.code(),
+        Some(1),
+        "stderr: {}",
+        stderr_of(&contains)
+    );
+    assert!(
+        stderr_of(&contains).contains("directory contains source directory"),
+        "stderr: {}",
+        stderr_of(&contains)
+    );
+}
+
+#[test]
+fn sphinx_build_requires_a_config() {
+    let sandbox = out_dir("sb-no-conf");
+    let src = sandbox.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(src.join("index.rst"), "Title\n=====\n\nBody.\n").unwrap();
+    let out = sandbox.join("out");
+
+    let result = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap()]);
+    assert_eq!(
+        result.status.code(),
+        Some(2),
+        "sphinx-build errors when the source has no conf.py, stderr: {}",
+        stderr_of(&result)
+    );
+    assert!(
+        stderr_of(&result).contains("doesn't contain a conf.py file"),
+        "stderr: {}",
+        stderr_of(&result)
+    );
+
+    // The native subcommand keeps its lenient auto-detect behavior.
+    let native = build(&src, &out, &[]);
+    assert!(
+        native.status.success(),
+        "native build still auto-detects/defaults, stderr: {}",
+        stderr_of(&native)
     );
 }
 

@@ -14,11 +14,11 @@ struct Cli {
     command: Commands,
 
     /// Enable verbose logging
-    #[arg(short, long)]
+    #[arg(short, long, global = true)]
     verbose: bool,
 
     /// Configuration file path
-    #[arg(short, long)]
+    #[arg(short, long, global = true)]
     config: Option<PathBuf>,
 }
 
@@ -196,39 +196,16 @@ fn wants_sphinx_build_mode(args: &[String]) -> bool {
     if !first.starts_with('-') {
         return true;
     }
-    // First token is a flag. Flags that exist only in sphinx-build mode force
-    // it; otherwise a native subcommand appearing later (global flags come
-    // first in the native CLI) keeps the invocation native.
-    const COMPAT_ONLY: &[&str] = &[
-        "-M",
-        "-b",
-        "--builder",
-        "-D",
-        "-A",
-        "-E",
-        "--fresh-env",
-        "-a",
-        "--write-all",
-        "-n",
-        "--nitpicky",
-        "-T",
-        "--show-traceback",
-        "-t",
-        "--tag",
-        "--keep-going",
-        "-d",
-        "--doctree-dir",
-        "-q",
-        "--quiet",
-        "--conf-dir",
-    ];
-    if args
-        .iter()
-        .skip(1)
-        .any(|a| COMPAT_ONLY.contains(&a.as_str()))
-    {
+    // First token is a flag. The only flags that may legally lead a native
+    // invocation are the global ones (-v/--verbose, -c/--config); any other
+    // leading flag (-W, -w, -j, -M, -D, …) can only be sphinx-build mode —
+    // scanning further would misread a positional OUTPUTDIR named `build`.
+    if !matches!(first, "-v" | "--verbose" | "-c" | "--config") {
         return true;
     }
+    // Ambiguous global flag first: a native subcommand token appearing later
+    // keeps the invocation native. (A compat call like `-c conf src build`
+    // loses this toss-up — documented with the `./build` escape hatch.)
     !args
         .iter()
         .skip(1)
@@ -312,9 +289,15 @@ async fn run_build(args: RunArgs) -> Result<i32> {
         BuildConfig::auto_detect(&args.source)?
     };
 
-    // Override config with CLI arguments (config file < -D < dedicated flags)
+    // Override config with CLI arguments (config file < -D < dedicated flags).
+    // Ignored overrides are warnings in sphinx-build too — they must count
+    // toward -W and reach the -w file.
+    let mut config_warnings: Vec<String> = Vec::new();
     for (key, value) in &args.overrides {
-        config.apply_override(key, value)?;
+        if let Some(message) = config.apply_override(key, value)? {
+            warn!("{}", message);
+            config_warnings.push(message);
+        }
     }
     for (key, value) in &args.html_defines {
         config
@@ -372,6 +355,15 @@ async fn run_build(args: RunArgs) -> Result<i32> {
         None
     };
 
+    // Config-time warnings (already logged when they occurred) go to the
+    // warning file and count toward the totals below.
+    if let Some(ref mut file) = warning_file_handle {
+        for message in &config_warnings {
+            writeln!(file, "WARNING: {}", message)?;
+        }
+    }
+    let total_warnings = stats.warnings + config_warnings.len();
+
     // Print warnings in Sphinx-like format
     for warning in &stats.warning_details {
         let file_path = warning.file.display();
@@ -417,23 +409,26 @@ async fn run_build(args: RunArgs) -> Result<i32> {
 
     // sphinx-build 9.1 parity: -W collects every warning (keep-going is the
     // default since Sphinx 8.1) and fails the build afterwards.
-    if should_fail_on_warning && stats.warnings > 0 {
+    if should_fail_on_warning && total_warnings > 0 {
         eprintln!(
             "build finished with problems, {} warning{} (with warnings treated as errors).",
-            stats.warnings,
-            plural(stats.warnings)
+            total_warnings,
+            plural(total_warnings)
         );
         return Ok(1);
     }
 
-    // sphinx-build parity: build errors always yield a non-zero exit.
+    // Deliberately STRICTER than sphinx-build here: real sphinx-build 9.1
+    // exits 0 on logged ERRORs unless -W is set. Unreadable or unparseable
+    // sources failing CI silently is exactly the M1 trust problem, so builds
+    // with errors exit 1.
     if stats.errors > 0 {
         eprintln!(
             "build finished with problems, {} error{}{}.",
             stats.errors,
             plural(stats.errors),
-            if stats.warnings > 0 {
-                format!(", {} warning{}", stats.warnings, plural(stats.warnings))
+            if total_warnings > 0 {
+                format!(", {} warning{}", total_warnings, plural(total_warnings))
             } else {
                 String::new()
             }
@@ -442,11 +437,11 @@ async fn run_build(args: RunArgs) -> Result<i32> {
     }
 
     // Print final summary
-    if stats.warnings > 0 {
+    if total_warnings > 0 {
         warn!(
             "build succeeded, {} warning{}.",
-            stats.warnings,
-            plural(stats.warnings)
+            total_warnings,
+            plural(total_warnings)
         );
     }
 
@@ -477,13 +472,28 @@ async fn run_sphinx_build_mode(sb: SphinxBuildCli) -> i32 {
     };
     init_logging(default_level);
 
+    // Refuse to build or clean into the source tree (sphinx-build parity:
+    // make-mode errors "is same as source directory!" / "directory contains
+    // source directory!" with exit 1).
+    if let Some(reason) = output_overlaps_source(&sb.sourcedir, &sb.outputdir) {
+        eprintln!("Error: {reason}");
+        return 1;
+    }
+
     // Make-mode dispatch first: -M MODE decides what happens at all.
+    // Make-mode keeps the cache beside the html dir (sphinx-build puts
+    // doctrees there), never inside the deployable OUTPUTDIR/html tree.
+    let mut make_mode_cache_dir = None;
     let (output, is_build) = if let Some(ref mode) = sb.make_mode {
         match mode.as_str() {
-            "html" => (sb.outputdir.join("html"), true),
+            "html" => {
+                make_mode_cache_dir = Some(sb.outputdir.join(".sphinx-ultra-cache"));
+                (sb.outputdir.join("html"), true)
+            }
             "clean" => {
-                println!("Removing everything under '{}'...", sb.outputdir.display());
+                // sphinx-build returns 0 silently when there is nothing to clean.
                 if sb.outputdir.exists() {
+                    println!("Removing everything under '{}'...", sb.outputdir.display());
                     if let Err(e) = remove_dir_contents(&sb.outputdir) {
                         eprintln!("Error: {e:#}");
                         return 2;
@@ -510,6 +520,26 @@ async fn run_sphinx_build_mode(sb: SphinxBuildCli) -> i32 {
     };
     debug_assert!(is_build);
 
+    // sphinx-build requires a configuration; silently building a mistyped
+    // path with defaults would be the opposite of drop-in behavior. (The
+    // sphinx-ultra.* probes are our native extension of the rule.)
+    if sb.confdir.is_none()
+        && ![
+            "conf.py",
+            "sphinx-ultra.yaml",
+            "sphinx-ultra.yml",
+            "sphinx-ultra.json",
+        ]
+        .iter()
+        .any(|f| sb.sourcedir.join(f).exists())
+    {
+        eprintln!(
+            "Error: config directory doesn't contain a conf.py file ({})",
+            sb.sourcedir.display()
+        );
+        return 2;
+    }
+
     info!(
         "Running sphinx-ultra v{} (sphinx-build compatible mode)",
         env!("CARGO_PKG_VERSION")
@@ -528,7 +558,7 @@ async fn run_sphinx_build_mode(sb: SphinxBuildCli) -> i32 {
         overrides: sb.define.clone(),
         html_defines: sb.html_define.clone(),
         tags: sb.tags.clone(),
-        doctree_dir: sb.doctreedir.clone(),
+        doctree_dir: sb.doctreedir.clone().or(make_mode_cache_dir),
         nitpicky: sb.nitpicky,
         jobs: sb.jobs,
         incremental,
@@ -550,6 +580,28 @@ async fn run_sphinx_build_mode(sb: SphinxBuildCli) -> i32 {
             }
             2
         }
+    }
+}
+
+/// Refuse output locations that would clobber the sources: equal dirs, or an
+/// output dir that is an ancestor of the source dir. Compared canonicalized
+/// so `docs` vs `./docs/` still match; a nonexistent output dir cannot
+/// overlap an existing source.
+fn output_overlaps_source(source: &std::path::Path, output: &std::path::Path) -> Option<String> {
+    let source = source.canonicalize().ok()?;
+    let output = output.canonicalize().ok()?;
+    if source == output {
+        Some(format!(
+            "'{}' is same as source directory!",
+            output.display()
+        ))
+    } else if source.starts_with(&output) {
+        Some(format!(
+            "'{}' directory contains source directory!",
+            output.display()
+        ))
+    } else {
+        None
     }
 }
 
@@ -682,6 +734,19 @@ mod tests {
         // even with an output dir literally named "build"
         assert!(wants_sphinx_build_mode(&argv(&[
             "-M", "html", "src", "build"
+        ])));
+    }
+
+    #[test]
+    fn dispatch_nonglobal_leading_flag_is_compat_even_with_build_positional() {
+        // -W/-w/-j can't lead a native invocation, so an OUTPUTDIR literally
+        // named `build` must not drag these into the native parser.
+        assert!(wants_sphinx_build_mode(&argv(&["-W", "docs", "build"])));
+        assert!(wants_sphinx_build_mode(&argv(&[
+            "-w", "log", "docs", "build"
+        ])));
+        assert!(wants_sphinx_build_mode(&argv(&[
+            "-j", "2", "docs", "stats"
         ])));
     }
 
