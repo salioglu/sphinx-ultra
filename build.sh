@@ -61,7 +61,6 @@ if [ -f "$BINARY_PATH" ]; then
     echo ""
     echo "Usage examples:"
     echo "  ./sphinx-ultra build --source docs --output _build"
-    echo "  ./sphinx-ultra serve --source docs --port 8000"
     echo "  ./sphinx-ultra stats --source docs"
     echo ""
 else

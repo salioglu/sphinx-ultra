@@ -58,7 +58,6 @@ show_help() {
     echo "  clean       - Clean build artifacts"
     echo "  docs        - Generate documentation for GitHub Pages"
     echo "  docs-dev    - Generate and open documentation for development"
-    echo "  serve       - Start development server"
     echo "  install     - Install locally"
     echo "  package     - Create release package"
     echo "  help        - Show this help"
@@ -277,14 +276,6 @@ docs_dev() {
     log_success "Documentation generated and opened in browser!"
 }
 
-serve() {
-    log_info "Starting development server..."
-    if ! check_rust_installation; then
-        return 1
-    fi
-    cargo run -- serve --source examples/basic --port 8000
-}
-
 install() {
     log_info "Installing locally..."
     if ! check_rust_installation; then
@@ -360,9 +351,6 @@ case "${1:-help}" in
         ;;
     docs-dev)
         docs_dev
-        ;;
-    serve)
-        serve
         ;;
     install)
         install
