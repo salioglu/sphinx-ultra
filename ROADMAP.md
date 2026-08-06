@@ -189,7 +189,8 @@ and CI can be trusted.
   (positional `SOURCEDIR OUTPUTDIR`, `-b html` gate, `-M` make-mode — what
   quickstart Makefiles invoke — `-D key=value`, `-A key=value`, `-d doctreedir`,
   `-n`, `-q`, `-E`, `-a`, `-T`, `-t`, `-c`, `-j auto`, `--keep-going`, repeatable
-  `-v`), pre-set `RUST_LOG` respected. Parity measured against real sphinx-build
+  `-v`), global `--verbose`/`--config` (usable before or after the native
+  subcommand), pre-set `RUST_LOG` respected. Parity measured against real sphinx-build
   9.1.0 (exit codes incl. `-W`'s collect-then-exit-1, `-M` output layout,
   message shapes). Companion executables: `sphinx-apidoc`/the 8.2+ `apidoc`
   extension ride M5 (autodoc bridge); `sphinx-autogen` is subsumed by M5

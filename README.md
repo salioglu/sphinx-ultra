@@ -54,11 +54,10 @@ not yet invoke. The full, file-and-line-level status audit lives in
 - **📊 Statistics**: `stats` command with project analysis
 - **🏗️ CLI**: `build`, `clean`, `stats`
 
-### 🧩 Built but not yet wired into `build` (activation is roadmap M1–M3)
+### 🧩 Built but not yet wired into `build` (activation is roadmap M2–M4)
 
-- **🎯 Domain system** with Python/RST cross-reference validation (library + examples)
-- **📝 Directive & role validation** (20 built-in validators; library + examples)
-- **🔍 Constraint engine** inspired by sphinx-needs (library + examples)
+- **🔍 Constraint engine** inspired by sphinx-needs (library + examples; wiring
+  waits for sphinx-needs item extraction in M4)
 - **🖥️ Sphinx-mirroring HTML builder, minijinja template engine, search index,
   objects.inv inventory** (library code, currently bypassed by the build path)
 
@@ -75,7 +74,7 @@ production-readiness workstream — is in **[ROADMAP.md](ROADMAP.md)**.
 
 ### Prerequisites
 
-- Rust (recent stable; an MSRV declaration is ROADMAP M1)
+- Rust 1.85 or newer (declared MSRV, verified in CI)
 - Cargo
 
 ### Installation
@@ -182,18 +181,18 @@ extensions = ['sphinx.ext.autodoc', 'sphinx.ext.viewcode']
 html_theme = 'sphinx_rtd_theme'
 ```
 
-> **Known limitation:** multi-line lists, dicts (e.g. `html_theme_options`),
-> f-strings, imports, and computed values are not parsed yet and are silently
-> dropped. Full conf.py support (native multi-line parser with warnings, plus
-> optional execution in your project's venv) is ROADMAP M1/M5.
+> Multi-line lists, dicts, tuples, string concatenation, and triple-quoted
+> strings parse natively; every construct the parser cannot handle (computed
+> values, f-strings) produces a `conf.py:<line>` warning instead of being
+> silently dropped. Executing dynamic conf.py in your project's venv arrives
+> with the M5 sidecar.
 
 ### YAML Configuration
 
 Create a `sphinx-ultra.yaml` file for native configuration.
 
-> **Known limitation:** all fields are currently required — a partial YAML file
-> fails with a "missing field" error, so include the complete structure below.
-> Sensible defaults for omitted fields are ROADMAP M1.
+> Every field is optional — a partial YAML file loads with sensible defaults
+> for whatever it omits.
 
 ```yaml
 # Project information
@@ -276,8 +275,8 @@ Parsed categories include:
 ### Performance Features
 
 - **Parallel Processing**: Utilizes all CPU cores for maximum throughput
-- **Change Detection**: blake3-based staleness checks (output caching itself is
-  currently broken — see IMPLEMENTATION_STATUS; fix is ROADMAP M1)
+- **Change Detection**: blake3-based staleness checks; cache hits write their
+  output, and any configuration change invalidates the cache automatically
 - **Memory Efficient**: Low memory footprint even for large projects
 - **Minimal I/O**: Efficient file operations and batch processing
 
