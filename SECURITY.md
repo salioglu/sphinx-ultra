@@ -6,7 +6,8 @@ We actively support and provide security updates for the following versions:
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.1.x   | :white_check_mark: |
+| 0.3.x   | :white_check_mark: |
+| < 0.3   | :x:                |
 
 ## Reporting a Vulnerability
 
@@ -61,12 +62,6 @@ When using Sphinx Ultra:
 - Use dedicated build directories
 - Avoid building in system directories
 
-### Network Security
-
-- Use HTTPS for external resources
-- Validate SSL certificates
-- Be cautious with live reload in production
-
 ### Configuration Security
 
 - Protect configuration files with sensitive data
@@ -75,23 +70,30 @@ When using Sphinx Ultra:
 
 ## Known Security Considerations
 
-### Template Rendering
+The actual attack surface of the current binary is:
 
-- Handlebars templates are sandboxed
-- Custom templates should be reviewed for XSS vulnerabilities
-- User-provided content is escaped by default
+### Input Parsing
+
+- RST/Markdown source files are parsed with hand-written scanners; treat
+  untrusted documentation sources with caution
+- `conf.py` files are **parsed, not executed** (no Python interpreter is
+  invoked), but values from them flow into build configuration
+- YAML/JSON configuration files are deserialized with serde; malformed input
+  is rejected rather than executed
 
 ### File Processing
 
 - Large files may cause memory exhaustion
 - Symbolic links are followed (potential security risk)
-- Binary files are properly handled
+- Output paths are derived from source paths under the configured output
+  directory
 
-### Network Features
+### Not Applicable (yet)
 
-- Development server is not hardened for production
-- WebSocket connections for live reload are not authenticated
-- CORS is configured permissively for development
+Earlier versions of this document described a development server, WebSocket
+live reload, CORS policy, and Handlebars template sandboxing. None of those
+subsystems exist in the current binary (a dev server is planned — see
+ROADMAP M3); this document will be updated when they ship.
 
 ## Security Updates
 
