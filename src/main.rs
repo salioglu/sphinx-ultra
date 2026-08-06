@@ -187,24 +187,24 @@ async fn main() -> Result<()> {
                 std::process::exit(1);
             }
 
-            // Print final summary
-            if stats.warnings > 0 || stats.errors > 0 {
-                let status_msg = if stats.errors > 0 {
-                    "build succeeded with problems"
-                } else {
-                    "build succeeded"
-                };
+            // sphinx-build parity: build errors always yield a non-zero exit.
+            if stats.errors > 0 {
+                eprintln!(
+                    "build finished with problems, {} error{}{}.",
+                    stats.errors,
+                    if stats.errors == 1 { "" } else { "s" },
+                    if stats.warnings > 0 {
+                        format!(", {} warnings", stats.warnings)
+                    } else {
+                        String::new()
+                    }
+                );
+                std::process::exit(1);
+            }
 
-                if stats.warnings > 0 && stats.errors > 0 {
-                    warn!(
-                        "{}, {} warnings, {} errors.",
-                        status_msg, stats.warnings, stats.errors
-                    );
-                } else if stats.warnings > 0 {
-                    warn!("{}, {} warnings.", status_msg, stats.warnings);
-                } else if stats.errors > 0 {
-                    warn!("{}, {} errors.", status_msg, stats.errors);
-                }
+            // Print final summary
+            if stats.warnings > 0 {
+                warn!("build succeeded, {} warnings.", stats.warnings);
             }
 
             info!("Build completed successfully!");

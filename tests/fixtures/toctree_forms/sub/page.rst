@@ -1,0 +1,6 @@
+Page
+----
+
+.. toctree::
+
+   sibling
