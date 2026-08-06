@@ -73,7 +73,7 @@ base64 = "0.22"
 pathdiff = "0.2"
 
 [dev-dependencies]
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.7", features = ["html_reports"] }
 proptest = "1.0"
 tempfile = "3.0"
 
