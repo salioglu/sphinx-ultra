@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use crate::cache::BuildCache;
 use crate::config::BuildConfig;
 use crate::document::Document;
-use crate::error::{BuildErrorReport, BuildWarning};
+use crate::error::{BuildErrorReport, BuildWarning, ErrorType};
 use crate::extensions::{ExtensionLoader, SphinxApp};
 use crate::matching;
 use crate::parser::Parser;
@@ -339,14 +339,31 @@ impl SphinxBuilder {
             .num_threads(self.parallel_jobs)
             .build()?;
 
-        let documents: Result<Vec<_>, _> = pool.install(|| {
+        // One file failing must not abort the build: failures become
+        // BuildErrorReports (and a non-zero exit) while the rest continue.
+        let results: Vec<(PathBuf, Result<Document>)> = pool.install(|| {
             files
                 .par_iter()
-                .map(|file_path| self.process_single_file(file_path))
+                .map(|file_path| (file_path.clone(), self.process_single_file(file_path)))
                 .collect()
         });
 
-        documents
+        let mut documents = Vec::with_capacity(results.len());
+        for (file_path, result) in results {
+            match result {
+                Ok(document) => documents.push(document),
+                Err(e) => {
+                    self.errors.lock().unwrap().push(BuildErrorReport::new(
+                        file_path,
+                        None,
+                        format!("{e:#}"),
+                        ErrorType::ParseError,
+                    ));
+                }
+            }
+        }
+
+        Ok(documents)
     }
 
     fn process_single_file(&self, file_path: &Path) -> Result<Document> {

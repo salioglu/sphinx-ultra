@@ -2,8 +2,8 @@
 //! projects and assert on exit codes, warnings, and the output tree.
 //!
 //! These tests lock in *current* behavior. Where current behavior is a known
-//! ROADMAP M1 defect (e.g. builds with errors exit 0), the assertion documents
-//! it with a comment so the fix is a deliberate test change, not an accident.
+//! ROADMAP M1 defect, the assertion documents it with a comment so the fix is
+//! a deliberate test change, not an accident.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -125,6 +125,44 @@ fn toctree_glob_matches_and_warns_on_dead_pattern() {
     assert!(
         !stderr.contains("isn't included in any toctree"),
         "glob-matched documents are referenced, not orphans, stderr: {stderr}"
+    );
+}
+
+#[test]
+fn per_file_error_reports_and_exits_one() {
+    // The failing file is created here rather than checked in: a fixture with
+    // invalid UTF-8 bytes is hostile to git tooling and editors.
+    let src = out_dir("broken-file-src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(
+        src.join("index.rst"),
+        "Welcome\n=======\n\n.. toctree::\n\n   good\n",
+    )
+    .unwrap();
+    std::fs::write(src.join("good.rst"), "Good\n----\n\nFine.\n").unwrap();
+    std::fs::write(
+        src.join("bad.rst"),
+        b"Title\n=====\n\xFF\xFE broken\n" as &[u8],
+    )
+    .unwrap();
+
+    let out = out_dir("broken-file-out");
+    let result = build(&src, &out, &[]);
+
+    assert_eq!(
+        result.status.code(),
+        Some(1),
+        "builds with errors must exit 1 (sphinx-build parity), stderr: {}",
+        stderr_of(&result)
+    );
+    let stderr = stderr_of(&result);
+    assert!(
+        stderr.contains("bad.rst: ERROR:"),
+        "per-file failure must be reported, stderr: {stderr}"
+    );
+    assert!(
+        out.join("index.html").is_file() && out.join("good.html").is_file(),
+        "build must continue past the failing file"
     );
 }
 
