@@ -215,29 +215,23 @@ And a missing section: :ref:`missing-section`.
     println!(
         "Valid references: {} ({}%)",
         stats.valid_references,
-        if stats.total_references > 0 {
-            (stats.valid_references * 100) / stats.total_references
-        } else {
-            0
-        }
+        (stats.valid_references * 100)
+            .checked_div(stats.total_references)
+            .unwrap_or(0)
     );
     println!(
         "Broken references: {} ({}%)",
         stats.broken_references,
-        if stats.total_references > 0 {
-            (stats.broken_references * 100) / stats.total_references
-        } else {
-            0
-        }
+        (stats.broken_references * 100)
+            .checked_div(stats.total_references)
+            .unwrap_or(0)
     );
     println!(
         "External references: {} ({}%)",
         stats.external_references,
-        if stats.total_references > 0 {
-            (stats.external_references * 100) / stats.total_references
-        } else {
-            0
-        }
+        (stats.external_references * 100)
+            .checked_div(stats.total_references)
+            .unwrap_or(0)
     );
 
     println!("\nReferences by type:");

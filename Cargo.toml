@@ -22,21 +22,16 @@ log = "0.4"
 env_logger = "0.11"
 
 # File system and I/O
-walkdir = "2.0"
 tempfile = "3.0"
-glob = "0.3"
 
 # String processing and templating
 regex = "1.0"
 lazy_static = "1.4"
-handlebars = "6.3"
 pulldown-cmark = "0.13"
-syntect = "5.2"
 
 # Performance and concurrency
 rayon = "1.0"
 dashmap = "6.1"
-crossbeam = "0.8"
 parking_lot = "0.12"
 
 # Date and time
@@ -44,44 +39,21 @@ chrono = { version = "0.4", features = ["serde"] }
 
 # Hashing and caching
 blake3 = "1.0"
-lru = "0.16"
 
 # HTML and web
 html-escape = "0.2"
-minifier = "0.3"
-cssparser = "0.35"
 
-# Compression and archives
+# Compression (objects.inv inventory format)
 flate2 = "1.0"
-tar = "0.4"
-
-# Binary serialization
-bincode = "2.0"
 
 # Template engine
 minijinja = "2.12"
-
-# Indexing and data structures
-indexmap = "2.0"
 
 # Base64 encoding
 base64 = "0.22"
 
 # Path utilities
 pathdiff = "0.2"
-
-# Configuration
-config = "0.15"
-
-# Python integration
-pyo3 = { version = "0.26.0", features = ["auto-initialize"] }
-pythonize = "0.26"
-
-# TOML parsing (for pyproject.toml)
-toml = "0.9"
-
-# INI parsing (for setup.cfg)
-ini = "1.3"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

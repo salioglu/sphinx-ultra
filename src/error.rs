@@ -14,7 +14,7 @@ pub enum BuildError {
     Yaml(#[from] serde_yaml::Error),
 
     #[error("Template rendering error: {0}")]
-    Template(#[from] handlebars::RenderError),
+    Template(String),
 
     #[error("File parsing error: {file}: {message}")]
     Parse { file: String, message: String },

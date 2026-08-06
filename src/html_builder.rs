@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value as JsonValue};
+use serde_json::{Map, Value as JsonValue};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use tokio::fs;

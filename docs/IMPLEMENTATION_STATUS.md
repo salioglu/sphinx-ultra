@@ -35,7 +35,7 @@ The plan to move everything to ✅ is [ROADMAP.md](../ROADMAP.md).
 | Error pipeline | 🔴 | `BuildErrorReport` plumbing exists end-to-end but nothing ever pushes an error; **builds with errors exit 0** (only `-W`+warnings exits 1). |
 | Static asset copying | 🟡 | Copies 5 handwritten shim files (incl. a 61-line fake jquery.js) + project `_static`/`_templates`; generated pages reference none of them; `html_static_path` ignored by the live path. |
 | Search index / genindex / objects.inv emission | 🔴 | `generate_search_index`/`generate_indices` are TODO no-ops. No searchindex.js, genindex.html, or objects.inv in output (verified empirically). |
-| Extension loading | 🔴 | Loading any extension fabricates a stub record and prints one line. Zero behavioral effect. No pyo3 usage anywhere despite the dependency. |
+| Extension loading | 🔴 | Loading any extension fabricates a stub record and prints one line. Zero behavioral effect. (The never-used pyo3 dependency was removed 2026-08; Python interop arrives as a sidecar in ROADMAP M5.) |
 | Build stats | 🟡 | `files_skipped` hardcoded 0; `errors` always 0; cache hits only counted under `--incremental`. |
 | `clean` / `stats` commands | ✅ | `stats` cross-ref count is naive substring counting. |
 
@@ -84,9 +84,9 @@ sites in the binary** — they run only from `examples/` and unit tests:
 | CI (fmt, clippy -D warnings, tests, audit, coverage, 3-OS) | ✅ | No MSRV job; `--all-features` is vacuous; `integration_test.rs` is 100% commented out yet runs as a green CI step. |
 | E2E tests of the binary | ⬜ | Absent — which is how the relative-path crash and unloadable YAML examples shipped. ROADMAP M1. |
 | Cargo.lock | ❌ | Gitignored for a binary crate → non-reproducible CI/releases; cache keys hash nothing. |
-| Release workflow | 🟡 | Solid tag/version validation, but `publish-crate` has no `needs:` gate (can publish before validation/builds); no checksums; musl target almost certainly broken by pyo3; no aarch64-linux artifact despite install.sh advertising one. |
-| pyo3/pythonize | ❌ | Zero call sites, yet compiled into every build with `auto-initialize` — links libpython, makes Python an undocumented build dependency, breaks static/musl distribution. Removal is ROADMAP M1; Python interop returns as a sidecar process (M5). |
-| Unused dependencies | ❌ | syntect, cssparser, minifier, tar, bincode, crossbeam, lru, config, glob, walkdir, indexmap, toml, ini, handlebars (+pyo3/pythonize) have zero effective call sites. |
+| Release workflow | 🟡 | Solid tag/version validation, but `publish-crate` has no `needs:` gate (can publish before validation/builds); no checksums; no aarch64-linux artifact despite install.sh advertising one. |
+| pyo3/pythonize | ✅ removed (2026-08) | Had zero call sites while linking libpython into every build (two RUSTSEC advisories, broken musl target, undocumented Python build dependency). Python interop returns as a venv **sidecar process** in ROADMAP M5 — not as a link-time dependency. |
+| Unused dependencies | ✅ pruned (2026-08) | Removed: pyo3, pythonize, syntect, cssparser, minifier, tar, bincode, crossbeam, lru, config, glob, walkdir, indexmap, toml, ini, handlebars. syntect returns when highlighting is actually wired (M2/M3). |
 | Repo hygiene | 🟡 | `Cargo.toml.new` / `Cargo.lock.template` / `.packagename` are scaffold leftovers that ship inside the crates.io package; the useful metadata (`rust-version`, keywords, categories, exclude) lives only in the dead `Cargo.toml.new`. CHANGELOG has no 0.2.0/0.3.0 entries. SECURITY.md describes subsystems that do not exist. |
 
 ## Testing status

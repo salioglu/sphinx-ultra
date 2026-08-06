@@ -50,14 +50,14 @@ with real tests that `sphinx-ultra build` never calls.
 | Themes | **None** | `html_theme` is parsed and then ignored; no theme loading, no templates rendered, static shims copied but unreferenced. |
 | Search | **Dead code** | In-memory index exists (non-Sphinx format); no `searchindex.js` emitted; no `searchtools.js` exists. |
 | objects.inv / intersphinx | **Dead + broken** | Writer exists (unused); reader corrupts real inventories (lossy UTF-8 over zlib bytes); no resolution anywhere. |
-| Extensions | **Stub** | Loading any extension prints one line and stores an inert record. Zero behavioral effect. pyo3 is declared (and links libpython!) but has zero call sites. |
+| Extensions | **Stub** | Loading any extension prints one line and stores an inert record. Zero behavioral effect. (The never-used pyo3 dependency was removed 2026-08.) |
 | Validation systems | **Dead code** | Constraint engine, domain/cross-ref validation, directive/role validation: all library-only, invoked only by `examples/`. Known defects: target/display-text inversion in the reference parser; an unsound `'static` transmute in the constraint engine's template cache; validators that false-positive on valid Sphinx (`.. note:: inline text`). |
 | Build-path validation | **Partial** | Only toctree missing-ref + orphan checks run; line numbers hardcoded to `10`; false positives on captions, `Title <doc>` entries, `:glob:`, and subdirectory-relative refs. |
 | conf.py support | **Minimal** | Line-scraper for single-line assignments only. Multi-line lists (the normal style) silently drop; dicts never parse; no warning on dropped config. |
 | YAML/JSON config | **Broken** | No serde defaults → both YAML files shipped in this repo fail to load ("missing field"). |
 | CLI | **Minimal** | `build/clean/stats`. No `-b`, `-D`, `-n`, `-q`, `-E`, `-a`, `-c`, `-t`, no positional dirs, no `sphinx-build` compatibility. Errors exit 0 (only `-W`+warnings exits 1). Relative `--source` crash fixed 2026-08. |
-| CI/release | **Partial** | Good matrix + clippy/fmt/audit/coverage; but crates.io publish job isn't gated on validation/build, Cargo.lock is gitignored (non-reproducible releases), no MSRV job, musl target almost certainly broken by pyo3, install.sh advertises an ARM-Linux artifact that is never built, `integration_test.rs` is 100% commented out yet runs green in CI. |
-| Dependencies | **Bloated** | ~17 declared deps with zero (or dead-only) call sites: pyo3, pythonize, syntect, cssparser, minifier, tar, bincode, crossbeam, lru, config, glob, walkdir, indexmap, toml, ini, handlebars (+ effectively minijinja/flate2/base64 via dead modules). |
+| CI/release | **Partial** | Good matrix + clippy/fmt/audit/coverage; but crates.io publish job isn't gated on validation/build, Cargo.lock is gitignored (non-reproducible releases), no MSRV job, install.sh advertises an ARM-Linux artifact that is never built, `integration_test.rs` is 100% commented out yet runs green in CI. |
+| Dependencies | **Pruned 2026-08** | 16 zero-call-site deps removed (incl. pyo3/pythonize, which carried two RUSTSEC advisories and linked libpython into every build). minijinja/flate2/base64 remain — used by the built-not-wired stack. |
 
 Full evidence (file:line per finding) lives in [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md).
 
@@ -105,10 +105,10 @@ Load-bearing decisions:
    venv** (JSON-RPC) for autodoc-class extensions. pyo3-in-process is *not* the plan:
    the sidecar isolates crashes, uses the project's venv, and keeps the core binary
    Python-free.
-4. **`pyo3` leaves the default build.** Today it links libpython into every build with
-   zero call sites, breaks musl, and makes Python an undocumented build dependency.
-   The Python bridge returns as an explicitly separate mechanism (sidecar process),
-   not a link-time dependency.
+4. **`pyo3` stays out of the default build** *(removed 2026-08 — it linked libpython
+   into every build with zero call sites, broke musl, and made Python an
+   undocumented build dependency)*. The Python bridge arrives as an explicitly
+   separate mechanism (sidecar process in M5), not a link-time dependency.
 5. **conf.py strategy, two tiers.** Tier 1 (native): a real Python *parser* (not
    executor) handling the declarative 95% — multi-line lists, dicts, tuples, string
    concat, f-strings with literal parts — with **warnings for every dropped
@@ -162,8 +162,9 @@ and CI can be trusted.
   - Commit `Cargo.lock`; `--locked` in CI/release. Delete `Cargo.toml.new`,
     `Cargo.lock.template`, `.packagename` after merging the useful metadata
     (`rust-version`, `keywords`, `categories`, `exclude`) into `Cargo.toml`.
-  - Remove `pyo3`/`pythonize` from default deps (unblocks musl); prune all unused
-    dependencies (syntect stays only when actually wired, in M3).
+  - ✅ *(done 2026-08)* Remove `pyo3`/`pythonize` (two RUSTSEC advisories, unblocks
+    musl, drops the undocumented Python build dependency) and prune the other 14
+    unused dependencies (syntect returns when actually wired, in M2/M3).
   - Gate `publish-crate` on `needs: [validate-version, build-release]`; add checksums;
     build the advertised `aarch64-unknown-linux-gnu` artifact or stop advertising it.
   - MSRV: declare `rust-version`, add an MSRV CI job. Delete the vacuous
@@ -578,7 +579,7 @@ and gets an explicit milestone when the M6 harness first encounters it.
 | Area | Commitment |
 |---|---|
 | CI | 3-OS matrix + MSRV job + `--locked`; fmt/clippy `-D warnings`; cargo-audit + cargo-deny; coverage gate; benchmark regression gate; E2E suite; differential-corpus job (nightly); fuzzing (parser, patterns) |
-| Releases | tag→version validation → build (5+ targets incl. aarch64-linux, working musl once pyo3 is gone) → checksums/SBOM → gated crates.io publish; reproducible with committed Cargo.lock; CHANGELOG enforced by release script |
+| Releases | tag→version validation → build (5+ targets incl. aarch64-linux and musl, unblocked by the pyo3 removal) → checksums/SBOM → gated crates.io publish; reproducible with committed Cargo.lock; CHANGELOG enforced by release script |
 | Packaging | crates.io (clean metadata, exclude list), GitHub binaries, PyPI wheels via maturin (post-M5), Homebrew tap; install.sh target list generated from the release matrix; checksum-verified installs |
 | Runtime deps | Core binary: zero (no Python, static musl build); bridge features degrade gracefully with actionable messages |
 | Exit codes & CI trust | Errors → non-zero always; `-W` semantics; `--keep-going`; structured warning categories with `suppress_warnings` |

@@ -73,8 +73,6 @@ production-readiness workstream — is in **[ROADMAP.md](ROADMAP.md)**.
 
 - Rust (recent stable; an MSRV declaration is ROADMAP M1)
 - Cargo
-- Python 3.x with a shared libpython — temporarily required at build time by the
-  currently-unused `pyo3` dependency; its removal is ROADMAP M1
 
 ### Installation
 
