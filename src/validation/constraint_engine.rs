@@ -10,9 +10,8 @@ use minijinja::Environment;
 use crate::error::BuildError;
 use crate::validation::expression_evaluator::ExpressionEvaluator;
 use crate::validation::{
-    ActionResult, ConstraintActions, ConstraintValidator, ContentItem, FailureAction,
-    ValidationContext, ValidationFailure, ValidationResult, ValidationRule, ValidationSeverity,
-    Validator,
+    ConstraintActions, ContentItem, FailureAction, ValidationContext, ValidationFailure,
+    ValidationResult, ValidationRule,
 };
 
 /// Core constraint validation engine
@@ -326,79 +325,16 @@ impl Default for ConstraintEngine {
     }
 }
 
-impl Validator for ConstraintEngine {
-    fn validate(&self, _context: &ValidationContext) -> ValidationResult {
-        // This is a simple implementation - in practice, you'd want to
-        // validate all constraints for the current item
-        ValidationResult::success()
-    }
-
-    fn get_validation_rules(&self) -> Vec<ValidationRule> {
-        // Return all rules from the configuration
-        Vec::new() // Placeholder
-    }
-
-    fn get_severity(&self) -> ValidationSeverity {
-        ValidationSeverity::Warning
-    }
-
-    fn supports_incremental(&self) -> bool {
-        true
-    }
-}
-
-impl ConstraintValidator for ConstraintEngine {
-    fn validate_constraint(&self, _rule: &ValidationRule, _item: &ContentItem) -> ValidationResult {
-        // This would need to be implemented with mutable access
-        // For now, return a placeholder
-        ValidationResult::success()
-    }
-
-    fn apply_actions(
-        &self,
-        _failures: &[ValidationFailure],
-        actions: &ConstraintActions,
-    ) -> ActionResult {
-        // Apply the specified actions
-        let mut warnings = Vec::new();
-        let mut errors = Vec::new();
-
-        for action in &actions.on_fail {
-            match action {
-                FailureAction::Warn => {
-                    warnings.push("Constraint validation warning".to_string());
-                }
-                FailureAction::Break => {
-                    errors.push(BuildError::ValidationError(
-                        "Constraint validation failed critically".to_string(),
-                    ));
-                }
-                FailureAction::Style => {
-                    // Style changes are applied separately
-                }
-            }
-        }
-
-        if errors.is_empty() {
-            ActionResult {
-                success: true,
-                warnings,
-                errors,
-            }
-        } else {
-            ActionResult {
-                success: false,
-                warnings,
-                errors,
-            }
-        }
-    }
-}
+// NOTE: ConstraintEngine deliberately does NOT implement the Validator /
+// ConstraintValidator traits. Earlier placeholder impls always returned
+// success, and auto-ref resolution silently picked the trait method over the
+// real inherent `validate_constraint` — wiring code would then validate
+// nothing. Call the inherent methods directly.
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::validation::ItemLocation;
+    use crate::validation::{ItemLocation, ValidationSeverity};
 
     fn create_test_item() -> ContentItem {
         let mut metadata = HashMap::new();
