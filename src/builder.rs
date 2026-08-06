@@ -88,7 +88,11 @@ pub struct SphinxBuilder {
 
 impl SphinxBuilder {
     pub fn new(config: BuildConfig, source_dir: PathBuf, output_dir: PathBuf) -> Result<Self> {
-        let cache_dir = output_dir.join(".sphinx-ultra-cache");
+        // -d/doctree_dir relocates the cache (sphinx-build's doctree dir).
+        let cache_dir = config
+            .doctree_dir
+            .clone()
+            .unwrap_or_else(|| output_dir.join(".sphinx-ultra-cache"));
         // Any config change invalidates cached documents (they were rendered
         // under the old configuration).
         let config_fingerprint = blake3::hash(serde_json::to_string(&config)?.as_bytes())
@@ -153,6 +157,11 @@ impl SphinxBuilder {
 
     pub fn enable_incremental(&mut self) {
         self.incremental = true;
+    }
+
+    /// Discard the saved environment before building (sphinx-build `-E`).
+    pub fn fresh_env(&self) -> Result<()> {
+        self.cache.clear()
     }
 
     /// Add a warning to the collection

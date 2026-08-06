@@ -1023,6 +1023,9 @@ impl ConfPyConfig {
         };
         config.exclude_patterns = self.exclude_patterns.clone();
 
+        config.nitpicky = self.nitpicky.unwrap_or(false);
+        config.html_context = self.html_context.clone();
+
         config
     }
 }

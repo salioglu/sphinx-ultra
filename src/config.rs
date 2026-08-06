@@ -115,6 +115,22 @@ pub struct BuildConfig {
     /// Default: [] (exclude nothing)
     /// Exclusions have priority over inclusions
     pub exclude_patterns: Vec<String>,
+
+    /// Warn about all missing cross-references (Sphinx `nitpicky` / `-n`)
+    pub nitpicky: bool,
+
+    /// Tags set via `-t` (consumed by `only`/`ifconfig` once M2 lands)
+    pub tags: Vec<String>,
+
+    /// Cache/doctree directory override (Sphinx `-d`); defaults to
+    /// `<output>/.sphinx-ultra-cache` when unset
+    pub doctree_dir: Option<std::path::PathBuf>,
+
+    /// Extra HTML template variables (conf.py `html_context`, CLI `-A`)
+    pub html_context: std::collections::HashMap<String, serde_json::Value>,
+
+    /// Run directive/role validation during the build
+    pub validate_directives: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -222,6 +238,12 @@ impl Default for BuildConfig {
             // File pattern matching (Sphinx compatibility)
             include_patterns: vec!["**".to_string()],
             exclude_patterns: vec![],
+
+            nitpicky: false,
+            tags: vec![],
+            doctree_dir: None,
+            html_context: std::collections::HashMap::new(),
+            validate_directives: true,
         }
     }
 }
@@ -338,6 +360,85 @@ impl BuildConfig {
         Ok(Self::default())
     }
 
+    /// Apply a `-D key=value` override (sphinx-build semantics): the value is
+    /// coerced to the type the field already has, dotted keys reach the nested
+    /// sections (`output.*`, `theme.*`, `optimization.*`), and an unknown key
+    /// warns and is ignored rather than failing the build.
+    pub fn apply_override(&mut self, key: &str, value: &str) -> Result<()> {
+        // `html_theme` is the Sphinx name; it lives in two places here.
+        // Fan aliases out first so both copies stay in sync.
+        match key {
+            "html_theme" => {
+                self.apply_override("output.html_theme", value)?;
+                return self.apply_override("theme.name", value);
+            }
+            "templates_path" => {
+                self.apply_override("template_dirs", value)?;
+                // fall through to set templates_path itself below
+            }
+            "html_static_path" => {
+                self.apply_override("static_dirs", value)?;
+                // fall through to set html_static_path itself below
+            }
+            _ => {}
+        }
+
+        let mut tree = serde_json::to_value(&*self)?;
+
+        // Resolve the dotted path to the existing slot; unknown keys warn
+        // (sphinx-build behavior) instead of erroring.
+        let mut slot = &mut tree;
+        for part in key.split('.') {
+            match slot.get_mut(part) {
+                Some(next) => slot = next,
+                None => {
+                    log::warn!("unknown config value '{}' in override, ignoring", key);
+                    return Ok(());
+                }
+            }
+        }
+
+        *slot = Self::coerce_override_value(slot, key, value)?;
+        *self = serde_json::from_value(tree)
+            .map_err(|e| anyhow::anyhow!("invalid value for -D {}={}: {}", key, value, e))?;
+        Ok(())
+    }
+
+    /// Coerce a CLI string to the JSON type currently occupying the slot.
+    fn coerce_override_value(
+        current: &serde_json::Value,
+        key: &str,
+        value: &str,
+    ) -> Result<serde_json::Value> {
+        use serde_json::Value;
+        Ok(match current {
+            Value::Bool(_) => match value {
+                "1" | "true" | "True" => Value::Bool(true),
+                "0" | "false" | "False" => Value::Bool(false),
+                other => anyhow::bail!("invalid boolean for -D {}={}", key, other),
+            },
+            Value::Number(_) => value
+                .parse::<i64>()
+                .map(Value::from)
+                .or_else(|_| value.parse::<f64>().map(Value::from))
+                .map_err(|_| anyhow::anyhow!("invalid number for -D {}={}", key, value))?,
+            Value::Array(_) => Value::Array(
+                value
+                    .split(',')
+                    .filter(|s| !s.is_empty())
+                    .map(|s| Value::String(s.trim().to_string()))
+                    .collect(),
+            ),
+            // Null slots are Option<...> fields: prefer a number if the value
+            // parses as one (parallel_jobs), otherwise store the string.
+            Value::Null => value
+                .parse::<i64>()
+                .map(Value::from)
+                .unwrap_or_else(|_| Value::String(value.to_string())),
+            _ => Value::String(value.to_string()),
+        })
+    }
+
     #[allow(dead_code)]
     pub fn save_to_file<P: AsRef<std::path::Path>>(&self, path: P) -> Result<()> {
         let content = if path.as_ref().extension().and_then(|s| s.to_str()) == Some("yaml")
@@ -423,5 +524,74 @@ output:
         // No config files
         let config = BuildConfig::auto_detect(root).unwrap();
         assert_eq!(config, BuildConfig::default());
+    }
+
+    #[test]
+    fn override_string_bool_number_and_list() {
+        let mut config = BuildConfig::default();
+        config.apply_override("project", "Custom").unwrap();
+        assert_eq!(config.project, "Custom");
+
+        config.apply_override("fail_on_warning", "1").unwrap();
+        assert!(config.fail_on_warning);
+        config.apply_override("fail_on_warning", "False").unwrap();
+        assert!(!config.fail_on_warning);
+
+        config.apply_override("max_cache_size_mb", "64").unwrap();
+        assert_eq!(config.max_cache_size_mb, 64);
+
+        config
+            .apply_override("exclude_patterns", "drafts/**,_scratch")
+            .unwrap();
+        assert_eq!(
+            config.exclude_patterns,
+            vec!["drafts/**".to_string(), "_scratch".to_string()]
+        );
+    }
+
+    #[test]
+    fn override_dotted_path_reaches_nested_sections() {
+        let mut config = BuildConfig::default();
+        config.apply_override("output.minify_html", "true").unwrap();
+        assert!(config.output.minify_html);
+    }
+
+    #[test]
+    fn override_html_theme_alias_syncs_both_copies() {
+        let mut config = BuildConfig::default();
+        config.apply_override("html_theme", "furo").unwrap();
+        assert_eq!(config.output.html_theme, "furo");
+        assert_eq!(config.theme.name, "furo");
+    }
+
+    #[test]
+    fn override_templates_path_syncs_template_dirs() {
+        let mut config = BuildConfig::default();
+        config
+            .apply_override("templates_path", "_mytemplates")
+            .unwrap();
+        assert_eq!(config.templates_path, vec![PathBuf::from("_mytemplates")]);
+        assert_eq!(config.template_dirs, vec![PathBuf::from("_mytemplates")]);
+    }
+
+    #[test]
+    fn override_unknown_key_is_ignored_not_error() {
+        let mut config = BuildConfig::default();
+        let before = config.clone();
+        config.apply_override("totally_unknown_key", "1").unwrap();
+        assert_eq!(config, before);
+    }
+
+    #[test]
+    fn override_option_number_field() {
+        let mut config = BuildConfig::default();
+        config.apply_override("parallel_jobs", "3").unwrap();
+        assert_eq!(config.parallel_jobs, Some(3));
+    }
+
+    #[test]
+    fn override_bad_bool_is_an_error() {
+        let mut config = BuildConfig::default();
+        assert!(config.apply_override("nitpicky", "maybe").is_err());
     }
 }
