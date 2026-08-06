@@ -821,115 +821,6 @@ impl PyLiteralParser {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn parse(content: &str) -> PythonConfigParser {
-        let mut parser = PythonConfigParser::new().unwrap();
-        parser.parse_statements(content).unwrap();
-        parser
-    }
-
-    #[test]
-    fn multiline_list_parses() {
-        let p = parse("extensions = [\n    'sphinx.ext.autodoc',\n    'sphinx.ext.viewcode',\n]\n");
-        let v = p.conf_namespace.get("extensions").expect("extensions set");
-        let items: Vec<&str> = v
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|i| i.as_str().unwrap())
-            .collect();
-        assert_eq!(items, vec!["sphinx.ext.autodoc", "sphinx.ext.viewcode"]);
-        assert!(p.warnings().is_empty(), "warnings: {:?}", p.warnings());
-    }
-
-    #[test]
-    fn multiline_dict_parses() {
-        let p = parse(
-            "html_theme_options = {\n    'collapse_navigation': False,\n    'navigation_depth': 4,\n}\n",
-        );
-        let v = p
-            .conf_namespace
-            .get("html_theme_options")
-            .expect("dict set");
-        let obj = v.as_object().unwrap();
-        assert_eq!(
-            obj.get("collapse_navigation"),
-            Some(&serde_json::Value::Bool(false))
-        );
-        assert_eq!(
-            obj.get("navigation_depth").and_then(|n| n.as_i64()),
-            Some(4)
-        );
-    }
-
-    #[test]
-    fn adjacent_string_concat_parses() {
-        let p = parse("copyright = ('2024, ' 'Team')\n");
-        assert_eq!(
-            p.conf_namespace.get("copyright").and_then(|v| v.as_str()),
-            Some("2024, Team")
-        );
-    }
-
-    #[test]
-    fn triple_quoted_string_parses() {
-        let p = parse("project = \"\"\"Multi\nLine\"\"\"\n");
-        assert_eq!(
-            p.conf_namespace.get("project").and_then(|v| v.as_str()),
-            Some("Multi\nLine")
-        );
-    }
-
-    #[test]
-    fn trailing_comment_stripped() {
-        let p = parse("version = '1.0'  # the version\n");
-        assert_eq!(
-            p.conf_namespace.get("version").and_then(|v| v.as_str()),
-            Some("1.0")
-        );
-    }
-
-    #[test]
-    fn unsupported_value_warns_and_drops() {
-        let p = parse("project = os.environ['P']\n");
-        assert!(!p.conf_namespace.contains_key("project"));
-        assert_eq!(p.warnings().len(), 1);
-        assert_eq!(p.warnings()[0].line, 1);
-        assert!(
-            p.warnings()[0].message.contains("project"),
-            "warning names the variable: {}",
-            p.warnings()[0].message
-        );
-    }
-
-    #[test]
-    fn unsupported_statement_warns_but_imports_do_not() {
-        let p = parse("import os\nfrom pathlib import Path\nsys.path.insert(0, 'x')\n");
-        assert_eq!(p.warnings().len(), 1, "warnings: {:?}", p.warnings());
-        assert_eq!(p.warnings()[0].line, 3);
-    }
-
-    #[test]
-    fn nested_structures_parse() {
-        let p = parse(
-            "intersphinx_mapping = {\n    'python': ('https://docs.python.org/3', None),\n}\n",
-        );
-        let v = p.conf_namespace.get("intersphinx_mapping").unwrap();
-        let python = v
-            .as_object()
-            .unwrap()
-            .get("python")
-            .unwrap()
-            .as_array()
-            .unwrap();
-        assert_eq!(python[0].as_str(), Some("https://docs.python.org/3"));
-        assert!(python[1].is_null());
-    }
-}
-
 impl Default for ConfPyConfig {
     fn default() -> Self {
         Self {
@@ -1133,5 +1024,114 @@ impl ConfPyConfig {
         config.exclude_patterns = self.exclude_patterns.clone();
 
         config
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(content: &str) -> PythonConfigParser {
+        let mut parser = PythonConfigParser::new().unwrap();
+        parser.parse_statements(content).unwrap();
+        parser
+    }
+
+    #[test]
+    fn multiline_list_parses() {
+        let p = parse("extensions = [\n    'sphinx.ext.autodoc',\n    'sphinx.ext.viewcode',\n]\n");
+        let v = p.conf_namespace.get("extensions").expect("extensions set");
+        let items: Vec<&str> = v
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i.as_str().unwrap())
+            .collect();
+        assert_eq!(items, vec!["sphinx.ext.autodoc", "sphinx.ext.viewcode"]);
+        assert!(p.warnings().is_empty(), "warnings: {:?}", p.warnings());
+    }
+
+    #[test]
+    fn multiline_dict_parses() {
+        let p = parse(
+            "html_theme_options = {\n    'collapse_navigation': False,\n    'navigation_depth': 4,\n}\n",
+        );
+        let v = p
+            .conf_namespace
+            .get("html_theme_options")
+            .expect("dict set");
+        let obj = v.as_object().unwrap();
+        assert_eq!(
+            obj.get("collapse_navigation"),
+            Some(&serde_json::Value::Bool(false))
+        );
+        assert_eq!(
+            obj.get("navigation_depth").and_then(|n| n.as_i64()),
+            Some(4)
+        );
+    }
+
+    #[test]
+    fn adjacent_string_concat_parses() {
+        let p = parse("copyright = ('2024, ' 'Team')\n");
+        assert_eq!(
+            p.conf_namespace.get("copyright").and_then(|v| v.as_str()),
+            Some("2024, Team")
+        );
+    }
+
+    #[test]
+    fn triple_quoted_string_parses() {
+        let p = parse("project = \"\"\"Multi\nLine\"\"\"\n");
+        assert_eq!(
+            p.conf_namespace.get("project").and_then(|v| v.as_str()),
+            Some("Multi\nLine")
+        );
+    }
+
+    #[test]
+    fn trailing_comment_stripped() {
+        let p = parse("version = '1.0'  # the version\n");
+        assert_eq!(
+            p.conf_namespace.get("version").and_then(|v| v.as_str()),
+            Some("1.0")
+        );
+    }
+
+    #[test]
+    fn unsupported_value_warns_and_drops() {
+        let p = parse("project = os.environ['P']\n");
+        assert!(!p.conf_namespace.contains_key("project"));
+        assert_eq!(p.warnings().len(), 1);
+        assert_eq!(p.warnings()[0].line, 1);
+        assert!(
+            p.warnings()[0].message.contains("project"),
+            "warning names the variable: {}",
+            p.warnings()[0].message
+        );
+    }
+
+    #[test]
+    fn unsupported_statement_warns_but_imports_do_not() {
+        let p = parse("import os\nfrom pathlib import Path\nsys.path.insert(0, 'x')\n");
+        assert_eq!(p.warnings().len(), 1, "warnings: {:?}", p.warnings());
+        assert_eq!(p.warnings()[0].line, 3);
+    }
+
+    #[test]
+    fn nested_structures_parse() {
+        let p = parse(
+            "intersphinx_mapping = {\n    'python': ('https://docs.python.org/3', None),\n}\n",
+        );
+        let v = p.conf_namespace.get("intersphinx_mapping").unwrap();
+        let python = v
+            .as_object()
+            .unwrap()
+            .get("python")
+            .unwrap()
+            .as_array()
+            .unwrap();
+        assert_eq!(python[0].as_str(), Some("https://docs.python.org/3"));
+        assert!(python[1].is_null());
     }
 }
