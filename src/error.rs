@@ -148,7 +148,6 @@ impl BuildWarning {
 }
 
 impl BuildErrorReport {
-    #[allow(dead_code)]
     pub fn new(file: PathBuf, line: Option<usize>, message: String, error_type: ErrorType) -> Self {
         Self {
             file,
