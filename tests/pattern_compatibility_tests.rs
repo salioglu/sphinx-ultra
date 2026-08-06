@@ -32,7 +32,7 @@ fn test_pattern_translation_compatibility() {
 
     // Test character classes (fnmatch style)
     assert_eq!(translate_pattern("[abc].rst"), "^[abc]\\.rst$");
-    assert_eq!(translate_pattern("[!_]*.rst"), "^[^_][^/]*\\.rst$");
+    assert_eq!(translate_pattern("[!_]*.rst"), "^[^/_][^/]*\\.rst$");
 }
 
 #[test]

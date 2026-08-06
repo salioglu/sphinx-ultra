@@ -77,12 +77,18 @@ pub fn translate_pattern(pattern: &str) -> String {
                     regex_pattern.push_str("\\[");
                     i += 1;
                 } else {
-                    // Valid character class
+                    // Valid character class.
+                    // Sphinx semantics (sphinx/util/matching.py): only '[!...]'
+                    // negates, and a negated class never matches '/'; a leading
+                    // '^' is an ordinary literal character.
                     let mut class_content = String::new();
                     let mut k = i + 1;
 
-                    if k < n && (chars[k] == '!' || chars[k] == '^') {
-                        class_content.push('^');
+                    if k < n && chars[k] == '!' {
+                        class_content.push_str("^/");
+                        k += 1;
+                    } else if k < n && chars[k] == '^' {
+                        class_content.push_str("\\^");
                         k += 1;
                     }
 
@@ -210,14 +216,26 @@ pub fn get_matching_files<P: AsRef<Path>>(
             let path = entry.path();
 
             if path.is_dir() {
-                // Recursively walk subdirectories
-                walk_dir(
-                    &path,
-                    base_dir,
-                    include_regexes,
-                    exclude_regexes,
-                    matched_files,
-                )?;
+                // Prune excluded directories like Sphinx's get_matching_files,
+                // which filters os.walk dirs by matching the bare relative path
+                // against the exclude matchers (a trailing-slash pattern like
+                // "_build/" is inert in Sphinx and must stay inert here).
+                let relative_path = path.strip_prefix(base_dir)?;
+                let normalized_path = normalize_path(relative_path);
+
+                let excluded = exclude_regexes
+                    .iter()
+                    .any(|regex| regex.is_match(&normalized_path));
+
+                if !excluded {
+                    walk_dir(
+                        &path,
+                        base_dir,
+                        include_regexes,
+                        exclude_regexes,
+                        matched_files,
+                    )?;
+                }
             } else if path.is_file() {
                 // Get relative path from base directory
                 let relative_path = path.strip_prefix(base_dir)?;
@@ -277,7 +295,7 @@ mod tests {
 
         // Character classes
         assert_eq!(translate_pattern("[abc].rst"), "^[abc]\\.rst$");
-        assert_eq!(translate_pattern("[!abc].rst"), "^[^abc]\\.rst$");
+        assert_eq!(translate_pattern("[!abc].rst"), "^[^/abc]\\.rst$");
     }
 
     #[test]
@@ -296,6 +314,57 @@ mod tests {
         assert!(!pattern_match("d.rst", "[abc].rst").unwrap());
         assert!(!pattern_match("a.rst", "[!abc].rst").unwrap());
         assert!(pattern_match("d.rst", "[!abc].rst").unwrap());
+        // Sphinx semantics: negated classes never match '/'
+        assert!(!pattern_match("/.rst", "[!abc].rst").unwrap());
+    }
+
+    #[test]
+    fn test_directory_pruning_matches_sphinx() {
+        // Sphinx's get_matching_files prunes directories whose bare relative
+        // path matches an exclude matcher; "_build/**" excludes the files
+        // beneath instead; a trailing-slash pattern like "_build/" matches
+        // neither directories nor files (inert).
+        let make_tree = || {
+            let temp_dir = TempDir::new().unwrap();
+            let base = temp_dir.path().to_path_buf();
+            fs::create_dir_all(base.join("_build/deep")).unwrap();
+            fs::write(base.join("index.rst"), "Index").unwrap();
+            fs::write(base.join("_build/stale.rst"), "Stale").unwrap();
+            fs::write(base.join("_build/deep/stale.rst"), "Stale").unwrap();
+            (temp_dir, base)
+        };
+
+        let include = vec!["**".to_string()];
+
+        // Bare "_build" prunes the whole tree
+        let (_t1, base) = make_tree();
+        let files = get_matching_files(&base, &include, &["_build".to_string()]).unwrap();
+        let names: Vec<String> = files
+            .iter()
+            .map(|f| normalize_path(f.strip_prefix(base.canonicalize().unwrap()).unwrap()))
+            .collect();
+        assert_eq!(names, vec!["index.rst"]);
+
+        // "_build/**" produces the same visible output (files excluded one by one)
+        let (_t2, base) = make_tree();
+        let files = get_matching_files(&base, &include, &["_build/**".to_string()]).unwrap();
+        let names: Vec<String> = files
+            .iter()
+            .map(|f| normalize_path(f.strip_prefix(base.canonicalize().unwrap()).unwrap()))
+            .collect();
+        assert_eq!(names, vec!["index.rst"]);
+
+        // Trailing-slash "_build/" is inert, exactly like Sphinx
+        let (_t3, base) = make_tree();
+        let files = get_matching_files(&base, &include, &["_build/".to_string()]).unwrap();
+        let names: Vec<String> = files
+            .iter()
+            .map(|f| normalize_path(f.strip_prefix(base.canonicalize().unwrap()).unwrap()))
+            .collect();
+        assert_eq!(
+            names,
+            vec!["_build/deep/stale.rst", "_build/stale.rst", "index.rst"]
+        );
     }
 
     #[test]
