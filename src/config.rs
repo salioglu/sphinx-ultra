@@ -265,6 +265,15 @@ impl Default for OptimizationConfig {
 impl BuildConfig {
     pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> Result<Self> {
         let path = path.as_ref();
+
+        // Sphinx projects configure via conf.py; route it to the Python
+        // config parser so `--config conf.py` behaves like auto-detection.
+        let is_python = path.file_name().and_then(|s| s.to_str()) == Some("conf.py")
+            || path.extension().and_then(|s| s.to_str()) == Some("py");
+        if is_python {
+            return Self::from_conf_py(path);
+        }
+
         let content = std::fs::read_to_string(path)
             .map_err(|e| anyhow::anyhow!("cannot read config file {}: {e}", path.display()))?;
         let config = if path.extension().and_then(|s| s.to_str()) == Some("yaml")
@@ -348,6 +357,16 @@ mod tests {
         assert_eq!(config.project, "Tiny");
         assert_eq!(config.max_cache_size_mb, 500); // default filled in
         assert_eq!(config.include_patterns, vec!["**".to_string()]);
+    }
+
+    #[test]
+    fn from_file_routes_conf_py() {
+        let temp_dir = TempDir::new().unwrap();
+        let p = temp_dir.path().join("conf.py");
+        fs::write(&p, "project = 'PyProject'\n").unwrap();
+
+        let config = BuildConfig::from_file(&p).unwrap();
+        assert_eq!(config.project, "PyProject");
     }
 
     #[test]

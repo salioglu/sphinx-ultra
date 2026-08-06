@@ -130,6 +130,52 @@ fn clean_removes_output_dir() {
 }
 
 #[test]
+fn config_flag_accepts_conf_py() {
+    let out = out_dir("config-conf-py");
+    let conf_dir = out_dir("config-conf-py-src");
+    std::fs::create_dir_all(&conf_dir).unwrap();
+    let conf = conf_dir.join("conf.py");
+    std::fs::write(&conf, "project = 'E2E'\n").unwrap();
+
+    let result = bin()
+        .arg("--config")
+        .arg(&conf)
+        .arg("build")
+        .arg("--source")
+        .arg(fixture("basic"))
+        .arg("--output")
+        .arg(&out)
+        .output()
+        .expect("binary should run");
+
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert!(out.join("index.html").is_file());
+}
+
+#[test]
+fn config_flag_accepts_partial_yaml() {
+    let out = out_dir("config-partial-yaml");
+    let conf_dir = out_dir("config-partial-yaml-src");
+    std::fs::create_dir_all(&conf_dir).unwrap();
+    let conf = conf_dir.join("custom.yaml");
+    std::fs::write(&conf, "project: 'Partial'\n").unwrap();
+
+    let result = bin()
+        .arg("--config")
+        .arg(&conf)
+        .arg("build")
+        .arg("--source")
+        .arg(fixture("basic"))
+        .arg("--output")
+        .arg(&out)
+        .output()
+        .expect("binary should run");
+
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert!(out.join("index.html").is_file());
+}
+
+#[test]
 fn stats_prints_source_file_count() {
     let result = bin()
         .arg("stats")
