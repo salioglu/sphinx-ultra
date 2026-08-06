@@ -260,6 +260,76 @@ fn config_flag_accepts_partial_yaml() {
 }
 
 #[test]
+fn incremental_cache_hit_still_writes_output() {
+    let out = out_dir("cache-write-on-hit");
+    let run1 = build(&fixture("basic"), &out, &["--incremental"]);
+    assert!(run1.status.success(), "stderr: {}", stderr_of(&run1));
+
+    // Simulate lost output while the cache stays warm: a cache hit must
+    // still emit the page, never skip writing.
+    std::fs::remove_file(out.join("index.html")).unwrap();
+    std::fs::remove_file(out.join("installation.html")).unwrap();
+
+    let run2 = build(&fixture("basic"), &out, &["--incremental"]);
+    assert!(run2.status.success(), "stderr: {}", stderr_of(&run2));
+    let stderr = stderr_of(&run2);
+    assert!(
+        stderr.contains("Cache hits: 2"),
+        "second run should hit the cache for both docs, stderr: {stderr}"
+    );
+    assert!(
+        out.join("index.html").is_file() && out.join("installation.html").is_file(),
+        "cache hits must still write output files"
+    );
+}
+
+#[test]
+fn clean_incremental_build_produces_full_output() {
+    let out = out_dir("clean-incremental");
+    let run1 = build(&fixture("basic"), &out, &["--incremental"]);
+    assert!(run1.status.success(), "stderr: {}", stderr_of(&run1));
+
+    let run2 = build(&fixture("basic"), &out, &["--clean", "--incremental"]);
+    assert!(run2.status.success(), "stderr: {}", stderr_of(&run2));
+    assert!(
+        out.join("index.html").is_file() && out.join("installation.html").is_file(),
+        "--clean --incremental must produce a complete output tree"
+    );
+}
+
+#[test]
+fn config_change_invalidates_cache() {
+    let src = out_dir("cache-config-src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(
+        src.join("index.rst"),
+        "Welcome\n=======\n\n.. toctree::\n\n   other\n",
+    )
+    .unwrap();
+    std::fs::write(src.join("other.rst"), "Other\n-----\n\nText.\n").unwrap();
+    std::fs::write(src.join("sphinx-ultra.yaml"), "project: 'A'\n").unwrap();
+
+    let out = out_dir("cache-config-out");
+    let run1 = build(&src, &out, &["--incremental"]);
+    assert!(run1.status.success(), "stderr: {}", stderr_of(&run1));
+
+    let run2 = build(&src, &out, &["--incremental"]);
+    assert!(
+        stderr_of(&run2).contains("Cache hits: 2"),
+        "unchanged config should reuse the cache, stderr: {}",
+        stderr_of(&run2)
+    );
+
+    std::fs::write(src.join("sphinx-ultra.yaml"), "project: 'B'\n").unwrap();
+    let run3 = build(&src, &out, &["--incremental"]);
+    assert!(
+        stderr_of(&run3).contains("Cache hits: 0"),
+        "config change must invalidate the cache, stderr: {}",
+        stderr_of(&run3)
+    );
+}
+
+#[test]
 fn stats_prints_source_file_count() {
     let result = bin()
         .arg("stats")

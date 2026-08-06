@@ -89,7 +89,17 @@ pub struct SphinxBuilder {
 impl SphinxBuilder {
     pub fn new(config: BuildConfig, source_dir: PathBuf, output_dir: PathBuf) -> Result<Self> {
         let cache_dir = output_dir.join(".sphinx-ultra-cache");
-        let cache = BuildCache::new(cache_dir)?;
+        // Any config change invalidates cached documents (they were rendered
+        // under the old configuration).
+        let config_fingerprint = blake3::hash(serde_json::to_string(&config)?.as_bytes())
+            .to_hex()
+            .to_string();
+        let cache = BuildCache::new(
+            cache_dir,
+            config.max_cache_size_mb,
+            config.cache_expiration_hours,
+            &config_fingerprint,
+        )?;
 
         // Canonicalize source_dir so it matches the canonicalized absolute paths
         // returned by matching::get_matching_files; without this, relative
@@ -167,6 +177,9 @@ impl SphinxBuilder {
         if self.output_dir.exists() {
             tokio::fs::remove_dir_all(&self.output_dir).await?;
         }
+        // A clean build must not reuse documents cached before the clean
+        // (the on-disk cache lived inside the output dir we just removed).
+        self.cache.clear()?;
         Ok(())
     }
 
@@ -370,12 +383,19 @@ impl SphinxBuilder {
         let relative_path = file_path.strip_prefix(&self.source_dir)?;
         debug!("Processing file: {}", relative_path.display());
 
-        // Check cache if incremental build is enabled
+        // Check cache if incremental build is enabled. A cache hit still
+        // writes the rendered output — skipping the write is how cached pages
+        // went missing from the output tree.
         if self.incremental {
             if let Ok(cached_doc) = self.cache.get_document(file_path) {
                 let file_mtime = utils::get_file_mtime(file_path)?;
-                if cached_doc.source_mtime >= file_mtime {
+                if cached_doc.source_mtime >= file_mtime && !cached_doc.html.is_empty() {
                     debug!("Using cached version of {}", relative_path.display());
+                    let output_path = self.get_output_path(file_path)?;
+                    if let Some(parent) = output_path.parent() {
+                        std::fs::create_dir_all(parent)?;
+                    }
+                    std::fs::write(&output_path, &cached_doc.html)?;
                     return Ok(cached_doc);
                 }
             }
@@ -383,20 +403,21 @@ impl SphinxBuilder {
 
         // Read and parse the file
         let content = std::fs::read_to_string(file_path)?;
-        let document = self.parser.parse(file_path, &content)?;
+        let mut document = self.parser.parse(file_path, &content)?;
 
         // Simple document rendering (placeholder)
         let rendered_html = format!(
             "<html><body>{}</body></html>",
             html_escape::encode_text(&document.content.to_string())
         );
+        document.html = rendered_html;
 
         // Write output file
         let output_path = self.get_output_path(file_path)?;
         if let Some(parent) = output_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(&output_path, &rendered_html)?;
+        std::fs::write(&output_path, &document.html)?;
 
         // Cache the document
         if self.incremental {
