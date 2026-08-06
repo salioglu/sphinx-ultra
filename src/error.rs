@@ -115,6 +115,18 @@ impl BuildWarning {
         )
     }
 
+    pub fn toctree_glob_no_match(file: PathBuf, line: Option<usize>, pattern: &str) -> Self {
+        Self::new(
+            file,
+            line,
+            format!(
+                "toctree glob pattern '{}' didn't match any documents",
+                pattern
+            ),
+            WarningType::EmptyToctree,
+        )
+    }
+
     pub fn orphaned_document(file: PathBuf) -> Self {
         Self::new(
             file,
