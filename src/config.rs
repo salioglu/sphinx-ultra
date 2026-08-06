@@ -290,8 +290,19 @@ impl BuildConfig {
 
     /// Load configuration from a Sphinx conf.py file
     pub fn from_conf_py<P: AsRef<std::path::Path>>(conf_py_path: P) -> Result<Self> {
+        let conf_py_path = conf_py_path.as_ref();
         let mut parser = PythonConfigParser::new()?;
         let conf_py_config = parser.parse_conf_py(conf_py_path)?;
+        // Silent dropping is banned: surface every construct the parser
+        // could not handle.
+        for warning in parser.warnings() {
+            log::warn!(
+                "{}:{}: {}",
+                conf_py_path.display(),
+                warning.line,
+                warning.message
+            );
+        }
         Ok(conf_py_config.to_build_config())
     }
 

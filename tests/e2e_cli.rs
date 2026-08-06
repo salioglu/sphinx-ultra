@@ -237,6 +237,41 @@ fn config_flag_accepts_conf_py() {
 }
 
 #[test]
+fn conf_py_multiline_and_dynamic_warning() {
+    let conf_dir = out_dir("conf-py-multiline-src");
+    std::fs::create_dir_all(&conf_dir).unwrap();
+    let conf = conf_dir.join("conf.py");
+    std::fs::write(
+        &conf,
+        "import os\n\
+         project = 'Multi'\n\
+         extensions = [\n    'sphinx.ext.autodoc',\n    'sphinx.ext.viewcode',\n]\n\
+         html_theme_options = {\n    'collapse_navigation': False,\n}\n\
+         release = os.environ['RELEASE']\n",
+    )
+    .unwrap();
+
+    let out = out_dir("conf-py-multiline-out");
+    let result = bin()
+        .arg("--config")
+        .arg(&conf)
+        .arg("build")
+        .arg("--source")
+        .arg(fixture("basic"))
+        .arg("--output")
+        .arg(&out)
+        .output()
+        .expect("binary should run");
+
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    let stderr = stderr_of(&result);
+    assert!(
+        stderr.contains("conf.py:10: unsupported value for 'release'"),
+        "dynamic values must warn with their line, stderr: {stderr}"
+    );
+}
+
+#[test]
 fn config_flag_accepts_partial_yaml() {
     let out = out_dir("config-partial-yaml");
     let conf_dir = out_dir("config-partial-yaml-src");
