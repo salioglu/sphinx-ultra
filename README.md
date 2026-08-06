@@ -12,72 +12,66 @@ A high-performance Rust-based Sphinx documentation builder designed for large co
 
 ## ⚠️ Development Status
 
-**🚧 This project is currently under active development and is NOT recommended for production usage.**
+**🚧 Pre-1.0: not yet recommended for production documentation workflows.**
 
-**Current Focus**: The primary goal is **validation and experimentation** rather than producing perfectly matched Sphinx builds. We are:
+**Mission (see [ROADMAP.md](ROADMAP.md)):** sphinx-ultra 1.0 will be a
+production-grade, drop-in replacement for `sphinx-build -b html` — full Sphinx
+feature parity (target: Sphinx 9.1.x), **sphinx-needs built in as a first-class
+feature** (target: 8.3.x), support for the 5 most popular themes and 15+ most
+popular extensions — at 10–100× the speed. **No Sphinx or sphinx-needs feature is
+excluded from scope**; features are phased, never excluded. The earlier
+validation-only scoping is retired.
 
-- ✅ Validating the core architecture and performance concepts
-- ✅ Testing parallel processing capabilities on large documentation sets
-- ✅ Experimenting with Rust-based parsing and rendering
-- ⚠️ **NOT** aiming for 100% Sphinx compatibility yet
-- ⚠️ **NOT** ready for production documentation workflows
-
-**Use Cases**: Perfect for developers who want to experiment with high-performance documentation building or contribute to the development of next-generation documentation tools.
+**Honest current state (verified by code audit, 2026-08):** today's build pipeline
+is fast and structurally sound, but the HTML it emits is a placeholder (the source
+text, escaped, without rendering, themes, or search). The RST/Markdown parsers are
+prototypes, `conf.py` support covers only simple single-line assignments, and the
+advertised validation systems exist as tested libraries that the build command does
+not yet invoke. The full, file-and-line-level status audit lives in
+[docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md).
 
 ## ✨ Features
 
-### ✅ Currently Implemented
+### ✅ Working today
 
-- **🚀 Blazing Fast**: Parallel processing with Rust's performance
-- **📊 Scalable**: Handle large documentation projects efficiently (tested with 50+ files in ~44ms)
-- **🔄 Incremental Builds**: Smart caching system for faster rebuilds
-- **📁 File Processing**: Support for RST and Markdown files
-- **🔧 Configuration**: Multiple configuration formats (conf.py, YAML, JSON)
-- **📂 File Pattern Matching**: 100% Sphinx-compatible `include_patterns` and `exclude_patterns` support
-- **📊 Statistics**: Project analysis and build metrics
-- **⚠️ Validation**: Document validation with warning/error reporting
-- **🏗️ CLI Interface**: Complete command-line interface (build, clean, stats)
-- **📦 Static Assets**: Automatic copying of static files and assets
-- **🎯 Domain System**: Complete cross-reference validation with Python and RST domains
-- **🔗 Reference Validation**: Comprehensive validation of :func:, :class:, :doc:, :ref: references
-- **💡 Smart Suggestions**: Intelligent suggestions for broken references
+- **🚀 Parallel build pipeline**: Rayon-based, scales across cores (`-j`)
+- **📂 Pattern-based file discovery**: Sphinx-style `include_patterns` /
+  `exclude_patterns` engine with directory pruning (the one known remaining
+  divergence from Sphinx 9.1 — `**` semantics — is tracked in ROADMAP M1 with
+  differential tests; `[!…]` classes, literal leading `^`, and directory-pruning
+  semantics were fixed in 2026-08)
+- **🔄 Change detection**: blake3-based staleness checks work; **output caching is
+  currently broken** (a cache hit skips writing output, so `--clean --incremental`
+  produces missing files) — fix is ROADMAP M1
+- **⚠️ Toctree validation**: missing-reference and orphan detection with
+  Sphinx-style warnings, `-W`, and `-w warnfile`
+- **🔧 Config auto-detection**: conf.py (simple assignments only, for now) →
+  sphinx-ultra.yaml → .yml → .json → defaults
+- **📊 Statistics**: `stats` command with project analysis
+- **🏗️ CLI**: `build`, `clean`, `stats`
 
-### 🚧 Partially Implemented
+### 🧩 Built but not yet wired into `build` (activation is roadmap M1–M3)
 
-- **🔍 Search Index**: Framework exists but search functionality not active
-- **🛠️ Extensions**: Basic extension system with limited Sphinx extension support
-- **🎨 Themes**: Basic theme structure but no advanced theming
+- **🎯 Domain system** with Python/RST cross-reference validation (library + examples)
+- **📝 Directive & role validation** (20 built-in validators; library + examples)
+- **🔍 Constraint engine** inspired by sphinx-needs (library + examples)
+- **🖥️ Sphinx-mirroring HTML builder, minijinja template engine, search index,
+  objects.inv inventory** (library code, currently bypassed by the build path)
 
-### 📋 Planned Features
+### 📋 Roadmap
 
-For detailed development roadmap, see **[Validation Features Plan](VALIDATION_FEATURES_PLAN.md)** which outlines our validation-focused approach.
-
-**Phase 1 (Next 2 months)**:
-- **🏗️ Domain System**: Sphinx-compatible domain registration and cross-reference validation
-- **📝 Directive Validation**: Complete directive/role validation system
-- **📖 Document Structure**: TOC tree and hierarchy validation
-
-**Phase 2-4 (Months 3-8)**:
-- **🔍 Content Constraints**: Field validation and workflow checking
-- **� Extension Framework**: Plugin validation and compatibility
-- **📚 Code Documentation**: Autodoc-style validation
-- **🌍 Internationalization**: Translation completeness validation
-
-**Advanced UI Features** (search indexing, complex templating, etc.) are intentionally deferred until validation foundation is solid.
-- **🌐 Live Server**: Development server with live reload
-- **�️ File Watching**: Automatic rebuilds on file changes
-- **🔌 Plugin System**: Full plugin architecture for custom functionality
-- **📱 Mobile Friendly**: Responsive design optimization
-- **🖼️ Image Optimization**: Automatic image processing and optimization
-- **📦 Asset Bundling**: Advanced asset optimization and bundling
-
-> **Note**: This project is in active development. The core build functionality works reliably, but advanced features are still being developed.
+The canonical, milestone-by-milestone plan — real docutils-fidelity parsing, theme
+engine (alabaster, sphinx-rtd-theme, furo, pydata-sphinx-theme, sphinx-book-theme),
+byte-compatible search and objects.inv, 16-extension support matrix (autodoc via a
+Python sidecar, myst-parser, sphinx-design, copybutton, mermaid, …), first-class
+sphinx-needs, i18n, LaTeX/EPUB/man builders, live-reload dev server, and the
+production-readiness workstream — is in **[ROADMAP.md](ROADMAP.md)**.
 
 ## 🚀 Quick Start
 
 ### Prerequisites
 
-- Rust 1.70+
+- Rust (recent stable; an MSRV declaration is ROADMAP M1)
 - Cargo
 
 ### Installation
@@ -119,7 +113,8 @@ cargo build --release
 # Parallel processing
 sphinx-ultra build --jobs 8 --source docs --output _build
 
-# Incremental builds (faster rebuilds)
+# Incremental builds (currently not recommended: cached documents skip output
+# writing — fix is ROADMAP M1)
 sphinx-ultra build --incremental --source docs --output _build
 
 # Clean before build
@@ -146,19 +141,29 @@ Sphinx Ultra supports multiple configuration formats and can auto-detect your se
 
 ### Sphinx conf.py Support
 
-Sphinx Ultra can read and parse existing Sphinx `conf.py` files:
+Sphinx Ultra can read existing Sphinx `conf.py` files, **currently limited to
+simple single-line assignments** (strings, booleans, integers, single-line lists):
 
 ```python
-# conf.py (existing Sphinx configuration works)
+# conf.py — this subset parses today
 project = 'My Documentation'
 version = '1.0'
 extensions = ['sphinx.ext.autodoc', 'sphinx.ext.viewcode']
 html_theme = 'sphinx_rtd_theme'
 ```
 
+> **Known limitation:** multi-line lists, dicts (e.g. `html_theme_options`),
+> f-strings, imports, and computed values are not parsed yet and are silently
+> dropped. Full conf.py support (native multi-line parser with warnings, plus
+> optional execution in your project's venv) is ROADMAP M1/M5.
+
 ### YAML Configuration
 
-Create a `sphinx-ultra.yaml` file for native configuration:
+Create a `sphinx-ultra.yaml` file for native configuration.
+
+> **Known limitation:** all fields are currently required — a partial YAML file
+> fails with a "missing field" error, so include the complete structure below.
+> Sensible defaults for omitted fields are ROADMAP M1.
 
 ```yaml
 # Project information
@@ -179,7 +184,7 @@ output:
   search_index: true
   minify_html: false
 
-# File pattern matching (Sphinx-compatible)
+# File pattern matching (Sphinx-style)
 include_patterns:
   - "**/*.rst"
   - "**/*.md"
@@ -209,17 +214,26 @@ optimization:
 
 ### Configuration Fields
 
-Most standard Sphinx configuration options are supported including:
+Many standard Sphinx configuration options are **parsed**; note that a number of
+them are not yet consumed by the build (see
+[docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md) § Configuration).
+The options that demonstrably change behavior today are project metadata,
+`parallel_jobs`, `include_patterns`/`exclude_patterns`, and `fail_on_warning`.
+Parsed categories include:
 - Project metadata (project, version, copyright, author)
 - HTML output options (theme, static paths, CSS/JS files)  
 - Extension configuration
 - Template and static file paths
-- **File pattern matching** (`include_patterns`, `exclude_patterns`) - [Full compatibility guide](docs/SPHINX_PATTERNS_COMPATIBILITY.md)
+- **File pattern matching** (`include_patterns`, `exclude_patterns`) - [compatibility guide](docs/SPHINX_PATTERNS_COMPATIBILITY.md) (close to Sphinx; remaining verified divergences tracked in [ROADMAP.md](ROADMAP.md) M1)
 - Build optimization settings
 
-## 📈 Performance Benchmarks
+## 📈 Performance
 
-Real performance test results on documentation projects:
+> **Important caveat:** the numbers below were measured on the **current
+> placeholder pipeline** (which does not yet perform full RST rendering, theming,
+> or search indexing). They demonstrate the parallel-I/O architecture, not
+> end-to-end documentation-build performance. Honest, corpus-based benchmarks with
+> regression gates arrive with the real parser (ROADMAP M2, §10).
 
 | Files | Build Time | Processing Rate | Memory Usage |
 |-------|------------|-----------------|--------------|
@@ -232,9 +246,9 @@ Real performance test results on documentation projects:
 ### Performance Features
 
 - **Parallel Processing**: Utilizes all CPU cores for maximum throughput
-- **Smart Caching**: Incremental builds only process changed files
+- **Change Detection**: blake3-based staleness checks (output caching itself is
+  currently broken — see IMPLEMENTATION_STATUS; fix is ROADMAP M1)
 - **Memory Efficient**: Low memory footprint even for large projects
-- **Fast Parsing**: Optimized RST and Markdown parsing
 - **Minimal I/O**: Efficient file operations and batch processing
 
 ### Comparison Notes
@@ -250,10 +264,10 @@ While we don't have direct Sphinx comparison benchmarks yet, the processing spee
 
 The Rust builder consists of several key components:
 
-- **Parser**: Fast RST/Markdown parsing with syntax highlighting
-- **Cache**: Intelligent caching system with LRU eviction
-- **Renderer**: Template-based HTML generation with Handlebars
-- **Builder**: Parallel processing engine with dependency tracking
+- **Parser**: RST/Markdown parsing (prototype today; docutils-fidelity parser is ROADMAP M2)
+- **Cache**: Incremental build cache with blake3 change detection
+- **Renderer**: minijinja-based template engine (built, not yet wired — ROADMAP M2)
+- **Builder**: Parallel processing engine (rayon)
 
 ## 🔍 Advanced Usage
 
@@ -264,6 +278,10 @@ Enable faster rebuilds by only processing changed files:
 ```bash
 sphinx-ultra build --incremental --source docs --output _build
 ```
+
+> **Warning:** output caching is currently broken — documents served from cache do
+> not get written to the output directory (worst with `--clean --incremental`).
+> Avoid `--incremental` until the ROADMAP M1 cache fix lands.
 
 ### Parallel Processing
 
@@ -334,10 +352,8 @@ Output includes:
 
 ```bash
 # Debug-level logging for detailed build information
+# (note: --verbose goes before the subcommand)
 sphinx-ultra --verbose build --source docs --output _build
-
-# Or set environment variable
-RUST_LOG=debug sphinx-ultra build --source docs --output _build
 ```
 
 ### Common Issues
@@ -354,7 +370,7 @@ RUST_LOG=debug sphinx-ultra build --source docs --output _build
 
 **Performance Issues**
 - Reduce parallel jobs if memory-constrained: `--jobs 1`
-- Enable incremental builds: `--incremental`
+- Avoid `--incremental` until the ROADMAP M1 cache fix lands
 - Check for large files that may slow processing
 
 ### Getting Help
@@ -410,11 +426,10 @@ Please see [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
 
 ### What Currently Works Well
 
-- Basic RST and Markdown processing
-- Fast parallel builds  
-- Configuration auto-detection
-- File validation and warning systems
-- Incremental caching
+- Fast parallel file processing (rayon)
+- Configuration auto-detection (conf.py subset → YAML → JSON → defaults)
+- Pattern-based file discovery with Sphinx-parity `[!…]`/pruning semantics
+- Toctree missing-reference/orphan warnings with `-W`/`-w`
 
 ### What Needs Development
 
@@ -423,7 +438,7 @@ Please see [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
 - Live development server
 - Full Sphinx directive compatibility
 
-## � Releases
+## 📦 Releases
 
 This project uses an automated release system with version validation to ensure consistency.
 
@@ -459,6 +474,6 @@ The release script automatically:
 
 **Version Safety**: The system prevents version mismatches between git tags and `Cargo.toml`. See [`scripts/README.md`](scripts/README.md) for detailed documentation.
 
-## �📄 License
+## 📄 License
 
 This project is licensed under the MIT License - see the LICENSE file for details.

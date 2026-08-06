@@ -49,6 +49,11 @@ impl SphinxBuilder {
         let cache_dir = output_dir.join(".sphinx-ultra-cache");
         let cache = BuildCache::new(cache_dir)?;
 
+        // Canonicalize source_dir so it matches the canonicalized absolute paths
+        // returned by matching::get_matching_files; without this, relative
+        // --source paths (including the default ".") fail strip_prefix later.
+        let source_dir = source_dir.canonicalize().unwrap_or(source_dir);
+
         let parser = Parser::new(&config)?;
 
         let parallel_jobs = config.parallel_jobs.unwrap_or_else(|| {

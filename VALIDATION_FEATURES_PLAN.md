@@ -1,5 +1,17 @@
 # Sphinx Ultra - Validation-Focused Feature Plan
 
+> **⚠️ SUPERSEDED (2026-08).** This plan is retained for historical context only.
+> The project's scope has changed: sphinx-ultra now targets **full Sphinx and
+> sphinx-needs parity with no feature exclusions** — the "Notable Exclusions"
+> section below (search, theming, templating) no longer applies. The canonical
+> plan is **[ROADMAP.md](ROADMAP.md)**; verified implementation status is
+> **[docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md)**.
+>
+> Note also that the "Implemented ✅ / Complete" claims below (domain system,
+> directive & role validation) refer to library modules with unit tests; the 2026-08
+> audit established that none of them is invoked by `sphinx-ultra build`. Wiring
+> them into the build is ROADMAP milestone M1.
+
 ## Overview
 This document outlines the upcoming validation-focused features for Sphinx Ultra based on comprehensive analysis of Sphinx and sphinx-needs. The focus is on **validation, verification, and consistency checking** rather than advanced UI features.
 

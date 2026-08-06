@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use crate::python_config::PythonConfigParser;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BuildConfig {
     /// Number of parallel jobs to use (defaults to number of CPU cores)
     pub parallel_jobs: Option<usize>,
@@ -116,7 +116,7 @@ pub struct BuildConfig {
     pub exclude_patterns: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct OutputConfig {
     /// Output HTML format
     pub html_theme: String,
@@ -137,7 +137,7 @@ pub struct OutputConfig {
     pub compress_output: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ThemeConfig {
     /// Theme name
     pub name: String,
@@ -152,7 +152,7 @@ pub struct ThemeConfig {
     pub custom_js: Vec<PathBuf>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct OptimizationConfig {
     /// Enable parallel processing
     pub parallel_processing: bool,
@@ -322,5 +322,79 @@ impl BuildConfig {
         };
         std::fs::write(path, content)?;
         Ok(())
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_auto_detect_conf_py() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        fs::write(root.join("conf.py"), "project = 'Test Project'\n").unwrap();
+
+        let config = BuildConfig::auto_detect(root).unwrap();
+        assert_eq!(config.project, "Test Project");
+    }
+
+    #[test]
+    fn test_auto_detect_yaml() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        // A complete sphinx-ultra.yaml: every field is currently required
+        // because BuildConfig has no serde defaults (tracked as a roadmap item).
+        let yaml_content = r#"
+project: 'YAML Project'
+max_cache_size_mb: 500
+cache_expiration_hours: 24
+output:
+  html_theme: 'sphinx_rtd_theme'
+  syntax_highlighting: true
+  highlight_theme: 'github'
+  search_index: true
+  minify_html: false
+  compress_output: false
+theme:
+  name: 'sphinx_rtd_theme'
+  options: {}
+  custom_css: []
+  custom_js: []
+optimization:
+  parallel_processing: true
+  incremental_builds: true
+  document_caching: true
+  image_optimization: false
+  asset_bundling: false
+extensions: []
+template_dirs: []
+static_dirs: []
+html_style: []
+html_css_files: []
+html_js_files: []
+html_static_path: []
+templates_path: []
+fail_on_warning: false
+include_patterns: ['**']
+exclude_patterns: []
+"#;
+        fs::write(root.join("sphinx-ultra.yaml"), yaml_content).unwrap();
+
+        let config = BuildConfig::auto_detect(root).unwrap();
+        assert_eq!(config.project, "YAML Project");
+    }
+
+    #[test]
+    fn test_auto_detect_default() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+
+        // No config files
+        let config = BuildConfig::auto_detect(root).unwrap();
+        assert_eq!(config, BuildConfig::default());
     }
 }
