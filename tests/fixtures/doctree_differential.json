@@ -1045,6 +1045,306 @@
       "rst": "para::\n\n    real literal\n"
     },
     {
+      "family": "review",
+      "name": "review.attr_no_space",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <paragraph>\n            body\n        <attribution>\n            Author\n",
+      "rst": "Para.\n\n    body\n\n    --Author\n"
+    },
+    {
+      "family": "review",
+      "name": "review.attr_no_space_emdash",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <paragraph>\n            body\n        <attribution>\n            Author\n",
+      "rst": "Para.\n\n    body\n\n    —Author\n"
+    },
+    {
+      "family": "review",
+      "name": "review.attr_multi_space",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <paragraph>\n            body\n        <attribution>\n            Author\n",
+      "rst": "Para.\n\n    body\n\n    --   Author\n"
+    },
+    {
+      "family": "review",
+      "name": "review.attr_ragged_continuation",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <paragraph>\n            body\n        <definition_list>\n            <definition_list_item>\n                <term>\n                    -- a,\n                <definition>\n                    <block_quote>\n                        <paragraph>\n                            b,\n                    <system_message level=\"2\" line=\"7\" source=\"<snippet>\" type=\"WARNING\">\n                        <paragraph>\n                            Block quote ends without a blank line; unexpected unindent.\n                    <paragraph>\n                        c\n",
+      "rst": "Para.\n\n    body\n\n    -- a,\n       b,\n      c\n"
+    },
+    {
+      "family": "review",
+      "name": "review.attr_deep_continuation",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <paragraph>\n            body\n        <attribution>\n            a,\n            b\n",
+      "rst": "Para.\n\n    body\n\n    -- a,\n         b\n"
+    },
+    {
+      "family": "review",
+      "name": "review.overline_too_short_warn",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"very-long-title\" names=\"very\\ long\\ title\">\n        <title>\n            Very long title\n        <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n            <paragraph>\n                Title overline too short.\n            <literal_block xml:space=\"preserve\">\n                ====\n                Very long title\n                ====\n        <paragraph>\n            body\n",
+      "rst": "====\nVery long title\n====\n\nbody\n"
+    },
+    {
+      "family": "review",
+      "name": "review.overline_too_short_leading_spaces",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"long-title-text\" names=\"long\\ title\\ text\">\n        <title>\n            Long title text\n        <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n            <paragraph>\n                Title overline too short.\n            <literal_block xml:space=\"preserve\">\n                =====\n                   Long title text\n                =====\n        <paragraph>\n            body\n",
+      "rst": "=====\n   Long title text\n=====\n\nbody\n"
+    },
+    {
+      "family": "review",
+      "name": "review.overline_missing_underline_text",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Missing matching underline for section title overline.\n        <literal_block xml:space=\"preserve\">\n            ====\n            Title\n            not underline\n    <paragraph>\n        para\n",
+      "rst": "====\nTitle\nnot underline\n\npara\n"
+    },
+    {
+      "family": "review",
+      "name": "review.overline_missing_underline_blank",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Missing matching underline for section title overline.\n        <literal_block xml:space=\"preserve\">\n            ====\n            Title\n    <paragraph>\n        para\n",
+      "rst": "====\nTitle\n\npara\n"
+    },
+    {
+      "family": "review",
+      "name": "review.overline_diff_char_underline",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Title overline & underline mismatch.\n        <literal_block xml:space=\"preserve\">\n            ----\n            Title\n            ====\n    <paragraph>\n        body\n",
+      "rst": "----\nTitle\n====\n\nbody\n"
+    },
+    {
+      "family": "review",
+      "name": "review.adornment_pair",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Invalid section title or transition marker.\n        <literal_block xml:space=\"preserve\">\n            ====\n            ----\n    <paragraph>\n        para\n",
+      "rst": "====\n----\n\npara\n"
+    },
+    {
+      "family": "review",
+      "name": "review.short_overline_pair",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            Possible incomplete section title.\n            Treating the overline as ordinary text because it's so short.\n    <section ids=\"id1\" names=\"--\">\n        <title>\n            --\n        <paragraph>\n            para\n",
+      "rst": "--\n--\n\npara\n"
+    },
+    {
+      "family": "review",
+      "name": "review.nested_short_adornment",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <system_message level=\"1\" line=\"3\" source=\"<snippet>\" type=\"INFO\">\n            <paragraph>\n                Unexpected possible title overline or transition.\n                Treating it as ordinary text because it's so short.\n        <paragraph>\n            ---\n            text\n",
+      "rst": "Para.\n\n    ---\n    text\n"
+    },
+    {
+      "family": "review",
+      "name": "review.nested_short_adornment_alone",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <system_message level=\"1\" line=\"3\" source=\"<snippet>\" type=\"INFO\">\n            <paragraph>\n                Unexpected possible title overline or transition.\n                Treating it as ordinary text because it's so short.\n        <paragraph>\n            ---\n        <paragraph>\n            text\n",
+      "rst": "Para.\n\n    ---\n\n    text\n"
+    },
+    {
+      "family": "review",
+      "name": "review.para_multiline_colon_adjacent_indent",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        line one\n        line two:\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unexpected indentation.\n    <literal_block xml:space=\"preserve\">\n        adjacent\n",
+      "rst": "line one\nline two::\n    adjacent\n"
+    },
+    {
+      "family": "review",
+      "name": "review.doctest_indented_continuation",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <doctest_block xml:space=\"preserve\">\n        >>> if x:\n        ...     y\n          indented output\n        more output\n    <paragraph>\n        after\n",
+      "rst": ">>> if x:\n...     y\n  indented output\nmore output\n\nafter\n"
+    },
+    {
+      "family": "review",
+      "name": "review.lineblock_ends_no_blank",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <line_block>\n        <line>\n            a\n        <line>\n            b\n    <system_message level=\"2\" line=\"2\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Line block ends without a blank line.\n    <paragraph>\n        plain\n",
+      "rst": "| a\n| b\nplain\n"
+    },
+    {
+      "family": "review",
+      "name": "review.lineblock_empty_inherits_depth",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <line_block>\n        <line>\n            a\n        <line_block>\n            <line>\n                n1\n            <line>\n            <line>\n                n2\n",
+      "rst": "| a\n|   n1\n|\n|   n2\n"
+    },
+    {
+      "family": "review",
+      "name": "review.lineblock_continuation_relative_indent",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <line_block>\n        <line>\n            a\n            b\n              c\n    <paragraph>\n        after\n",
+      "rst": "| a\n  b\n    c\n\nafter\n"
+    },
+    {
+      "family": "review",
+      "name": "review.lineblock_continuation_after_empty",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <line_block>\n        <line>\n            cont\n    <paragraph>\n        after\n",
+      "rst": "|\n  cont\n\nafter\n"
+    },
+    {
+      "family": "review",
+      "name": "review.bare_double_underscore",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target anonymous=\"1\" ids=\"id1\">\n    <paragraph>\n        para\n",
+      "rst": "__\n\npara\n"
+    },
+    {
+      "family": "review",
+      "name": "review.anon_shortcut_continuation",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target anonymous=\"1\" ids=\"id1\" refuri=\"https://example.com/path\">\n",
+      "rst": "__ https://example.com/\n   path\n"
+    },
+    {
+      "family": "review",
+      "name": "review.malformed_target_double_colon",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n        _name::\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            malformed hyperlink target.\n    <paragraph>\n        para\n",
+      "rst": ".. _name::\n\npara\n"
+    },
+    {
+      "family": "review",
+      "name": "review.malformed_target_double_colon_uri",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n        _name:: uri\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            malformed hyperlink target.\n",
+      "rst": ".. _name:: uri\n"
+    },
+    {
+      "family": "review",
+      "name": "review.malformed_target_no_colon",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n        _name\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            malformed hyperlink target.\n    <paragraph>\n        para\n",
+      "rst": ".. _name\n\npara\n"
+    },
+    {
+      "family": "review",
+      "name": "review.malformed_target_bare_anon",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n        __\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            malformed hyperlink target.\n    <paragraph>\n        para\n",
+      "rst": ".. __\n\npara\n"
+    },
+    {
+      "family": "review",
+      "name": "review.malformed_target_empty_name",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n        _: uri\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            malformed hyperlink target.\n    <paragraph>\n        para\n",
+      "rst": ".. _: uri\n\npara\n"
+    },
+    {
+      "family": "review",
+      "name": "review.malformed_target_empty_backtick",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n        _``: https://x/\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            malformed hyperlink target.\n",
+      "rst": ".. _``: https://x/\n"
+    },
+    {
+      "family": "review",
+      "name": "review.malformed_target_unclosed_backtick",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n        _`abc: x\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            malformed hyperlink target.\n",
+      "rst": ".. _`abc: x\n"
+    },
+    {
+      "family": "review",
+      "name": "review.target_multiline_backtick_name",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target ids=\"multi-line-name\" names=\"multi\\ line\\ name\" refuri=\"https://x/\">\n    <paragraph>\n        para\n",
+      "rst": ".. _`multi\n   line name`: https://x/\n\npara\n"
+    },
+    {
+      "family": "review",
+      "name": "review.target_multiline_plain_name",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target ids=\"long-name\" names=\"long\\ name\" refuri=\"uri\">\n    <paragraph>\n        para\n",
+      "rst": ".. _long\n   name: uri\n\npara\n"
+    },
+    {
+      "family": "review",
+      "name": "review.target_escaped_underscore_uri",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target ids=\"a\" names=\"a\" refuri=\"uri_\">\n",
+      "rst": ".. _a: uri\\_\n"
+    },
+    {
+      "family": "review",
+      "name": "review.target_space_joined_indirect",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target ids=\"a\" names=\"a\" refuri=\"onetwo_\">\n",
+      "rst": ".. _a: one\n   two_\n"
+    },
+    {
+      "family": "review",
+      "name": "review.enum_bare_successor",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        1. one\n        2.\n",
+      "rst": "1. one\n2.\n"
+    },
+    {
+      "family": "review",
+      "name": "review.enum_bare_third",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <enumerated_list enumtype=\"arabic\" prefix=\"\" suffix=\".\">\n        <list_item>\n            <paragraph>\n                one\n    <system_message level=\"2\" line=\"2\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Enumerated list ends without a blank line; unexpected unindent.\n    <paragraph>\n        2. two\n        3.\n",
+      "rst": "1. one\n2. two\n3.\n"
+    },
+    {
+      "family": "review",
+      "name": "review.enum_bare_pair",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        1.\n        2.\n",
+      "rst": "1.\n2.\n"
+    },
+    {
+      "family": "review",
+      "name": "review.enum_explicit_after_auto",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        #. one\n        2. two\n",
+      "rst": "#. one\n2. two\n"
+    },
+    {
+      "family": "review",
+      "name": "review.enum_auto_mid_explicit",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <enumerated_list enumtype=\"arabic\" prefix=\"\" suffix=\".\">\n        <list_item>\n            <paragraph>\n                one\n    <system_message level=\"2\" line=\"2\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Enumerated list ends without a blank line; unexpected unindent.\n    <paragraph>\n        #. two\n        3. three\n",
+      "rst": "1. one\n#. two\n3. three\n"
+    },
+    {
+      "family": "review",
+      "name": "review.target_then_section_same_name",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target ids=\"conflict\" names=\"conflict\" refuri=\"https://x/\">\n    <section dupnames=\"conflict\" ids=\"id1\">\n        <title>\n            conflict\n        <system_message backrefs=\"id1\" level=\"1\" line=\"4\" source=\"<snippet>\" type=\"INFO\">\n            <paragraph>\n                Duplicate implicit target name: \"conflict\".\n        <paragraph>\n            body\n",
+      "rst": ".. _conflict: https://x/\n\nconflict\n========\n\nbody\n"
+    },
+    {
+      "family": "review",
+      "name": "review.section_then_target_same_name",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section dupnames=\"conflict\" ids=\"conflict\">\n        <title>\n            conflict\n        <system_message level=\"1\" line=\"4\" source=\"<snippet>\" type=\"INFO\">\n            <paragraph>\n                Target name overrides implicit target name \"conflict\".\n        <target ids=\"id1\" names=\"conflict\" refuri=\"https://x/\">\n        <paragraph>\n            body\n",
+      "rst": "conflict\n========\n\n.. _conflict: https://x/\n\nbody\n"
+    },
+    {
+      "family": "review",
+      "name": "review.bullet_alone_blank_body",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                body\n",
+      "rst": "-\n\n  body\n"
+    },
+    {
+      "family": "review",
+      "name": "review.cjk_underline_short",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"1\" line=\"2\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            Possible title underline, too short for the title.\n            Treating it as ordinary text because it's so short.\n    <paragraph>\n        日本語\n        ===\n    <paragraph>\n        body\n",
+      "rst": "日本語\n===\n\nbody\n"
+    },
+    {
+      "family": "review",
+      "name": "review.cjk_underline_between",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"id1\" names=\"日本語\">\n        <title>\n            日本語\n        <system_message level=\"2\" line=\"2\" source=\"<snippet>\" type=\"WARNING\">\n            <paragraph>\n                Title underline too short.\n            <literal_block xml:space=\"preserve\">\n                日本語\n                ====\n        <paragraph>\n            body\n",
+      "rst": "日本語\n====\n\nbody\n"
+    },
+    {
+      "family": "review",
+      "name": "review.cjk_underline_exact",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"id1\" names=\"日本語\">\n        <title>\n            日本語\n        <paragraph>\n            body\n",
+      "rst": "日本語\n======\n\nbody\n"
+    },
+    {
+      "family": "review",
+      "name": "review.explicit_double_space_target",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target ids=\"t\" names=\"t\" refuri=\"https://x/\">\n",
+      "rst": "..  _t: https://x/\n"
+    },
+    {
+      "family": "review",
+      "name": "review.comment_triple_space",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n        comment text\n",
+      "rst": "..   comment text\n"
+    },
+    {
+      "family": "review",
+      "name": "review.classifier_multi_space",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                term\n            <classifier>\n                classifier\n            <definition>\n                <paragraph>\n                    def\n",
+      "rst": "term  :  classifier\n    def\n"
+    },
+    {
+      "family": "review",
+      "name": "review.short_overline_demote_deflist",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            Possible incomplete section title.\n            Treating the overline as ordinary text because it's so short.\n    <definition_list>\n        <definition_list_item>\n            <term>\n                ---\n            <definition>\n                <paragraph>\n                    x\n",
+      "rst": "---\n    x\n"
+    },
+    {
+      "family": "review",
+      "name": "review.quoted_literal_then_indent",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        intro:\n    <literal_block xml:space=\"preserve\">\n        > line one\n    <system_message level=\"3\" line=\"4\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unexpected indentation.\n    <block_quote>\n        <paragraph>\n            indented\n",
+      "rst": "intro::\n\n> line one\n  indented\n"
+    },
+    {
+      "family": "review",
+      "name": "review.established_styles_overunder",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"a\" names=\"a\">\n        <title>\n            A\n        <section ids=\"b\" names=\"b\">\n            <title>\n                B\n    <section ids=\"c\" names=\"c\">\n        <title>\n            C\n        <system_message level=\"3\" line=\"12\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                Inconsistent title style: skip from level 1 to 3.\n            <literal_block xml:space=\"preserve\">\n                D\n                ~\n            <paragraph>\n                Established title styles: =/= -\n        <paragraph>\n            body\n",
+      "rst": "=====\nA\n=====\n\nB\n-\n\n=====\nC\n=====\n\nD\n~\n\nbody\n"
+    },
+    {
       "family": "mixtures",
       "name": "mixtures.everything_adjacent",
       "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"head\" names=\"head\">\n        <title>\n            Head\n        <definition_list>\n            <definition_list_item>\n                <term>\n                    term\n                <definition>\n                    <paragraph>\n                        def\n        <bullet_list bullet=\"-\">\n            <list_item>\n                <paragraph>\n                    a\n            <list_item>\n                <paragraph>\n                    b\n        <enumerated_list enumtype=\"arabic\" prefix=\"\" suffix=\".\">\n            <list_item>\n                <paragraph>\n                    one\n            <list_item>\n                <paragraph>\n                    two\n        <literal_block xml:space=\"preserve\">\n            lit\n        <comment xml:space=\"preserve\">\n            done\n",

@@ -134,11 +134,18 @@ pub struct DupnameFixup {
 
 /// Document-level id/name registry (docutils `document.ids`/`nameids`/
 /// `id_counter` with Sphinx auto-id settings).
+#[derive(Debug, Clone)]
+struct NameEntry {
+    /// Some(id) while the name maps uniquely; None once duplicated away.
+    id: Option<String>,
+    explicit: bool,
+    refuri: Option<String>,
+}
+
 #[derive(Debug, Default)]
 pub struct IdRegistry {
     ids: HashSet<String>,
-    /// name -> Some(id) while unique, None once duplicated.
-    nameids: HashMap<String, Option<String>>,
+    nameids: HashMap<String, NameEntry>,
     /// per-prefix auto-id counters (only "id" in wave 1).
     id_counter: HashMap<&'static str, u64>,
     fixups: Vec<DupnameFixup>,
@@ -170,6 +177,21 @@ impl IdRegistry {
         }
     }
 
+    fn dupname_new(node: &mut Node, name: &str) {
+        if let Some(pos) = node.attrs.names.iter().position(|n| n == name) {
+            node.attrs.names.remove(pos);
+            node.attrs.dupnames.push(name.to_string());
+        }
+    }
+
+    /// docutils `set_name_id_map`/`set_duplicate_name_id` with the
+    /// explicit-vs-implicit precedence table (fixture-verified):
+    /// - implicit vs implicit: BOTH dupname'd, INFO "Duplicate implicit …"
+    /// - explicit vs explicit: BOTH dupname'd, WARNING "Duplicate explicit …"
+    ///   (unless both share an identical refuri: new dupname'd silently)
+    /// - new implicit vs old explicit: only the NEW node dupname'd, INFO
+    /// - new explicit vs old implicit: OLD dupname'd, new KEEPS the name,
+    ///   INFO "Target name overrides implicit target name …"
     fn register(
         &mut self,
         node: &mut Node,
@@ -177,6 +199,7 @@ impl IdRegistry {
         source: &str,
         explicit: bool,
         backrefs_on_msg: bool,
+        refuri: Option<&str>,
     ) -> Option<Node> {
         let id = self.allocate_id(&node.attrs.names);
         node.attrs.ids.push(id.clone());
@@ -184,39 +207,104 @@ impl IdRegistry {
         let mut message = None;
         let names = node.attrs.names.clone();
         for name in names {
-            match self.nameids.get(&name) {
-                None => {
-                    self.nameids.insert(name, Some(id.clone()));
+            let Some(entry) = self.nameids.get(&name).cloned() else {
+                self.nameids.insert(
+                    name,
+                    NameEntry {
+                        id: Some(id.clone()),
+                        explicit,
+                        refuri: refuri.map(str::to_string),
+                    },
+                );
+                continue;
+            };
+            let dup_info = |level: u8, text: String, with_backrefs: bool| {
+                let mut msg = messages::system_message(level, &text, line, source);
+                if with_backrefs {
+                    msg.attrs.backrefs.push(id.clone());
                 }
-                Some(entry) => {
-                    // Duplicate: dupname the NEW node now, queue the OLD one.
-                    if let Some(old_id) = entry.clone() {
+                msg
+            };
+            match (entry.explicit, explicit) {
+                (true, true) => {
+                    if refuri.is_some() && entry.refuri.as_deref() == refuri {
+                        // Identical external duplicate: silent, new dupname'd.
+                        Self::dupname_new(node, &name);
+                        continue;
+                    }
+                    if let Some(old_id) = entry.id.clone() {
                         self.fixups.push(DupnameFixup {
                             name: name.clone(),
                             node_id: old_id,
                         });
                     }
-                    self.nameids.insert(name.clone(), None);
-                    let pos = node.attrs.names.iter().position(|n| *n == name);
-                    if let Some(pos) = pos {
-                        node.attrs.names.remove(pos);
-                        node.attrs.dupnames.push(name.clone());
-                    }
-                    let (level, kind_word) = if explicit {
-                        (messages::WARNING, "explicit")
-                    } else {
-                        (messages::INFO, "implicit")
-                    };
-                    let mut msg = messages::system_message(
-                        level,
-                        &format!("Duplicate {kind_word} target name: \"{name}\"."),
-                        line,
-                        source,
+                    self.nameids.insert(
+                        name.clone(),
+                        NameEntry {
+                            id: None,
+                            explicit: true,
+                            refuri: None,
+                        },
                     );
-                    if backrefs_on_msg {
-                        msg.attrs.backrefs.push(id.clone());
+                    Self::dupname_new(node, &name);
+                    message = Some(dup_info(
+                        messages::WARNING,
+                        format!("Duplicate explicit target name: \"{name}\"."),
+                        backrefs_on_msg,
+                    ));
+                }
+                (true, false) => {
+                    // Old explicit wins: only the new node is dupname'd.
+                    Self::dupname_new(node, &name);
+                    message = Some(dup_info(
+                        messages::INFO,
+                        format!("Duplicate implicit target name: \"{name}\"."),
+                        backrefs_on_msg,
+                    ));
+                }
+                (false, true) => {
+                    // New explicit overrides: old dupname'd, new keeps name.
+                    if let Some(old_id) = entry.id.clone() {
+                        self.fixups.push(DupnameFixup {
+                            name: name.clone(),
+                            node_id: old_id,
+                        });
                     }
-                    message = Some(msg);
+                    self.nameids.insert(
+                        name.clone(),
+                        NameEntry {
+                            id: Some(id.clone()),
+                            explicit: true,
+                            refuri: refuri.map(str::to_string),
+                        },
+                    );
+                    message = Some(dup_info(
+                        messages::INFO,
+                        format!("Target name overrides implicit target name \"{name}\"."),
+                        false,
+                    ));
+                }
+                (false, false) => {
+                    if let Some(old_id) = entry.id.clone() {
+                        self.fixups.push(DupnameFixup {
+                            name: name.clone(),
+                            node_id: old_id,
+                        });
+                    }
+                    self.nameids.insert(
+                        name.clone(),
+                        NameEntry {
+                            id: None,
+                            explicit: false,
+                            refuri: None,
+                        },
+                    );
+                    Self::dupname_new(node, &name);
+                    message = Some(dup_info(
+                        messages::INFO,
+                        format!("Duplicate implicit target name: \"{name}\"."),
+                        backrefs_on_msg,
+                    ));
                 }
             }
         }
@@ -228,7 +316,7 @@ impl IdRegistry {
     /// node dupname'd immediately, old node queued for
     /// [`apply_dupname_fixups`].
     pub fn set_id_implicit(&mut self, node: &mut Node, line: u32, source: &str) -> Option<Node> {
-        self.register(node, line, source, false, true)
+        self.register(node, line, source, false, true, None)
     }
 
     /// Register an explicit target (`.. _name:` forms). On duplicate:
@@ -240,8 +328,9 @@ impl IdRegistry {
         line: u32,
         source: &str,
         internal: bool,
+        refuri: Option<&str>,
     ) -> Option<Node> {
-        self.register(node, line, source, true, internal)
+        self.register(node, line, source, true, internal, refuri)
     }
 
     /// Register an anonymous target: always an auto id, never a name.
@@ -364,13 +453,13 @@ mod tests {
         let mut t1 = Node::elem(kinds::TARGET, Span::ZERO);
         t1.attrs.names.push("dup".into());
         assert!(reg
-            .set_id_explicit(&mut t1, 1, "<snippet>", false)
+            .set_id_explicit(&mut t1, 1, "<snippet>", false, Some("https://1/"))
             .is_none());
 
         let mut t2 = Node::elem(kinds::TARGET, Span::ZERO);
         t2.attrs.names.push("dup".into());
         let msg = reg
-            .set_id_explicit(&mut t2, 3, "<snippet>", false)
+            .set_id_explicit(&mut t2, 3, "<snippet>", false, Some("https://2/"))
             .expect("dup WARNING");
         assert_eq!(msg.get("type"), Some(&AttrValue::Str("WARNING".into())));
         assert!(msg.attrs.backrefs.is_empty()); // external: no backrefs
@@ -380,11 +469,11 @@ mod tests {
         let mut reg = IdRegistry::new();
         let mut i1 = Node::elem(kinds::TARGET, Span::ZERO);
         i1.attrs.names.push("t".into());
-        reg.set_id_explicit(&mut i1, 1, "<snippet>", true);
+        reg.set_id_explicit(&mut i1, 1, "<snippet>", true, None);
         let mut i2 = Node::elem(kinds::TARGET, Span::ZERO);
         i2.attrs.names.push("t".into());
         let msg = reg
-            .set_id_explicit(&mut i2, 5, "<snippet>", true)
+            .set_id_explicit(&mut i2, 5, "<snippet>", true, None)
             .expect("dup WARNING");
         assert_eq!(msg.attrs.backrefs, vec!["id1"]); // internal: backrefs
     }

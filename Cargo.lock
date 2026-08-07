@@ -1221,6 +1221,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "unicode-normalization",
+ "unicode-width",
 ]
 
 [[package]]
