@@ -1766,8 +1766,31 @@ impl<'a> BlockParser<'a> {
         while end < lines.len() && !lines[end].is_blank() {
             end += 1;
         }
-        let block: Vec<LineRef<'a>> = lines[start..end].to_vec();
+        let mut block: Vec<LineRef<'a>> = lines[start..end].to_vec();
         *pos = end;
+        // docutils trims a non-border tail back to the LAST valid border
+        // (the remainder re-parses, with a blank-line-required warning),
+        // BEFORE any alignment checks.
+        let mut trailing_warning = None;
+        if !is_grid_table_top(block[block.len() - 1].text.trim_end()) {
+            let mut found = None;
+            for i in (2..block.len() - 1).rev() {
+                if is_grid_table_top(block[i].text.trim_end()) {
+                    found = Some(i);
+                    break;
+                }
+            }
+            if let Some(i) = found {
+                let next_lineno = block[i + 1].lineno;
+                block.truncate(i + 1);
+                *pos = start + i + 1;
+                trailing_warning = Some(self.msg(
+                    messages::WARNING,
+                    "Blank line required after table.",
+                    next_lineno,
+                ));
+            }
+        }
         let raw_block: Vec<String> = block.iter().map(|l| l.text.to_string()).collect();
         let malformed = |detail: &str, lineno: u32| -> Node {
             messages::with_literal(
@@ -1978,6 +2001,9 @@ impl<'a> BlockParser<'a> {
         tgroup.children.push(tbody);
         table.children.push(tgroup);
         out.push(table);
+        if let Some(w) = trailing_warning {
+            out.push(w);
+        }
     }
 
     fn parse_simple_table(&mut self, lines: &[LineRef<'a>], pos: &mut usize, out: &mut Vec<Node>) {

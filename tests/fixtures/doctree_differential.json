@@ -2143,6 +2143,114 @@
       "rst": "para line\n=====  =====\nA      B\n=====  =====\n"
     },
     {
+      "family": "w2_hardening",
+      "name": "w2_hardening.table_in_quote",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <table>\n            <tgroup cols=\"2\">\n                <colspec colwidth=\"4\">\n                <colspec colwidth=\"4\">\n                <tbody>\n                    <row>\n                        <entry>\n                            <paragraph>\n                                A\n                        <entry>\n                            <paragraph>\n                                B\n",
+      "rst": "Para.\n\n    +----+----+\n    | A  | B  |\n    +----+----+\n"
+    },
+    {
+      "family": "w2_hardening",
+      "name": "w2_hardening.footnote_in_quote",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <footnote ids=\"id1\" names=\"1\">\n            <label>\n                1\n            <paragraph>\n                quoted footnote\n",
+      "rst": "Para.\n\n    .. [1] quoted footnote\n"
+    },
+    {
+      "family": "w2_hardening",
+      "name": "w2_hardening.fields_in_footnote",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <footnote ids=\"id1\" names=\"1\">\n        <label>\n            1\n        <paragraph>\n            intro\n        <field_list>\n            <field>\n                <field_name>\n                    key\n                <field_body>\n                    <paragraph>\n                        value\n",
+      "rst": ".. [1] intro\n\n   :key: value\n"
+    },
+    {
+      "family": "w2_hardening",
+      "name": "w2_hardening.refs_in_table_cells",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"1\">\n            <colspec colwidth=\"16\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            See \n                            <reference name=\"word\" refname=\"word\">\n                                word\n                             here\n",
+      "rst": "+----------------+\n| See word_ here |\n+----------------+\n"
+    },
+    {
+      "family": "w2_hardening",
+      "name": "w2_hardening.markup_in_field_body",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <field_list>\n        <field>\n            <field_name>\n                field\n            <field_body>\n                <paragraph>\n                    has \n                    <emphasis>\n                        emph\n                     and \n                    <literal>\n                        lit\n",
+      "rst": ":field: has *emph* and ``lit``\n"
+    },
+    {
+      "family": "w2_hardening",
+      "name": "w2_hardening.role_in_term",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                <subscript>\n                    x\n                 term\n            <definition>\n                <paragraph>\n                    definition\n",
+      "rst": ":sub:`x` term\n    definition\n"
+    },
+    {
+      "family": "w2_hardening",
+      "name": "w2_hardening.footnote_ref_in_title",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"title-1-here\" names=\"title\\ 1\\ here\">\n        <title>\n            Title \n            <footnote_reference ids=\"id1\" refname=\"1\">\n                1\n             Here\n        <paragraph>\n            body\n",
+      "rst": "Title [1]_ Here\n===============\n\nbody\n"
+    },
+    {
+      "family": "w2_hardening",
+      "name": "w2_hardening.uri_in_lineblock",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <line_block>\n        <line>\n            See \n            <reference refuri=\"https://example.com/\">\n                https://example.com/\n             here\n        <line>\n            second\n",
+      "rst": "| See https://example.com/ here\n| second\n"
+    },
+    {
+      "family": "w2_hardening",
+      "name": "w2_hardening.emphasis_across_lines_in_cell",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"1\">\n            <colspec colwidth=\"14\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            <emphasis>\n                                multi\n                                line\n                             cell\n",
+      "rst": "+--------------+\n| *multi       |\n| line* cell   |\n+--------------+\n"
+    },
+    {
+      "family": "w2_hardening",
+      "name": "w2_hardening.substitution_in_option_desc",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <option_list>\n        <option_list_item>\n            <option_group>\n                <option>\n                    <option_string>\n                        -a\n            <description>\n                <paragraph>\n                    Uses \n                    <substitution_reference refname=\"sub\">\n                        sub\n                     here.\n",
+      "rst": "-a  Uses |sub| here.\n"
+    },
+    {
+      "family": "w2_hardening",
+      "name": "w2_hardening.target_after_footnote",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <footnote ids=\"id1\" names=\"1\">\n        <label>\n            1\n        <paragraph>\n            note\n    <target ids=\"t\" names=\"t\" refuri=\"https://x/\">\n",
+      "rst": ".. [1] note\n.. _t: https://x/\n"
+    },
+    {
+      "family": "w2_hardening",
+      "name": "w2_hardening.anon_ref_then_anon_target",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <reference anonymous=\"1\" name=\"thing\">\n            thing\n         here.\n    <target anonymous=\"1\" ids=\"id1\" refuri=\"https://x/\">\n",
+      "rst": "See thing__ here.\n\n__ https://x/\n"
+    },
+    {
+      "family": "w2_hardening",
+      "name": "w2_hardening.inline_target_dup_section",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        A \n        <target ids=\"dup\" names=\"dup\">\n            dup\n         inline.\n    <section dupnames=\"dup\" ids=\"id1\">\n        <title>\n            dup\n        <system_message backrefs=\"id1\" level=\"1\" line=\"4\" source=\"<snippet>\" type=\"INFO\">\n            <paragraph>\n                Duplicate implicit target name: \"dup\".\n        <paragraph>\n            body\n",
+      "rst": "A _`dup` inline.\n\ndup\n===\n\nbody\n"
+    },
+    {
+      "family": "w2_hardening",
+      "name": "w2_hardening.field_then_option",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <field_list>\n        <field>\n            <field_name>\n                field\n            <field_body>\n                <paragraph>\n                    value\n    <option_list>\n        <option_list_item>\n            <option_group>\n                <option>\n                    <option_string>\n                        -a\n            <description>\n                <paragraph>\n                    desc\n",
+      "rst": ":field: value\n\n-a  desc\n"
+    },
+    {
+      "family": "w2_hardening",
+      "name": "w2_hardening.table_then_footnote_adjacent",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"1\">\n            <colspec colwidth=\"4\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            A\n    <system_message level=\"2\" line=\"4\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Blank line required after table.\n    <footnote ids=\"id1\" names=\"1\">\n        <label>\n            1\n        <paragraph>\n            adjacent note\n",
+      "rst": "+----+\n| A  |\n+----+\n.. [1] adjacent note\n"
+    },
+    {
+      "family": "w2_hardening",
+      "name": "w2_hardening.problematic_in_deep_nesting",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                item\n            <bullet_list bullet=\"-\">\n                <list_item>\n                    <paragraph>\n                        inner \n                        <problematic ids=\"id2\" refid=\"id1\">\n                            *\n                        oops\n                    <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"3\" source=\"<snippet>\" type=\"WARNING\">\n                        <paragraph>\n                            Inline emphasis start-string without end-string.\n",
+      "rst": "- item\n\n  - inner *oops\n"
+    },
+    {
+      "family": "w2_hardening",
+      "name": "w2_hardening.literal_role_vs_literal_block",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <literal>\n            x\n        :\n    <literal_block xml:space=\"preserve\">\n        block\n",
+      "rst": ":literal:`x`::\n\n    block\n"
+    },
+    {
+      "family": "w2_hardening",
+      "name": "w2_hardening.pep_in_footnote",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <footnote ids=\"id1\" names=\"1\">\n        <label>\n            1\n        <paragraph>\n            See \n            <reference refuri=\"https://peps.python.org/pep-0008\">\n                PEP 8\n             for style.\n",
+      "rst": ".. [1] See :pep:`8` for style.\n"
+    },
+    {
       "family": "review",
       "name": "review.attr_no_space",
       "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <paragraph>\n            body\n        <attribution>\n            Author\n",

@@ -475,6 +475,25 @@ CASES = [
     ("tables_simple", "margin_text", "=====  =====\nA     xB\n=====  =====\n"),
     ("tables_simple", "three_columns", "===  ===  ===\na    b    c\nd    e    f\n===  ===  ===\n"),
     ("tables_simple", "in_paragraph_absorbed", "para line\n=====  =====\nA      B\n=====  =====\n"),
+    # ----- wave 2 hardening: construct interactions -----
+    ("w2_hardening", "table_in_quote", "Para.\n\n    +----+----+\n    | A  | B  |\n    +----+----+\n"),
+    ("w2_hardening", "footnote_in_quote", "Para.\n\n    .. [1] quoted footnote\n"),
+    ("w2_hardening", "fields_in_footnote", ".. [1] intro\n\n   :key: value\n"),
+    ("w2_hardening", "refs_in_table_cells", "+----------------+\n| See word_ here |\n+----------------+\n"),
+    ("w2_hardening", "markup_in_field_body", ":field: has *emph* and ``lit``\n"),
+    ("w2_hardening", "role_in_term", ":sub:`x` term\n    definition\n"),
+    ("w2_hardening", "footnote_ref_in_title", "Title [1]_ Here\n===============\n\nbody\n"),
+    ("w2_hardening", "uri_in_lineblock", "| See https://example.com/ here\n| second\n"),
+    ("w2_hardening", "emphasis_across_lines_in_cell", "+--------------+\n| *multi       |\n| line* cell   |\n+--------------+\n"),
+    ("w2_hardening", "substitution_in_option_desc", "-a  Uses |sub| here.\n"),
+    ("w2_hardening", "target_after_footnote", ".. [1] note\n.. _t: https://x/\n"),
+    ("w2_hardening", "anon_ref_then_anon_target", "See thing__ here.\n\n__ https://x/\n"),
+    ("w2_hardening", "inline_target_dup_section", "A _`dup` inline.\n\ndup\n===\n\nbody\n"),
+    ("w2_hardening", "field_then_option", ":field: value\n\n-a  desc\n"),
+    ("w2_hardening", "table_then_footnote_adjacent", "+----+\n| A  |\n+----+\n.. [1] adjacent note\n"),
+    ("w2_hardening", "problematic_in_deep_nesting", "- item\n\n  - inner *oops\n"),
+    ("w2_hardening", "literal_role_vs_literal_block", ":literal:`x`::\n\n    block\n"),
+    ("w2_hardening", "pep_in_footnote", ".. [1] See :pep:`8` for style.\n"),
     # ----- review round (adversarial-review confirmed findings, 2026-08-07) -----
     ("review", "attr_no_space", "Para.\n\n    body\n\n    --Author\n"),
     ("review", "attr_no_space_emdash", "Para.\n\n    body\n\n    \u2014Author\n"),
@@ -570,7 +589,7 @@ def main() -> int:
         "paragraphs": 4, "sections": 8, "transition": 4, "lists_bullet": 8,
         "lists_enum": 8, "deflist": 8, "quote": 8, "literal": 8,
         "comment_target": 8, "lineblock": 4, "doctest": 4, "errors": 12,
-        "hardening": 20, "mixtures": 8, "review": 45, "inline_basics": 25, "inline_carriers": 10, "inline_refs": 40, "inline_roles": 20, "footnotes": 14, "fields": 15, "options": 10, "tables_grid": 18, "tables_simple": 12,
+        "hardening": 20, "mixtures": 8, "review": 45, "inline_basics": 25, "inline_carriers": 10, "inline_refs": 40, "inline_roles": 20, "footnotes": 14, "fields": 15, "options": 10, "tables_grid": 18, "tables_simple": 12, "w2_hardening": 15,
     }
     counts: dict = {}
     for family, _, _ in CASES:
