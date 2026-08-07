@@ -46,3 +46,8 @@ pub const SUPERSCRIPT: &str = "superscript";
 pub const ABBREVIATION: &str = "abbreviation";
 pub const ACRONYM: &str = "acronym";
 pub const MATH: &str = "math";
+
+// wave 2: footnotes/citations
+pub const FOOTNOTE: &str = "footnote";
+pub const CITATION: &str = "citation";
+pub const LABEL: &str = "label";

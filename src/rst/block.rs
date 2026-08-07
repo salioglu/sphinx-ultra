@@ -1310,6 +1310,13 @@ impl<'a> BlockParser<'a> {
             line.text[2..].trim_start()
         };
 
+        if rest.starts_with('[') {
+            if let Some(next_pos) = self.try_footnote_def(lines, pos, rest, out) {
+                *pos = next_pos;
+                self.warn_explicit_markup_end(lines, *pos, out);
+                return;
+            }
+        }
         if rest.starts_with('_') {
             // Target attempt: the marker (name + link) may span ADJACENT
             // indented continuation lines; parse the joined form.
@@ -1437,6 +1444,124 @@ impl<'a> BlockParser<'a> {
         self.warn_explicit_markup_end(lines, *pos, out);
     }
 
+    /// `.. [label]` footnote and citation definitions. Returns the new
+    /// position past the construct, or None when `rest` is not a valid
+    /// footnote/citation marker (falls through to comment).
+    fn try_footnote_def(
+        &mut self,
+        lines: &[LineRef<'a>],
+        pos: &mut usize,
+        rest: &str,
+        out: &mut Vec<Node>,
+    ) -> Option<usize> {
+        let chars: Vec<char> = rest.chars().collect();
+        let mut j = 1usize; // past '['
+        let label_start = j;
+        match chars.get(j) {
+            Some('#') => {
+                j += 1;
+                if let Some(len) = match_simplename_chars(&chars, j) {
+                    j += len;
+                }
+            }
+            Some('*') => j += 1,
+            _ => j += match_simplename_chars(&chars, j)?,
+        }
+        if chars.get(j) != Some(&']') {
+            return None;
+        }
+        let after = j + 1;
+        if !(chars.len() == after || chars.get(after) == Some(&' ')) {
+            return None;
+        }
+        let label: String = chars[label_start..j].iter().collect();
+        let start = *pos;
+        let lineno = lines[start].lineno;
+
+        // Body: first-line remainder + following indented block (blanks
+        // between marker and block allowed; docutils get_first_known_indented).
+        let first_rest: String = chars
+            .get(after + 1..)
+            .map(|c| c.iter().collect())
+            .unwrap_or_default();
+        let first_rest = if chars.get(after) == Some(&' ') {
+            first_rest
+        } else {
+            String::new()
+        };
+        let (block, consumed, _indent, _term) = indented_block(lines, start + 1);
+        let mut body: Vec<LineRef<'a>> = Vec::new();
+        if !first_rest.trim().is_empty() {
+            // remainder starts at a virtual column; treat as its own line
+            body.push(LineRef::new(
+                rest_after(
+                    lines[start].text,
+                    lines[start].text.chars().count() - first_rest.chars().count(),
+                ),
+                lineno,
+                lines[start].src_start,
+                lines[start].src_end,
+            ));
+        }
+        for l in &block {
+            body.push(*l);
+        }
+
+        let is_citation =
+            !label.starts_with('#') && label != "*" && !label.chars().all(|c| c.is_ascii_digit());
+        let kind = if is_citation {
+            kinds::CITATION
+        } else {
+            kinds::FOOTNOTE
+        };
+        let span = self.span_of(lines, start, start + consumed);
+        let mut node = Node::elem(kind, span);
+        let mut has_label_child = false;
+        if is_citation {
+            node.attrs.names.push(ids::fully_normalize_name(&label));
+            has_label_child = true;
+        } else if label == "*" {
+            node.set("auto", AttrValue::Str("*".to_string()));
+        } else if let Some(rest_label) = label.strip_prefix('#') {
+            node.set("auto", AttrValue::Int(1));
+            if !rest_label.is_empty() {
+                node.attrs.names.push(ids::fully_normalize_name(rest_label));
+            }
+        } else {
+            node.attrs.names.push(ids::fully_normalize_name(&label));
+            has_label_child = true;
+        }
+        let msg = if node.attrs.names.is_empty() {
+            self.registry.set_id_anonymous(&mut node);
+            None
+        } else {
+            self.registry
+                .set_id_explicit(&mut node, lineno, self.source_path, true, None)
+        };
+        if has_label_child {
+            let mut lab = Node::elem(kinds::LABEL, span);
+            lab.children.push(Node::text_node(label.clone(), span));
+            node.children.push(lab);
+        }
+        if let Some(m) = msg {
+            node.children.push(m);
+        }
+        let content = self.parse_elements(&body);
+        if content.is_empty() {
+            let text = if is_citation {
+                "Citation content expected."
+            } else {
+                "Footnote content expected."
+            };
+            node.children
+                .push(self.msg(messages::WARNING, text, lineno));
+        } else {
+            node.children.extend(content);
+        }
+        out.push(node);
+        Some(start + 1 + consumed)
+    }
+
     fn parse_anonymous_shortcut(
         &mut self,
         lines: &[LineRef<'a>],
@@ -1484,6 +1609,34 @@ impl<'a> BlockParser<'a> {
 // ----------------------------------------------------------------------
 // free helpers
 // ----------------------------------------------------------------------
+
+/// docutils `simplename` over a char slice (see rst::inline for the
+/// pattern description).
+fn match_simplename_chars(chars: &[char], at: usize) -> Option<usize> {
+    let n = chars.len();
+    let mut i = at;
+    let atom = |c: char| (c.is_alphanumeric() || c == '_') && c != '_';
+    if i >= n || !atom(chars[i]) {
+        return None;
+    }
+    while i < n && atom(chars[i]) {
+        i += 1;
+    }
+    loop {
+        if i < n && matches!(chars[i], '-' | '.' | '_' | '+' | ':') {
+            let sep_end = i + 1;
+            if sep_end < n && atom(chars[sep_end]) {
+                i = sep_end + 1;
+                while i < n && atom(chars[i]) {
+                    i += 1;
+                }
+                continue;
+            }
+        }
+        break;
+    }
+    Some(i - at)
+}
 
 /// Consume an indented block starting at `start`: lines while blank or
 /// indented, up to the LAST indented line (trailing blanks are neither

@@ -72,6 +72,9 @@ SUPPORTED_KINDS = {
     "abbreviation",
     "acronym",
     "math",
+    "footnote",
+    "citation",
+    "label",
 }
 
 # (family, name, rst) — names unique, families floor-checked below.
@@ -372,6 +375,23 @@ CASES = [
     ("inline_roles", "literal_role_escapes", ":literal:`a\\*b` end.\n"),
     ("inline_roles", "role_in_quote", "Para.\n\n    quoted :bogus:`x` here\n"),
     ("inline_roles", "colon_not_role", "see: `x` end.\n"),
+    # ----- wave 2: footnote/citation definitions (probe-verified) -----
+    ("footnotes", "manual_numbered", ".. [1] A numbered footnote.\n"),
+    ("footnotes", "auto_numbered", ".. [#] An auto-numbered footnote.\n"),
+    ("footnotes", "auto_labeled", ".. [#note] Labeled auto footnote.\n"),
+    ("footnotes", "symbol", ".. [*] Symbol footnote.\n"),
+    ("footnotes", "citation_simple", ".. [CIT2020] A citation body.\n"),
+    ("footnotes", "empty_footnote", ".. [1]\n"),
+    ("footnotes", "empty_citation", ".. [CIT]\n"),
+    ("footnotes", "blank_then_body", ".. [1]\n\n   Body after blank.\n"),
+    ("footnotes", "multiline_body", ".. [CIT] line one\n   line two at 3\n     line three deeper\n"),
+    ("footnotes", "multi_paragraph", ".. [2] para one\n\n   para two\n"),
+    ("footnotes", "list_in_footnote", ".. [3] intro\n\n   - a\n   - b\n"),
+    ("footnotes", "duplicate_manual", ".. [1] first\n.. [1] second\n"),
+    ("footnotes", "auto_vs_citation_dup", ".. [#x] auto footnote\n.. [X] citation\n"),
+    ("footnotes", "symbol_pair_no_warning", ".. [*] one\n.. [*] two\n"),
+    ("footnotes", "target_vs_footnote_dup", ".. _1: https://x/\n\n.. [1] footnote\n"),
+    ("footnotes", "refs_and_defs", "See [1]_ and [#]_ here.\n\n.. [1] first\n.. [#] auto\n"),
     # ----- review round (adversarial-review confirmed findings, 2026-08-07) -----
     ("review", "attr_no_space", "Para.\n\n    body\n\n    --Author\n"),
     ("review", "attr_no_space_emdash", "Para.\n\n    body\n\n    \u2014Author\n"),
@@ -467,7 +487,7 @@ def main() -> int:
         "paragraphs": 4, "sections": 8, "transition": 4, "lists_bullet": 8,
         "lists_enum": 8, "deflist": 8, "quote": 8, "literal": 8,
         "comment_target": 8, "lineblock": 4, "doctest": 4, "errors": 12,
-        "hardening": 20, "mixtures": 8, "review": 45, "inline_basics": 25, "inline_carriers": 10, "inline_refs": 40, "inline_roles": 20,
+        "hardening": 20, "mixtures": 8, "review": 45, "inline_basics": 25, "inline_carriers": 10, "inline_refs": 40, "inline_roles": 20, "footnotes": 14,
     }
     counts: dict = {}
     for family, _, _ in CASES:

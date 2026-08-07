@@ -1675,6 +1675,102 @@
       "rst": "see: `x` end.\n"
     },
     {
+      "family": "footnotes",
+      "name": "footnotes.manual_numbered",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <footnote ids=\"id1\" names=\"1\">\n        <label>\n            1\n        <paragraph>\n            A numbered footnote.\n",
+      "rst": ".. [1] A numbered footnote.\n"
+    },
+    {
+      "family": "footnotes",
+      "name": "footnotes.auto_numbered",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <footnote auto=\"1\" ids=\"id1\">\n        <paragraph>\n            An auto-numbered footnote.\n",
+      "rst": ".. [#] An auto-numbered footnote.\n"
+    },
+    {
+      "family": "footnotes",
+      "name": "footnotes.auto_labeled",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <footnote auto=\"1\" ids=\"note\" names=\"note\">\n        <paragraph>\n            Labeled auto footnote.\n",
+      "rst": ".. [#note] Labeled auto footnote.\n"
+    },
+    {
+      "family": "footnotes",
+      "name": "footnotes.symbol",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <footnote auto=\"*\" ids=\"id1\">\n        <paragraph>\n            Symbol footnote.\n",
+      "rst": ".. [*] Symbol footnote.\n"
+    },
+    {
+      "family": "footnotes",
+      "name": "footnotes.citation_simple",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <citation ids=\"cit2020\" names=\"cit2020\">\n        <label>\n            CIT2020\n        <paragraph>\n            A citation body.\n",
+      "rst": ".. [CIT2020] A citation body.\n"
+    },
+    {
+      "family": "footnotes",
+      "name": "footnotes.empty_footnote",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <footnote ids=\"id1\" names=\"1\">\n        <label>\n            1\n        <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n            <paragraph>\n                Footnote content expected.\n",
+      "rst": ".. [1]\n"
+    },
+    {
+      "family": "footnotes",
+      "name": "footnotes.empty_citation",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <citation ids=\"cit\" names=\"cit\">\n        <label>\n            CIT\n        <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n            <paragraph>\n                Citation content expected.\n",
+      "rst": ".. [CIT]\n"
+    },
+    {
+      "family": "footnotes",
+      "name": "footnotes.blank_then_body",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <footnote ids=\"id1\" names=\"1\">\n        <label>\n            1\n        <paragraph>\n            Body after blank.\n",
+      "rst": ".. [1]\n\n   Body after blank.\n"
+    },
+    {
+      "family": "footnotes",
+      "name": "footnotes.multiline_body",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <citation ids=\"cit\" names=\"cit\">\n        <label>\n            CIT\n        <paragraph>\n            line one\n            line two at 3\n        <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                Unexpected indentation.\n        <block_quote>\n            <paragraph>\n                line three deeper\n",
+      "rst": ".. [CIT] line one\n   line two at 3\n     line three deeper\n"
+    },
+    {
+      "family": "footnotes",
+      "name": "footnotes.multi_paragraph",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <footnote ids=\"id1\" names=\"2\">\n        <label>\n            2\n        <paragraph>\n            para one\n        <paragraph>\n            para two\n",
+      "rst": ".. [2] para one\n\n   para two\n"
+    },
+    {
+      "family": "footnotes",
+      "name": "footnotes.list_in_footnote",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <footnote ids=\"id1\" names=\"3\">\n        <label>\n            3\n        <paragraph>\n            intro\n        <bullet_list bullet=\"-\">\n            <list_item>\n                <paragraph>\n                    a\n            <list_item>\n                <paragraph>\n                    b\n",
+      "rst": ".. [3] intro\n\n   - a\n   - b\n"
+    },
+    {
+      "family": "footnotes",
+      "name": "footnotes.duplicate_manual",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <footnote dupnames=\"1\" ids=\"id1\">\n        <label>\n            1\n        <paragraph>\n            first\n    <footnote dupnames=\"1\" ids=\"id2\">\n        <label>\n            1\n        <system_message backrefs=\"id2\" level=\"2\" line=\"2\" source=\"<snippet>\" type=\"WARNING\">\n            <paragraph>\n                Duplicate explicit target name: \"1\".\n        <paragraph>\n            second\n",
+      "rst": ".. [1] first\n.. [1] second\n"
+    },
+    {
+      "family": "footnotes",
+      "name": "footnotes.auto_vs_citation_dup",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <footnote auto=\"1\" dupnames=\"x\" ids=\"x\">\n        <paragraph>\n            auto footnote\n    <citation dupnames=\"x\" ids=\"id1\">\n        <label>\n            X\n        <system_message backrefs=\"id1\" level=\"2\" line=\"2\" source=\"<snippet>\" type=\"WARNING\">\n            <paragraph>\n                Duplicate explicit target name: \"x\".\n        <paragraph>\n            citation\n",
+      "rst": ".. [#x] auto footnote\n.. [X] citation\n"
+    },
+    {
+      "family": "footnotes",
+      "name": "footnotes.symbol_pair_no_warning",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <footnote auto=\"*\" ids=\"id1\">\n        <paragraph>\n            one\n    <footnote auto=\"*\" ids=\"id2\">\n        <paragraph>\n            two\n",
+      "rst": ".. [*] one\n.. [*] two\n"
+    },
+    {
+      "family": "footnotes",
+      "name": "footnotes.target_vs_footnote_dup",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target dupnames=\"1\" ids=\"id1\" refuri=\"https://x/\">\n    <footnote dupnames=\"1\" ids=\"id2\">\n        <label>\n            1\n        <system_message backrefs=\"id2\" level=\"2\" line=\"3\" source=\"<snippet>\" type=\"WARNING\">\n            <paragraph>\n                Duplicate explicit target name: \"1\".\n        <paragraph>\n            footnote\n",
+      "rst": ".. _1: https://x/\n\n.. [1] footnote\n"
+    },
+    {
+      "family": "footnotes",
+      "name": "footnotes.refs_and_defs",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <footnote_reference ids=\"id1\" refname=\"1\">\n            1\n         and \n        <footnote_reference auto=\"1\" ids=\"id2\">\n         here.\n    <footnote ids=\"id3\" names=\"1\">\n        <label>\n            1\n        <paragraph>\n            first\n    <footnote auto=\"1\" ids=\"id4\">\n        <paragraph>\n            auto\n",
+      "rst": "See [1]_ and [#]_ here.\n\n.. [1] first\n.. [#] auto\n"
+    },
+    {
       "family": "review",
       "name": "review.attr_no_space",
       "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <paragraph>\n            body\n        <attribution>\n            Author\n",
