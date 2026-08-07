@@ -56,15 +56,15 @@ detect_platform() {
     case "$os" in
         Linux)
             case "$arch" in
-                x86_64) echo "x86_64-unknown-linux-gnu" ;;
-                aarch64) echo "aarch64-unknown-linux-gnu" ;;
+                x86_64) echo "linux-x86_64" ;;
+                aarch64) echo "linux-aarch64" ;;
                 *) log_error "Unsupported architecture: $arch"; exit 1 ;;
             esac
             ;;
         Darwin)
             case "$arch" in
-                x86_64) echo "x86_64-apple-darwin" ;;
-                arm64) echo "aarch64-apple-darwin" ;;
+                x86_64) echo "macos-x86_64" ;;
+                arm64) echo "macos-aarch64" ;;
                 *) log_error "Unsupported architecture: $arch"; exit 1 ;;
             esac
             ;;
