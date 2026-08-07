@@ -88,7 +88,9 @@ get_latest_version() {
 download_binary() {
     local version=$1
     local platform=$2
-    local archive_name="sphinx-ultra-${version}-${platform}.tar.gz"
+    # Tag is v-prefixed (v0.4.0); archive names are not (sphinx-ultra-0.4.0-...)
+    local version_num="${version#v}"
+    local archive_name="sphinx-ultra-${version_num}-${platform}.tar.gz"
     local download_url="https://github.com/$REPO/releases/download/$version/$archive_name"
     local temp_dir=$(mktemp -d)
 
@@ -105,7 +107,7 @@ download_binary() {
     log_info "Extracting archive..."
     tar -xzf "$temp_dir/$archive_name" -C "$temp_dir"
 
-    echo "$temp_dir/sphinx-ultra-${version}-${platform}/$BINARY_NAME"
+    echo "$temp_dir/sphinx-ultra-${version_num}-${platform}/$BINARY_NAME"
 }
 
 verify_checksum() {

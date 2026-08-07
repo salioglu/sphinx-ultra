@@ -11,6 +11,12 @@ everything forward is [ROADMAP.md](ROADMAP.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- `install.sh` no longer prefixes archive names with the tag's `v`
+  (`sphinx-ultra-v0.4.0-...` 404'd; assets are named `sphinx-ultra-0.4.0-...`
+  — broken for every release since checksums were introduced)
+
 ## [0.4.0] - 2026-08-07
 
 ### Added
