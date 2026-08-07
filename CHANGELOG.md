@@ -11,6 +11,19 @@ everything forward is [ROADMAP.md](ROADMAP.md).
 
 ## [Unreleased]
 
+### Added
+
+- M2 wave 1 (library-only, not yet wired into the build): typed doctree IR
+  with docutils-equivalent node semantics and source spans (`src/doctree/`),
+  and a docutils-fidelity recursive-descent RST **block** parser
+  (`src/rst/`) covering sections, transitions, bullet/enumerated/definition
+  lists, block quotes with attribution, literal/doctest/line blocks,
+  comments, and hyperlink targets — byte-identical pseudo-XML against
+  docutils 0.22.4 across a committed 175-case differential fixture
+  (`tests/doctree_differential.rs`), plus a proptest totality suite.
+  The binary's behavior is unchanged; the new parser replaces the
+  line-scanner in M2 wave 3.
+
 ### Fixed
 
 - `install.sh` no longer prefixes archive names with the tag's `v`
