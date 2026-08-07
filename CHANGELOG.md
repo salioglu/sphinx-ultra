@@ -11,6 +11,8 @@ everything forward is [ROADMAP.md](ROADMAP.md).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-07
+
 ### Added
 
 - **sphinx-build compatible argument mode**: `sphinx-ultra SOURCEDIR OUTPUTDIR`
@@ -36,7 +38,7 @@ everything forward is [ROADMAP.md](ROADMAP.md).
   commented-out `integration_test.rs`)
 - MSRV declared (`rust-version = "1.85"`) and verified by a dedicated CI job
 - Release artifacts now ship SHA-256 checksums, and `install.sh` verifies them
-- `aarch64-unknown-linux-gnu` release artifact (previously advertised by
+- `linux-aarch64` release artifact (previously advertised by
   `install.sh` but never built)
 - `--config` now accepts a `conf.py` path (previously YAML/JSON only)
 - Crate metadata for crates.io: `keywords`, `categories`, `documentation`,
@@ -108,6 +110,15 @@ everything forward is [ROADMAP.md](ROADMAP.md).
 
 ### Changed
 
+- Release artifacts renamed from Rust target triples to `os-arch`
+  (`linux-x86_64`, `linux-x86_64-musl`, `linux-aarch64`, `macos-x86_64`,
+  `macos-aarch64`, `windows-x86_64`); `install.sh` detects the new names
+- The musl artifact is built with `cross` (container-pinned musl
+  toolchain) after host `musl-gcc` linking broke twice from runner-image
+  drift
+- `scripts/release.sh` now syncs `Cargo.lock` with the bumped version, and
+  the release workflow fails fast on a stale lockfile (the v0.4.0 first
+  cut failed every `--locked` build this way)
 - `Cargo.lock` is committed; CI and releases build with `--locked`
   (reproducible builds)
 - crates.io publishing is gated on version validation and release builds
