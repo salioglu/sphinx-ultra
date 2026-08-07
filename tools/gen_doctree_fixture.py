@@ -67,6 +67,11 @@ SUPPORTED_KINDS = {
     "footnote_reference",
     "citation_reference",
     "substitution_reference",
+    "subscript",
+    "superscript",
+    "abbreviation",
+    "acronym",
+    "math",
 }
 
 # (family, name, rst) — names unique, families floor-checked below.
@@ -343,6 +348,30 @@ CASES = [
     ("inline_refs", "double_underscore_not_ref", "See foo__bar and __init__ here.\n"),
     ("inline_refs", "word_ref_end_sentence", "See word_. Done.\n"),
     ("inline_refs", "escaped_word_ref", "See word\\_ here.\n"),
+    # ----- wave 2: inline roles (probe-verified inputs) -----
+    ("inline_roles", "generic_roles", ":emphasis:`text` and :strong:`text` and :literal:`text` end.\n"),
+    ("inline_roles", "sub_sup", "Water :sub:`2` and x :sup:`2` end.\n"),
+    ("inline_roles", "title_aliases", ":title-reference:`Some Title` :title:`Some Title` :t:`Some Title` end.\n"),
+    ("inline_roles", "abbrev_acronym", ":ab:`St. Nick` and :ac:`NATO` end.\n"),
+    ("inline_roles", "suffix_syntax", "`text`:emphasis: and `text`:strong: end.\n"),
+    ("inline_roles", "case_insensitive", ":EMPHASIS:`text` and `text`:SUP: end.\n"),
+    ("inline_roles", "both_roles_error", ":emphasis:`text`:strong: end.\n"),
+    ("inline_roles", "unknown_role", ":bogus:`x`\n\nnext para here\n"),
+    ("inline_roles", "unknown_role_cased", ":BoGuS:`x` end.\n"),
+    ("inline_roles", "unknown_role_repeat", ":bogus:`x` :bogus:`y`\n"),
+    ("inline_roles", "unknown_role_suffix", "`x`:bogus: end.\n"),
+    ("inline_roles", "pep_role", ":pep-reference:`8` and :PEP:`0` and :pep:`008` end.\n"),
+    ("inline_roles", "pep_invalid", ":PEP:`99999` end.\n"),
+    ("inline_roles", "rfc_role", ":rfc-reference:`2822` and :RFC:`0002822` and :RFC:`1` end.\n"),
+    ("inline_roles", "rfc_fragment", ":RFC:`2822#section-3` end.\n"),
+    ("inline_roles", "rfc_invalid", ":RFC:`0` end.\n"),
+    ("inline_roles", "math_role", ":math:`x^2 + y_1` and :math:`a\\\\b` end.\n"),
+    ("inline_roles", "code_role", ":code:`print(1)` end.\n"),
+    ("inline_roles", "raw_role_bare", ":raw:`text` end.\n"),
+    ("inline_roles", "unimplemented_roles", ":index:`x` end.\n"),
+    ("inline_roles", "literal_role_escapes", ":literal:`a\\*b` end.\n"),
+    ("inline_roles", "role_in_quote", "Para.\n\n    quoted :bogus:`x` here\n"),
+    ("inline_roles", "colon_not_role", "see: `x` end.\n"),
     # ----- review round (adversarial-review confirmed findings, 2026-08-07) -----
     ("review", "attr_no_space", "Para.\n\n    body\n\n    --Author\n"),
     ("review", "attr_no_space_emdash", "Para.\n\n    body\n\n    \u2014Author\n"),
@@ -438,7 +467,7 @@ def main() -> int:
         "paragraphs": 4, "sections": 8, "transition": 4, "lists_bullet": 8,
         "lists_enum": 8, "deflist": 8, "quote": 8, "literal": 8,
         "comment_target": 8, "lineblock": 4, "doctest": 4, "errors": 12,
-        "hardening": 20, "mixtures": 8, "review": 45, "inline_basics": 25, "inline_carriers": 10, "inline_refs": 40,
+        "hardening": 20, "mixtures": 8, "review": 45, "inline_basics": 25, "inline_carriers": 10, "inline_refs": 40, "inline_roles": 20,
     }
     counts: dict = {}
     for family, _, _ in CASES:
@@ -461,7 +490,7 @@ def main() -> int:
         # nodes are all "supported". Two guards: output text, and directive
         # syntax in the SOURCE (catches quietly-succeeding directives like
         # `.. highlights::` whose output nodes are all supported kinds).
-        if "directive" in pseudo:
+        if "Unknown directive type" in pseudo or "No directive entry" in pseudo:
             bad.append(f"{name}: snippet reaches directive machinery")
             continue
         if re.search(r"^\s*\.\. +(?!_)[\w][\w.+:-]* *::", rst, re.M):

@@ -528,9 +528,11 @@ impl<'a> Inliner<'a> {
         }
     }
 
-    /// Backtick constructs: phrase references (trailing `_`/`__`) or
-    /// interpreted text (default role: title_reference).
+    /// Backtick constructs: phrase references (trailing `_`/`__`),
+    /// role-prefixed/suffixed interpreted text, or the default role.
     fn backtick_construct(&mut self, i: usize) -> usize {
+        // Detect a `:name:` role prefix ending exactly at `i`.
+        let prefix_role = self.role_prefix_before(i);
         let content_from = i + 1;
         let (end, underscores) = match self.find_end_with_underscores(content_from, '`', 2) {
             Some(r) => r,
@@ -540,13 +542,269 @@ impl<'a> Inliner<'a> {
             }
         };
         let raw: String = self.chars[content_from..end].iter().collect();
-        if underscores > 0 {
+        if underscores > 0 && prefix_role.is_none() {
             self.phrase_reference(&raw, underscores);
             return end + 1 + underscores;
         }
-        // interpreted text, default role
-        self.emit_inline(kinds::TITLE_REFERENCE, &raw, false);
-        end + 1
+        // Suffix role `text`:name: (only when no trailing underscores).
+        let suffix_role = if underscores == 0 {
+            self.role_suffix_after(end)
+        } else {
+            None
+        };
+        match (prefix_role, suffix_role) {
+            (Some((pstart, pname)), Some((send, sname))) => {
+                let _ = (pname, sname);
+                // Both prefix and suffix: WARNING + problematic over the span.
+                self.trim_pending(i - pstart);
+                let rawsource: String = self.chars[pstart..send].iter().collect();
+                self.role_problematic(
+                    &rawsource,
+                    None,
+                    messages::WARNING,
+                    "Multiple roles in interpreted text (both prefix and suffix present; only one allowed).",
+                );
+                send
+            }
+            (Some((pstart, name)), None) => {
+                self.trim_pending(i - pstart);
+                let rawsource: String = self.chars[pstart..end + 1].iter().collect();
+                self.apply_role(&name, &raw, &rawsource);
+                end + 1
+            }
+            (None, Some((send, name))) => {
+                let rawsource: String = self.chars[i..send].iter().collect();
+                self.apply_role(&name, &raw, &rawsource);
+                send
+            }
+            (None, None) => {
+                self.emit_inline(kinds::TITLE_REFERENCE, &raw, false);
+                end + 1
+            }
+        }
+    }
+
+    /// `:name:` immediately before position `i` with a valid construct
+    /// prefix before it. Returns (construct_start, role_name).
+    fn role_prefix_before(&self, i: usize) -> Option<(usize, String)> {
+        if i < 3 || self.chars[i - 1] != ':' {
+            return None;
+        }
+        // scan backward for the opening ':'
+        let mut j = i - 1;
+        while j > 0 {
+            j -= 1;
+            let c = self.chars[j];
+            if c == ':' {
+                let name: String = self.chars[j + 1..i - 1].iter().collect();
+                let name_chars: Vec<char> = name.chars().collect();
+                if name_chars.is_empty()
+                    || match_simplename(&name_chars, 0) != Some(name_chars.len())
+                {
+                    return None;
+                }
+                let prev = j.checked_sub(1).map(|p| self.chars[p]);
+                if !is_start_prefix_ok(prev) {
+                    return None;
+                }
+                return Some((j, name));
+            }
+            if !(is_word_char(c) || matches!(c, '-' | '.' | '+')) {
+                return None;
+            }
+        }
+        None
+    }
+
+    /// `:name:` immediately after the closing backtick at `end`. Returns
+    /// (construct_end_exclusive, role_name).
+    fn role_suffix_after(&self, end: usize) -> Option<(usize, String)> {
+        let mut j = end + 1;
+        if self.chars.get(j) != Some(&':') {
+            return None;
+        }
+        j += 1;
+        let len = match_simplename(&self.chars, j)?;
+        j += len;
+        if self.chars.get(j) != Some(&':') {
+            return None;
+        }
+        j += 1;
+        if !is_end_suffix_ok(self.chars.get(j).copied()) {
+            return None;
+        }
+        let name: String = self.chars[end + 2..j - 1].iter().collect();
+        Some((j, name))
+    }
+
+    /// Remove the last `n` chars from pending (a role prefix that turned
+    /// out to be part of the construct).
+    fn trim_pending(&mut self, n: usize) {
+        for _ in 0..n {
+            self.pending.pop();
+        }
+    }
+
+    /// problematic + message pair for role errors. `info` precedes the
+    /// main message without ids/backrefs.
+    fn role_problematic(&mut self, rawsource: &str, info: Option<String>, level: u8, text: &str) {
+        self.flush_text();
+        if let Some(info_text) = info {
+            self.messages.push(messages::system_message(
+                messages::INFO,
+                &info_text,
+                self.lineno,
+                self.source_path,
+            ));
+        }
+        let msg_id = self.registry.allocate_auto_id();
+        let prob_id = self.registry.allocate_auto_id();
+        let mut prob = Node::elem(kinds::PROBLEMATIC, self.span);
+        prob.attrs.ids.push(prob_id.clone());
+        prob.set("refid", AttrValue::Str(msg_id.clone()));
+        prob.children
+            .push(Node::text_node(unescape(rawsource, true), self.span));
+        self.nodes.push(prob);
+        let mut msg = messages::system_message(level, text, self.lineno, self.source_path);
+        msg.attrs.ids.push(msg_id);
+        msg.attrs.backrefs.push(prob_id);
+        self.messages.push(msg);
+    }
+
+    /// Apply a built-in role by (raw, unlowercased) name.
+    fn apply_role(&mut self, given_name: &str, raw: &str, rawsource: &str) {
+        let lower = given_name.to_lowercase();
+        // en language aliases -> canonical names
+        let canonical = match lower.as_str() {
+            "abbreviation" | "ab" => "abbreviation",
+            "acronym" | "ac" => "acronym",
+            "code" => "code",
+            "emphasis" => "emphasis",
+            "literal" => "literal",
+            "math" => "math",
+            "pep-reference" | "pep" => "pep-reference",
+            "rfc-reference" | "rfc" => "rfc-reference",
+            "strong" => "strong",
+            "subscript" | "sub" => "subscript",
+            "superscript" | "sup" => "superscript",
+            "title-reference" | "title" | "t" => "title-reference",
+            "raw" => "raw",
+            "index" | "i" => "index",
+            "named-reference" => "named-reference",
+            "anonymous-reference" => "anonymous-reference",
+            "footnote-reference" => "footnote-reference",
+            "citation-reference" => "citation-reference",
+            "substitution-reference" => "substitution-reference",
+            "target" => "target",
+            "uri-reference" | "uri" | "url" => "uri-reference",
+            _ => {
+                // Not in the language module: INFO + canonical lookup, which
+                // also fails for anything we do not know -> ERROR.
+                let info = format!(
+                    "No role entry for \"{given_name}\" in module \"docutils.parsers.rst.languages.en\".\nTrying \"{given_name}\" as canonical role name."
+                );
+                if lower == "restructuredtext-unimplemented-role" {
+                    self.role_problematic(
+                        rawsource,
+                        Some(info),
+                        messages::ERROR,
+                        &format!("Interpreted text role \"{given_name}\" not implemented."),
+                    );
+                } else {
+                    self.role_problematic(
+                        rawsource,
+                        Some(info),
+                        messages::ERROR,
+                        &format!("Unknown interpreted text role \"{given_name}\"."),
+                    );
+                }
+                return;
+            }
+        };
+        match canonical {
+            "emphasis" => self.emit_inline(kinds::EMPHASIS, raw, false),
+            "strong" => self.emit_inline(kinds::STRONG, raw, false),
+            "literal" => self.emit_inline(kinds::LITERAL, raw, false),
+            "subscript" => self.emit_inline(kinds::SUBSCRIPT, raw, false),
+            "superscript" => self.emit_inline(kinds::SUPERSCRIPT, raw, false),
+            "title-reference" => self.emit_inline(kinds::TITLE_REFERENCE, raw, false),
+            "abbreviation" => self.emit_inline(kinds::ABBREVIATION, raw, false),
+            "acronym" => self.emit_inline(kinds::ACRONYM, raw, false),
+            "math" => self.emit_inline(kinds::MATH, raw, true),
+            "code" => {
+                self.flush_text();
+                let mut node = Node::elem(kinds::LITERAL, self.span);
+                node.attrs.classes.push("code".to_string());
+                node.children
+                    .push(Node::text_node(unescape(raw, true), self.span));
+                self.nodes.push(node);
+            }
+            "pep-reference" => {
+                let text = unescape(raw, false);
+                match text.parse::<u32>().ok().filter(|n| *n <= 9999) {
+                    Some(n) => {
+                        self.flush_text();
+                        let mut r = Node::elem(kinds::REFERENCE, self.span);
+                        r.set(
+                            "refuri",
+                            AttrValue::Str(format!("https://peps.python.org/pep-{n:04}")),
+                        );
+                        r.children
+                            .push(Node::text_node(format!("PEP {text}"), self.span));
+                        self.nodes.push(r);
+                    }
+                    None => self.role_problematic(
+                        rawsource,
+                        None,
+                        messages::ERROR,
+                        &format!(
+                            "PEP number must be a number from 0 to 9999; \"{text}\" is invalid."
+                        ),
+                    ),
+                }
+            }
+            "rfc-reference" => {
+                let text = unescape(raw, false);
+                let (numpart, fragment) = match text.split_once('#') {
+                    Some((a, b)) => (a.to_string(), Some(b.to_string())),
+                    None => (text.clone(), None),
+                };
+                match numpart.parse::<u32>().ok().filter(|n| *n >= 1) {
+                    Some(n) => {
+                        self.flush_text();
+                        let mut r = Node::elem(kinds::REFERENCE, self.span);
+                        let mut uri = format!("https://tools.ietf.org/html/rfc{n}.html");
+                        if let Some(f) = fragment {
+                            uri = format!("{uri}#{f}");
+                        }
+                        r.set("refuri", AttrValue::Str(uri));
+                        r.children
+                            .push(Node::text_node(format!("RFC {n}"), self.span));
+                        self.nodes.push(r);
+                    }
+                    None => self.role_problematic(
+                        rawsource,
+                        None,
+                        messages::ERROR,
+                        &format!(
+                            "RFC number must be a number greater than or equal to 1; \"{numpart}\" is invalid."
+                        ),
+                    ),
+                }
+            }
+            "raw" => self.role_problematic(
+                rawsource,
+                None,
+                messages::ERROR,
+                "No format (Writer name) is associated with this role: \"raw\".\nThe \"raw\" role cannot be used directly.\nInstead, use the \"role\" directive to create a new role with an associated format.",
+            ),
+            other => self.role_problematic(
+                rawsource,
+                None,
+                messages::ERROR,
+                &format!("Interpreted text role \"{other}\" not implemented."),
+            ),
+        }
     }
 
     /// Phrase reference body handling incl. embedded `<uri>`/`<alias_>`.

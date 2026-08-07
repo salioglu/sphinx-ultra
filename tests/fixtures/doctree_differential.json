@@ -1537,6 +1537,144 @@
       "rst": "See word\\_ here.\n"
     },
     {
+      "family": "inline_roles",
+      "name": "inline_roles.generic_roles",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <emphasis>\n            text\n         and \n        <strong>\n            text\n         and \n        <literal>\n            text\n         end.\n",
+      "rst": ":emphasis:`text` and :strong:`text` and :literal:`text` end.\n"
+    },
+    {
+      "family": "inline_roles",
+      "name": "inline_roles.sub_sup",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Water \n        <subscript>\n            2\n         and x \n        <superscript>\n            2\n         end.\n",
+      "rst": "Water :sub:`2` and x :sup:`2` end.\n"
+    },
+    {
+      "family": "inline_roles",
+      "name": "inline_roles.title_aliases",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <title_reference>\n            Some Title\n         \n        <title_reference>\n            Some Title\n         \n        <title_reference>\n            Some Title\n         end.\n",
+      "rst": ":title-reference:`Some Title` :title:`Some Title` :t:`Some Title` end.\n"
+    },
+    {
+      "family": "inline_roles",
+      "name": "inline_roles.abbrev_acronym",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <abbreviation>\n            St. Nick\n         and \n        <acronym>\n            NATO\n         end.\n",
+      "rst": ":ab:`St. Nick` and :ac:`NATO` end.\n"
+    },
+    {
+      "family": "inline_roles",
+      "name": "inline_roles.suffix_syntax",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <emphasis>\n            text\n         and \n        <strong>\n            text\n         end.\n",
+      "rst": "`text`:emphasis: and `text`:strong: end.\n"
+    },
+    {
+      "family": "inline_roles",
+      "name": "inline_roles.case_insensitive",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <emphasis>\n            text\n         and \n        <superscript>\n            text\n         end.\n",
+      "rst": ":EMPHASIS:`text` and `text`:SUP: end.\n"
+    },
+    {
+      "family": "inline_roles",
+      "name": "inline_roles.both_roles_error",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            :emphasis:`text`:strong:\n         end.\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Multiple roles in interpreted text (both prefix and suffix present; only one allowed).\n",
+      "rst": ":emphasis:`text`:strong: end.\n"
+    },
+    {
+      "family": "inline_roles",
+      "name": "inline_roles.unknown_role",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            :bogus:`x`\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            No role entry for \"bogus\" in module \"docutils.parsers.rst.languages.en\".\n            Trying \"bogus\" as canonical role name.\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown interpreted text role \"bogus\".\n    <paragraph>\n        next para here\n",
+      "rst": ":bogus:`x`\n\nnext para here\n"
+    },
+    {
+      "family": "inline_roles",
+      "name": "inline_roles.unknown_role_cased",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            :BoGuS:`x`\n         end.\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            No role entry for \"BoGuS\" in module \"docutils.parsers.rst.languages.en\".\n            Trying \"BoGuS\" as canonical role name.\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown interpreted text role \"BoGuS\".\n",
+      "rst": ":BoGuS:`x` end.\n"
+    },
+    {
+      "family": "inline_roles",
+      "name": "inline_roles.unknown_role_repeat",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            :bogus:`x`\n         \n        <problematic ids=\"id4\" refid=\"id3\">\n            :bogus:`y`\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            No role entry for \"bogus\" in module \"docutils.parsers.rst.languages.en\".\n            Trying \"bogus\" as canonical role name.\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown interpreted text role \"bogus\".\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            No role entry for \"bogus\" in module \"docutils.parsers.rst.languages.en\".\n            Trying \"bogus\" as canonical role name.\n    <system_message backrefs=\"id4\" ids=\"id3\" level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown interpreted text role \"bogus\".\n",
+      "rst": ":bogus:`x` :bogus:`y`\n"
+    },
+    {
+      "family": "inline_roles",
+      "name": "inline_roles.unknown_role_suffix",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`:bogus:\n         end.\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            No role entry for \"bogus\" in module \"docutils.parsers.rst.languages.en\".\n            Trying \"bogus\" as canonical role name.\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown interpreted text role \"bogus\".\n",
+      "rst": "`x`:bogus: end.\n"
+    },
+    {
+      "family": "inline_roles",
+      "name": "inline_roles.pep_role",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <reference refuri=\"https://peps.python.org/pep-0008\">\n            PEP 8\n         and \n        <reference refuri=\"https://peps.python.org/pep-0000\">\n            PEP 0\n         and \n        <reference refuri=\"https://peps.python.org/pep-0008\">\n            PEP 008\n         end.\n",
+      "rst": ":pep-reference:`8` and :PEP:`0` and :pep:`008` end.\n"
+    },
+    {
+      "family": "inline_roles",
+      "name": "inline_roles.pep_invalid",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            :PEP:`99999`\n         end.\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            PEP number must be a number from 0 to 9999; \"99999\" is invalid.\n",
+      "rst": ":PEP:`99999` end.\n"
+    },
+    {
+      "family": "inline_roles",
+      "name": "inline_roles.rfc_role",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <reference refuri=\"https://tools.ietf.org/html/rfc2822.html\">\n            RFC 2822\n         and \n        <reference refuri=\"https://tools.ietf.org/html/rfc2822.html\">\n            RFC 2822\n         and \n        <reference refuri=\"https://tools.ietf.org/html/rfc1.html\">\n            RFC 1\n         end.\n",
+      "rst": ":rfc-reference:`2822` and :RFC:`0002822` and :RFC:`1` end.\n"
+    },
+    {
+      "family": "inline_roles",
+      "name": "inline_roles.rfc_fragment",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <reference refuri=\"https://tools.ietf.org/html/rfc2822.html#section-3\">\n            RFC 2822\n         end.\n",
+      "rst": ":RFC:`2822#section-3` end.\n"
+    },
+    {
+      "family": "inline_roles",
+      "name": "inline_roles.rfc_invalid",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            :RFC:`0`\n         end.\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            RFC number must be a number greater than or equal to 1; \"0\" is invalid.\n",
+      "rst": ":RFC:`0` end.\n"
+    },
+    {
+      "family": "inline_roles",
+      "name": "inline_roles.math_role",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <math>\n            x^2 + y_1\n         and \n        <math>\n            a\\\\b\n         end.\n",
+      "rst": ":math:`x^2 + y_1` and :math:`a\\\\b` end.\n"
+    },
+    {
+      "family": "inline_roles",
+      "name": "inline_roles.code_role",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <literal classes=\"code\">\n            print(1)\n         end.\n",
+      "rst": ":code:`print(1)` end.\n"
+    },
+    {
+      "family": "inline_roles",
+      "name": "inline_roles.raw_role_bare",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            :raw:`text`\n         end.\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            No format (Writer name) is associated with this role: \"raw\".\n            The \"raw\" role cannot be used directly.\n            Instead, use the \"role\" directive to create a new role with an associated format.\n",
+      "rst": ":raw:`text` end.\n"
+    },
+    {
+      "family": "inline_roles",
+      "name": "inline_roles.unimplemented_roles",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            :index:`x`\n         end.\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Interpreted text role \"index\" not implemented.\n",
+      "rst": ":index:`x` end.\n"
+    },
+    {
+      "family": "inline_roles",
+      "name": "inline_roles.literal_role_escapes",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <literal>\n            a*b\n         end.\n",
+      "rst": ":literal:`a\\*b` end.\n"
+    },
+    {
+      "family": "inline_roles",
+      "name": "inline_roles.role_in_quote",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <paragraph>\n            quoted \n            <problematic ids=\"id2\" refid=\"id1\">\n                :bogus:`x`\n             here\n        <system_message level=\"1\" line=\"3\" source=\"<snippet>\" type=\"INFO\">\n            <paragraph>\n                No role entry for \"bogus\" in module \"docutils.parsers.rst.languages.en\".\n                Trying \"bogus\" as canonical role name.\n        <system_message backrefs=\"id2\" ids=\"id1\" level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                Unknown interpreted text role \"bogus\".\n",
+      "rst": "Para.\n\n    quoted :bogus:`x` here\n"
+    },
+    {
+      "family": "inline_roles",
+      "name": "inline_roles.colon_not_role",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        see: \n        <title_reference>\n            x\n         end.\n",
+      "rst": "see: `x` end.\n"
+    },
+    {
       "family": "review",
       "name": "review.attr_no_space",
       "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <paragraph>\n            body\n        <attribution>\n            Author\n",
