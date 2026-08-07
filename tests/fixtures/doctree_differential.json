@@ -1,0 +1,1062 @@
+{
+  "cases": [
+    {
+      "family": "paragraphs",
+      "name": "paragraphs.empty_document",
+      "pseudo_xml": "<document source=\"<snippet>\">\n",
+      "rst": ""
+    },
+    {
+      "family": "paragraphs",
+      "name": "paragraphs.whitespace_only",
+      "pseudo_xml": "<document source=\"<snippet>\">\n",
+      "rst": "   \n\n  \n"
+    },
+    {
+      "family": "paragraphs",
+      "name": "paragraphs.single",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Just some text.\n",
+      "rst": "Just some text.\n"
+    },
+    {
+      "family": "paragraphs",
+      "name": "paragraphs.multiline",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        line one\n        line two\n",
+      "rst": "line one\nline two\n"
+    },
+    {
+      "family": "paragraphs",
+      "name": "paragraphs.blank_separated",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        para one\n    <paragraph>\n        para two\n",
+      "rst": "para one\n\n\npara two\n"
+    },
+    {
+      "family": "paragraphs",
+      "name": "paragraphs.trailing_whitespace",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        para with trailing\n        second line\n",
+      "rst": "para with trailing   \nsecond line  \n"
+    },
+    {
+      "family": "paragraphs",
+      "name": "paragraphs.tabs_in_text",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                col     one\n            <definition>\n                <paragraph>\n                    indented tab start\n",
+      "rst": "col\tone\n\tindented tab start\n"
+    },
+    {
+      "family": "paragraphs",
+      "name": "paragraphs.crlf_input",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        one\n        two\n    <paragraph>\n        three\n",
+      "rst": "one\r\ntwo\r\n\r\nthree\r\n"
+    },
+    {
+      "family": "paragraphs",
+      "name": "paragraphs.adornment_absorbed",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        line1\n        line2\n        ----\n        after\n",
+      "rst": "line1\nline2\n----\nafter\n"
+    },
+    {
+      "family": "paragraphs",
+      "name": "paragraphs.adornment_absorbed_blank",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        line1\n        line2\n        ----\n    <paragraph>\n        after\n",
+      "rst": "line1\nline2\n----\n\nafter\n"
+    },
+    {
+      "family": "paragraphs",
+      "name": "paragraphs.short_adornment_alone",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        before\n    <paragraph>\n        ---\n    <paragraph>\n        after\n",
+      "rst": "before\n\n---\n\nafter\n"
+    },
+    {
+      "family": "paragraphs",
+      "name": "paragraphs.punctuation_text",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        x -- y; z: w, (v) [u].\n",
+      "rst": "x -- y; z: w, (v) [u].\n"
+    },
+    {
+      "family": "sections",
+      "name": "sections.simple_nested",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Para under title.\n        <section ids=\"sub\" names=\"sub\">\n            <title>\n                Sub\n            <paragraph>\n                Para under sub.\n",
+      "rst": "Title\n=====\n\nPara under title.\n\nSub\n---\n\nPara under sub.\n"
+    },
+    {
+      "family": "sections",
+      "name": "sections.three_levels",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"a\" names=\"a\">\n        <title>\n            A\n        <section ids=\"b\" names=\"b\">\n            <title>\n                B\n            <section ids=\"c\" names=\"c\">\n                <title>\n                    C\n                <paragraph>\n                    deep text\n        <section ids=\"d\" names=\"d\">\n            <title>\n                D\n            <paragraph>\n                back at two\n",
+      "rst": "A\n=\n\nB\n-\n\nC\n~\n\ndeep text\n\nD\n-\n\nback at two\n"
+    },
+    {
+      "family": "sections",
+      "name": "sections.over_under",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"over\" names=\"over\">\n        <title>\n            Over\n        <paragraph>\n            body here\n",
+      "rst": "=====\nOver\n=====\n\nbody here\n"
+    },
+    {
+      "family": "sections",
+      "name": "sections.over_under_vs_under",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"over\" names=\"over\">\n        <title>\n            Over\n        <section ids=\"under\" names=\"under\">\n            <title>\n                Under\n            <paragraph>\n                deep body\n",
+      "rst": "=====\nOver\n=====\n\nUnder\n=====\n\ndeep body\n"
+    },
+    {
+      "family": "sections",
+      "name": "sections.over_under_centered",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            body\n",
+      "rst": "==========\n  Title\n==========\n\nbody\n"
+    },
+    {
+      "family": "sections",
+      "name": "sections.underline_exact_length",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"ab\" names=\"ab\">\n        <title>\n            AB\n        <paragraph>\n            x\n",
+      "rst": "AB\n==\n\nx\n"
+    },
+    {
+      "family": "sections",
+      "name": "sections.underline_longer",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"ab\" names=\"ab\">\n        <title>\n            AB\n        <paragraph>\n            x\n",
+      "rst": "AB\n=====\n\nx\n"
+    },
+    {
+      "family": "sections",
+      "name": "sections.unicode_title",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"uberblick\" names=\"überblick\">\n        <title>\n            Überblick\n        <paragraph>\n            text\n",
+      "rst": "Überblick\n=========\n\ntext\n"
+    },
+    {
+      "family": "sections",
+      "name": "sections.digraph_title",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"strasze\" names=\"straße\">\n        <title>\n            straße\n        <paragraph>\n            text\n",
+      "rst": "straße\n======\n\ntext\n"
+    },
+    {
+      "family": "sections",
+      "name": "sections.digit_title",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"id1\" names=\"123\">\n        <title>\n            123\n        <paragraph>\n            text\n",
+      "rst": "123\n=====\n\ntext\n"
+    },
+    {
+      "family": "sections",
+      "name": "sections.numbered_title",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"intro\" names=\"1.\\ intro\">\n        <title>\n            1. Intro\n        <paragraph>\n            text\n",
+      "rst": "1. Intro\n========\n\ntext\n"
+    },
+    {
+      "family": "sections",
+      "name": "sections.duplicate_titles",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section dupnames=\"duplicate\" ids=\"duplicate\">\n        <title>\n            Duplicate\n        <paragraph>\n            x\n    <section dupnames=\"duplicate\" ids=\"id1\">\n        <title>\n            Duplicate\n        <system_message backrefs=\"id1\" level=\"1\" line=\"7\" source=\"<snippet>\" type=\"INFO\">\n            <paragraph>\n                Duplicate implicit target name: \"duplicate\".\n        <paragraph>\n            y\n",
+      "rst": "Duplicate\n=========\n\nx\n\nDuplicate\n=========\n\ny\n"
+    },
+    {
+      "family": "sections",
+      "name": "sections.triple_duplicate",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section dupnames=\"dup\" ids=\"dup\">\n        <title>\n            Dup\n    <section dupnames=\"dup\" ids=\"id1\">\n        <title>\n            Dup\n        <system_message backrefs=\"id1\" level=\"1\" line=\"5\" source=\"<snippet>\" type=\"INFO\">\n            <paragraph>\n                Duplicate implicit target name: \"dup\".\n    <section dupnames=\"dup\" ids=\"id2\">\n        <title>\n            Dup\n        <system_message backrefs=\"id2\" level=\"1\" line=\"8\" source=\"<snippet>\" type=\"INFO\">\n            <paragraph>\n                Duplicate implicit target name: \"dup\".\n",
+      "rst": "Dup\n===\n\nDup\n===\n\nDup\n===\n"
+    },
+    {
+      "family": "sections",
+      "name": "sections.same_level_siblings",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"alpha\" names=\"alpha\">\n        <title>\n            Alpha\n        <paragraph>\n            one\n    <section ids=\"b\" names=\"b\">\n        <title>\n            B\n        <paragraph>\n            two\n",
+      "rst": "Alpha\n-----\n\none\n\nB\n----------\n\ntwo\n"
+    },
+    {
+      "family": "sections",
+      "name": "sections.title_no_blank_after",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"para\" names=\"para\">\n        <title>\n            para\n        <paragraph>\n            after\n",
+      "rst": "para\n----\nafter\n"
+    },
+    {
+      "family": "sections",
+      "name": "sections.whitespace_collapse_title",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"my-section-title\" names=\"my\\ section\\ title!\">\n        <title>\n            My  Section    Title!\n        <paragraph>\n            x\n",
+      "rst": "My  Section    Title!\n=====================\n\nx\n"
+    },
+    {
+      "family": "transition",
+      "name": "transition.basic",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <transition>\n    <paragraph>\n        More.\n",
+      "rst": "Para.\n\n----\n\nMore.\n"
+    },
+    {
+      "family": "transition",
+      "name": "transition.doc_start",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <transition>\n    <paragraph>\n        para\n",
+      "rst": "----\n\npara\n"
+    },
+    {
+      "family": "transition",
+      "name": "transition.doc_end",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        para\n    <transition>\n",
+      "rst": "para\n\n----\n"
+    },
+    {
+      "family": "transition",
+      "name": "transition.adjacent",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        para\n    <transition>\n    <transition>\n    <paragraph>\n        end\n",
+      "rst": "para\n\n----\n\n----\n\nend\n"
+    },
+    {
+      "family": "transition",
+      "name": "transition.after_section_title",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"head\" names=\"head\">\n        <title>\n            Head\n        <transition>\n        <paragraph>\n            para\n",
+      "rst": "Head\n====\n\n----\n\npara\n"
+    },
+    {
+      "family": "transition",
+      "name": "transition.other_chars",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        a\n    <transition>\n    <paragraph>\n        b\n    <transition>\n    <paragraph>\n        c\n    <transition>\n    <paragraph>\n        d\n    <transition>\n    <paragraph>\n        e\n    <transition>\n    <paragraph>\n        f\n",
+      "rst": "a\n\n====\n\nb\n\n~~~~\n\nc\n\n****\n\nd\n\n::::\n\ne\n\n____\n\nf\n"
+    },
+    {
+      "family": "lists_bullet",
+      "name": "lists_bullet.simple",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                one\n        <list_item>\n            <paragraph>\n                two\n        <list_item>\n            <paragraph>\n                three\n",
+      "rst": "- one\n- two\n- three\n"
+    },
+    {
+      "family": "lists_bullet",
+      "name": "lists_bullet.loose",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                one\n        <list_item>\n            <paragraph>\n                two\n",
+      "rst": "- one\n\n- two\n"
+    },
+    {
+      "family": "lists_bullet",
+      "name": "lists_bullet.nested",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                outer one\n            <bullet_list bullet=\"*\">\n                <list_item>\n                    <paragraph>\n                        inner a\n                <list_item>\n                    <paragraph>\n                        inner b\n        <list_item>\n            <paragraph>\n                outer two\n",
+      "rst": "- outer one\n\n  * inner a\n\n  * inner b\n\n- outer two\n"
+    },
+    {
+      "family": "lists_bullet",
+      "name": "lists_bullet.multi_paragraph_item",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                first para of item\n            <paragraph>\n                second para of item\n",
+      "rst": "- first para of item\n\n  second para of item\n"
+    },
+    {
+      "family": "lists_bullet",
+      "name": "lists_bullet.star_and_plus",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"*\">\n        <list_item>\n            <paragraph>\n                star one\n        <list_item>\n            <paragraph>\n                star two\n    <bullet_list bullet=\"+\">\n        <list_item>\n            <paragraph>\n                plus one\n        <list_item>\n            <paragraph>\n                plus two\n",
+      "rst": "* star one\n* star two\n\n+ plus one\n+ plus two\n"
+    },
+    {
+      "family": "lists_bullet",
+      "name": "lists_bullet.unicode_bullets",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"•\">\n        <list_item>\n            <paragraph>\n                uni bullet\n    <bullet_list bullet=\"‣\">\n        <list_item>\n            <paragraph>\n                tri bullet\n    <bullet_list bullet=\"⁃\">\n        <list_item>\n            <paragraph>\n                hyphen bullet\n",
+      "rst": "• uni bullet\n\n‣ tri bullet\n\n⁃ hyphen bullet\n"
+    },
+    {
+      "family": "lists_bullet",
+      "name": "lists_bullet.marker_alone",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                body from next line\n",
+      "rst": "-\n  body from next line\n"
+    },
+    {
+      "family": "lists_bullet",
+      "name": "lists_bullet.ends_no_blank",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                item\n    <system_message level=\"2\" line=\"2\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Bullet list ends without a blank line; unexpected unindent.\n    <paragraph>\n        plain\n",
+      "rst": "- item\nplain\n"
+    },
+    {
+      "family": "lists_bullet",
+      "name": "lists_bullet.cont_then_ends",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                item\n                cont\n    <system_message level=\"2\" line=\"3\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Bullet list ends without a blank line; unexpected unindent.\n    <paragraph>\n        plain\n",
+      "rst": "- item\n  cont\nplain\n"
+    },
+    {
+      "family": "lists_bullet",
+      "name": "lists_bullet.deep_nesting",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                a\n            <bullet_list bullet=\"-\">\n                <list_item>\n                    <paragraph>\n                        b\n                    <bullet_list bullet=\"-\">\n                        <list_item>\n                            <paragraph>\n                                c\n                            <bullet_list bullet=\"-\">\n                                <list_item>\n                                    <paragraph>\n                                        d\n                                    <bullet_list bullet=\"-\">\n                                        <list_item>\n                                            <paragraph>\n                                                e\n",
+      "rst": "- a\n\n  - b\n\n    - c\n\n      - d\n\n        - e\n"
+    },
+    {
+      "family": "lists_bullet",
+      "name": "lists_bullet.different_bullet_adjacent",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                a\n    <system_message level=\"2\" line=\"2\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Bullet list ends without a blank line; unexpected unindent.\n    <bullet_list bullet=\"*\">\n        <list_item>\n            <paragraph>\n                b\n",
+      "rst": "- a\n* b\n"
+    },
+    {
+      "family": "lists_bullet",
+      "name": "lists_bullet.item_with_quote",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                item\n            <block_quote>\n                <paragraph>\n                    quoted deeper\n",
+      "rst": "- item\n\n      quoted deeper\n"
+    },
+    {
+      "family": "lists_enum",
+      "name": "lists_enum.arabic",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <enumerated_list enumtype=\"arabic\" prefix=\"\" suffix=\".\">\n        <list_item>\n            <paragraph>\n                one\n        <list_item>\n            <paragraph>\n                two\n        <list_item>\n            <paragraph>\n                three\n",
+      "rst": "1. one\n2. two\n3. three\n"
+    },
+    {
+      "family": "lists_enum",
+      "name": "lists_enum.loweralpha",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <enumerated_list enumtype=\"loweralpha\" prefix=\"\" suffix=\".\">\n        <list_item>\n            <paragraph>\n                x\n        <list_item>\n            <paragraph>\n                y\n",
+      "rst": "a. x\nb. y\n"
+    },
+    {
+      "family": "lists_enum",
+      "name": "lists_enum.paren_arabic",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <enumerated_list enumtype=\"arabic\" prefix=\"(\" suffix=\")\">\n        <list_item>\n            <paragraph>\n                x\n        <list_item>\n            <paragraph>\n                y\n",
+      "rst": "(1) x\n(2) y\n"
+    },
+    {
+      "family": "lists_enum",
+      "name": "lists_enum.upper_paren",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <enumerated_list enumtype=\"upperalpha\" prefix=\"\" suffix=\")\">\n        <list_item>\n            <paragraph>\n                x\n        <list_item>\n            <paragraph>\n                y\n",
+      "rst": "A) x\nB) y\n"
+    },
+    {
+      "family": "lists_enum",
+      "name": "lists_enum.auto",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <enumerated_list enumtype=\"arabic\" prefix=\"\" suffix=\".\">\n        <list_item>\n            <paragraph>\n                x\n        <list_item>\n            <paragraph>\n                y\n",
+      "rst": "#. x\n#. y\n"
+    },
+    {
+      "family": "lists_enum",
+      "name": "lists_enum.auto_continue",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <enumerated_list enumtype=\"arabic\" prefix=\"\" suffix=\".\">\n        <list_item>\n            <paragraph>\n                one\n        <list_item>\n            <paragraph>\n                two\n",
+      "rst": "1. one\n#. two\n"
+    },
+    {
+      "family": "lists_enum",
+      "name": "lists_enum.start_three",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <enumerated_list enumtype=\"arabic\" prefix=\"\" start=\"3\" suffix=\".\">\n        <list_item>\n            <paragraph>\n                three\n        <list_item>\n            <paragraph>\n                four\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            Enumerated list start value not ordinal-1: \"3\" (ordinal 3)\n",
+      "rst": "3. three\n4. four\n"
+    },
+    {
+      "family": "lists_enum",
+      "name": "lists_enum.roman_start_two",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <enumerated_list enumtype=\"lowerroman\" prefix=\"\" start=\"2\" suffix=\".\">\n        <list_item>\n            <paragraph>\n                two\n        <list_item>\n            <paragraph>\n                three\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            Enumerated list start value not ordinal-1: \"ii\" (ordinal 2)\n",
+      "rst": "ii. two\niii. three\n"
+    },
+    {
+      "family": "lists_enum",
+      "name": "lists_enum.single_i",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <enumerated_list enumtype=\"lowerroman\" prefix=\"\" suffix=\".\">\n        <list_item>\n            <paragraph>\n                single\n",
+      "rst": "i. single\n"
+    },
+    {
+      "family": "lists_enum",
+      "name": "lists_enum.single_v",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <enumerated_list enumtype=\"loweralpha\" prefix=\"\" start=\"22\" suffix=\".\">\n        <list_item>\n            <paragraph>\n                five\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            Enumerated list start value not ordinal-1: \"v\" (ordinal 22)\n",
+      "rst": "v. five\n"
+    },
+    {
+      "family": "lists_enum",
+      "name": "lists_enum.single_c",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <enumerated_list enumtype=\"loweralpha\" prefix=\"\" start=\"3\" suffix=\".\">\n        <list_item>\n            <paragraph>\n                see\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            Enumerated list start value not ordinal-1: \"c\" (ordinal 3)\n",
+      "rst": "c. see\n"
+    },
+    {
+      "family": "lists_enum",
+      "name": "lists_enum.single_A_sentence",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <enumerated_list enumtype=\"upperalpha\" prefix=\"\" suffix=\".\">\n        <list_item>\n            <paragraph>\n                Einstein was smart.\n",
+      "rst": "A. Einstein was smart.\n"
+    },
+    {
+      "family": "lists_enum",
+      "name": "lists_enum.roman_narrowing",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        v. five\n        vi. six\n",
+      "rst": "v. five\nvi. six\n"
+    },
+    {
+      "family": "lists_enum",
+      "name": "lists_enum.alpha_over_roman_succession",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <enumerated_list enumtype=\"loweralpha\" prefix=\"\" start=\"8\" suffix=\".\">\n        <list_item>\n            <paragraph>\n                x\n        <list_item>\n            <paragraph>\n                y\n        <list_item>\n            <paragraph>\n                z\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            Enumerated list start value not ordinal-1: \"h\" (ordinal 8)\n",
+      "rst": "h. x\ni. y\nj. z\n"
+    },
+    {
+      "family": "lists_enum",
+      "name": "lists_enum.not_a_list",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        1. one\n        not an item\n",
+      "rst": "1. one\nnot an item\n"
+    },
+    {
+      "family": "lists_enum",
+      "name": "lists_enum.skip_aborts",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        1. one\n        3. three\n",
+      "rst": "1. one\n3. three\n"
+    },
+    {
+      "family": "lists_enum",
+      "name": "lists_enum.type_switch_aborts",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        1. one\n        a. alpha\n",
+      "rst": "1. one\na. alpha\n"
+    },
+    {
+      "family": "lists_enum",
+      "name": "lists_enum.broken_mid_list",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <enumerated_list enumtype=\"arabic\" prefix=\"\" suffix=\".\">\n        <list_item>\n            <paragraph>\n                one\n    <system_message level=\"2\" line=\"2\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Enumerated list ends without a blank line; unexpected unindent.\n    <paragraph>\n        2. two\n        5. five\n",
+      "rst": "1. one\n2. two\n5. five\n"
+    },
+    {
+      "family": "lists_enum",
+      "name": "lists_enum.continuation_lines",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <enumerated_list enumtype=\"arabic\" prefix=\"\" suffix=\".\">\n        <list_item>\n            <paragraph>\n                first\n                more of first\n        <list_item>\n            <paragraph>\n                second\n",
+      "rst": "1. first\n   more of first\n2. second\n"
+    },
+    {
+      "family": "lists_enum",
+      "name": "lists_enum.paren_roman",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <enumerated_list enumtype=\"lowerroman\" prefix=\"(\" suffix=\")\">\n        <list_item>\n            <paragraph>\n                x\n        <list_item>\n            <paragraph>\n                y\n",
+      "rst": "(i) x\n(ii) y\n"
+    },
+    {
+      "family": "deflist",
+      "name": "deflist.simple",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                term\n            <definition>\n                <paragraph>\n                    definition here\n",
+      "rst": "term\n    definition here\n"
+    },
+    {
+      "family": "deflist",
+      "name": "deflist.classifiers",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                term2\n            <classifier>\n                classifier one\n            <classifier>\n                classifier two\n            <definition>\n                <paragraph>\n                    Definition2.\n",
+      "rst": "term2 : classifier one : classifier two\n    Definition2.\n"
+    },
+    {
+      "family": "deflist",
+      "name": "deflist.colon_no_space",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                term:not a classifier\n            <definition>\n                <paragraph>\n                    Definition.\n",
+      "rst": "term:not a classifier\n    Definition.\n"
+    },
+    {
+      "family": "deflist",
+      "name": "deflist.merge_items",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                term1\n            <definition>\n                <paragraph>\n                    Def1.\n        <definition_list_item>\n            <term>\n                term2\n            <definition>\n                <paragraph>\n                    Def2.\n",
+      "rst": "term1\n    Def1.\n\nterm2\n    Def2.\n"
+    },
+    {
+      "family": "deflist",
+      "name": "deflist.multi_para_definition",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                term\n            <definition>\n                <paragraph>\n                    para one\n                <paragraph>\n                    para two\n",
+      "rst": "term\n    para one\n\n    para two\n"
+    },
+    {
+      "family": "deflist",
+      "name": "deflist.nested_list_in_def",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                term\n            <definition>\n                <bullet_list bullet=\"-\">\n                    <list_item>\n                        <paragraph>\n                            a\n                    <list_item>\n                        <paragraph>\n                            b\n",
+      "rst": "term\n    - a\n    - b\n"
+    },
+    {
+      "family": "deflist",
+      "name": "deflist.ends_no_blank",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                term\n            <definition>\n                <paragraph>\n                    def\n    <system_message level=\"2\" line=\"3\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Definition list ends without a blank line; unexpected unindent.\n    <paragraph>\n        plain\n",
+      "rst": "term\n    def\nplain\n"
+    },
+    {
+      "family": "deflist",
+      "name": "deflist.blank_between_not_deflist",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        term\n    <block_quote>\n        <paragraph>\n            definition\n",
+      "rst": "term\n\n    definition\n"
+    },
+    {
+      "family": "deflist",
+      "name": "deflist.adjacent_items",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                term\n            <definition>\n                <paragraph>\n                    def\n        <definition_list_item>\n            <term>\n                term2\n            <definition>\n                <paragraph>\n                    def2\n",
+      "rst": "term\n    def\nterm2\n    def2\n"
+    },
+    {
+      "family": "quote",
+      "name": "quote.simple",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <paragraph>\n            No matter where you go, there you are.\n",
+      "rst": "Para.\n\n    No matter where you go, there you are.\n"
+    },
+    {
+      "family": "quote",
+      "name": "quote.attribution",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <paragraph>\n            No matter where you go, there you are.\n        <attribution>\n            Buckaroo Banzai\n",
+      "rst": "Para.\n\n    No matter where you go, there you are.\n\n    -- Buckaroo Banzai\n"
+    },
+    {
+      "family": "quote",
+      "name": "quote.attribution_triple_dash",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <paragraph>\n            Quoted here.\n        <attribution>\n            Someone\n",
+      "rst": "Para.\n\n    Quoted here.\n\n    --- Someone\n"
+    },
+    {
+      "family": "quote",
+      "name": "quote.attribution_em_dash",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <paragraph>\n            Quoted here.\n        <attribution>\n            Author\n",
+      "rst": "Para.\n\n    Quoted here.\n\n    — Author\n"
+    },
+    {
+      "family": "quote",
+      "name": "quote.two_quotes_split",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <paragraph>\n            First quote.\n        <attribution>\n            First Author\n    <block_quote>\n        <paragraph>\n            Second quote.\n        <attribution>\n            Second Author\n",
+      "rst": "Para.\n\n    First quote.\n\n    -- First Author\n\n    Second quote.\n\n    -- Second Author\n"
+    },
+    {
+      "family": "quote",
+      "name": "quote.multiline_attribution",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <paragraph>\n            Quote.\n        <attribution>\n            Author Name,\n            Book Title, 1999\n",
+      "rst": "Para.\n\n    Quote.\n\n    -- Author Name,\n       Book Title, 1999\n"
+    },
+    {
+      "family": "quote",
+      "name": "quote.nested_quote",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <paragraph>\n            outer quote\n        <block_quote>\n            <paragraph>\n                inner quote\n",
+      "rst": "Para.\n\n    outer quote\n\n        inner quote\n"
+    },
+    {
+      "family": "quote",
+      "name": "quote.partial_dedent",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <block_quote>\n            <paragraph>\n                quoted\n        <system_message level=\"2\" line=\"4\" source=\"<snippet>\" type=\"WARNING\">\n            <paragraph>\n                Block quote ends without a blank line; unexpected unindent.\n        <paragraph>\n            dedented-oddly\n",
+      "rst": "Para.\n\n    quoted\n  dedented-oddly\n"
+    },
+    {
+      "family": "quote",
+      "name": "quote.enum_trap",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <enumerated_list enumtype=\"upperalpha\" prefix=\"\" start=\"17\" suffix=\".\">\n            <list_item>\n                <paragraph>\n                    quoted\n        <system_message level=\"1\" line=\"3\" source=\"<snippet>\" type=\"INFO\">\n            <paragraph>\n                Enumerated list start value not ordinal-1: \"Q\" (ordinal 17)\n",
+      "rst": "Para.\n\n    Q. quoted\n"
+    },
+    {
+      "family": "quote",
+      "name": "quote.list_inside_quote",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <bullet_list bullet=\"-\">\n            <list_item>\n                <paragraph>\n                    a\n            <list_item>\n                <paragraph>\n                    b\n",
+      "rst": "Para.\n\n    - a\n    - b\n"
+    },
+    {
+      "family": "quote",
+      "name": "quote.multi_paragraph",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <paragraph>\n            first quoted para\n        <paragraph>\n            second quoted para\n",
+      "rst": "Para.\n\n    first quoted para\n\n    second quoted para\n"
+    },
+    {
+      "family": "literal",
+      "name": "literal.expanded",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Paragraph introducing:\n    <literal_block xml:space=\"preserve\">\n        literal line one\n        literal line two\n",
+      "rst": "Paragraph introducing::\n\n    literal line one\n    literal line two\n"
+    },
+    {
+      "family": "literal",
+      "name": "literal.minimized",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Paragraph ends with\n    <literal_block xml:space=\"preserve\">\n        literal here\n",
+      "rst": "Paragraph ends with ::\n\n    literal here\n"
+    },
+    {
+      "family": "literal",
+      "name": "literal.triple_colon",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        text::\n    <literal_block xml:space=\"preserve\">\n        x\n",
+      "rst": "text:::\n\n    x\n"
+    },
+    {
+      "family": "literal",
+      "name": "literal.colon_space_colon",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        text:\n    <literal_block xml:space=\"preserve\">\n        y\n",
+      "rst": "text: ::\n\n    y\n"
+    },
+    {
+      "family": "literal",
+      "name": "literal.only_colons",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <literal_block xml:space=\"preserve\">\n        literal\n",
+      "rst": "::\n\n    literal\n"
+    },
+    {
+      "family": "literal",
+      "name": "literal.quoted",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Next is a quoted literal:\n    <literal_block xml:space=\"preserve\">\n        > quoted line one\n        > quoted line two\n",
+      "rst": "Next is a quoted literal::\n\n> quoted line one\n> quoted line two\n"
+    },
+    {
+      "family": "literal",
+      "name": "literal.quoted_inconsistent",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        intro:\n    <literal_block xml:space=\"preserve\">\n        > line one\n    <system_message level=\"3\" line=\"4\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Inconsistent literal block quoting.\n    <paragraph>\n        $ different\n",
+      "rst": "intro::\n\n> line one\n$ different\n"
+    },
+    {
+      "family": "literal",
+      "name": "literal.missing",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Intro:\n    <system_message level=\"2\" line=\"3\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Literal block expected; none found.\n    <paragraph>\n        Not indented.\n",
+      "rst": "Intro::\n\nNot indented.\n"
+    },
+    {
+      "family": "literal",
+      "name": "literal.ends_no_blank",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        para:\n    <literal_block xml:space=\"preserve\">\n        lit\n    <system_message level=\"2\" line=\"4\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Literal block ends without a blank line; unexpected unindent.\n    <paragraph>\n        back\n",
+      "rst": "para::\n\n    lit\nback\n"
+    },
+    {
+      "family": "literal",
+      "name": "literal.internal_blank_lines",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        code:\n    <literal_block xml:space=\"preserve\">\n        line one\n        \n        line two\n",
+      "rst": "code::\n\n    line one\n\n    line two\n"
+    },
+    {
+      "family": "literal",
+      "name": "literal.deeper_relative_indent",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        code:\n    <literal_block xml:space=\"preserve\">\n        six spaces\n          eight spaces\n",
+      "rst": "code::\n\n      six spaces\n        eight spaces\n"
+    },
+    {
+      "family": "literal",
+      "name": "literal.adjacent_no_blank",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                para::\n            <definition>\n                <system_message level=\"1\" line=\"2\" source=\"<snippet>\" type=\"INFO\">\n                    <paragraph>\n                        Blank line missing before literal block (after the \"::\")? Interpreted as a definition list item.\n                <paragraph>\n                    lit right away\n",
+      "rst": "para::\n    lit right away\n"
+    },
+    {
+      "family": "doctest",
+      "name": "doctest.simple",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <doctest_block xml:space=\"preserve\">\n        >>> print(\"hello\")\n        hello\n        >>> 1 + 1\n        2\n",
+      "rst": ">>> print(\"hello\")\nhello\n>>> 1 + 1\n2\n"
+    },
+    {
+      "family": "doctest",
+      "name": "doctest.single",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <doctest_block xml:space=\"preserve\">\n        >>> 2 + 2\n        4\n",
+      "rst": ">>> 2 + 2\n4\n"
+    },
+    {
+      "family": "doctest",
+      "name": "doctest.then_paragraph",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <doctest_block xml:space=\"preserve\">\n        >>> x = 1\n    <paragraph>\n        After the doctest.\n",
+      "rst": ">>> x = 1\n\nAfter the doctest.\n"
+    },
+    {
+      "family": "doctest",
+      "name": "doctest.inside_list_item",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                item\n            <doctest_block xml:space=\"preserve\">\n                >>> code()\n                result\n",
+      "rst": "- item\n\n  >>> code()\n  result\n"
+    },
+    {
+      "family": "lineblock",
+      "name": "lineblock.simple",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <line_block>\n        <line>\n            Lend us a couple of bob till Thursday.\n        <line>\n            I am absolutely skint.\n",
+      "rst": "| Lend us a couple of bob till Thursday.\n| I am absolutely skint.\n"
+    },
+    {
+      "family": "lineblock",
+      "name": "lineblock.nested",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <line_block>\n        <line>\n            top one\n        <line>\n            top two\n        <line_block>\n            <line>\n                nested one\n        <line>\n            back\n        <line>\n        <line>\n            after empty\n",
+      "rst": "| top one\n| top two\n|     nested one\n| back\n|\n| after empty\n"
+    },
+    {
+      "family": "lineblock",
+      "name": "lineblock.continuation",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <line_block>\n        <line>\n            A very long line\n            continued here\n        <line>\n            second\n",
+      "rst": "| A very long line\n  continued here\n| second\n"
+    },
+    {
+      "family": "lineblock",
+      "name": "lineblock.double_nested",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <line_block>\n        <line>\n            top\n        <line_block>\n            <line>\n                n1\n            <line_block>\n                <line>\n                    n2\n        <line>\n            back\n",
+      "rst": "| top\n|   n1\n|     n2\n| back\n"
+    },
+    {
+      "family": "lineblock",
+      "name": "lineblock.after_paragraph",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Intro para.\n    <line_block>\n        <line>\n            line one\n        <line>\n            line two\n",
+      "rst": "Intro para.\n\n| line one\n| line two\n"
+    },
+    {
+      "family": "comment_target",
+      "name": "comment_target.comment_multiline",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n        This is a comment\n        that continues on\n        multiple lines.\n",
+      "rst": ".. This is a comment\n   that continues on\n   multiple lines.\n"
+    },
+    {
+      "family": "comment_target",
+      "name": "comment_target.comment_empty_start",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n    <block_quote>\n        <paragraph>\n            Indented block attached\n            to an empty comment start.\n",
+      "rst": "..\n\n   Indented block attached\n   to an empty comment start.\n"
+    },
+    {
+      "family": "comment_target",
+      "name": "comment_target.comment_bare",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n",
+      "rst": "..\n"
+    },
+    {
+      "family": "comment_target",
+      "name": "comment_target.comment_weird_colons",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n        just a comment::  with weird colons\n",
+      "rst": ".. just a comment::  with weird colons\n"
+    },
+    {
+      "family": "comment_target",
+      "name": "comment_target.comment_ragged",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n        first\n           deep\n        shallow\n",
+      "rst": ".. first\n      deep\n   shallow\n"
+    },
+    {
+      "family": "comment_target",
+      "name": "comment_target.comment_adjacent_pair",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n        one\n    <comment xml:space=\"preserve\">\n        two\n",
+      "rst": ".. one\n.. two\n"
+    },
+    {
+      "family": "comment_target",
+      "name": "comment_target.target_internal",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target ids=\"para-target\" names=\"para-target\">\n    <paragraph>\n        Some paragraph here.\n",
+      "rst": ".. _para-target:\n\nSome paragraph here.\n"
+    },
+    {
+      "family": "comment_target",
+      "name": "comment_target.target_external_indirect",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target ids=\"docutils\" names=\"docutils\" refuri=\"https://docutils.sourceforge.io/\">\n    <target ids=\"indirect\" names=\"indirect\" refname=\"docutils\">\n",
+      "rst": ".. _docutils: https://docutils.sourceforge.io/\n.. _indirect: docutils_\n"
+    },
+    {
+      "family": "comment_target",
+      "name": "comment_target.target_multiline_uri",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target ids=\"long\" names=\"long\" refuri=\"https://example.com/path/here\">\n",
+      "rst": ".. _long: https://example.com/\n   path/here\n"
+    },
+    {
+      "family": "comment_target",
+      "name": "comment_target.target_uri_spaces",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target ids=\"a\" names=\"a\" refuri=\"BTarget_\">\n",
+      "rst": ".. _a: B  Target_\n"
+    },
+    {
+      "family": "comment_target",
+      "name": "comment_target.target_backtick_name",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target ids=\"name-with-colon\" names=\"name\\ with:\\ colon\" refuri=\"https://x/\">\n",
+      "rst": ".. _`name with: colon`: https://x/\n"
+    },
+    {
+      "family": "comment_target",
+      "name": "comment_target.target_escaped_colon",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target ids=\"a-b\" names=\"a:\\ b\" refuri=\"https://y/\">\n",
+      "rst": ".. _a\\: b: https://y/\n"
+    },
+    {
+      "family": "comment_target",
+      "name": "comment_target.target_anonymous_both",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target anonymous=\"1\" ids=\"id1\" refuri=\"https://example.com/1\">\n    <target anonymous=\"1\" ids=\"id2\" refuri=\"https://example.com/2\">\n",
+      "rst": ".. __: https://example.com/1\n\n__ https://example.com/2\n"
+    },
+    {
+      "family": "comment_target",
+      "name": "comment_target.target_chained_before_section",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target ids=\"target1\" names=\"target1\">\n    <target ids=\"target2\" names=\"target2\">\n    <section ids=\"section-title\" names=\"section\\ title\">\n        <title>\n            Section Title\n",
+      "rst": ".. _target1:\n.. _target2:\n\nSection Title\n=============\n"
+    },
+    {
+      "family": "comment_target",
+      "name": "comment_target.target_phrase_indirect",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target ids=\"a\" names=\"a\" refname=\"phrase ref\">\n",
+      "rst": ".. _a: `phrase ref`_\n"
+    },
+    {
+      "family": "comment_target",
+      "name": "comment_target.target_dup_external",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target dupnames=\"dup\" ids=\"dup\" refuri=\"https://1/\">\n    <system_message level=\"2\" line=\"3\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Duplicate explicit target name: \"dup\".\n    <target dupnames=\"dup\" ids=\"id1\" refuri=\"https://2/\">\n",
+      "rst": ".. _dup: https://1/\n\n.. _dup: https://2/\n"
+    },
+    {
+      "family": "comment_target",
+      "name": "comment_target.target_dup_internal",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target dupnames=\"t\" ids=\"t\">\n    <paragraph>\n        para\n    <system_message backrefs=\"id1\" level=\"2\" line=\"5\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Duplicate explicit target name: \"t\".\n    <target dupnames=\"t\" ids=\"id1\">\n    <paragraph>\n        para2\n",
+      "rst": ".. _t:\n\npara\n\n.. _t:\n\npara2\n"
+    },
+    {
+      "family": "comment_target",
+      "name": "comment_target.target_before_paragraph",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target ids=\"marker\" names=\"marker\">\n    <paragraph>\n        Following paragraph.\n",
+      "rst": ".. _marker:\n\nFollowing paragraph.\n"
+    },
+    {
+      "family": "errors",
+      "name": "errors.underline_too_short",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"long-section-title\" names=\"long\\ section\\ title\">\n        <title>\n            Long Section Title\n        <system_message level=\"2\" line=\"2\" source=\"<snippet>\" type=\"WARNING\">\n            <paragraph>\n                Title underline too short.\n            <literal_block xml:space=\"preserve\">\n                Long Section Title\n                ======\n",
+      "rst": "Long Section Title\n======\n"
+    },
+    {
+      "family": "errors",
+      "name": "errors.underline_very_short",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"1\" line=\"2\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            Possible title underline, too short for the title.\n            Treating it as ordinary text because it's so short.\n    <paragraph>\n        Title\n        ===\n",
+      "rst": "Title\n===\n"
+    },
+    {
+      "family": "errors",
+      "name": "errors.overline_mismatch",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Title overline & underline mismatch.\n        <literal_block xml:space=\"preserve\">\n            =========\n            Title\n            ========\n    <paragraph>\n        body\n",
+      "rst": "=========\nTitle\n========\n\nbody\n"
+    },
+    {
+      "family": "errors",
+      "name": "errors.incomplete_overline",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Incomplete section title.\n        <literal_block xml:space=\"preserve\">\n            ----\n            text with no closing\n",
+      "rst": "----\ntext with no closing\n"
+    },
+    {
+      "family": "errors",
+      "name": "errors.short_overline",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            Possible incomplete section title.\n            Treating the overline as ordinary text because it's so short.\n    <paragraph>\n        ==\n        Overlong Title\n        ==\n    <paragraph>\n        body\n",
+      "rst": "==\nOverlong Title\n==\n\nbody\n"
+    },
+    {
+      "family": "errors",
+      "name": "errors.skip_level",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"a\" names=\"a\">\n        <title>\n            A\n        <section ids=\"b\" names=\"b\">\n            <title>\n                B\n    <section ids=\"c\" names=\"c\">\n        <title>\n            C\n        <system_message level=\"3\" line=\"10\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                Inconsistent title style: skip from level 1 to 3.\n            <literal_block xml:space=\"preserve\">\n                D\n                ~\n            <paragraph>\n                Established title styles: - =\n        <paragraph>\n            body\n",
+      "rst": "A\n-\n\nB\n=\n\nC\n-\n\nD\n~\n\nbody\n"
+    },
+    {
+      "family": "errors",
+      "name": "errors.unexpected_indent",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        line one\n        line two\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unexpected indentation.\n    <block_quote>\n        <paragraph>\n            Indented without blank line.\n",
+      "rst": "line one\nline two\n    Indented without blank line.\n"
+    },
+    {
+      "family": "errors",
+      "name": "errors.single_line_indent_is_deflist",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                line one\n            <definition>\n                <paragraph>\n                    Indented without blank line.\n",
+      "rst": "line one\n    Indented without blank line.\n"
+    },
+    {
+      "family": "errors",
+      "name": "errors.enum_start_info",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <enumerated_list enumtype=\"arabic\" prefix=\"\" start=\"3\" suffix=\".\">\n        <list_item>\n            <paragraph>\n                three\n        <list_item>\n            <paragraph>\n                four\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            Enumerated list start value not ordinal-1: \"3\" (ordinal 3)\n",
+      "rst": "3. three\n4. four\n"
+    },
+    {
+      "family": "errors",
+      "name": "errors.enum_empty_item_quote",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <enumerated_list enumtype=\"upperalpha\" prefix=\"\" start=\"17\" suffix=\".\">\n            <list_item>\n        <system_message level=\"1\" line=\"3\" source=\"<snippet>\" type=\"INFO\">\n            <paragraph>\n                Enumerated list start value not ordinal-1: \"Q\" (ordinal 17)\n",
+      "rst": "Para.\n\n    Q.\n"
+    },
+    {
+      "family": "errors",
+      "name": "errors.nested_transition",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                Unexpected section title or transition.\n            <literal_block xml:space=\"preserve\">\n                ----\n        <paragraph>\n            quoted\n",
+      "rst": "Para.\n\n    ----\n\n    quoted\n"
+    },
+    {
+      "family": "errors",
+      "name": "errors.nested_title",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <system_message level=\"3\" line=\"4\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                Unexpected section title.\n            <literal_block xml:space=\"preserve\">\n                Fake\n                ====\n",
+      "rst": "Para.\n\n    Fake\n    ====\n"
+    },
+    {
+      "family": "errors",
+      "name": "errors.nested_title_in_list",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                item\n            <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n                <paragraph>\n                    Unexpected section title or transition.\n                <literal_block xml:space=\"preserve\">\n                    ----\n            <paragraph>\n                more\n",
+      "rst": "- item\n\n  ----\n\n  more\n"
+    },
+    {
+      "family": "errors",
+      "name": "errors.quote_unindent",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <block_quote>\n            <paragraph>\n                quoted line\n        <system_message level=\"2\" line=\"4\" source=\"<snippet>\" type=\"WARNING\">\n            <paragraph>\n                Block quote ends without a blank line; unexpected unindent.\n        <paragraph>\n            odd dedent\n",
+      "rst": "Para.\n\n    quoted line\n  odd dedent\n"
+    },
+    {
+      "family": "mixtures",
+      "name": "mixtures.kitchen_sink_sections",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"top\" names=\"top\">\n        <title>\n            Top\n        <target ids=\"mark\" names=\"mark\">\n        <paragraph>\n            para\n        <transition>\n        <section ids=\"sub\" names=\"sub\">\n            <title>\n                Sub\n            <bullet_list bullet=\"-\">\n                <list_item>\n                    <paragraph>\n                        list\n                <list_item>\n                    <paragraph>\n                        items\n    <section ids=\"back\" names=\"back\">\n        <title>\n            Back\n        <paragraph>\n            end\n",
+      "rst": "Top\n===\n\n.. _mark:\n\npara\n\n----\n\nSub\n---\n\n- list\n- items\n\nBack\n====\n\nend\n"
+    },
+    {
+      "family": "mixtures",
+      "name": "mixtures.list_quote_list",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                outer\n            <block_quote>\n                <paragraph>\n                    quoted in item\n            <bullet_list bullet=\"-\">\n                <list_item>\n                    <paragraph>\n                        inner after quote\n",
+      "rst": "- outer\n\n      quoted in item\n\n  - inner after quote\n"
+    },
+    {
+      "family": "mixtures",
+      "name": "mixtures.literal_in_list",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                item with code:\n            <literal_block xml:space=\"preserve\">\n                indented code\n        <list_item>\n            <paragraph>\n                next item\n",
+      "rst": "- item with code::\n\n      indented code\n\n- next item\n"
+    },
+    {
+      "family": "mixtures",
+      "name": "mixtures.deflist_in_quote",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <definition_list>\n            <definition_list_item>\n                <term>\n                    term\n                <definition>\n                    <paragraph>\n                        def in quote\n",
+      "rst": "Para.\n\n    term\n        def in quote\n"
+    },
+    {
+      "family": "mixtures",
+      "name": "mixtures.comment_between_paragraphs",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        one\n    <comment xml:space=\"preserve\">\n        hidden note\n    <paragraph>\n        two\n",
+      "rst": "one\n\n.. hidden note\n\ntwo\n"
+    },
+    {
+      "family": "mixtures",
+      "name": "mixtures.targets_and_comments",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target ids=\"t1\" names=\"t1\" refuri=\"https://x/\">\n    <comment xml:space=\"preserve\">\n        a comment\n    <target ids=\"t2\" names=\"t2\">\n    <paragraph>\n        para\n",
+      "rst": ".. _t1: https://x/\n.. a comment\n.. _t2:\n\npara\n"
+    },
+    {
+      "family": "mixtures",
+      "name": "mixtures.lineblock_then_list",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <line_block>\n        <line>\n            a\n        <line>\n            b\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                item\n",
+      "rst": "| a\n| b\n\n- item\n"
+    },
+    {
+      "family": "mixtures",
+      "name": "mixtures.quote_with_doctest",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <doctest_block xml:space=\"preserve\">\n            >>> quoted_code()\n            output\n",
+      "rst": "Para.\n\n    >>> quoted_code()\n    output\n"
+    },
+    {
+      "family": "mixtures",
+      "name": "mixtures.tabbed_list",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                item\n            <block_quote>\n                <paragraph>\n                    continued via tab\n",
+      "rst": "- item\n\n\tcontinued via tab\n"
+    },
+    {
+      "family": "hardening",
+      "name": "hardening.bullet_after_paragraph_adjacent",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        para\n        - item\n",
+      "rst": "para\n- item\n"
+    },
+    {
+      "family": "hardening",
+      "name": "hardening.roman_i_then_j",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        i. x\n        j. y\n",
+      "rst": "i. x\nj. y\n"
+    },
+    {
+      "family": "hardening",
+      "name": "hardening.single_x_alpha",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <enumerated_list enumtype=\"loweralpha\" prefix=\"\" start=\"24\" suffix=\".\">\n        <list_item>\n            <paragraph>\n                ten\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            Enumerated list start value not ordinal-1: \"x\" (ordinal 24)\n",
+      "rst": "x. ten\n"
+    },
+    {
+      "family": "hardening",
+      "name": "hardening.enum_line_as_title",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"one\" names=\"1.\\ one\">\n        <title>\n            1. one\n        <paragraph>\n            body\n",
+      "rst": "1. one\n=========\n\nbody\n"
+    },
+    {
+      "family": "hardening",
+      "name": "hardening.bullet_then_adornment",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                a\n    <system_message level=\"2\" line=\"2\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Bullet list ends without a blank line; unexpected unindent.\n    <transition>\n    <paragraph>\n        after\n",
+      "rst": "- a\n----\n\nafter\n"
+    },
+    {
+      "family": "hardening",
+      "name": "hardening.target_camel_name",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target ids=\"camelcase-name\" names=\"camelcase\\ name\" refuri=\"https://x/\">\n",
+      "rst": ".. _CamelCase  Name: https://x/\n"
+    },
+    {
+      "family": "hardening",
+      "name": "hardening.lone_double_colon",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"2\" line=\"2\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Literal block expected; none found.\n",
+      "rst": "::\n"
+    },
+    {
+      "family": "hardening",
+      "name": "hardening.trailing_expect_literal",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        para:\n    <system_message level=\"2\" line=\"2\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Literal block expected; none found.\n",
+      "rst": "para::\n"
+    },
+    {
+      "family": "hardening",
+      "name": "hardening.target_then_adjacent_paragraph",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target ids=\"t\" names=\"t\">\n    <system_message level=\"2\" line=\"2\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Explicit markup ends without a blank line; unexpected unindent.\n    <paragraph>\n        para right after\n",
+      "rst": ".. _t:\npara right after\n"
+    },
+    {
+      "family": "hardening",
+      "name": "hardening.comment_then_adjacent_text",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n        c\n    <system_message level=\"2\" line=\"2\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Explicit markup ends without a blank line; unexpected unindent.\n    <paragraph>\n        not indented\n",
+      "rst": ".. c\nnot indented\n"
+    },
+    {
+      "family": "hardening",
+      "name": "hardening.tab_in_literal",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        code:\n    <literal_block xml:space=\"preserve\">\n        a   b\n",
+      "rst": "code::\n\n    a\tb\n"
+    },
+    {
+      "family": "hardening",
+      "name": "hardening.sections_no_blank_between",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"a\" names=\"a\">\n        <title>\n            A\n    <section ids=\"b\" names=\"b\">\n        <title>\n            B\n",
+      "rst": "A\n=\nB\n=\n"
+    },
+    {
+      "family": "hardening",
+      "name": "hardening.body_adjacent_after_underline",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            body adjacent\n",
+      "rst": "Title\n=====\nbody adjacent\n"
+    },
+    {
+      "family": "hardening",
+      "name": "hardening.quote_attribution_only",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <paragraph>\n            -- Just Attribution\n",
+      "rst": "Para.\n\n    -- Just Attribution\n"
+    },
+    {
+      "family": "hardening",
+      "name": "hardening.deep_def_indent",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                term\n            <definition>\n                <definition_list>\n                    <definition_list_item>\n                        <term>\n                            def1\n                        <definition>\n                            <paragraph>\n                                deeper block\n",
+      "rst": "term\n    def1\n        deeper block\n"
+    },
+    {
+      "family": "hardening",
+      "name": "hardening.lineblock_whole_doc",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <line_block>\n        <line>\n",
+      "rst": "|\n"
+    },
+    {
+      "family": "hardening",
+      "name": "hardening.adjacent_comments_with_bodies",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n        one\n        one body\n    <comment xml:space=\"preserve\">\n        two\n",
+      "rst": ".. one\n   one body\n.. two\n"
+    },
+    {
+      "family": "hardening",
+      "name": "hardening.enum_paren_mismatch",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        (1. x\n",
+      "rst": "(1. x\n"
+    },
+    {
+      "family": "hardening",
+      "name": "hardening.anon_shortcut_adjacent_para",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target anonymous=\"1\" ids=\"id1\" refuri=\"https://x/\">\n    <system_message level=\"2\" line=\"2\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Explicit markup ends without a blank line; unexpected unindent.\n    <paragraph>\n        para after\n",
+      "rst": "__ https://x/\npara after\n"
+    },
+    {
+      "family": "hardening",
+      "name": "hardening.literal_inside_list_item",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                item\n            <paragraph>\n                para:\n            <literal_block xml:space=\"preserve\">\n                lit in item\n",
+      "rst": "- item\n\n  para::\n\n      lit in item\n"
+    },
+    {
+      "family": "hardening",
+      "name": "hardening.dashes_mid_quote_not_attribution",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <paragraph>\n            a -- b stays text\n",
+      "rst": "Para.\n\n    a -- b stays text\n"
+    },
+    {
+      "family": "hardening",
+      "name": "hardening.attribution_then_more_attribution",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <paragraph>\n            body\n        <attribution>\n            a\n    <block_quote>\n        <paragraph>\n            -- b\n",
+      "rst": "Para.\n\n    body\n\n    -- a\n\n    -- b\n"
+    },
+    {
+      "family": "hardening",
+      "name": "hardening.target_then_bullet_adjacent",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target ids=\"t\" names=\"t\">\n    <system_message level=\"2\" line=\"2\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Explicit markup ends without a blank line; unexpected unindent.\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                item\n",
+      "rst": ".. _t:\n- item\n"
+    },
+    {
+      "family": "hardening",
+      "name": "hardening.quoted_literal_at_eof",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        q:\n    <literal_block xml:space=\"preserve\">\n        > a\n        > b\n",
+      "rst": "q::\n\n> a\n> b\n"
+    },
+    {
+      "family": "hardening",
+      "name": "hardening.comment_tab_continuation",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n        c\n        body via tab\n",
+      "rst": ".. c\n\tbody via tab\n"
+    },
+    {
+      "family": "hardening",
+      "name": "hardening.deflist_term_double_colon_blank_ok",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        para:\n    <literal_block xml:space=\"preserve\">\n        real literal\n",
+      "rst": "para::\n\n    real literal\n"
+    },
+    {
+      "family": "mixtures",
+      "name": "mixtures.everything_adjacent",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"head\" names=\"head\">\n        <title>\n            Head\n        <definition_list>\n            <definition_list_item>\n                <term>\n                    term\n                <definition>\n                    <paragraph>\n                        def\n        <bullet_list bullet=\"-\">\n            <list_item>\n                <paragraph>\n                    a\n            <list_item>\n                <paragraph>\n                    b\n        <enumerated_list enumtype=\"arabic\" prefix=\"\" suffix=\".\">\n            <list_item>\n                <paragraph>\n                    one\n            <list_item>\n                <paragraph>\n                    two\n        <literal_block xml:space=\"preserve\">\n            lit\n        <comment xml:space=\"preserve\">\n            done\n",
+      "rst": "Head\n====\n\nterm\n    def\n\n- a\n- b\n\n1. one\n2. two\n\n::\n\n    lit\n\n.. done\n"
+    }
+  ],
+  "docutils_version": "0.22.4",
+  "generator": "tools/gen_doctree_fixture.py",
+  "settings": {
+    "auto_id_prefix": "id",
+    "halt_level": 5,
+    "id_prefix": "",
+    "report_level": 1
+  }
+}

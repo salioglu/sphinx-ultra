@@ -79,6 +79,7 @@ struct SectionStart {
     /// Extra messages inserted right after `<title>` (short-underline
     /// warning); the duplicate-name INFO is added by the caller.
     messages: Vec<Node>,
+    title_lineno: u32,
     underline_lineno: u32,
     span: Span,
 }
@@ -127,6 +128,23 @@ impl<'a> BlockParser<'a> {
 
     fn msg(&self, level: u8, text: &str, lineno: u32) -> Node {
         messages::system_message(level, text, lineno, self.source_path)
+    }
+
+    /// Probe-verified: an explicit-markup element (comment/target) followed
+    /// by an ADJACENT non-blank column-0 line that is not itself explicit
+    /// markup warns. Consecutive `..`/`__ ` items chain without warning.
+    fn warn_explicit_markup_end(&self, lines: &[LineRef<'a>], pos: usize, out: &mut Vec<Node>) {
+        if let Some(l) = lines.get(pos) {
+            let explicit_ish =
+                l.text == ".." || l.text.starts_with(".. ") || l.text.starts_with("__ ");
+            if !l.is_blank() && l.indent() == 0 && !explicit_ish {
+                out.push(self.msg(
+                    messages::WARNING,
+                    "Explicit markup ends without a blank line; unexpected unindent.",
+                    l.lineno,
+                ));
+            }
+        }
     }
 
     // ------------------------------------------------------------------
@@ -197,7 +215,7 @@ impl<'a> BlockParser<'a> {
                 stack.len(),
                 level
             );
-            let mut msg = self.msg(messages::ERROR, &text, start.underline_lineno);
+            let mut msg = self.msg(messages::ERROR, &text, start.title_lineno);
             msg = messages::with_literal(msg, &start.raw_lines);
             let established: Vec<String> = self.styles.iter().map(|(c, _)| c.to_string()).collect();
             msg = messages::with_paragraph(
@@ -412,6 +430,7 @@ impl<'a> BlockParser<'a> {
         }
         let span = self.span_of(lines, *pos, *pos + 2);
         let raw = format!("{}\n{}\n{}", line.text, title_line.text, under.text);
+        let title_lineno = title_line.lineno;
         let underline_lineno = under.lineno;
         let title_text = title_line.text.trim().to_string();
         *pos += 3;
@@ -420,6 +439,7 @@ impl<'a> BlockParser<'a> {
             style: (ch, true),
             raw_lines: raw,
             messages: Vec::new(),
+            title_lineno,
             underline_lineno,
             span,
         })
@@ -467,6 +487,7 @@ impl<'a> BlockParser<'a> {
                         }
                         let span = self.span_of(lines, *pos, *pos + 1);
                         let raw = format!("{}\n{}", line.text, next.text);
+                        let title_lineno = line.lineno;
                         let underline_lineno = next.lineno;
                         let title = line.text.trim().to_string();
                         *pos += 2;
@@ -475,6 +496,7 @@ impl<'a> BlockParser<'a> {
                             style: (ch, false),
                             raw_lines: raw,
                             messages: msgs,
+                            title_lineno,
                             underline_lineno,
                             span,
                         });
@@ -551,6 +573,14 @@ impl<'a> BlockParser<'a> {
             p += 1;
         }
         if p >= lines.len() {
+            // Probe-verified: at EOF the warning still fires, anchored to
+            // the line after the last one.
+            let after_end = lines.last().map(|l| l.lineno + 1).unwrap_or(1);
+            out.push(self.msg(
+                messages::WARNING,
+                "Literal block expected; none found.",
+                after_end,
+            ));
             *pos = p;
             return;
         }
@@ -870,7 +900,15 @@ impl<'a> BlockParser<'a> {
             }
             let mut definition =
                 Node::elem(kinds::DEFINITION, self.span_of(lines, *pos + 1, item_last));
-            definition.children = self.parse_elements(&block);
+            if term_line.text.ends_with("::") {
+                // Probe-verified: docutils flags a term ending in `::`.
+                definition.children.push(self.msg(
+                    messages::INFO,
+                    "Blank line missing before literal block (after the \"::\")? Interpreted as a definition list item.",
+                    term_line.lineno + 1,
+                ));
+            }
+            definition.children.extend(self.parse_elements(&block));
             item.children.push(definition);
             dl.children.push(item);
             *pos += 1 + consumed;
@@ -942,10 +980,12 @@ impl<'a> BlockParser<'a> {
                 i += 1;
             }
             let chunk = &block[chunk_start..i];
-            if let Some(attr) = attribution_from_chunk(chunk, span) {
-                quotes.push((std::mem::take(&mut acc), Some(attr)));
-            } else {
-                acc.extend_from_slice(chunk);
+            // Probe-verified: an attribution needs preceding quote body —
+            // a quote whose only content is "-- x" is a plain paragraph.
+            let has_body = acc.iter().any(|l| !l.is_blank());
+            match attribution_from_chunk(chunk, span) {
+                Some(attr) if has_body => quotes.push((std::mem::take(&mut acc), Some(attr))),
+                _ => acc.extend_from_slice(chunk),
             }
         }
         if !acc.iter().all(|l| l.is_blank()) || quotes.is_empty() {
@@ -1038,9 +1078,23 @@ impl<'a> BlockParser<'a> {
             return;
         }
 
-        // Comment.
+        // Comment. Probe-verified continuation rules: a comment with first-
+        // line text absorbs the following indented block THROUGH internal
+        // blank lines; a bare `..` takes a body only when the indented block
+        // is ADJACENT (`..` + blank + indent leaves an empty comment and a
+        // block quote).
         let start = *pos;
-        let (block, consumed, _indent, _terminator) = indented_block(lines, *pos + 1);
+        let adjacent_body = lines
+            .get(start + 1)
+            .map(|l| !l.is_blank() && l.indent() > 0)
+            .unwrap_or(false);
+        let consume_block = !rest.is_empty() || adjacent_body;
+        let (block, consumed) = if consume_block {
+            let (block, consumed, _indent, _terminator) = indented_block(lines, start + 1);
+            (block, consumed)
+        } else {
+            (Vec::new(), 0)
+        };
         *pos = start + 1 + consumed;
         let span = self.span_of(lines, start, start + consumed);
         let mut text_lines: Vec<String> = Vec::new();
@@ -1048,8 +1102,10 @@ impl<'a> BlockParser<'a> {
             text_lines.push(rest.to_string());
         }
         let mut body: &[LineRef<'a>] = &block;
-        while body.first().map(|l| l.is_blank()).unwrap_or(false) {
-            body = &body[1..];
+        if rest.is_empty() {
+            while body.first().map(|l| l.is_blank()).unwrap_or(false) {
+                body = &body[1..];
+            }
         }
         for l in body {
             text_lines.push(l.text.to_string());
@@ -1062,6 +1118,7 @@ impl<'a> BlockParser<'a> {
                 .push(Node::text_node(text_lines.join("\n"), span));
         }
         out.push(comment);
+        self.warn_explicit_markup_end(lines, *pos, out);
     }
 
     fn finish_target(
@@ -1073,7 +1130,17 @@ impl<'a> BlockParser<'a> {
     ) {
         let start = *pos;
         let lineno = lines[start].lineno;
-        let (block, consumed, _indent, _terminator) = indented_block(lines, *pos + 1);
+        // Probe-verified: target continuation lines must be ADJACENT (a
+        // blank line ends the target; the indented block becomes a quote).
+        let mut consumed = 0usize;
+        while lines
+            .get(start + 1 + consumed)
+            .map(|l| !l.is_blank() && l.indent() > 0)
+            .unwrap_or(false)
+        {
+            consumed += 1;
+        }
+        let block: Vec<LineRef<'a>> = lines[start + 1..start + 1 + consumed].to_vec();
         *pos = start + 1 + consumed;
         let span = self.span_of(lines, start, start + consumed);
 
@@ -1082,9 +1149,7 @@ impl<'a> BlockParser<'a> {
             link_parts.push(marker.link.clone());
         }
         for l in &block {
-            if !l.is_blank() {
-                link_parts.push(l.text.trim().to_string());
-            }
+            link_parts.push(l.text.trim().to_string());
         }
         let link = link_parts.join("");
 
@@ -1117,6 +1182,7 @@ impl<'a> BlockParser<'a> {
             out.push(m);
         }
         out.push(target);
+        self.warn_explicit_markup_end(lines, *pos, out);
     }
 
     fn parse_anonymous_shortcut(
@@ -1141,6 +1207,7 @@ impl<'a> BlockParser<'a> {
         }
         self.registry.set_id_anonymous(&mut target);
         out.push(target);
+        self.warn_explicit_markup_end(lines, *pos, out);
     }
 }
 
@@ -1377,25 +1444,20 @@ fn initial_candidates(body: &str, auto: bool) -> Vec<EnumCandidate> {
     }
     let chars: Vec<char> = body.chars().collect();
     if chars.len() == 1 {
+        // Probe-verified: single-letter firsts have NO ambiguity in docutils
+        // 0.22.4 — 'i'/'I' are roman(1) ONLY ("i. x\nj. y" is a paragraph),
+        // every other letter is alpha ONLY ("v. five\nvi. six" is a
+        // paragraph). Successors reinterpret via ordinal_in_sequence, which
+        // is how "h. i. j." stays alpha.
         let c = chars[0];
         return match c {
-            'i' => vec![mk("lowerroman", 1), mk("loweralpha", 9)],
-            'I' => vec![mk("upperroman", 1), mk("upperalpha", 9)],
+            'i' => vec![mk("lowerroman", 1)],
+            'I' => vec![mk("upperroman", 1)],
             _ if c.is_ascii_lowercase() => {
-                let alpha = (c as u64) - ('a' as u64) + 1;
-                let mut v = vec![mk("loweralpha", alpha)];
-                if let Some(r) = roman_value(body, true) {
-                    v.push(mk("lowerroman", r));
-                }
-                v
+                vec![mk("loweralpha", (c as u64) - ('a' as u64) + 1)]
             }
             _ if c.is_ascii_uppercase() => {
-                let alpha = (c as u64) - ('A' as u64) + 1;
-                let mut v = vec![mk("upperalpha", alpha)];
-                if let Some(r) = roman_value(body, false) {
-                    v.push(mk("upperroman", r));
-                }
-                v
+                vec![mk("upperalpha", (c as u64) - ('A' as u64) + 1)]
             }
             _ => Vec::new(),
         };
@@ -1940,9 +2002,16 @@ mod tests {
             pf(".. This is a comment\n   that continues on\n   multiple lines."),
             "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n        This is a comment\n        that continues on\n        multiple lines.\n"
         );
+        // Probe-verified: `..` + blank + indented block leaves an EMPTY
+        // comment; the block becomes an ordinary block quote.
         assert_eq!(
             pf("..\n\n   Indented block attached\n   to an empty comment start."),
-            "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n        Indented block attached\n        to an empty comment start.\n"
+            "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n    <block_quote>\n        <paragraph>\n            Indented block attached\n            to an empty comment start.\n"
+        );
+        // Adjacent block IS the body.
+        assert_eq!(
+            pf("..\n   block line one\n   block line two"),
+            "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n        block line one\n        block line two\n"
         );
         assert_eq!(
             pf(".."),
