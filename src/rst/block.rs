@@ -20,6 +20,10 @@ use super::lines::Lines;
 const ADORNMENT_CHARS: &str = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
 const BULLET_CHARS: [char; 6] = ['*', '+', '-', '\u{2022}', '\u{2023}', '\u{2043}'];
 
+/// A pending block-quote segment: accumulated body lines plus an optional
+/// (attribution node, marker lineno) that closed it.
+type QuoteSegment<'a> = (Vec<LineRef<'a>>, Option<(Node, u32)>);
+
 #[derive(Copy, Clone, Debug)]
 struct LineRef<'a> {
     text: &'a str,
@@ -277,20 +281,29 @@ impl<'a> BlockParser<'a> {
             Self::close_section(root, stack);
         }
 
+        let inline = super::inline::parse_inline(
+            &start.title,
+            start.span,
+            start.title_lineno,
+            &mut self.registry,
+            self.source_path,
+        );
+        let mut title = Node::elem(kinds::TITLE, start.span);
+        title.children = inline.nodes;
+        // Section name from the title's TEXT content (markup stripped).
         let mut section = Node::elem(kinds::SECTION, start.span);
         section
             .attrs
             .names
-            .push(ids::fully_normalize_name(&start.title));
+            .push(ids::fully_normalize_name(&title.astext()));
         let dup_info =
             self.registry
                 .set_id_implicit(&mut section, start.underline_lineno, self.source_path);
-        let mut title = Node::elem(kinds::TITLE, start.span);
-        title
-            .children
-            .push(Node::text_node(start.title.clone(), start.span));
         section.children.push(title);
         for m in start.messages {
+            section.children.push(m);
+        }
+        for m in inline.messages {
             section.children.push(m);
         }
         if let Some(info) = dup_info {
@@ -1038,16 +1051,36 @@ impl<'a> BlockParser<'a> {
             let term_span = self.span_of(lines, *pos, *pos);
             let mut parts = split_classifiers(term_line.text).into_iter();
             let term_text = parts.next().unwrap_or_default();
+            let mut term_msgs = Vec::new();
+            let inline = super::inline::parse_inline(
+                &term_text,
+                term_span,
+                term_line.lineno,
+                &mut self.registry,
+                self.source_path,
+            );
             let mut term = Node::elem(kinds::TERM, term_span);
-            term.children.push(Node::text_node(term_text, term_span));
+            term.children = inline.nodes;
+            term_msgs.extend(inline.messages);
             item.children.push(term);
             for classifier in parts {
+                let inline = super::inline::parse_inline(
+                    &classifier,
+                    term_span,
+                    term_line.lineno,
+                    &mut self.registry,
+                    self.source_path,
+                );
                 let mut c = Node::elem(kinds::CLASSIFIER, term_span);
-                c.children.push(Node::text_node(classifier, term_span));
+                c.children = inline.nodes;
+                term_msgs.extend(inline.messages);
                 item.children.push(c);
             }
             let mut definition =
                 Node::elem(kinds::DEFINITION, self.span_of(lines, *pos + 1, item_last));
+            // Fixture-verified: term/classifier inline messages land INSIDE
+            // the definition, before its content.
+            definition.children.append(&mut term_msgs);
             if term_line.text.ends_with("::") {
                 // Probe-verified: docutils flags a term ending in `::`.
                 definition.children.push(self.msg(
@@ -1114,7 +1147,7 @@ impl<'a> BlockParser<'a> {
         let span = self.span_of(lines, start, start + consumed - 1);
 
         // Split into blank-separated chunks; attribution chunks close quotes.
-        let mut quotes: Vec<(Vec<LineRef<'a>>, Option<Node>)> = Vec::new();
+        let mut quotes: Vec<QuoteSegment<'a>> = Vec::new();
         let mut acc: Vec<LineRef<'a>> = Vec::new();
         let mut i = 0usize;
         while i < block.len() {
@@ -1142,13 +1175,26 @@ impl<'a> BlockParser<'a> {
         for (body, attribution) in quotes {
             let mut quote = Node::elem(kinds::BLOCK_QUOTE, span);
             quote.children = self.parse_elements(&body);
-            if let Some(a) = attribution {
+            let mut attr_messages = Vec::new();
+            if let Some((raw_attr, lineno)) = attribution {
+                let raw = raw_attr.astext();
+                let inline = super::inline::parse_inline(
+                    &raw,
+                    raw_attr.span,
+                    lineno,
+                    &mut self.registry,
+                    self.source_path,
+                );
+                let mut a = Node::elem(kinds::ATTRIBUTION, raw_attr.span);
+                a.children = inline.nodes;
+                attr_messages = inline.messages;
                 quote.children.push(a);
             }
             if quote.children.is_empty() {
                 continue;
             }
             out.push(quote);
+            out.append(&mut attr_messages);
         }
         if let Some(t) = terminator {
             out.push(self.msg(
@@ -1214,16 +1260,31 @@ impl<'a> BlockParser<'a> {
                 break;
             }
         }
-        // Resolve inherited depths.
-        let mut resolved: Vec<(usize, String)> = Vec::with_capacity(items.len());
+        // Resolve inherited depths and inline-parse each line's text.
+        let span = self.span_of(lines, start, p - 1);
+        let first_lineno = lines[start].lineno;
+        let mut resolved: Vec<(usize, Vec<Node>)> = Vec::with_capacity(items.len());
+        let mut lb_messages: Vec<Node> = Vec::new();
         let mut prev_depth = 0usize;
         for (depth, text) in items {
             let d = depth.unwrap_or(prev_depth);
             prev_depth = d;
-            resolved.push((d, text));
+            if text.is_empty() {
+                resolved.push((d, Vec::new()));
+            } else {
+                let inline = super::inline::parse_inline(
+                    &text,
+                    span,
+                    first_lineno,
+                    &mut self.registry,
+                    self.source_path,
+                );
+                lb_messages.extend(inline.messages);
+                resolved.push((d, inline.nodes));
+            }
         }
-        let span = self.span_of(lines, start, p - 1);
-        out.push(build_line_block(&resolved, span, 0));
+        out.push(build_line_block(&mut resolved, span, 0));
+        out.append(&mut lb_messages);
         // Fixture-verified: warning anchored to the LAST line-block line.
         if p < lines.len() && !lines[p].is_blank() {
             out.push(self.msg(
@@ -1488,7 +1549,7 @@ fn strip_literal_colons(text: &str) -> (String, bool) {
     (text.to_string(), false)
 }
 
-fn attribution_from_chunk(chunk: &[LineRef<'_>], span: Span) -> Option<Node> {
+fn attribution_from_chunk(chunk: &[LineRef<'_>], span: Span) -> Option<(Node, u32)> {
     let first = chunk.first()?;
     if first.indent() != 0 {
         return None;
@@ -1533,19 +1594,17 @@ fn attribution_from_chunk(chunk: &[LineRef<'_>], span: Span) -> Option<Node> {
     }
     let mut attribution = Node::elem(kinds::ATTRIBUTION, span);
     attribution.children.push(Node::text_node(text, span));
-    Some(attribution)
+    Some((attribution, first.lineno))
 }
 
-fn build_line_block(items: &[(usize, String)], span: Span, guard: usize) -> Node {
+fn build_line_block(items: &mut [(usize, Vec<Node>)], span: Span, guard: usize) -> Node {
     let mut lb = Node::elem(kinds::LINE_BLOCK, span);
     // Totality guard mirroring MAX_NEST_DEPTH: absurd nesting flattens
     // instead of overflowing the stack (docutils crashes here).
     if guard >= MAX_NEST_DEPTH {
-        for (_, text) in items {
+        for (_, children) in items.iter_mut() {
             let mut line = Node::elem(kinds::LINE, span);
-            if !text.is_empty() {
-                line.children.push(Node::text_node(text.clone(), span));
-            }
+            line.children = std::mem::take(children);
             lb.children.push(line);
         }
         return lb;
@@ -1553,12 +1612,9 @@ fn build_line_block(items: &[(usize, String)], span: Span, guard: usize) -> Node
     let base = items.iter().map(|(d, _)| *d).min().unwrap_or(0);
     let mut i = 0usize;
     while i < items.len() {
-        let (depth, text) = &items[i];
-        if *depth <= base {
+        if items[i].0 <= base {
             let mut line = Node::elem(kinds::LINE, span);
-            if !text.is_empty() {
-                line.children.push(Node::text_node(text.clone(), span));
-            }
+            line.children = std::mem::take(&mut items[i].1);
             lb.children.push(line);
             i += 1;
         } else {
@@ -1567,7 +1623,7 @@ fn build_line_block(items: &[(usize, String)], span: Span, guard: usize) -> Node
                 i += 1;
             }
             lb.children
-                .push(build_line_block(&items[run_start..i], span, guard + 1));
+                .push(build_line_block(&mut items[run_start..i], span, guard + 1));
         }
     }
     lb

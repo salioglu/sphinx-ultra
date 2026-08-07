@@ -281,6 +281,17 @@ CASES = [
     ("inline_basics", "emphasis_in_quote", "Para.\n\n    quoted *emph* here\n"),
     ("inline_basics", "emphasis_in_list", "- item *emph* text\n"),
     ("inline_basics", "unclosed_in_list_item", "- *oops in item\n"),
+    # ----- wave 2: inline in carriers (titles/terms/attributions/line blocks) -----
+    ("inline_carriers", "markup_in_title", "The *Great* Title\n=================\n\nbody\n"),
+    ("inline_carriers", "literal_in_title", "Using ``code`` Here\n===================\n\nbody\n"),
+    ("inline_carriers", "unclosed_in_title", "Bad *title\n==========\n\nbody\n"),
+    ("inline_carriers", "markup_in_term", "*term* text\n    definition\n"),
+    ("inline_carriers", "markup_in_classifier", "term : *class*\n    definition\n"),
+    ("inline_carriers", "unclosed_in_term", "*oops term\n    definition\n"),
+    ("inline_carriers", "markup_in_attribution", "Para.\n\n    body\n\n    -- *Anon* Author\n"),
+    ("inline_carriers", "markup_in_lineblock", "| plain line\n| *emph* line\n| ``lit`` line\n"),
+    ("inline_carriers", "unclosed_in_lineblock", "| *oops line\n| second\n"),
+    ("inline_carriers", "markup_title_dup_names", "*Same*\n======\n\nx\n\nSame\n====\n\ny\n"),
     # ----- review round (adversarial-review confirmed findings, 2026-08-07) -----
     ("review", "attr_no_space", "Para.\n\n    body\n\n    --Author\n"),
     ("review", "attr_no_space_emdash", "Para.\n\n    body\n\n    \u2014Author\n"),
@@ -376,7 +387,7 @@ def main() -> int:
         "paragraphs": 4, "sections": 8, "transition": 4, "lists_bullet": 8,
         "lists_enum": 8, "deflist": 8, "quote": 8, "literal": 8,
         "comment_target": 8, "lineblock": 4, "doctest": 4, "errors": 12,
-        "hardening": 20, "mixtures": 8, "review": 45, "inline_basics": 25,
+        "hardening": 20, "mixtures": 8, "review": 45, "inline_basics": 25, "inline_carriers": 10,
     }
     counts: dict = {}
     for family, _, _ in CASES:

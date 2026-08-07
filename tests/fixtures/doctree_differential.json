@@ -1207,6 +1207,66 @@
       "rst": "- *oops in item\n"
     },
     {
+      "family": "inline_carriers",
+      "name": "inline_carriers.markup_in_title",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"the-great-title\" names=\"the\\ great\\ title\">\n        <title>\n            The \n            <emphasis>\n                Great\n             Title\n        <paragraph>\n            body\n",
+      "rst": "The *Great* Title\n=================\n\nbody\n"
+    },
+    {
+      "family": "inline_carriers",
+      "name": "inline_carriers.literal_in_title",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"using-code-here\" names=\"using\\ code\\ here\">\n        <title>\n            Using \n            <literal>\n                code\n             Here\n        <paragraph>\n            body\n",
+      "rst": "Using ``code`` Here\n===================\n\nbody\n"
+    },
+    {
+      "family": "inline_carriers",
+      "name": "inline_carriers.unclosed_in_title",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"bad-title\" names=\"bad\\ *title\">\n        <title>\n            Bad \n            <problematic ids=\"id2\" refid=\"id1\">\n                *\n            title\n        <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n            <paragraph>\n                Inline emphasis start-string without end-string.\n        <paragraph>\n            body\n",
+      "rst": "Bad *title\n==========\n\nbody\n"
+    },
+    {
+      "family": "inline_carriers",
+      "name": "inline_carriers.markup_in_term",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                <emphasis>\n                    term\n                 text\n            <definition>\n                <paragraph>\n                    definition\n",
+      "rst": "*term* text\n    definition\n"
+    },
+    {
+      "family": "inline_carriers",
+      "name": "inline_carriers.markup_in_classifier",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                term\n            <classifier>\n                <emphasis>\n                    class\n            <definition>\n                <paragraph>\n                    definition\n",
+      "rst": "term : *class*\n    definition\n"
+    },
+    {
+      "family": "inline_carriers",
+      "name": "inline_carriers.unclosed_in_term",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                <problematic ids=\"id2\" refid=\"id1\">\n                    *\n                oops term\n            <definition>\n                <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n                    <paragraph>\n                        Inline emphasis start-string without end-string.\n                <paragraph>\n                    definition\n",
+      "rst": "*oops term\n    definition\n"
+    },
+    {
+      "family": "inline_carriers",
+      "name": "inline_carriers.markup_in_attribution",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <paragraph>\n            body\n        <attribution>\n            <emphasis>\n                Anon\n             Author\n",
+      "rst": "Para.\n\n    body\n\n    -- *Anon* Author\n"
+    },
+    {
+      "family": "inline_carriers",
+      "name": "inline_carriers.markup_in_lineblock",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <line_block>\n        <line>\n            plain line\n        <line>\n            <emphasis>\n                emph\n             line\n        <line>\n            <literal>\n                lit\n             line\n",
+      "rst": "| plain line\n| *emph* line\n| ``lit`` line\n"
+    },
+    {
+      "family": "inline_carriers",
+      "name": "inline_carriers.unclosed_in_lineblock",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <line_block>\n        <line>\n            <problematic ids=\"id2\" refid=\"id1\">\n                *\n            oops line\n        <line>\n            second\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Inline emphasis start-string without end-string.\n",
+      "rst": "| *oops line\n| second\n"
+    },
+    {
+      "family": "inline_carriers",
+      "name": "inline_carriers.markup_title_dup_names",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section dupnames=\"same\" ids=\"same\">\n        <title>\n            <emphasis>\n                Same\n        <paragraph>\n            x\n    <section dupnames=\"same\" ids=\"id1\">\n        <title>\n            Same\n        <system_message backrefs=\"id1\" level=\"1\" line=\"7\" source=\"<snippet>\" type=\"INFO\">\n            <paragraph>\n                Duplicate implicit target name: \"same\".\n        <paragraph>\n            y\n",
+      "rst": "*Same*\n======\n\nx\n\nSame\n====\n\ny\n"
+    },
+    {
       "family": "review",
       "name": "review.attr_no_space",
       "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <paragraph>\n            body\n        <attribution>\n            Author\n",
