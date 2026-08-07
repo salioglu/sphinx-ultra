@@ -6,6 +6,7 @@ pub mod builder;
 pub mod cache;
 pub mod config;
 pub mod directives;
+pub mod doctree;
 pub mod document;
 pub mod domains;
 pub mod environment;
