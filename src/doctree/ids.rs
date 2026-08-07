@@ -244,6 +244,12 @@ impl IdRegistry {
         self.register(node, line, source, true, internal)
     }
 
+    /// Register an anonymous target: always an auto id, never a name.
+    pub fn set_id_anonymous(&mut self, node: &mut Node) {
+        let id = self.allocate_id(&[]);
+        node.attrs.ids.push(id);
+    }
+
     pub fn take_fixups(&mut self) -> Vec<DupnameFixup> {
         std::mem::take(&mut self.fixups)
     }
