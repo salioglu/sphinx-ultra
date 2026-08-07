@@ -26,23 +26,39 @@ struct LineRef<'a> {
     lineno: u32,
     src_start: u32,
     src_end: u32,
+    /// Cached leading-space count. Computed once at view construction and
+    /// derived arithmetically on dedent — re-scanning per nesting level made
+    /// deep nesting O(depth^3) (measured: 800-level nest took ~0.5s).
+    indent: u32,
 }
 
 impl<'a> LineRef<'a> {
+    fn new(text: &'a str, lineno: u32, src_start: u32, src_end: u32) -> LineRef<'a> {
+        let indent = (text.len() - text.trim_start_matches(' ').len()) as u32;
+        LineRef {
+            text,
+            lineno,
+            src_start,
+            src_end,
+            indent,
+        }
+    }
+
     fn is_blank(&self) -> bool {
         self.text.is_empty()
     }
 
     fn indent(&self) -> usize {
-        self.text.len() - self.text.trim_start_matches(' ').len()
+        self.indent as usize
     }
 
     /// Dedent by `n` columns (leading columns are spaces by construction;
-    /// marker lines are sliced with [`rest_after`] instead).
+    /// marker lines are re-wrapped with [`LineRef::new`] instead).
     fn dedented(&self, n: usize) -> LineRef<'a> {
         let n = n.min(self.indent());
         LineRef {
             text: &self.text[n..],
+            indent: self.indent - n as u32,
             ..*self
         }
     }
@@ -84,12 +100,18 @@ struct SectionStart {
     span: Span,
 }
 
+/// Nested-container recursion cap. Real documents nest ~10 deep; docutils
+/// itself dies with RecursionError near Python's limit (~1000). We stay
+/// total: content beyond this depth is dropped with an ERROR message.
+const MAX_NEST_DEPTH: usize = 200;
+
 pub(crate) struct BlockParser<'a> {
     top: Vec<LineRef<'a>>,
     source_path: &'a str,
     source_len: usize,
     registry: IdRegistry,
     styles: Vec<(char, bool)>,
+    depth: usize,
 }
 
 impl<'a> BlockParser<'a> {
@@ -97,12 +119,7 @@ impl<'a> BlockParser<'a> {
         let top = lines
             .iter()
             .enumerate()
-            .map(|(i, l)| LineRef {
-                text: &l.text,
-                lineno: (i + 1) as u32,
-                src_start: l.src_start,
-                src_end: l.src_end,
-            })
+            .map(|(i, l)| LineRef::new(&l.text, (i + 1) as u32, l.src_start, l.src_end))
             .collect();
         BlockParser {
             top,
@@ -110,6 +127,7 @@ impl<'a> BlockParser<'a> {
             source_len,
             registry: IdRegistry::new(),
             styles: Vec::new(),
+            depth: 0,
         }
     }
 
@@ -259,6 +277,22 @@ impl<'a> BlockParser<'a> {
     // ------------------------------------------------------------------
 
     fn parse_elements(&mut self, lines: &[LineRef<'a>]) -> Vec<Node> {
+        if self.depth >= MAX_NEST_DEPTH {
+            // sphinx-ultra-specific totality guard (docutils crashes here).
+            let lineno = lines.first().map(|l| l.lineno).unwrap_or(1);
+            return vec![self.msg(
+                messages::ERROR,
+                "Maximum nesting depth exceeded; deeper content skipped.",
+                lineno,
+            )];
+        }
+        self.depth += 1;
+        let out = self.parse_elements_inner(lines);
+        self.depth -= 1;
+        out
+    }
+
+    fn parse_elements_inner(&mut self, lines: &[LineRef<'a>]) -> Vec<Node> {
         let mut out = Vec::new();
         let mut pos = 0usize;
         while pos < lines.len() {
@@ -722,10 +756,12 @@ impl<'a> BlockParser<'a> {
             }
         } else {
             content_indent = marker_chars + spaces;
-            body.push(LineRef {
-                text: rest,
-                ..marker_line
-            });
+            body.push(LineRef::new(
+                rest,
+                marker_line.lineno,
+                marker_line.src_start,
+                marker_line.src_end,
+            ));
         }
 
         let mut last_content = start;
