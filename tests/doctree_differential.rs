@@ -32,7 +32,7 @@ fn matches_docutils_parser_pformat() {
     let fixture: Fixture = serde_json::from_str(raw).expect("fixture parses");
     assert_eq!(fixture.docutils_version, "0.22.4");
     assert!(
-        fixture.cases.len() >= 110,
+        fixture.cases.len() >= 200,
         "fixture truncated? only {} cases",
         fixture.cases.len()
     );

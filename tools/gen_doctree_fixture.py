@@ -19,6 +19,7 @@ corpus and SUPPORTED_KINDS; never remove or rename existing cases.
 
 import io
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -247,6 +248,57 @@ CASES = [
     ("hardening", "quoted_literal_at_eof", "q::\n\n> a\n> b\n"),
     ("hardening", "comment_tab_continuation", ".. c\n\tbody via tab\n"),
     ("hardening", "deflist_term_double_colon_blank_ok", "para::\n\n    real literal\n"),
+    # ----- review round (adversarial-review confirmed findings, 2026-08-07) -----
+    ("review", "attr_no_space", "Para.\n\n    body\n\n    --Author\n"),
+    ("review", "attr_no_space_emdash", "Para.\n\n    body\n\n    \u2014Author\n"),
+    ("review", "attr_multi_space", "Para.\n\n    body\n\n    --   Author\n"),
+    ("review", "attr_ragged_continuation", "Para.\n\n    body\n\n    -- a,\n       b,\n      c\n"),
+    ("review", "attr_deep_continuation", "Para.\n\n    body\n\n    -- a,\n         b\n"),
+    ("review", "overline_too_short_warn", "====\nVery long title\n====\n\nbody\n"),
+    ("review", "overline_too_short_leading_spaces", "=====\n   Long title text\n=====\n\nbody\n"),
+    ("review", "overline_missing_underline_text", "====\nTitle\nnot underline\n\npara\n"),
+    ("review", "overline_missing_underline_blank", "====\nTitle\n\npara\n"),
+    ("review", "overline_diff_char_underline", "----\nTitle\n====\n\nbody\n"),
+    ("review", "adornment_pair", "====\n----\n\npara\n"),
+    ("review", "short_overline_pair", "--\n--\n\npara\n"),
+    ("review", "nested_short_adornment", "Para.\n\n    ---\n    text\n"),
+    ("review", "nested_short_adornment_alone", "Para.\n\n    ---\n\n    text\n"),
+    ("review", "para_multiline_colon_adjacent_indent", "line one\nline two::\n    adjacent\n"),
+    ("review", "doctest_indented_continuation", ">>> if x:\n...     y\n  indented output\nmore output\n\nafter\n"),
+    ("review", "lineblock_ends_no_blank", "| a\n| b\nplain\n"),
+    ("review", "lineblock_empty_inherits_depth", "| a\n|   n1\n|\n|   n2\n"),
+    ("review", "lineblock_continuation_relative_indent", "| a\n  b\n    c\n\nafter\n"),
+    ("review", "lineblock_continuation_after_empty", "|\n  cont\n\nafter\n"),
+    ("review", "bare_double_underscore", "__\n\npara\n"),
+    ("review", "anon_shortcut_continuation", "__ https://example.com/\n   path\n"),
+    ("review", "malformed_target_double_colon", ".. _name::\n\npara\n"),
+    ("review", "malformed_target_double_colon_uri", ".. _name:: uri\n"),
+    ("review", "malformed_target_no_colon", ".. _name\n\npara\n"),
+    ("review", "malformed_target_bare_anon", ".. __\n\npara\n"),
+    ("review", "malformed_target_empty_name", ".. _: uri\n\npara\n"),
+    ("review", "malformed_target_empty_backtick", ".. _``: https://x/\n"),
+    ("review", "malformed_target_unclosed_backtick", ".. _`abc: x\n"),
+    ("review", "target_multiline_backtick_name", ".. _`multi\n   line name`: https://x/\n\npara\n"),
+    ("review", "target_multiline_plain_name", ".. _long\n   name: uri\n\npara\n"),
+    ("review", "target_escaped_underscore_uri", ".. _a: uri\\_\n"),
+    ("review", "target_space_joined_indirect", ".. _a: one\n   two_\n"),
+    ("review", "enum_bare_successor", "1. one\n2.\n"),
+    ("review", "enum_bare_third", "1. one\n2. two\n3.\n"),
+    ("review", "enum_bare_pair", "1.\n2.\n"),
+    ("review", "enum_explicit_after_auto", "#. one\n2. two\n"),
+    ("review", "enum_auto_mid_explicit", "1. one\n#. two\n3. three\n"),
+    ("review", "target_then_section_same_name", ".. _conflict: https://x/\n\nconflict\n========\n\nbody\n"),
+    ("review", "section_then_target_same_name", "conflict\n========\n\n.. _conflict: https://x/\n\nbody\n"),
+    ("review", "bullet_alone_blank_body", "-\n\n  body\n"),
+    ("review", "cjk_underline_short", "\u65e5\u672c\u8a9e\n===\n\nbody\n"),
+    ("review", "cjk_underline_between", "\u65e5\u672c\u8a9e\n====\n\nbody\n"),
+    ("review", "cjk_underline_exact", "\u65e5\u672c\u8a9e\n======\n\nbody\n"),
+    ("review", "explicit_double_space_target", "..  _t: https://x/\n"),
+    ("review", "comment_triple_space", "..   comment text\n"),
+    ("review", "classifier_multi_space", "term  :  classifier\n    def\n"),
+    ("review", "short_overline_demote_deflist", "---\n    x\n"),
+    ("review", "quoted_literal_then_indent", "intro::\n\n> line one\n  indented\n"),
+    ("review", "established_styles_overunder", "=====\nA\n=====\n\nB\n-\n\n=====\nC\n=====\n\nD\n~\n\nbody\n"),
     ("mixtures", "everything_adjacent", "Head\n====\n\nterm\n    def\n\n- a\n- b\n\n1. one\n2. two\n\n::\n\n    lit\n\n.. done\n"),
 ]
 
@@ -285,12 +337,13 @@ def main() -> int:
 
     names = [f"{family}.{name}" for family, name, _ in CASES]
     assert len(names) == len(set(names)), "family-qualified case names must be unique"
-    assert len(CASES) >= 110, f"corpus degenerated: {len(CASES)} cases"
+    assert len(CASES) >= 200, f"corpus degenerated: {len(CASES)} cases"
 
     floors = {
         "paragraphs": 4, "sections": 8, "transition": 4, "lists_bullet": 8,
         "lists_enum": 8, "deflist": 8, "quote": 8, "literal": 8,
         "comment_target": 8, "lineblock": 4, "doctest": 4, "errors": 12,
+        "hardening": 20, "mixtures": 8, "review": 45,
     }
     counts: dict = {}
     for family, _, _ in CASES:
@@ -310,9 +363,14 @@ def main() -> int:
         pseudo = parse_pformat(rst)
         # Directive machinery is wave 3: a snippet that reaches docutils'
         # directive parsing is out of corpus scope even when its output
-        # nodes are all "supported" (unknown-directive system messages).
+        # nodes are all "supported". Two guards: output text, and directive
+        # syntax in the SOURCE (catches quietly-succeeding directives like
+        # `.. highlights::` whose output nodes are all supported kinds).
         if "directive" in pseudo:
             bad.append(f"{name}: snippet reaches directive machinery")
+            continue
+        if re.search(r"^\s*\.\. +(?!_)[\w][\w.+:-]* *::", rst, re.M):
+            bad.append(f"{name}: directive-shaped syntax in source")
             continue
         out_cases.append({
             "name": f"{family}.{name}",

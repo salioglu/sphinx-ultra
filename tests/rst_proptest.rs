@@ -66,6 +66,14 @@ proptest! {
         let tree = parse_rst(&s, &opts());
         let _ = tree.root.pformat();
     }
+
+    #[test]
+    fn parse_never_panics_on_multiline_arbitrary_input(
+        v in proptest::collection::vec("\\PC{0,40}", 0..30)
+    ) {
+        let s = v.join("\n");
+        let _ = parse_rst(&s, &opts());
+    }
 }
 
 #[test]
@@ -78,7 +86,14 @@ fn deep_nesting_does_not_overflow_stack() {
         s.push_str(&"  ".repeat(depth));
         s.push_str("- x\n");
     }
-    let _ = parse_rst(&s, &opts());
+    let tree = parse_rst(&s, &opts());
+    let out = tree.root.pformat();
+    assert_eq!(
+        out.matches("Maximum nesting depth exceeded; deeper content skipped.")
+            .count(),
+        1,
+        "depth guard must fire exactly once"
+    );
 }
 
 #[test]

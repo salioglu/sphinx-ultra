@@ -87,6 +87,20 @@ fn char_len(text: &str) -> usize {
     text.chars().count()
 }
 
+/// docutils `column_width`: east-asian wide/fullwidth chars count 2.
+fn column_width(text: &str) -> usize {
+    unicode_width::UnicodeWidthStr::width(text)
+}
+
+/// Definition-list term split on the docutils classifier delimiter
+/// `' +: +'` (one-or-more spaces, colon, one-or-more spaces).
+fn split_classifiers(term: &str) -> Vec<String> {
+    lazy_static::lazy_static! {
+        static ref CLASSIFIER_RE: regex::Regex = regex::Regex::new(" +: +").unwrap();
+    }
+    CLASSIFIER_RE.split(term).map(str::to_string).collect()
+}
+
 struct SectionStart {
     title: String,
     style: (char, bool),
@@ -215,7 +229,10 @@ impl<'a> BlockParser<'a> {
     }
 
     fn close_section(root: &mut Node, stack: &mut Vec<Node>) {
-        if let Some(done) = stack.pop() {
+        if let Some(mut done) = stack.pop() {
+            if let Some(last) = done.children.last() {
+                done.span.end = done.span.end.max(last.span.end);
+            }
             Self::container(root, stack).children.push(done);
         }
     }
@@ -235,7 +252,17 @@ impl<'a> BlockParser<'a> {
             );
             let mut msg = self.msg(messages::ERROR, &text, start.title_lineno);
             msg = messages::with_literal(msg, &start.raw_lines);
-            let established: Vec<String> = self.styles.iter().map(|(c, _)| c.to_string()).collect();
+            let established: Vec<String> = self
+                .styles
+                .iter()
+                .map(|(c, over)| {
+                    if *over {
+                        format!("{c}/{c}")
+                    } else {
+                        c.to_string()
+                    }
+                })
+                .collect();
             msg = messages::with_paragraph(
                 msg,
                 &format!("Established title styles: {}", established.join(" ")),
@@ -348,6 +375,11 @@ impl<'a> BlockParser<'a> {
             self.parse_anonymous_shortcut(lines, pos, rest, out);
             return None;
         }
+        if text == "__" {
+            // Bare `__`: anonymous internal target (fixture-verified).
+            self.parse_anonymous_shortcut(lines, pos, "", out);
+            return None;
+        }
         if let Some(c) = adornment_char(text) {
             return self.handle_adornment(lines, pos, c, match_titles, out);
         }
@@ -397,7 +429,14 @@ impl<'a> BlockParser<'a> {
                 out.push(msg);
                 *pos += 1;
             } else {
-                self.parse_paragraph_like(lines, pos, out);
+                // Fixture-verified: short adornments in nested contexts get
+                // an INFO, then reprocess through the text state.
+                out.push(self.msg(
+                    messages::INFO,
+                    "Unexpected possible title overline or transition.\nTreating it as ordinary text because it's so short.",
+                    line.lineno,
+                ));
+                return self.handle_text(lines, pos, match_titles, out);
             }
             return None;
         }
@@ -415,41 +454,69 @@ impl<'a> BlockParser<'a> {
             return None;
         }
 
-        // Overline candidacy: adornment, then a text line.
+        // Overline candidacy: adornment, then a second line.
         let title_line = next.unwrap();
-        if adornment_char(title_line.text).is_some() {
-            let msg = messages::with_literal(
-                self.msg(messages::ERROR, "Incomplete section title.", line.lineno),
-                &format!("{}\n{}", line.text, title_line.text),
-            );
-            out.push(msg);
-            *pos += 2;
-            return None;
-        }
-        if len < 4 && len < char_len(title_line.text) {
+        if len < 4 {
+            // Short overline: INFO, then reprocess through the text state
+            // ("--\n--" becomes a section titled "--"; "---\n    x" becomes
+            // a definition list).
             out.push(self.msg(
                 messages::INFO,
                 "Possible incomplete section title.\nTreating the overline as ordinary text because it's so short.",
                 line.lineno,
             ));
-            self.parse_paragraph_like(lines, pos, out);
-            return None;
+            return self.handle_text(lines, pos, match_titles, out);
         }
-        let under = lines.get(*pos + 2).copied();
-        let under_ok = under
-            .map(|u| adornment_char(u.text) == Some(ch))
-            .unwrap_or(false);
-        if !under_ok {
+        if adornment_char(title_line.text).is_some() {
             let msg = messages::with_literal(
-                self.msg(messages::ERROR, "Incomplete section title.", line.lineno),
+                self.msg(
+                    messages::ERROR,
+                    "Invalid section title or transition marker.",
+                    line.lineno,
+                ),
                 &format!("{}\n{}", line.text, title_line.text),
             );
             out.push(msg);
             *pos += 2;
             return None;
         }
+        let under = lines.get(*pos + 2).copied();
+        // Fixture-verified message split: at EOF the title is "incomplete";
+        // with a blank or text third line the underline is "missing".
+        let missing_underline = match under {
+            None => Some(("Incomplete section title.", 2usize, false)),
+            Some(u) if u.is_blank() => Some((
+                "Missing matching underline for section title overline.",
+                2,
+                false,
+            )),
+            Some(u) if adornment_char(u.text).is_none() => Some((
+                "Missing matching underline for section title overline.",
+                3,
+                true,
+            )),
+            _ => None,
+        };
+        if let Some((text, consume, third_in_literal)) = missing_underline {
+            let literal = if third_in_literal {
+                format!(
+                    "{}\n{}\n{}",
+                    line.text,
+                    title_line.text,
+                    lines[*pos + 2].text
+                )
+            } else {
+                format!("{}\n{}", line.text, title_line.text)
+            };
+            let msg =
+                messages::with_literal(self.msg(messages::ERROR, text, line.lineno), &literal);
+            out.push(msg);
+            *pos += consume;
+            return None;
+        }
         let under = under.unwrap();
-        if char_len(under.text) != len {
+        if adornment_char(under.text) != Some(ch) || char_len(under.text) != len {
+            // Different char or different length: both are a mismatch.
             let msg = messages::with_literal(
                 self.msg(
                     messages::ERROR,
@@ -462,6 +529,15 @@ impl<'a> BlockParser<'a> {
             *pos += 3;
             return None;
         }
+        // Title column width (leading spaces included) wider than the
+        // adornment: section is still created, WARNING inside.
+        let mut msgs = Vec::new();
+        if column_width(title_line.text) > len {
+            msgs.push(messages::with_literal(
+                self.msg(messages::WARNING, "Title overline too short.", line.lineno),
+                &format!("{}\n{}\n{}", line.text, title_line.text, under.text),
+            ));
+        }
         let span = self.span_of(lines, *pos, *pos + 2);
         let raw = format!("{}\n{}\n{}", line.text, title_line.text, under.text);
         let title_lineno = title_line.lineno;
@@ -472,7 +548,7 @@ impl<'a> BlockParser<'a> {
             title: title_text,
             style: (ch, true),
             raw_lines: raw,
-            messages: Vec::new(),
+            messages: msgs,
             title_lineno,
             underline_lineno,
             span,
@@ -496,7 +572,7 @@ impl<'a> BlockParser<'a> {
         if let Some(next) = next {
             if !next.is_blank() && next.indent() == 0 {
                 if let Some(ch) = adornment_char(next.text) {
-                    let title_len = char_len(line.text);
+                    let title_len = column_width(line.text);
                     let ul_len = char_len(next.text);
                     if ul_len >= title_len || ul_len >= 4 {
                         if !match_titles {
@@ -582,8 +658,7 @@ impl<'a> BlockParser<'a> {
         *pos = end;
 
         // Multi-line paragraph directly followed by an indented line.
-        if !expect_literal
-            && end < lines.len()
+        if end < lines.len()
             && !lines[end].is_blank()
             && lines[end].indent() > 0
             && end - start >= 2
@@ -593,6 +668,12 @@ impl<'a> BlockParser<'a> {
                 "Unexpected indentation.",
                 lines[end].lineno,
             ));
+            // With a `::` trigger the indented block is STILL the literal
+            // (fixture-verified); otherwise it becomes a block quote via the
+            // ordinary element loop.
+            if expect_literal {
+                self.parse_literal_block(lines, pos, out);
+            }
             return;
         }
 
@@ -660,11 +741,12 @@ impl<'a> BlockParser<'a> {
             lb.children.push(Node::text_node(text.join("\n"), span));
             out.push(lb);
             if endq < lines.len() && !lines[endq].is_blank() {
-                out.push(self.msg(
-                    messages::ERROR,
-                    "Inconsistent literal block quoting.",
-                    lines[endq].lineno,
-                ));
+                let text = if lines[endq].indent() > 0 {
+                    "Unexpected indentation."
+                } else {
+                    "Inconsistent literal block quoting."
+                };
+                out.push(self.msg(messages::ERROR, text, lines[endq].lineno));
             }
             *pos = endq;
             return;
@@ -747,7 +829,13 @@ impl<'a> BlockParser<'a> {
         let mut body: Vec<LineRef<'a>> = Vec::new();
         let content_indent;
         if rest.is_empty() {
-            match lines.get(start + 1) {
+            // Fixture-verified: a bare marker's body may follow after blank
+            // lines; the first indented line sets the content indent.
+            let mut probe = start + 1;
+            while probe < lines.len() && lines[probe].is_blank() {
+                probe += 1;
+            }
+            match lines.get(probe) {
                 Some(n) if !n.is_blank() && n.indent() > 0 => content_indent = n.indent(),
                 _ => {
                     *pos = start + 1;
@@ -802,13 +890,16 @@ impl<'a> BlockParser<'a> {
         if candidates.is_empty() {
             return false;
         }
-        if !self.enum_item_valid(lines, *pos, first, &candidates) {
+        if !self.enum_item_valid(lines, *pos, first, &candidates, first.auto) {
             return false;
         }
         let start = *pos;
         let mut warn_line: Option<u32> = None;
         let mut items: Vec<Node> = Vec::new();
         let mut current = first.clone();
+        // Fixture-verified: once an item is auto (#), explicit successors
+        // invalidate; bare successors ("2." with no text) never continue.
+        let mut auto_mode = first.auto;
         loop {
             let item = self.parse_list_item(lines, pos, current.marker_chars);
             items.push(item);
@@ -826,10 +917,17 @@ impl<'a> BlockParser<'a> {
             let mut accepted = false;
             if line.indent() == 0 {
                 if let Some(e) = parse_enumerator(line.text) {
-                    if e.prefix == first.prefix && e.suffix == first.suffix {
+                    if e.prefix == first.prefix
+                        && e.suffix == first.suffix
+                        && !e.rest_empty
+                        && !(auto_mode && !e.auto)
+                    {
                         let narrowed = advance_candidates(&candidates, &e);
-                        if !narrowed.is_empty() && self.enum_item_valid(lines, p, &e, &narrowed) {
+                        if !narrowed.is_empty()
+                            && self.enum_item_valid(lines, p, &e, &narrowed, auto_mode || e.auto)
+                        {
                             candidates = narrowed;
+                            auto_mode |= e.auto;
                             current = e;
                             *pos = p;
                             accepted = true;
@@ -886,6 +984,7 @@ impl<'a> BlockParser<'a> {
         at: usize,
         item: &Enumerator,
         candidates: &[EnumCandidate],
+        auto_context: bool,
     ) -> bool {
         let next = match lines.get(at + 1) {
             None => return true,
@@ -895,7 +994,12 @@ impl<'a> BlockParser<'a> {
             return true;
         }
         match parse_enumerator(next.text) {
-            Some(e) if e.prefix == item.prefix && e.suffix == item.suffix => {
+            Some(e)
+                if e.prefix == item.prefix
+                    && e.suffix == item.suffix
+                    && !e.rest_empty
+                    && !(auto_context && !e.auto) =>
+            {
                 !advance_candidates(candidates, &e).is_empty()
             }
             _ => false,
@@ -924,8 +1028,8 @@ impl<'a> BlockParser<'a> {
                 self.span_of(lines, *pos, item_last),
             );
             let term_span = self.span_of(lines, *pos, *pos);
-            let mut parts = term_line.text.split(" : ");
-            let term_text = parts.next().unwrap_or("");
+            let mut parts = split_classifiers(term_line.text).into_iter();
+            let term_text = parts.next().unwrap_or_default();
             let mut term = Node::elem(kinds::TERM, term_span);
             term.children.push(Node::text_node(term_text, term_span));
             item.children.push(term);
@@ -1052,9 +1156,11 @@ impl<'a> BlockParser<'a> {
     // ------------------------------------------------------------------
 
     fn parse_doctest(&mut self, lines: &[LineRef<'a>], pos: &mut usize, out: &mut Vec<Node>) {
+        // Fixture-verified: a doctest block runs to the next BLANK line,
+        // absorbing indented continuation/output lines verbatim.
         let start = *pos;
         let mut end = *pos;
-        while end < lines.len() && !lines[end].is_blank() && lines[end].indent() == 0 {
+        while end < lines.len() && !lines[end].is_blank() {
             end += 1;
         }
         let text: Vec<&str> = lines[start..end].iter().map(|l| l.text).collect();
@@ -1068,32 +1174,56 @@ impl<'a> BlockParser<'a> {
 
     fn parse_line_block(&mut self, lines: &[LineRef<'a>], pos: &mut usize, out: &mut Vec<Node>) {
         let start = *pos;
-        // (depth, text) items; indented continuations join the previous item.
-        let mut items: Vec<(usize, String)> = Vec::new();
+        // (depth, text): depth None on bare `|` lines inherits the previous
+        // line's depth (fixture-verified). Continuations dedent by the FIRST
+        // continuation line's indent, preserving deeper relative indents.
+        let mut items: Vec<(Option<usize>, String)> = Vec::new();
+        let mut cont_dedent: Option<usize> = None;
         let mut p = *pos;
         while p < lines.len() && !lines[p].is_blank() {
             let l = lines[p];
             if l.indent() == 0 && (l.text == "|" || l.text.starts_with("| ")) {
+                cont_dedent = None;
                 if l.text == "|" {
-                    items.push((0, String::new()));
+                    items.push((None, String::new()));
                 } else {
                     let content = &l.text[2..];
                     let depth = content.len() - content.trim_start_matches(' ').len();
-                    items.push((depth, content[depth..].to_string()));
+                    items.push((Some(depth), content[depth..].to_string()));
                 }
                 p += 1;
             } else if l.indent() > 0 && !items.is_empty() {
+                let dedent = *cont_dedent.get_or_insert(l.indent());
+                let dedent = dedent.min(l.indent());
                 if let Some(last) = items.last_mut() {
-                    last.1.push('\n');
-                    last.1.push_str(l.text.trim_start());
+                    if !last.1.is_empty() {
+                        last.1.push('\n');
+                    }
+                    last.1.push_str(&l.text[dedent..]);
                 }
                 p += 1;
             } else {
                 break;
             }
         }
+        // Resolve inherited depths.
+        let mut resolved: Vec<(usize, String)> = Vec::with_capacity(items.len());
+        let mut prev_depth = 0usize;
+        for (depth, text) in items {
+            let d = depth.unwrap_or(prev_depth);
+            prev_depth = d;
+            resolved.push((d, text));
+        }
         let span = self.span_of(lines, start, p - 1);
-        out.push(build_line_block(&items, span));
+        out.push(build_line_block(&resolved, span, 0));
+        // Fixture-verified: warning anchored to the LAST line-block line.
+        if p < lines.len() && !lines[p].is_blank() {
+            out.push(self.msg(
+                messages::WARNING,
+                "Line block ends without a blank line.",
+                lines[p - 1].lineno,
+            ));
+        }
         *pos = p;
     }
 
@@ -1103,14 +1233,95 @@ impl<'a> BlockParser<'a> {
 
     fn parse_explicit(&mut self, lines: &[LineRef<'a>], pos: &mut usize, out: &mut Vec<Node>) {
         let line = lines[*pos];
+        // docutils consumes ALL whitespace after `..` (fixture-verified for
+        // multi-space forms).
         let rest = if line.text == ".." {
             ""
         } else {
-            &line.text[3..]
+            line.text[2..].trim_start()
         };
 
-        if let Some(target) = parse_target_marker(rest) {
-            self.finish_target(lines, pos, target, out);
+        if rest.starts_with('_') {
+            // Target attempt: the marker (name + link) may span ADJACENT
+            // indented continuation lines; parse the joined form.
+            let start = *pos;
+            let lineno = line.lineno;
+            let mut consumed = 0usize;
+            while lines
+                .get(start + 1 + consumed)
+                .map(|l| !l.is_blank() && l.indent() > 0)
+                .unwrap_or(false)
+            {
+                consumed += 1;
+            }
+            let cont: Vec<&str> = lines[start + 1..start + 1 + consumed]
+                .iter()
+                .map(|l| l.text.trim())
+                .collect();
+            let joined = if cont.is_empty() {
+                rest.to_string()
+            } else {
+                format!("{}\n{}", rest, cont.join("\n"))
+            };
+            *pos = start + 1 + consumed;
+            let span = self.span_of(lines, start, start + consumed);
+            match parse_target_marker(&joined) {
+                Some(marker) => {
+                    let mut target = Node::elem(kinds::TARGET, span);
+                    let mut internal = false;
+                    let mut refuri_val: Option<String> = None;
+                    if marker.anonymous {
+                        target.set("anonymous", AttrValue::Int(1));
+                    } else {
+                        target
+                            .attrs
+                            .names
+                            .push(ids::fully_normalize_name(&marker.name));
+                    }
+                    if marker.link.is_empty() {
+                        internal = true;
+                    } else if let Some(refname) = reference_name_from_link(&marker.link) {
+                        target.set("refname", AttrValue::Str(refname));
+                    } else {
+                        let uri: String = marker
+                            .link
+                            .chars()
+                            .filter(|c| !c.is_whitespace() && *c != '\\')
+                            .collect();
+                        refuri_val = Some(uri.clone());
+                        target.set("refuri", AttrValue::Str(uri));
+                    }
+                    let msg = if marker.anonymous {
+                        self.registry.set_id_anonymous(&mut target);
+                        None
+                    } else {
+                        self.registry.set_id_explicit(
+                            &mut target,
+                            lineno,
+                            self.source_path,
+                            internal,
+                            refuri_val.as_deref(),
+                        )
+                    };
+                    if let Some(m) = msg {
+                        out.push(m);
+                    }
+                    out.push(target);
+                }
+                None => {
+                    // Malformed target: comment + WARNING (fixture-verified).
+                    let mut text_lines: Vec<String> = vec![rest.to_string()];
+                    text_lines.extend(cont.iter().map(|s| s.to_string()));
+                    let mut comment = Node::elem(kinds::COMMENT, span);
+                    comment.set("xml:space", AttrValue::Str("preserve".to_string()));
+                    comment
+                        .children
+                        .push(Node::text_node(text_lines.join("\n"), span));
+                    out.push(comment);
+                    out.push(self.msg(messages::WARNING, "malformed hyperlink target.", lineno));
+                }
+            }
+            self.warn_explicit_markup_end(lines, *pos, out);
             return;
         }
 
@@ -1157,17 +1368,14 @@ impl<'a> BlockParser<'a> {
         self.warn_explicit_markup_end(lines, *pos, out);
     }
 
-    fn finish_target(
+    fn parse_anonymous_shortcut(
         &mut self,
         lines: &[LineRef<'a>],
         pos: &mut usize,
-        marker: TargetMarker,
+        rest: &str,
         out: &mut Vec<Node>,
     ) {
         let start = *pos;
-        let lineno = lines[start].lineno;
-        // Probe-verified: target continuation lines must be ADJACENT (a
-        // blank line ends the target; the indented block becomes a quote).
         let mut consumed = 0usize;
         while lines
             .get(start + 1 + consumed)
@@ -1176,68 +1384,25 @@ impl<'a> BlockParser<'a> {
         {
             consumed += 1;
         }
-        let block: Vec<LineRef<'a>> = lines[start + 1..start + 1 + consumed].to_vec();
-        *pos = start + 1 + consumed;
         let span = self.span_of(lines, start, start + consumed);
-
-        let mut link_parts: Vec<String> = Vec::new();
-        if !marker.link.is_empty() {
-            link_parts.push(marker.link.clone());
+        let mut link = rest.trim().to_string();
+        for l in &lines[start + 1..start + 1 + consumed] {
+            if !link.is_empty() {
+                link.push('\n');
+            }
+            link.push_str(l.text.trim());
         }
-        for l in &block {
-            link_parts.push(l.text.trim().to_string());
-        }
-        let link = link_parts.join("");
-
-        let mut target = Node::elem(kinds::TARGET, span);
-        let mut internal = false;
-        if marker.anonymous {
-            target.set("anonymous", AttrValue::Int(1));
-        } else {
-            target
-                .attrs
-                .names
-                .push(ids::fully_normalize_name(&marker.name));
-        }
-        if link.is_empty() {
-            internal = true;
-        } else if let Some(refname) = reference_name_from_link(&link) {
-            target.set("refname", AttrValue::Str(refname));
-        } else {
-            let uri: String = link.chars().filter(|c| !c.is_whitespace()).collect();
-            target.set("refuri", AttrValue::Str(uri));
-        }
-        let msg = if marker.anonymous {
-            self.registry.set_id_anonymous(&mut target);
-            None
-        } else {
-            self.registry
-                .set_id_explicit(&mut target, lineno, self.source_path, internal)
-        };
-        if let Some(m) = msg {
-            out.push(m);
-        }
-        out.push(target);
-        self.warn_explicit_markup_end(lines, *pos, out);
-    }
-
-    fn parse_anonymous_shortcut(
-        &mut self,
-        lines: &[LineRef<'a>],
-        pos: &mut usize,
-        rest: &str,
-        out: &mut Vec<Node>,
-    ) {
-        let span = self.span_of(lines, *pos, *pos);
-        *pos += 1;
+        *pos = start + 1 + consumed;
         let mut target = Node::elem(kinds::TARGET, span);
         target.set("anonymous", AttrValue::Int(1));
-        let link = rest.trim();
         if !link.is_empty() {
-            if let Some(refname) = reference_name_from_link(link) {
+            if let Some(refname) = reference_name_from_link(&link) {
                 target.set("refname", AttrValue::Str(refname));
             } else {
-                let uri: String = link.chars().filter(|c| !c.is_whitespace()).collect();
+                let uri: String = link
+                    .chars()
+                    .filter(|c| !c.is_whitespace() && *c != '\\')
+                    .collect();
                 target.set("refuri", AttrValue::Str(uri));
             }
         }
@@ -1252,7 +1417,8 @@ impl<'a> BlockParser<'a> {
 // ----------------------------------------------------------------------
 
 /// Consume an indented block starting at `start`: lines while blank or
-/// indented; trailing blanks are consumed but excluded from the block.
+/// indented, up to the LAST indented line (trailing blanks are neither
+/// consumed nor included; callers see them).
 /// Returns (dedented block, consumed line count, base indent, adjacency
 /// terminator line number when the block ends at an adjacent non-blank
 /// column-0 line).
@@ -1319,32 +1485,68 @@ fn attribution_from_chunk(chunk: &[LineRef<'_>], span: Span) -> Option<Node> {
     if first.indent() != 0 {
         return None;
     }
-    let (marker_cols, rest) = [("--- ", 4usize), ("-- ", 3), ("\u{2014} ", 2)]
-        .iter()
-        .find_map(|(m, cols)| first.text.strip_prefix(m).map(|r| (*cols, r)))?;
+    // Fixture-verified marker rules: `--`/`---` (not followed by another
+    // hyphen) or an em dash, then ZERO or more spaces (all consumed), then
+    // non-space text.
+    let after = match first.text.strip_prefix('\u{2014}') {
+        Some(r) => r,
+        None => {
+            // `---` then `--`; a further hyphen means an adornment, not a
+            // marker. The `---` arm runs first, so the `--` arm's remainder
+            // can only start with `-` for exactly `---x`-shaped input.
+            let r = first
+                .text
+                .strip_prefix("---")
+                .or_else(|| first.text.strip_prefix("--"))?;
+            if r.starts_with('-') {
+                return None;
+            }
+            r
+        }
+    };
+    let rest = after.trim_start_matches(' ');
+    if rest.is_empty() {
+        return None;
+    }
+    // Continuation lines must share ONE uniform indent (else the chunk is
+    // not an attribution at all) and dedent by exactly that indent.
     let mut text = rest.to_string();
-    for l in &chunk[1..] {
-        text.push('\n');
-        let dedent = l.indent().min(marker_cols);
-        text.push_str(&l.text[dedent..]);
+    if chunk.len() > 1 {
+        let indent = chunk[1].indent();
+        for l in &chunk[1..] {
+            if l.indent() != indent {
+                return None;
+            }
+        }
+        for l in &chunk[1..] {
+            text.push('\n');
+            text.push_str(&l.text[indent..]);
+        }
     }
     let mut attribution = Node::elem(kinds::ATTRIBUTION, span);
     attribution.children.push(Node::text_node(text, span));
     Some(attribution)
 }
 
-fn build_line_block(items: &[(usize, String)], span: Span) -> Node {
+fn build_line_block(items: &[(usize, String)], span: Span, guard: usize) -> Node {
     let mut lb = Node::elem(kinds::LINE_BLOCK, span);
-    let base = items
-        .iter()
-        .filter(|(_, t)| !t.is_empty())
-        .map(|(d, _)| *d)
-        .min()
-        .unwrap_or(0);
+    // Totality guard mirroring MAX_NEST_DEPTH: absurd nesting flattens
+    // instead of overflowing the stack (docutils crashes here).
+    if guard >= MAX_NEST_DEPTH {
+        for (_, text) in items {
+            let mut line = Node::elem(kinds::LINE, span);
+            if !text.is_empty() {
+                line.children.push(Node::text_node(text.clone(), span));
+            }
+            lb.children.push(line);
+        }
+        return lb;
+    }
+    let base = items.iter().map(|(d, _)| *d).min().unwrap_or(0);
     let mut i = 0usize;
     while i < items.len() {
         let (depth, text) = &items[i];
-        if *depth <= base || text.is_empty() {
+        if *depth <= base {
             let mut line = Node::elem(kinds::LINE, span);
             if !text.is_empty() {
                 line.children.push(Node::text_node(text.clone(), span));
@@ -1353,11 +1555,11 @@ fn build_line_block(items: &[(usize, String)], span: Span) -> Node {
             i += 1;
         } else {
             let run_start = i;
-            while i < items.len() && items[i].0 > base && !items[i].1.is_empty() {
+            while i < items.len() && items[i].0 > base {
                 i += 1;
             }
             lb.children
-                .push(build_line_block(&items[run_start..i], span));
+                .push(build_line_block(&items[run_start..i], span, guard + 1));
         }
     }
     lb
@@ -1373,6 +1575,9 @@ struct Enumerator {
     prefix: &'static str,
     suffix: &'static str,
     auto: bool,
+    /// Marker followed by end-of-line with no text (fixture-verified: valid
+    /// for a lone first item, never for a successor).
+    rest_empty: bool,
     /// Characters the marker occupies (prefix + literal + suffix).
     marker_chars: usize,
 }
@@ -1475,6 +1680,8 @@ fn initial_candidates(body: &str, auto: bool) -> Vec<EnumCandidate> {
     if body.chars().all(|c| c.is_ascii_digit()) && !body.is_empty() {
         return body
             .parse::<u64>()
+            .ok()
+            .filter(|v| *v <= i64::MAX as u64)
             .map(|v| vec![mk("arabic", v)])
             .unwrap_or_default();
     }
@@ -1560,6 +1767,7 @@ fn parse_enumerator(text: &str) -> Option<Enumerator> {
         prefix,
         suffix,
         auto,
+        rest_empty: rest.trim().is_empty(),
         marker_chars: prefix.len() + body.len() + 1,
     })
 }
@@ -1574,13 +1782,19 @@ struct TargetMarker {
     link: String,
 }
 
-/// Parse `_name: link`, ``_`name`: link``, `__: link`, `__` forms from the
-/// text after `.. `. Returns None when this is not a hyperlink target.
+/// Parse `_name: link`, ``_`name`: link``, `__: link` forms from the
+/// (possibly multi-line, newline-joined) text after `..`. Returns None for
+/// MALFORMED targets (the caller emits a comment + "malformed hyperlink
+/// target." warning): missing colon, colon not followed by space/EOL,
+/// empty or unclosed backtick phrase, empty plain name, bare `__`.
 fn parse_target_marker(rest: &str) -> Option<TargetMarker> {
     let after = rest.strip_prefix('_')?;
     if let Some(a) = after.strip_prefix('_') {
-        // `.. __:` / `.. __: uri` anonymous form
+        // `.. __:` / `.. __: uri` anonymous form; bare `.. __` is malformed.
         let link = a.strip_prefix(':')?;
+        if !(link.is_empty() || link.starts_with(' ') || link.starts_with('\n')) {
+            return None;
+        }
         return Some(TargetMarker {
             name: String::new(),
             anonymous: true,
@@ -1590,14 +1804,21 @@ fn parse_target_marker(rest: &str) -> Option<TargetMarker> {
     if let Some(quoted) = after.strip_prefix('`') {
         let close = quoted.find('`')?;
         let name = &quoted[..close];
+        if name.is_empty() {
+            return None;
+        }
         let link = quoted[close + 1..].strip_prefix(':')?;
+        if !(link.is_empty() || link.starts_with(' ') || link.starts_with('\n')) {
+            return None;
+        }
         return Some(TargetMarker {
             name: name.to_string(),
             anonymous: false,
             link: link.trim().to_string(),
         });
     }
-    // Plain name: scan to the first unescaped ':'.
+    // Plain name: scan to the first unescaped ':', which must be followed by
+    // space, newline, or end of input.
     let mut name = String::new();
     let mut chars = after.char_indices();
     while let Some((i, c)) = chars.next() {
@@ -1612,6 +1833,9 @@ fn parse_target_marker(rest: &str) -> Option<TargetMarker> {
                     return None;
                 }
                 let link = &after[i + 1..];
+                if !(link.is_empty() || link.starts_with(' ') || link.starts_with('\n')) {
+                    return None;
+                }
                 return Some(TargetMarker {
                     name,
                     anonymous: false,
@@ -1624,16 +1848,26 @@ fn parse_target_marker(rest: &str) -> Option<TargetMarker> {
     None
 }
 
-/// `name_` or `` `phrase`_ `` → normalized reference name (indirect target).
+/// `name_` or `` `phrase`_ `` → normalized reference name (indirect
+/// target). The check runs on the whitespace-joined link block; an escaped
+/// trailing underscore (`uri\_`) is NOT a reference (fixture-verified).
 fn reference_name_from_link(link: &str) -> Option<String> {
-    let body = link.strip_suffix('_')?;
+    let joined = ids::whitespace_normalize_name(link);
+    let body = joined.strip_suffix('_')?;
+    if body.ends_with('\\') {
+        return None;
+    }
     if let Some(phrase) = body.strip_prefix('`').and_then(|b| b.strip_suffix('`')) {
+        if phrase.is_empty() {
+            return None;
+        }
         return Some(ids::fully_normalize_name(phrase));
     }
     if !body.is_empty()
         && !body.ends_with('_')
         && !body.contains(char::is_whitespace)
         && !body.contains('`')
+        && !body.contains('\\')
     {
         return Some(ids::fully_normalize_name(body));
     }
