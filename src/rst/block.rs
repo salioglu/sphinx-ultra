@@ -372,6 +372,14 @@ impl<'a> BlockParser<'a> {
             }
             // invalid list start: fall through to the text path
         }
+        if field_marker(text).is_some() {
+            self.parse_field_list(lines, pos, out);
+            return None;
+        }
+        if option_group_marker(text).is_some() && self.option_item_viable(lines, *pos) {
+            self.parse_option_list(lines, pos, out);
+            return None;
+        }
         if text.starts_with(">>> ") || text == ">>>" {
             self.parse_doctest(lines, pos, out);
             return None;
@@ -1107,6 +1115,8 @@ impl<'a> BlockParser<'a> {
                     && Self::bullet_marker(l.text).is_none()
                     && parse_enumerator(l.text).is_none()
                     && adornment_char(l.text).is_none()
+                    && field_marker(l.text).is_none()
+                    && option_group_marker(l.text).is_none()
                     && !l.text.starts_with(".. ")
                     && l.text != ".."
                     && !l.text.starts_with("| ")
@@ -1562,6 +1572,171 @@ impl<'a> BlockParser<'a> {
         Some(start + 1 + consumed)
     }
 
+    /// Field lists: `:name: value` markers (probe-verified regex port).
+    fn parse_field_list(&mut self, lines: &[LineRef<'a>], pos: &mut usize, out: &mut Vec<Node>) {
+        let start = *pos;
+        let mut fl = Node::elem(kinds::FIELD_LIST, Span::ZERO);
+        let mut warn_line: Option<u32> = None;
+        loop {
+            let line = lines[*pos];
+            let (name_raw, body_start) = field_marker(line.text).expect("checked by caller");
+            let lineno = line.lineno;
+            let field_span = self.span_of(lines, *pos, *pos);
+            // body: marker-line remainder + any-indent continuation block
+            let first_rest = line.text[body_start..].trim_start();
+            let (block, consumed, _i, terminator) = indented_block(lines, *pos + 1);
+            let mut body_lines: Vec<LineRef<'a>> = Vec::new();
+            if !first_rest.is_empty() {
+                let offset = line.text.len() - first_rest.len();
+                body_lines.push(LineRef::new(
+                    &line.text[offset..],
+                    lineno,
+                    line.src_start,
+                    line.src_end,
+                ));
+            }
+            body_lines.extend(block.iter().copied());
+            *pos += 1 + consumed;
+
+            let name_inline = super::inline::parse_inline(
+                &name_raw,
+                field_span,
+                lineno,
+                &mut self.registry,
+                self.source_path,
+            );
+            let mut field = Node::elem(kinds::FIELD, field_span);
+            let mut fname = Node::elem(kinds::FIELD_NAME, field_span);
+            fname.children = name_inline.nodes;
+            field.children.push(fname);
+            let mut fbody = Node::elem(kinds::FIELD_BODY, field_span);
+            fbody.children.extend(name_inline.messages);
+            fbody.children.extend(self.parse_elements(&body_lines));
+            field.children.push(fbody);
+            fl.children.push(field);
+
+            // continue on the next field marker (blanks allowed between)
+            let mut p = *pos;
+            while p < lines.len() && lines[p].is_blank() {
+                p += 1;
+            }
+            let continues =
+                p < lines.len() && lines[p].indent() == 0 && field_marker(lines[p].text).is_some();
+            if continues {
+                *pos = p;
+                continue;
+            }
+            let _ = terminator;
+            // Adjacency: any non-blank line directly after the field body
+            // (indented-block terminator OR a col-0 line) warns.
+            if let Some(l) = lines.get(*pos) {
+                if !l.is_blank() {
+                    warn_line = Some(l.lineno);
+                }
+            }
+            break;
+        }
+        fl.span = self.span_of(lines, start, pos.saturating_sub(1));
+        out.push(fl);
+        if let Some(l) = warn_line {
+            out.push(self.msg(
+                messages::WARNING,
+                "Field list ends without a blank line; unexpected unindent.",
+                l,
+            ));
+        }
+    }
+
+    /// An option marker line is only a list item when it has a two-space
+    /// description or an indented following line (else: paragraph).
+    fn option_item_viable(&self, lines: &[LineRef<'a>], at: usize) -> bool {
+        let (_, desc) = match option_group_marker(lines[at].text) {
+            Some(r) => r,
+            None => return false,
+        };
+        if !desc.is_empty() {
+            return true;
+        }
+        lines
+            .get(at + 1)
+            .map(|l| !l.is_blank() && l.indent() > 0)
+            .unwrap_or(false)
+    }
+
+    fn parse_option_list(&mut self, lines: &[LineRef<'a>], pos: &mut usize, out: &mut Vec<Node>) {
+        let start = *pos;
+        let mut ol = Node::elem(kinds::OPTION_LIST, Span::ZERO);
+        let mut warn_line: Option<u32> = None;
+        loop {
+            let line = lines[*pos];
+            let (specs, desc) = option_group_marker(line.text).expect("checked by caller");
+            let span = self.span_of(lines, *pos, *pos);
+            let (block, consumed, _i, terminator) = indented_block(lines, *pos + 1);
+            let mut body_lines: Vec<LineRef<'a>> = Vec::new();
+            if !desc.is_empty() {
+                let offset = line.text.len() - desc.len();
+                body_lines.push(LineRef::new(
+                    &line.text[offset..],
+                    line.lineno,
+                    line.src_start,
+                    line.src_end,
+                ));
+            }
+            body_lines.extend(block.iter().copied());
+            *pos += 1 + consumed;
+
+            let mut item = Node::elem(kinds::OPTION_LIST_ITEM, span);
+            let mut group = Node::elem(kinds::OPTION_GROUP, span);
+            for (opt_string, arg) in specs {
+                let mut opt = Node::elem(kinds::OPTION, span);
+                let mut os = Node::elem(kinds::OPTION_STRING, span);
+                os.children.push(Node::text_node(opt_string, span));
+                opt.children.push(os);
+                if let Some((delim, argtext)) = arg {
+                    let mut oa = Node::elem(kinds::OPTION_ARGUMENT, span);
+                    oa.set("delimiter", AttrValue::Str(delim));
+                    oa.children.push(Node::text_node(argtext, span));
+                    opt.children.push(oa);
+                }
+                group.children.push(opt);
+            }
+            item.children.push(group);
+            let mut description = Node::elem(kinds::DESCRIPTION, span);
+            description.children = self.parse_elements(&body_lines);
+            item.children.push(description);
+            ol.children.push(item);
+
+            let mut p = *pos;
+            while p < lines.len() && lines[p].is_blank() {
+                p += 1;
+            }
+            let continues = p < lines.len()
+                && lines[p].indent() == 0
+                && option_group_marker(lines[p].text).is_some()
+                && self.option_item_viable(lines, p);
+            if continues {
+                *pos = p;
+                continue;
+            }
+            let _ = terminator;
+            if let Some(l) = lines.get(*pos) {
+                if !l.is_blank() {
+                    warn_line = Some(l.lineno);
+                }
+            }
+            break;
+        }
+        ol.span = self.span_of(lines, start, pos.saturating_sub(1));
+        out.push(ol);
+        if let Some(l) = warn_line {
+            out.push(self.msg(
+                messages::WARNING,
+                "Option list ends without a blank line; unexpected unindent.",
+                l,
+            ));
+        }
+    }
+
     fn parse_anonymous_shortcut(
         &mut self,
         lines: &[LineRef<'a>],
@@ -1609,6 +1784,179 @@ impl<'a> BlockParser<'a> {
 // ----------------------------------------------------------------------
 // free helpers
 // ----------------------------------------------------------------------
+
+/// Field marker: `:name:` where the name may not start with `:`/space,
+/// may not end with a space, and interior `:` is allowed unless followed
+/// by space, backtick, or EOL. The marker must close with `:` + space/EOL.
+/// Returns (raw name, byte index just past the closing colon).
+fn field_marker(text: &str) -> Option<(String, usize)> {
+    let mut chars = text.char_indices();
+    let (_, first) = chars.next()?;
+    if first != ':' {
+        return None;
+    }
+    let mut name = String::new();
+    let mut prev_char: Option<char> = None;
+    let mut it = chars.peekable();
+    // reject :: and ": "
+    match it.peek() {
+        Some((_, ':')) | Some((_, ' ')) | None => return None,
+        _ => {}
+    }
+    while let Some((i, c)) = it.next() {
+        match c {
+            '\\' => {
+                name.push(c);
+                if let Some((_, esc)) = it.next() {
+                    name.push(esc);
+                    prev_char = Some(esc);
+                }
+            }
+            ':' => {
+                let next = it.peek().map(|(_, c)| *c);
+                match next {
+                    None | Some(' ') => {
+                        // closing colon; name may not end with a space
+                        if prev_char == Some(' ') || name.is_empty() {
+                            return None;
+                        }
+                        return Some((name, i + 1));
+                    }
+                    Some('`') => return None,
+                    _ => {
+                        name.push(':');
+                        prev_char = Some(':');
+                    }
+                }
+            }
+            _ => {
+                name.push(c);
+                prev_char = Some(c);
+            }
+        }
+    }
+    None
+}
+
+/// Option-group marker: synonyms split on `, ` (not inside `<>`), each a
+/// short (`-x`/`+x` with optional attached/spaced arg) or long
+/// (`--name`/`/name` with `=`/space arg) option. Returns the specs plus
+/// the description remainder (after 2+ spaces), or None when any synonym
+/// is malformed.
+#[allow(clippy::type_complexity)]
+fn option_group_marker(text: &str) -> Option<(Vec<(String, Option<(String, String)>)>, &str)> {
+    // split marker from description at the first run of 2+ spaces
+    // OUTSIDE angle brackets
+    let mut in_angle = false;
+    let mut marker_end = text.len();
+    let bytes: Vec<(usize, char)> = text.char_indices().collect();
+    let mut k = 0;
+    while k < bytes.len() {
+        let (i, c) = bytes[k];
+        match c {
+            '<' => in_angle = true,
+            '>' => in_angle = false,
+            ' ' if !in_angle && bytes.get(k + 1).map(|(_, c)| *c == ' ').unwrap_or(false) => {
+                marker_end = i;
+                break;
+            }
+            _ => {}
+        }
+        k += 1;
+    }
+    let marker = &text[..marker_end];
+    let desc = text[marker_end..].trim_start();
+
+    // split synonyms on ', ' outside <>
+    let mut specs = Vec::new();
+    let mut parts: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut in_angle = false;
+    let mchars: Vec<char> = marker.chars().collect();
+    let mut idx = 0;
+    while idx < mchars.len() {
+        let c = mchars[idx];
+        match c {
+            '<' => {
+                in_angle = true;
+                cur.push(c);
+            }
+            '>' => {
+                in_angle = false;
+                cur.push(c);
+            }
+            ',' if !in_angle && mchars.get(idx + 1) == Some(&' ') => {
+                parts.push(std::mem::take(&mut cur));
+                idx += 1; // skip the space
+            }
+            _ => cur.push(c),
+        }
+        idx += 1;
+    }
+    parts.push(cur);
+
+    for part in &parts {
+        specs.push(parse_one_option(part)?);
+    }
+    Some((specs, desc))
+}
+
+/// One option synonym -> (option_string, Some((delimiter, argument))).
+fn parse_one_option(part: &str) -> Option<(String, Option<(String, String)>)> {
+    let optarg_ok = |s: &str| -> bool {
+        if let Some(inner) = s.strip_prefix('<') {
+            return inner.ends_with('>') && !inner[..inner.len() - 1].contains(['<', '>']);
+        }
+        let mut cs = s.chars();
+        matches!(cs.next(), Some(c) if c.is_ascii_alphabetic())
+            && cs.all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+    };
+    if let Some(rest) = part.strip_prefix("--").or_else(|| part.strip_prefix('/')) {
+        let prefix = if part.starts_with("--") { "--" } else { "/" };
+        // optname [ =|space optarg ]
+        let name_end = rest.find([' ', '=']).unwrap_or(rest.len());
+        let (name, tail) = rest.split_at(name_end);
+        let mut nc = name.chars();
+        let name_ok = matches!(nc.next(), Some(c) if c.is_ascii_alphanumeric())
+            && nc.all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'));
+        if !name_ok {
+            return None;
+        }
+        if tail.is_empty() {
+            return Some((format!("{prefix}{name}"), None));
+        }
+        let delim = &tail[..1];
+        let arg = &tail[1..];
+        if !optarg_ok(arg) {
+            return None;
+        }
+        return Some((
+            format!("{prefix}{name}"),
+            Some((delim.to_string(), arg.to_string())),
+        ));
+    }
+    let rest = part.strip_prefix('-').or_else(|| part.strip_prefix('+'))?;
+    let prefix = &part[..1];
+    let mut rc = rest.chars();
+    let letter = rc.next().filter(|c| c.is_ascii_alphanumeric())?;
+    let tail: String = rc.collect();
+    if tail.is_empty() {
+        return Some((format!("{prefix}{letter}"), None));
+    }
+    if let Some(arg) = tail.strip_prefix(' ') {
+        if !optarg_ok(arg) {
+            return None;
+        }
+        return Some((
+            format!("{prefix}{letter}"),
+            Some((" ".to_string(), arg.to_string())),
+        ));
+    }
+    if !optarg_ok(&tail) {
+        return None;
+    }
+    Some((format!("{prefix}{letter}"), Some((String::new(), tail))))
+}
 
 /// docutils `simplename` over a char slice (see rst::inline for the
 /// pattern description).

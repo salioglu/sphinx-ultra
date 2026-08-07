@@ -1771,6 +1771,180 @@
       "rst": "See [1]_ and [#]_ here.\n\n.. [1] first\n.. [#] auto\n"
     },
     {
+      "family": "fields",
+      "name": "fields.basic_mid_document",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        A paragraph first.\n    <field_list>\n        <field>\n            <field_name>\n                name\n            <field_body>\n                <paragraph>\n                    value\n        <field>\n            <field_name>\n                other\n            <field_body>\n                <paragraph>\n                    thing\n",
+      "rst": "A paragraph first.\n\n:name: value\n:other: thing\n"
+    },
+    {
+      "family": "fields",
+      "name": "fields.doc_start_biblio",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <field_list>\n        <field>\n            <field_name>\n                Author\n            <field_body>\n                <paragraph>\n                    Jane\n        <field>\n            <field_name>\n                Date\n            <field_body>\n                <paragraph>\n                    2026\n    <paragraph>\n        Body.\n",
+      "rst": ":Author: Jane\n:Date: 2026\n\nBody.\n"
+    },
+    {
+      "family": "fields",
+      "name": "fields.no_space_not_field",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        :field:value-no-space\n",
+      "rst": ":field:value-no-space\n"
+    },
+    {
+      "family": "fields",
+      "name": "fields.double_colon_not_field",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        :: value\n",
+      "rst": ":: value\n"
+    },
+    {
+      "family": "fields",
+      "name": "fields.interior_colon",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <field_list>\n        <field>\n            <field_name>\n                fie:ld\n            <field_body>\n                <paragraph>\n                    value\n",
+      "rst": ":fie:ld: value\n"
+    },
+    {
+      "family": "fields",
+      "name": "fields.escaped_colon_name",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <field_list>\n        <field>\n            <field_name>\n                field: colon\n            <field_body>\n                <paragraph>\n                    value\n",
+      "rst": ":field\\: colon: value\n"
+    },
+    {
+      "family": "fields",
+      "name": "fields.role_not_field",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <literal classes=\"code\">\n            x\n        : description\n",
+      "rst": ":code:`x`: description\n"
+    },
+    {
+      "family": "fields",
+      "name": "fields.markup_in_name",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <field_list>\n        <field>\n            <field_name>\n                <emphasis>\n                    emph name\n            <field_body>\n                <paragraph>\n                    value\n",
+      "rst": ":*emph name*: value\n"
+    },
+    {
+      "family": "fields",
+      "name": "fields.unclosed_markup_in_name",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <field_list>\n        <field>\n            <field_name>\n                <problematic ids=\"id2\" refid=\"id1\">\n                    *\n                oops\n            <field_body>\n                <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n                    <paragraph>\n                        Inline emphasis start-string without end-string.\n                <paragraph>\n                    value\n",
+      "rst": ":*oops: value\n"
+    },
+    {
+      "family": "fields",
+      "name": "fields.continuation_indent",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <field_list>\n        <field>\n            <field_name>\n                field\n            <field_body>\n                <paragraph>\n                    first line\n                    continuation at indent 3\n",
+      "rst": ":field: first line\n   continuation at indent 3\n"
+    },
+    {
+      "family": "fields",
+      "name": "fields.body_next_line",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <field_list>\n        <field>\n            <field_name>\n                field\n            <field_body>\n                <paragraph>\n                    body starts on the next line\n",
+      "rst": ":field:\n    body starts on the next line\n"
+    },
+    {
+      "family": "fields",
+      "name": "fields.empty_body",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <field_list>\n        <field>\n            <field_name>\n                empty\n            <field_body>\n    <paragraph>\n        next para\n",
+      "rst": ":empty:\n\nnext para\n"
+    },
+    {
+      "family": "fields",
+      "name": "fields.deeper_indent_error",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <field_list>\n        <field>\n            <field_name>\n                f\n            <field_body>\n                <paragraph>\n                    first\n                    more\n                <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n                    <paragraph>\n                        Unexpected indentation.\n                <block_quote>\n                    <paragraph>\n                        deeper\n",
+      "rst": ":f: first\n      more\n        deeper\n"
+    },
+    {
+      "family": "fields",
+      "name": "fields.nested_field_in_body",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <field_list>\n        <field>\n            <field_name>\n                field\n            <field_body>\n                <field_list>\n                    <field>\n                        <field_name>\n                            not-a-field\n                        <field_body>\n                            <paragraph>\n                                inside body\n",
+      "rst": ":field: :not-a-field: inside body\n"
+    },
+    {
+      "family": "fields",
+      "name": "fields.ends_no_blank",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <field_list>\n        <field>\n            <field_name>\n                field\n            <field_body>\n                <paragraph>\n                    body\n    <system_message level=\"2\" line=\"2\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Field list ends without a blank line; unexpected unindent.\n    <paragraph>\n        not part of it\n",
+      "rst": ":field: body\nnot part of it\n"
+    },
+    {
+      "family": "fields",
+      "name": "fields.blank_separated_merge",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <field_list>\n        <field>\n            <field_name>\n                a\n            <field_body>\n                <paragraph>\n                    one\n        <field>\n            <field_name>\n                b\n            <field_body>\n                <paragraph>\n                    two\n",
+      "rst": ":a: one\n\n:b: two\n"
+    },
+    {
+      "family": "fields",
+      "name": "fields.paragraph_not_interrupted",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        text line\n        :field: value\n",
+      "rst": "text line\n:field: value\n"
+    },
+    {
+      "family": "options",
+      "name": "options.angle_arg",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <option_list>\n        <option_list_item>\n            <option_group>\n                <option>\n                    <option_string>\n                        -f\n                    <option_argument delimiter=\" \">\n                        <file>\n            <description>\n                <paragraph>\n                    Use this file.\n",
+      "rst": "-f <file>  Use this file.\n"
+    },
+    {
+      "family": "options",
+      "name": "options.synonyms",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <option_list>\n        <option_list_item>\n            <option_group>\n                <option>\n                    <option_string>\n                        -f\n                    <option_argument delimiter=\" \">\n                        FILE\n                <option>\n                    <option_string>\n                        --file\n                    <option_argument delimiter=\"=\">\n                        FILE\n            <description>\n                <paragraph>\n                    Specify the file.\n",
+      "rst": "-f FILE, --file=FILE  Specify the file.\n"
+    },
+    {
+      "family": "options",
+      "name": "options.attached_arg",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <option_list>\n        <option_list_item>\n            <option_group>\n                <option>\n                    <option_string>\n                        -o\n                    <option_argument delimiter=\"\">\n                        VALUE\n            <description>\n                <paragraph>\n                    Attached argument.\n",
+      "rst": "-oVALUE  Attached argument.\n"
+    },
+    {
+      "family": "options",
+      "name": "options.dos_options",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <option_list>\n        <option_list_item>\n            <option_group>\n                <option>\n                    <option_string>\n                        /INPUT\n                    <option_argument delimiter=\"=\">\n                        FILE\n            <description>\n                <paragraph>\n                    Dos style.\n        <option_list_item>\n            <option_group>\n                <option>\n                    <option_string>\n                        /IN\n                    <option_argument delimiter=\" \">\n                        FILE\n            <description>\n                <paragraph>\n                    Spaced.\n",
+      "rst": "/INPUT=FILE  Dos style.\n\n/IN FILE  Spaced.\n"
+    },
+    {
+      "family": "options",
+      "name": "options.one_space_not_option",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        -a description-one-space\n",
+      "rst": "-a description-one-space\n"
+    },
+    {
+      "family": "options",
+      "name": "options.comma_in_arg_rejected",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        -f x,y  Comma inside arg.\n",
+      "rst": "-f x,y  Comma inside arg.\n"
+    },
+    {
+      "family": "options",
+      "name": "options.two_word_arg_rejected",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        --file A B  Two-word arg without angles.\n",
+      "rst": "--file A B  Two-word arg without angles.\n"
+    },
+    {
+      "family": "options",
+      "name": "options.digit_start_rejected",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        -o2x  Digit-start attached.\n",
+      "rst": "-o2x  Digit-start attached.\n"
+    },
+    {
+      "family": "options",
+      "name": "options.bare_markers_paragraph",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        -a\n        -b\n",
+      "rst": "-a\n-b\n"
+    },
+    {
+      "family": "options",
+      "name": "options.desc_next_line",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <option_list>\n        <option_list_item>\n            <option_group>\n                <option>\n                    <option_string>\n                        -x\n            <description>\n                <paragraph>\n                    Description on the next line.\n",
+      "rst": "-x\n   Description on the next line.\n"
+    },
+    {
+      "family": "options",
+      "name": "options.angle_with_spaces",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <option_list>\n        <option_list_item>\n            <option_group>\n                <option>\n                    <option_string>\n                        -p\n                    <option_argument delimiter=\" \">\n                        <port number>\n            <description>\n                <paragraph>\n                    Port to use.\n",
+      "rst": "-p <port number>  Port to use.\n"
+    },
+    {
+      "family": "options",
+      "name": "options.plus_option",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <option_list>\n        <option_list_item>\n            <option_group>\n                <option>\n                    <option_string>\n                        +x\n            <description>\n                <paragraph>\n                    Enable x.\n",
+      "rst": "+x  Enable x.\n"
+    },
+    {
       "family": "review",
       "name": "review.attr_no_space",
       "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <paragraph>\n            body\n        <attribution>\n            Author\n",
