@@ -130,6 +130,10 @@ pub(crate) struct BlockParser<'a> {
     registry: IdRegistry,
     styles: Vec<(char, bool)>,
     depth: usize,
+    /// +1 inside table-cell nested parses: docutils' state-machine-derived
+    /// line numbers (the unindent/unexpected-indentation family) run one
+    /// high there (probe-verified); content-anchored messages stay absolute.
+    line_bias: u32,
 }
 
 impl<'a> BlockParser<'a> {
@@ -146,6 +150,7 @@ impl<'a> BlockParser<'a> {
             registry: IdRegistry::new(),
             styles: Vec::new(),
             depth: 0,
+            line_bias: 0,
         }
     }
 
@@ -164,6 +169,11 @@ impl<'a> BlockParser<'a> {
 
     fn msg(&self, level: u8, text: &str, lineno: u32) -> Node {
         messages::system_message(level, text, lineno, self.source_path)
+    }
+
+    /// For state-machine-position-derived messages (see `line_bias`).
+    fn msg_sm(&self, level: u8, text: &str, lineno: u32) -> Node {
+        messages::system_message(level, text, lineno + self.line_bias, self.source_path)
     }
 
     /// Probe-verified: an explicit-markup element (comment/target) followed
@@ -386,6 +396,14 @@ impl<'a> BlockParser<'a> {
         }
         if text == "|" || text.starts_with("| ") {
             self.parse_line_block(lines, pos, out);
+            return None;
+        }
+        if is_grid_table_top(text) {
+            self.parse_grid_table(lines, pos, out);
+            return None;
+        }
+        if is_simple_table_top(text) {
+            self.parse_simple_table(lines, pos, out);
             return None;
         }
         if text == ".." || text.starts_with(".. ") {
@@ -692,7 +710,7 @@ impl<'a> BlockParser<'a> {
             && lines[end].indent() > 0
             && end - start >= 2
         {
-            out.push(self.msg(
+            out.push(self.msg_sm(
                 messages::ERROR,
                 "Unexpected indentation.",
                 lines[end].lineno,
@@ -740,7 +758,7 @@ impl<'a> BlockParser<'a> {
             out.push(lb);
             *pos = p + consumed;
             if let Some(term) = terminator {
-                out.push(self.msg(
+                out.push(self.msg_sm(
                     messages::WARNING,
                     "Literal block ends without a blank line; unexpected unindent.",
                     term,
@@ -830,7 +848,7 @@ impl<'a> BlockParser<'a> {
         list.span = self.span_of(lines, start, pos.saturating_sub(1));
         out.push(list);
         if let Some(l) = warn_line {
-            out.push(self.msg(
+            out.push(self.msg_sm(
                 messages::WARNING,
                 "Bullet list ends without a blank line; unexpected unindent.",
                 l,
@@ -986,7 +1004,7 @@ impl<'a> BlockParser<'a> {
         let first_lineno = lines[start].lineno;
         out.push(list);
         if let Some(l) = warn_line {
-            out.push(self.msg(
+            out.push(self.msg_sm(
                 messages::WARNING,
                 "Enumerated list ends without a blank line; unexpected unindent.",
                 l,
@@ -1138,7 +1156,7 @@ impl<'a> BlockParser<'a> {
         dl.span = self.span_of(lines, start, pos.saturating_sub(1));
         out.push(dl);
         if let Some(l) = warn_line {
-            out.push(self.msg(
+            out.push(self.msg_sm(
                 messages::WARNING,
                 "Definition list ends without a blank line; unexpected unindent.",
                 l,
@@ -1207,7 +1225,7 @@ impl<'a> BlockParser<'a> {
             out.append(&mut attr_messages);
         }
         if let Some(t) = terminator {
-            out.push(self.msg(
+            out.push(self.msg_sm(
                 messages::WARNING,
                 "Block quote ends without a blank line; unexpected unindent.",
                 t,
@@ -1297,7 +1315,7 @@ impl<'a> BlockParser<'a> {
         out.append(&mut lb_messages);
         // Fixture-verified: warning anchored to the LAST line-block line.
         if p < lines.len() && !lines[p].is_blank() {
-            out.push(self.msg(
+            out.push(self.msg_sm(
                 messages::WARNING,
                 "Line block ends without a blank line.",
                 lines[p - 1].lineno,
@@ -1639,7 +1657,7 @@ impl<'a> BlockParser<'a> {
         fl.span = self.span_of(lines, start, pos.saturating_sub(1));
         out.push(fl);
         if let Some(l) = warn_line {
-            out.push(self.msg(
+            out.push(self.msg_sm(
                 messages::WARNING,
                 "Field list ends without a blank line; unexpected unindent.",
                 l,
@@ -1729,11 +1747,607 @@ impl<'a> BlockParser<'a> {
         ol.span = self.span_of(lines, start, pos.saturating_sub(1));
         out.push(ol);
         if let Some(l) = warn_line {
-            out.push(self.msg(
+            out.push(self.msg_sm(
                 messages::WARNING,
                 "Option list ends without a blank line; unexpected unindent.",
                 l,
             ));
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // grid tables (docutils tableparser.GridTableParser port)
+    // ------------------------------------------------------------------
+
+    fn parse_grid_table(&mut self, lines: &[LineRef<'a>], pos: &mut usize, out: &mut Vec<Node>) {
+        let start = *pos;
+        // isolate: consume until blank line
+        let mut end = *pos;
+        while end < lines.len() && !lines[end].is_blank() {
+            end += 1;
+        }
+        let block: Vec<LineRef<'a>> = lines[start..end].to_vec();
+        *pos = end;
+        let raw_block: Vec<String> = block.iter().map(|l| l.text.to_string()).collect();
+        let malformed = |detail: &str, lineno: u32| -> Node {
+            messages::with_literal(
+                messages::system_message(
+                    messages::ERROR,
+                    &format!("Malformed table.\n{detail}"),
+                    lineno,
+                    self.source_path,
+                ),
+                raw_block.join("\n").trim_end(),
+            )
+        };
+        // right-border alignment
+        let width = char_len(block[0].text.trim_end());
+        for l in block.iter().skip(1) {
+            let t = l.text.trim_end();
+            if char_len(t) != width || !(t.ends_with('+') || t.ends_with('|')) {
+                out.push(malformed("Right border not aligned or missing.", l.lineno));
+                return;
+            }
+        }
+        // bottom border must be a grid border
+        if !is_grid_table_top(block[block.len() - 1].text.trim_end()) {
+            let lineno = block[block.len() - 1].lineno;
+            out.push(malformed("Bottom border missing or corrupt.", lineno));
+            return;
+        }
+
+        // grid as char matrix (head/body sep '=' converted to '-')
+        let mut grid: Vec<Vec<char>> = block
+            .iter()
+            .map(|l| l.text.trim_end().chars().collect())
+            .collect();
+        let mut head_sep: Option<usize> = None;
+        for (i, row) in grid.iter_mut().enumerate() {
+            let s: String = row.iter().collect();
+            if is_grid_head_sep(&s) {
+                if let Some(first) = head_sep {
+                    out.push(malformed(
+                        &format!(
+                            "Multiple head/body row separators (table lines {} and {}); only one allowed.",
+                            first + 1,
+                            i + 1
+                        ),
+                        block[0].lineno,
+                    ));
+                    return;
+                }
+                head_sep = Some(i);
+                for c in row.iter_mut() {
+                    if *c == '=' {
+                        *c = '-';
+                    }
+                }
+            }
+        }
+        let nrows = grid.len();
+        let at = |r: usize, c: usize| -> char {
+            *grid.get(r).and_then(|row| row.get(c)).unwrap_or(&' ')
+        };
+
+        // trace cells from top-left corners
+        let mut cells: Vec<(usize, usize, usize, usize)> = Vec::new();
+        let mut colseps: Vec<usize> = vec![0];
+        let mut rowseps: Vec<usize> = vec![0];
+        let mut corners: Vec<(usize, usize)> = vec![(0, 0)];
+        let mut done_to: Vec<(usize, usize)> = Vec::new(); // (left, bottom) per traced cell
+        while let Some((top, left)) = corners.pop() {
+            if cells
+                .iter()
+                .any(|(t, l, b, r)| *t <= top && top < *b && *l <= left && left < *r)
+            {
+                continue;
+            }
+            if at(top, left) != '+' {
+                continue;
+            }
+            if let Some((bottom, right, mut cseps, mut rseps)) = trace_cell(&grid, top, left) {
+                cells.push((top, left, bottom, right));
+                colseps.append(&mut cseps);
+                rowseps.append(&mut rseps);
+                corners.push((top, right));
+                corners.push((bottom, left));
+                done_to.push((left, bottom));
+                corners.sort();
+                corners.dedup();
+            }
+        }
+        colseps.sort_unstable();
+        colseps.dedup();
+        rowseps.sort_unstable();
+        rowseps.dedup();
+
+        // completeness: every column spanned to the bottom
+        let bottom_row = nrows - 1;
+        if rowseps.last() != Some(&bottom_row) && !cells.is_empty() {
+            out.push(malformed("Parse incomplete.", block[0].lineno));
+            return;
+        }
+        let _ = done_to;
+
+        // structure
+        let ncols = colseps.len().saturating_sub(1);
+        let colwidths: Vec<usize> = colseps.windows(2).map(|w| w[1] - w[0] - 1).collect();
+        let row_of = |o: usize| rowseps.iter().position(|r| *r == o);
+        let col_of = |o: usize| colseps.iter().position(|c| *c == o);
+        let nrows_struct = rowseps.len().saturating_sub(1);
+        // rows[r][c] = Option<entry>
+        let mut entries: Vec<Vec<Option<Node>>> = vec![];
+        for _ in 0..nrows_struct {
+            entries.push((0..ncols).map(|_| None).collect());
+        }
+        let mut covered: Vec<Vec<bool>> = vec![vec![false; ncols]; nrows_struct];
+        let mut cell_list = cells.clone();
+        cell_list.sort();
+        for (top, left, bottom, right) in cell_list {
+            let (Some(rn), Some(cn), Some(rb), Some(cr)) =
+                (row_of(top), col_of(left), row_of(bottom), col_of(right))
+            else {
+                continue;
+            };
+            if covered[rn][cn] {
+                continue;
+            }
+            let morerows = rb - rn - 1;
+            let morecols = cr - cn - 1;
+            for row in covered.iter_mut().take(rb).skip(rn) {
+                for cell in row.iter_mut().take(cr).skip(cn) {
+                    *cell = true;
+                }
+            }
+            let span = self.span_of(lines, start + top, start + bottom);
+            let mut entry = Node::elem(kinds::ENTRY, span);
+            if morecols > 0 {
+                entry.set("morecols", AttrValue::Int(morecols as i64));
+            }
+            if morerows > 0 {
+                entry.set("morerows", AttrValue::Int(morerows as i64));
+            }
+            // cell block: rows top+1..bottom, cols left+1..right
+            let mut cell_lines: Vec<LineRef<'a>> = Vec::new();
+            for l in block.iter().take(bottom).skip(top + 1) {
+                let text = char_slice(l.text, left + 1, right);
+                cell_lines.push(LineRef::new(text, l.lineno, l.src_start, l.src_end));
+            }
+            let base = cell_lines
+                .iter()
+                .filter(|l| !l.text.trim().is_empty())
+                .map(|l| l.indent())
+                .min()
+                .unwrap_or(0);
+            let dedented: Vec<LineRef<'a>> = cell_lines
+                .iter()
+                .map(|l| {
+                    if l.text.trim().is_empty() {
+                        LineRef::new("", l.lineno, l.src_start, l.src_end)
+                    } else {
+                        let mut d = l.dedented(base);
+                        // strip trailing whitespace inside the cell view
+                        d.text = d.text.trim_end();
+                        d
+                    }
+                })
+                .collect();
+            if dedented.iter().any(|l| !l.text.is_empty()) {
+                self.line_bias += 1;
+                entry.children = self.parse_elements(&dedented);
+                self.line_bias -= 1;
+            }
+            entries[rn][cn] = Some(entry);
+        }
+
+        let table_span = self.span_of(lines, start, end.saturating_sub(1));
+        let mut table = Node::elem(kinds::TABLE, table_span);
+        let mut tgroup = Node::elem(kinds::TGROUP, table_span);
+        tgroup.set("cols", AttrValue::Int(ncols as i64));
+        for w in &colwidths {
+            let mut cs = Node::elem(kinds::COLSPEC, table_span);
+            cs.set("colwidth", AttrValue::Int(*w as i64));
+            tgroup.children.push(cs);
+        }
+        let head_rows = head_sep.and_then(row_of).unwrap_or(0);
+        let build_rows = |range: std::ops::Range<usize>, entries: &mut Vec<Vec<Option<Node>>>| {
+            let mut rows = Vec::new();
+            for r in range {
+                let mut row = Node::elem(kinds::ROW, table_span);
+                for slot in entries[r].iter_mut() {
+                    if let Some(e) = slot.take() {
+                        row.children.push(e);
+                    }
+                }
+                rows.push(row);
+            }
+            rows
+        };
+        if head_sep.is_some() && head_rows > 0 {
+            let mut thead = Node::elem(kinds::THEAD, table_span);
+            thead.children = build_rows(0..head_rows, &mut entries);
+            tgroup.children.push(thead);
+        } else if head_sep.is_some() {
+            let mut thead = Node::elem(kinds::THEAD, table_span);
+            thead.children = build_rows(0..0, &mut entries);
+            let _ = &mut thead;
+            tgroup.children.push(thead);
+        }
+        let mut tbody = Node::elem(kinds::TBODY, table_span);
+        tbody.children = build_rows(head_rows..nrows_struct, &mut entries);
+        tgroup.children.push(tbody);
+        table.children.push(tgroup);
+        out.push(table);
+    }
+
+    fn parse_simple_table(&mut self, lines: &[LineRef<'a>], pos: &mut usize, out: &mut Vec<Node>) {
+        let start = *pos;
+        let toplen = char_len(lines[start].text.trim_end());
+        // isolate: find border candidates (=-runs line, same stripped length)
+        let mut found = 0usize;
+        let mut found_at = None;
+        let mut end = None;
+        let mut i = start + 1;
+        while i < lines.len() && !lines[i].is_blank() {
+            let t = lines[i].text.trim_end();
+            if is_simple_table_border(t) {
+                if char_len(t) != toplen {
+                    let raw: Vec<String> = lines[start..=i]
+                        .iter()
+                        .map(|l| l.text.to_string())
+                        .collect();
+                    out.push(messages::with_literal(
+                        self.msg(
+                            messages::ERROR,
+                            "Malformed table.\nBottom border or header rule does not match top border.",
+                            lines[i].lineno,
+                        ),
+                        raw.join("\n").trim_end(),
+                    ));
+                    *pos = i + 1;
+                    return;
+                }
+                found += 1;
+                found_at = Some(i);
+                if found == 2
+                    || i + 1 >= lines.len()
+                    || lines.get(i + 1).map(|l| l.is_blank()).unwrap_or(true)
+                {
+                    end = Some(i);
+                    break;
+                }
+            }
+            i += 1;
+        }
+        let Some(end) = end else {
+            // no bottom border
+            let (block_end, extra) = match found_at {
+                Some(f) => (f, " or no blank line after table bottom"),
+                None => (i.saturating_sub(1).max(start), ""),
+            };
+            let raw: Vec<String> = lines[start..=block_end.min(lines.len() - 1)]
+                .iter()
+                .map(|l| l.text.to_string())
+                .collect();
+            out.push(messages::with_literal(
+                self.msg(
+                    messages::ERROR,
+                    &format!("Malformed table.\nNo bottom table border found{extra}."),
+                    lines[start].lineno,
+                ),
+                raw.join("\n").trim_end(),
+            ));
+            *pos = block_end + 1;
+            if !extra.is_empty() {
+                if let Some(l) = lines.get(*pos).filter(|l| !l.is_blank()) {
+                    out.push(self.msg(
+                        messages::WARNING,
+                        "Blank line required after table.",
+                        l.lineno,
+                    ));
+                }
+            }
+            return;
+        };
+        *pos = end + 1;
+        let blank_after_ok = lines.get(*pos).map(|l| l.is_blank()).unwrap_or(true);
+
+        let block: Vec<LineRef<'a>> = lines[start..=end].to_vec();
+        let raw_block: Vec<String> = block.iter().map(|l| l.text.to_string()).collect();
+        let malformed = |detail: &str, lineno: u32| -> Node {
+            messages::with_literal(
+                messages::system_message(
+                    messages::ERROR,
+                    &format!("Malformed table.\n{detail}"),
+                    lineno,
+                    self.source_path,
+                ),
+                raw_block.join("\n").trim_end(),
+            )
+        };
+
+        // columns from the top border '=' runs
+        let top_chars: Vec<char> = block[0].text.trim_end().chars().collect();
+        let mut columns: Vec<(usize, usize)> = Vec::new();
+        let mut run_start = None;
+        for (ci, c) in top_chars.iter().enumerate() {
+            if *c == '=' {
+                if run_start.is_none() {
+                    run_start = Some(ci);
+                }
+            } else if let Some(s) = run_start.take() {
+                columns.push((s, ci));
+            }
+        }
+        if let Some(s) = run_start {
+            columns.push((s, top_chars.len()));
+        }
+        let border_end = columns.last().map(|(_, e)| *e).unwrap_or(0);
+
+        // interior head/body sep: full-'='-runs line converted to span line
+        let mut head_sep_row: Option<usize> = None; // index into block
+        let mut work: Vec<String> = block
+            .iter()
+            .map(|l| l.text.trim_end().to_string())
+            .collect();
+        let n = work.len();
+        for (bi, w) in work.iter_mut().enumerate() {
+            if bi > 0 && bi < n - 1 && is_simple_table_border(w) {
+                head_sep_row = Some(bi);
+                *w = w.replace('=', "-");
+            }
+        }
+        let bottom = work.len() - 1;
+        work[0] = work[0].replace('=', "-");
+        work[bottom] = work[bottom].replace('=', "-");
+
+        // rows: (start_line_idx, end_line_idx_exclusive, colspec)
+        struct RawRow {
+            start: usize,
+            end: usize,
+            cols: Vec<(usize, usize)>,
+        }
+        let parse_span_cols =
+            |line: &str, table_line: usize| -> Result<Vec<(usize, usize)>, Box<Node>> {
+                let chars: Vec<char> = line.chars().collect();
+                let mut cols = Vec::new();
+                let mut rs = None;
+                for (ci, c) in chars.iter().enumerate() {
+                    if *c == '-' {
+                        if rs.is_none() {
+                            rs = Some(ci);
+                        }
+                    } else if let Some(s) = rs.take() {
+                        cols.push((s, ci));
+                    }
+                }
+                if let Some(s) = rs {
+                    cols.push((s, chars.len()));
+                }
+                if cols.last().map(|(_, e)| *e) != Some(border_end) {
+                    return Err(Box::new(malformed(
+                        &format!("Column span incomplete in table line {}.", table_line + 1),
+                        block[0].lineno,
+                    )));
+                }
+                Ok(cols)
+            };
+
+        let is_span_line = |s: &str| {
+            let t = s.trim_end();
+            !t.is_empty() && t.starts_with('-') && t.chars().all(|c| matches!(c, '-' | ' '))
+        };
+        let first_col = columns.first().copied().unwrap_or((0, 0));
+        let mut rows: Vec<RawRow> = Vec::new();
+        let mut open: Option<usize> = None;
+        #[allow(clippy::needless_range_loop)]
+        for bi in 1..work.len() {
+            let line = &work[bi];
+            let at_bottom = bi == bottom;
+            if is_span_line(line) || at_bottom {
+                let span_cols = match parse_span_cols(&work[bi], bi) {
+                    Ok(c) => c,
+                    Err(m) => {
+                        out.push(*m);
+                        return;
+                    }
+                };
+                if let Some(s) = open.take() {
+                    rows.push(RawRow {
+                        start: s,
+                        end: bi,
+                        cols: span_cols,
+                    });
+                } else if !at_bottom || rows.is_empty() {
+                    // span line with no open row: empty row
+                    rows.push(RawRow {
+                        start: bi,
+                        end: bi,
+                        cols: span_cols,
+                    });
+                }
+                continue;
+            }
+            let fc_text = char_slice(line, first_col.0, first_col.1);
+            if !fc_text.trim().is_empty() {
+                if let Some(s) = open.take() {
+                    rows.push(RawRow {
+                        start: s,
+                        end: bi,
+                        cols: columns.clone(),
+                    });
+                }
+                open = Some(bi);
+            } else if open.is_none() {
+                // blank first column with no open row: dropped silently
+            }
+        }
+        if let Some(s) = open {
+            rows.push(RawRow {
+                start: s,
+                end: bottom,
+                cols: columns.clone(),
+            });
+        }
+
+        // margin check + last-column extension, per ROW using the row's own
+        // colspec (span rows have merged columns — docutils check_columns).
+        let mut last_col_end = border_end;
+        for row in &rows {
+            for bi in row.start..row.end.min(bottom) {
+                let line = &work[bi];
+                for w2 in row.cols.windows(2) {
+                    let (_, e1) = w2[0];
+                    let (s2, _) = w2[1];
+                    if !char_slice(line, e1, s2).trim().is_empty() {
+                        out.push(malformed(
+                            &format!("Text in column margin in table line {}.", bi + 1),
+                            block[bi].lineno,
+                        ));
+                        return;
+                    }
+                }
+                let row_border_end = row.cols.last().map(|(_, e)| *e).unwrap_or(border_end);
+                let tail = char_slice(line, row_border_end, char_len(line));
+                if !tail.trim().is_empty() {
+                    let last_start = row.cols.last().map(|(s, _)| *s).unwrap_or(0);
+                    let extent = last_start
+                        + char_len(char_slice(line, last_start, char_len(line)).trim_end());
+                    last_col_end = last_col_end.max(extent);
+                }
+            }
+        }
+
+        // map span cols -> column indices for morecols; validate alignment
+        let col_starts: Vec<usize> = columns.iter().map(|(s, _)| *s).collect();
+        let col_ends: Vec<usize> = columns.iter().map(|(_, e)| *e).collect();
+        let mut built_rows: Vec<(usize, Node)> = Vec::new(); // (start_line, row)
+        for row in &rows {
+            let mut r = Node::elem(kinds::ROW, self.span_of(lines, start, end));
+            for (ci, (cs, ce)) in row.cols.iter().enumerate() {
+                let ce_eff = if ci == row.cols.len() - 1 {
+                    last_col_end.max(*ce)
+                } else {
+                    *ce
+                };
+                let Some(ci_start) = col_starts.iter().position(|s| s == cs) else {
+                    out.push(malformed(
+                        &format!(
+                            "Column span alignment problem in table line {}.",
+                            row.start + 2
+                        ),
+                        block[0].lineno,
+                    ));
+                    return;
+                };
+                let span_end_col = if ci == row.cols.len() - 1 {
+                    columns.len() - 1
+                } else {
+                    match col_ends.iter().position(|e| e == ce) {
+                        Some(p) => p,
+                        None => {
+                            out.push(malformed(
+                                &format!(
+                                    "Column span alignment problem in table line {}.",
+                                    row.start + 2
+                                ),
+                                block[0].lineno,
+                            ));
+                            return;
+                        }
+                    }
+                };
+                let morecols = span_end_col - ci_start;
+                let mut entry = Node::elem(kinds::ENTRY, self.span_of(lines, start, end));
+                if morecols > 0 {
+                    entry.set("morecols", AttrValue::Int(morecols as i64));
+                }
+                // cell block
+                let mut cell_lines: Vec<LineRef<'a>> = Vec::new();
+                for bi in row.start..row.end.min(bottom) {
+                    let l = &block[bi];
+                    let text = char_slice(&work[bi], *cs, ce_eff).trim_end();
+                    // borrow from the original line where possible; work is
+                    // trimmed copy — slice original text at same char cols
+                    let orig = char_slice(l.text, *cs, ce_eff.min(char_len(l.text)));
+                    let use_text = if char_len(orig.trim_end()) == char_len(text) {
+                        orig.trim_end()
+                    } else {
+                        orig
+                    };
+                    cell_lines.push(LineRef::new(use_text, l.lineno, l.src_start, l.src_end));
+                }
+                let base = cell_lines
+                    .iter()
+                    .filter(|l| !l.text.trim().is_empty())
+                    .map(|l| l.indent())
+                    .min()
+                    .unwrap_or(0);
+                let dedented: Vec<LineRef<'a>> = cell_lines
+                    .iter()
+                    .map(|l| {
+                        if l.text.trim().is_empty() {
+                            LineRef::new("", l.lineno, l.src_start, l.src_end)
+                        } else {
+                            l.dedented(base)
+                        }
+                    })
+                    .collect();
+                if dedented.iter().any(|l| !l.text.is_empty()) {
+                    self.line_bias += 1;
+                    entry.children = self.parse_elements(&dedented);
+                    self.line_bias -= 1;
+                }
+                r.children.push(entry);
+            }
+            built_rows.push((row.start, r));
+        }
+
+        // widened last column affects colwidths
+        let mut colwidths: Vec<usize> = columns.iter().map(|(s, e)| e - s).collect();
+        if let (Some(last), Some((s, _))) = (colwidths.last_mut(), columns.last()) {
+            *last = (*last).max(last_col_end.saturating_sub(*s));
+        }
+
+        let table_span = self.span_of(lines, start, end);
+        let mut table = Node::elem(kinds::TABLE, table_span);
+        let mut tgroup = Node::elem(kinds::TGROUP, table_span);
+        tgroup.set("cols", AttrValue::Int(columns.len() as i64));
+        for w in &colwidths {
+            let mut cs = Node::elem(kinds::COLSPEC, table_span);
+            cs.set("colwidth", AttrValue::Int(*w as i64));
+            tgroup.children.push(cs);
+        }
+        if let Some(sep) = head_sep_row {
+            let mut thead = Node::elem(kinds::THEAD, table_span);
+            let mut tbody_rows = Vec::new();
+            for (rs, r) in built_rows {
+                if rs < sep {
+                    thead.children.push(r);
+                } else {
+                    tbody_rows.push(r);
+                }
+            }
+            tgroup.children.push(thead);
+            let mut tbody = Node::elem(kinds::TBODY, table_span);
+            tbody.children = tbody_rows;
+            tgroup.children.push(tbody);
+        } else {
+            let mut tbody = Node::elem(kinds::TBODY, table_span);
+            tbody.children = built_rows.into_iter().map(|(_, r)| r).collect();
+            tgroup.children.push(tbody);
+        }
+        table.children.push(tgroup);
+        out.push(table);
+
+        if !blank_after_ok {
+            if let Some(l) = lines.get(*pos) {
+                out.push(self.msg(
+                    messages::WARNING,
+                    "Blank line required after table.",
+                    l.lineno,
+                ));
+            }
         }
     }
 
@@ -1956,6 +2570,155 @@ fn parse_one_option(part: &str) -> Option<(String, Option<(String, String)>)> {
         return None;
     }
     Some((format!("{prefix}{letter}"), Some((String::new(), tail))))
+}
+
+fn is_grid_table_top(text: &str) -> bool {
+    // \+-[-+]+-\+ *$
+    let t = text.trim_end();
+    let chars: Vec<char> = t.chars().collect();
+    chars.len() >= 4
+        && chars[0] == '+'
+        && chars[chars.len() - 1] == '+'
+        && chars[1] == '-'
+        && chars[chars.len() - 2] == '-'
+        && chars[1..chars.len() - 1]
+            .iter()
+            .all(|c| matches!(c, '-' | '+'))
+}
+
+fn is_grid_head_sep(text: &str) -> bool {
+    // \+=[=+]+=\+ *$
+    let t = text.trim_end();
+    let chars: Vec<char> = t.chars().collect();
+    chars.len() >= 4
+        && chars[0] == '+'
+        && chars[chars.len() - 1] == '+'
+        && chars[1] == '='
+        && chars[chars.len() - 2] == '='
+        && chars[1..chars.len() - 1]
+            .iter()
+            .all(|c| matches!(c, '=' | '+'))
+}
+
+/// `=+[ =]*$` — a candidate simple-table border (incl. solid runs).
+fn is_simple_table_border(text: &str) -> bool {
+    let t = text.trim_end();
+    !t.is_empty() && t.starts_with('=') && t.chars().all(|c| matches!(c, '=' | ' '))
+}
+
+fn is_simple_table_top(text: &str) -> bool {
+    // =+( +=+)+ *$  (two or more '=' runs)
+    let t = text.trim_end();
+    if t.is_empty() {
+        return false;
+    }
+    let mut runs = 0;
+    let mut in_run = false;
+    for c in t.chars() {
+        match c {
+            '=' => {
+                if !in_run {
+                    runs += 1;
+                    in_run = true;
+                }
+            }
+            ' ' => in_run = false,
+            _ => return false,
+        }
+    }
+    runs >= 2
+}
+
+/// Byte-safe slice of a &str by CHAR column range.
+fn char_slice(text: &str, from: usize, to: usize) -> &str {
+    let mut idx = text.char_indices().skip(from);
+    let start = match idx.next() {
+        Some((i, _)) => i,
+        None => return "",
+    };
+    let end = text
+        .char_indices()
+        .nth(to)
+        .map(|(i, _)| i)
+        .unwrap_or(text.len());
+    &text[start..end]
+}
+
+/// Trace one grid cell from its top-left '+': returns (bottom, right,
+/// column separators seen, row separators seen).
+#[allow(clippy::type_complexity)]
+fn trace_cell(
+    grid: &[Vec<char>],
+    top: usize,
+    left: usize,
+) -> Option<(usize, usize, Vec<usize>, Vec<usize>)> {
+    let at =
+        |r: usize, c: usize| -> Option<char> { grid.get(r).and_then(|row| row.get(c)).copied() };
+    let width = grid.get(top).map(|r| r.len()).unwrap_or(0);
+    // scan right along the top border
+    let mut c = left + 1;
+    let mut top_corners = Vec::new();
+    loop {
+        match at(top, c) {
+            Some('+') => top_corners.push(c),
+            Some('-') => {}
+            _ => break,
+        }
+        c += 1;
+        if c > width + 1 {
+            break;
+        }
+    }
+    for &right in &top_corners {
+        // scan down the right edge
+        let mut r = top + 1;
+        let mut right_corners = Vec::new();
+        loop {
+            match at(r, right) {
+                Some('+') => right_corners.push(r),
+                Some('|') => {}
+                _ => break,
+            }
+            r += 1;
+            if r > grid.len() {
+                break;
+            }
+        }
+        for &bottom in &right_corners {
+            // scan left along the bottom, then up the left edge
+            let mut ok = true;
+            let mut cseps = vec![left, right];
+            for cc in left + 1..right {
+                match at(bottom, cc) {
+                    Some('+') => cseps.push(cc),
+                    Some('-') => {}
+                    _ => {
+                        ok = false;
+                        break;
+                    }
+                }
+            }
+            if !ok {
+                continue;
+            }
+            let mut rseps = vec![top, bottom];
+            for rr in top + 1..bottom {
+                match at(rr, left) {
+                    Some('+') => rseps.push(rr),
+                    Some('|') => {}
+                    _ => {
+                        ok = false;
+                        break;
+                    }
+                }
+            }
+            if !ok {
+                continue;
+            }
+            return Some((bottom, right, cseps, rseps));
+        }
+    }
+    None
 }
 
 /// docutils `simplename` over a char slice (see rst::inline for the

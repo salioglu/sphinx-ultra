@@ -1945,6 +1945,204 @@
       "rst": "+x  Enable x.\n"
     },
     {
+      "family": "tables_grid",
+      "name": "tables_grid.minimal_2x2",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"4\">\n            <colspec colwidth=\"4\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            A\n                    <entry>\n                        <paragraph>\n                            B\n                <row>\n                    <entry>\n                        <paragraph>\n                            C\n                    <entry>\n                        <paragraph>\n                            D\n",
+      "rst": "+----+----+\n| A  | B  |\n+----+----+\n| C  | D  |\n+----+----+\n"
+    },
+    {
+      "family": "tables_grid",
+      "name": "tables_grid.colwidths",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"3\">\n            <colspec colwidth=\"3\">\n            <colspec colwidth=\"9\">\n            <colspec colwidth=\"2\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            a\n                    <entry>\n                        <paragraph>\n                            bbbbbbb\n                    <entry>\n                        <paragraph>\n                            c\n",
+      "rst": "+---+---------+--+\n| a | bbbbbbb | c|\n+---+---------+--+\n"
+    },
+    {
+      "family": "tables_grid",
+      "name": "tables_grid.header_sep",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"4\">\n            <colspec colwidth=\"4\">\n            <thead>\n                <row>\n                    <entry>\n                        <paragraph>\n                            H1\n                    <entry>\n                        <paragraph>\n                            H2\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            C\n                    <entry>\n                        <paragraph>\n                            D\n",
+      "rst": "+----+----+\n| H1 | H2 |\n+====+====+\n| C  | D  |\n+----+----+\n"
+    },
+    {
+      "family": "tables_grid",
+      "name": "tables_grid.two_header_rows",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"4\">\n            <colspec colwidth=\"4\">\n            <thead>\n                <row>\n                    <entry>\n                        <paragraph>\n                            H1\n                    <entry>\n                        <paragraph>\n                            H2\n                <row>\n                    <entry>\n                        <paragraph>\n                            H3\n                    <entry>\n                        <paragraph>\n                            H4\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            C\n                    <entry>\n                        <paragraph>\n                            D\n",
+      "rst": "+----+----+\n| H1 | H2 |\n+----+----+\n| H3 | H4 |\n+====+====+\n| C  | D  |\n+----+----+\n"
+    },
+    {
+      "family": "tables_grid",
+      "name": "tables_grid.empty_header",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"4\">\n            <colspec colwidth=\"4\">\n            <thead>\n                <row>\n                    <entry>\n                    <entry>\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            C\n                    <entry>\n                        <paragraph>\n                            D\n",
+      "rst": "+----+----+\n+====+====+\n| C  | D  |\n+----+----+\n"
+    },
+    {
+      "family": "tables_grid",
+      "name": "tables_grid.column_span",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"4\">\n            <colspec colwidth=\"4\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            A\n                    <entry>\n                        <paragraph>\n                            B\n                <row>\n                    <entry morecols=\"1\">\n                        <paragraph>\n                            merged\n",
+      "rst": "+----+----+\n| A  | B  |\n+----+----+\n| merged  |\n+----+----+\n"
+    },
+    {
+      "family": "tables_grid",
+      "name": "tables_grid.row_span",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"6\">\n            <colspec colwidth=\"4\">\n            <tbody>\n                <row>\n                    <entry morerows=\"1\">\n                        <paragraph>\n                            span\n                    <entry>\n                        <paragraph>\n                            B\n                <row>\n                    <entry>\n                        <paragraph>\n                            D\n",
+      "rst": "+------+----+\n| span | B  |\n|      +----+\n|      | D  |\n+------+----+\n"
+    },
+    {
+      "family": "tables_grid",
+      "name": "tables_grid.multiline_cell",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"10\">\n            <colspec colwidth=\"4\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            Cells may\n                            span.\n                    <entry>\n                        <paragraph>\n                            B\n",
+      "rst": "+----------+----+\n| Cells may| B  |\n| span.    |    |\n+----------+----+\n"
+    },
+    {
+      "family": "tables_grid",
+      "name": "tables_grid.multi_para_cell",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"13\">\n            <colspec colwidth=\"4\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            para one\n                        <paragraph>\n                            para two\n                    <entry>\n                        <paragraph>\n                            B\n",
+      "rst": "+-------------+----+\n| para one    | B  |\n|             |    |\n| para two    |    |\n+-------------+----+\n"
+    },
+    {
+      "family": "tables_grid",
+      "name": "tables_grid.list_in_cell",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"10\">\n            <colspec colwidth=\"4\">\n            <tbody>\n                <row>\n                    <entry>\n                        <bullet_list bullet=\"-\">\n                            <list_item>\n                                <paragraph>\n                                    item\n                            <list_item>\n                                <paragraph>\n                                    two\n                    <entry>\n                        <paragraph>\n                            B\n",
+      "rst": "+----------+----+\n| - item   | B  |\n| - two    |    |\n+----------+----+\n"
+    },
+    {
+      "family": "tables_grid",
+      "name": "tables_grid.empty_cells",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"4\">\n            <colspec colwidth=\"4\">\n            <tbody>\n                <row>\n                    <entry>\n                    <entry>\n",
+      "rst": "+----+----+\n|    |    |\n+----+----+\n"
+    },
+    {
+      "family": "tables_grid",
+      "name": "tables_grid.borders_only",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"4\">\n            <colspec colwidth=\"4\">\n            <tbody>\n                <row>\n                    <entry>\n                    <entry>\n",
+      "rst": "+----+----+\n+----+----+\n"
+    },
+    {
+      "family": "tables_grid",
+      "name": "tables_grid.lone_border",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"0\">\n            <tbody>\n",
+      "rst": "+----+----+\n"
+    },
+    {
+      "family": "tables_grid",
+      "name": "tables_grid.right_border_misaligned",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"2\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Malformed table.\n            Right border not aligned or missing.\n        <literal_block xml:space=\"preserve\">\n            +----+----+\n            | A  | B   |\n            +----+----+\n",
+      "rst": "+----+----+\n| A  | B   |\n+----+----+\n"
+    },
+    {
+      "family": "tables_grid",
+      "name": "tables_grid.short_bottom_border",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Malformed table.\n            Right border not aligned or missing.\n        <literal_block xml:space=\"preserve\">\n            +----+----+\n            | A  | B  |\n            +----+---+\n",
+      "rst": "+----+----+\n| A  | B  |\n+----+---+\n"
+    },
+    {
+      "family": "tables_grid",
+      "name": "tables_grid.unclosed_table",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"2\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Malformed table.\n            Bottom border missing or corrupt.\n        <literal_block xml:space=\"preserve\">\n            +----+----+\n            | A  | B  |\n",
+      "rst": "+----+----+\n| A  | B  |\n"
+    },
+    {
+      "family": "tables_grid",
+      "name": "tables_grid.eq_border_cannot_close",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Malformed table.\n            Bottom border missing or corrupt.\n        <literal_block xml:space=\"preserve\">\n            +----+\n            | A  |\n            +====+\n",
+      "rst": "+----+\n| A  |\n+====+\n"
+    },
+    {
+      "family": "tables_grid",
+      "name": "tables_grid.nested_indent_in_cell",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"1\">\n            <colspec colwidth=\"12\">\n            <tbody>\n                <row>\n                    <entry>\n                        <block_quote>\n                            <paragraph>\n                                deep\n                        <system_message level=\"2\" line=\"4\" source=\"<snippet>\" type=\"WARNING\">\n                            <paragraph>\n                                Block quote ends without a blank line; unexpected unindent.\n                        <paragraph>\n                            shallow\n",
+      "rst": "+------------+\n|   deep     |\n| shallow    |\n+------------+\n"
+    },
+    {
+      "family": "tables_grid",
+      "name": "tables_grid.table_in_list_item",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                item\n            <table>\n                <tgroup cols=\"2\">\n                    <colspec colwidth=\"4\">\n                    <colspec colwidth=\"4\">\n                    <tbody>\n                        <row>\n                            <entry>\n                                <paragraph>\n                                    A\n                            <entry>\n                                <paragraph>\n                                    B\n",
+      "rst": "- item\n\n  +----+----+\n  | A  | B  |\n  +----+----+\n"
+    },
+    {
+      "family": "tables_grid",
+      "name": "tables_grid.text_after_table",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"4\">\n            <colspec colwidth=\"4\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            A\n                    <entry>\n                        <paragraph>\n                            B\n    <paragraph>\n        after para\n",
+      "rst": "+----+----+\n| A  | B  |\n+----+----+\n\nafter para\n"
+    },
+    {
+      "family": "tables_simple",
+      "name": "tables_simple.basic",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"5\">\n            <colspec colwidth=\"5\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            A\n                    <entry>\n                        <paragraph>\n                            B\n                <row>\n                    <entry>\n                        <paragraph>\n                            C\n                    <entry>\n                        <paragraph>\n                            D\n",
+      "rst": "=====  =====\nA      B\nC      D\n=====  =====\n"
+    },
+    {
+      "family": "tables_simple",
+      "name": "tables_simple.header",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"5\">\n            <colspec colwidth=\"5\">\n            <thead>\n                <row>\n                    <entry>\n                        <paragraph>\n                            H1\n                    <entry>\n                        <paragraph>\n                            H2\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            A\n                    <entry>\n                        <paragraph>\n                            B\n",
+      "rst": "=====  =====\nH1     H2\n=====  =====\nA      B\n=====  =====\n"
+    },
+    {
+      "family": "tables_simple",
+      "name": "tables_simple.multiline_row",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"5\">\n            <colspec colwidth=\"5\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            first\n                    <entry>\n                        <paragraph>\n                            cell\n                <row>\n                    <entry>\n                        <paragraph>\n                            more\n                    <entry>\n                        <paragraph>\n                            text\n                <row>\n                    <entry>\n                        <paragraph>\n                            next\n                    <entry>\n                        <paragraph>\n                            row\n",
+      "rst": "=====  =====\nfirst  cell\nmore   text\n-----  -----\nnext   row\n=====  =====\n"
+    },
+    {
+      "family": "tables_simple",
+      "name": "tables_simple.column_span_rule",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"5\">\n            <colspec colwidth=\"5\">\n            <tbody>\n                <row>\n                    <entry morecols=\"1\">\n                        <paragraph>\n                            merged cells\n                <row>\n                    <entry>\n                        <paragraph>\n                            A\n                    <entry>\n                        <paragraph>\n                            B\n",
+      "rst": "=====  =====\nmerged cells\n------------\nA      B\n=====  =====\n"
+    },
+    {
+      "family": "tables_simple",
+      "name": "tables_simple.right_edge_overflow",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"5\">\n            <colspec colwidth=\"25\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            A\n                    <entry>\n                        <paragraph>\n                            B and this extends beyond\n",
+      "rst": "=====  =====\nA      B and this extends beyond\n=====  =====\n"
+    },
+    {
+      "family": "tables_simple",
+      "name": "tables_simple.single_run_not_table",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"a\" names=\"a\">\n        <title>\n            A\n",
+      "rst": "=====\nA\n=====\n"
+    },
+    {
+      "family": "tables_simple",
+      "name": "tables_simple.borders_only",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"5\">\n            <colspec colwidth=\"5\">\n            <tbody>\n                <row>\n                    <entry>\n                    <entry>\n",
+      "rst": "=====  =====\n=====  =====\n"
+    },
+    {
+      "family": "tables_simple",
+      "name": "tables_simple.no_bottom_border",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Malformed table.\n            No bottom table border found.\n        <literal_block xml:space=\"preserve\">\n            =====  =====\n            A      B\n",
+      "rst": "=====  =====\nA      B\n"
+    },
+    {
+      "family": "tables_simple",
+      "name": "tables_simple.border_mismatch",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Malformed table.\n            Bottom border or header rule does not match top border.\n        <literal_block xml:space=\"preserve\">\n            =====  =====\n            A      B\n            ===  ===\n",
+      "rst": "=====  =====\nA      B\n===  ===\n"
+    },
+    {
+      "family": "tables_simple",
+      "name": "tables_simple.text_after_table_no_blank",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Malformed table.\n            No bottom table border found or no blank line after table bottom.\n        <literal_block xml:space=\"preserve\">\n            =====  =====\n            A      B\n            =====  =====\n    <system_message level=\"2\" line=\"4\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Blank line required after table.\n    <paragraph>\n        trailing text\n",
+      "rst": "=====  =====\nA      B\n=====  =====\ntrailing text\n"
+    },
+    {
+      "family": "tables_simple",
+      "name": "tables_simple.margin_text",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"2\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Malformed table.\n            Text in column margin in table line 2.\n        <literal_block xml:space=\"preserve\">\n            =====  =====\n            A     xB\n            =====  =====\n",
+      "rst": "=====  =====\nA     xB\n=====  =====\n"
+    },
+    {
+      "family": "tables_simple",
+      "name": "tables_simple.three_columns",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"3\">\n            <colspec colwidth=\"3\">\n            <colspec colwidth=\"3\">\n            <colspec colwidth=\"3\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            a\n                    <entry>\n                        <paragraph>\n                            b\n                    <entry>\n                        <paragraph>\n                            c\n                <row>\n                    <entry>\n                        <paragraph>\n                            d\n                    <entry>\n                        <paragraph>\n                            e\n                    <entry>\n                        <paragraph>\n                            f\n",
+      "rst": "===  ===  ===\na    b    c\nd    e    f\n===  ===  ===\n"
+    },
+    {
+      "family": "tables_simple",
+      "name": "tables_simple.in_paragraph_absorbed",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        para line\n        =====  =====\n        A      B\n        =====  =====\n",
+      "rst": "para line\n=====  =====\nA      B\n=====  =====\n"
+    },
+    {
       "family": "review",
       "name": "review.attr_no_space",
       "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <paragraph>\n            body\n        <attribution>\n            Author\n",
