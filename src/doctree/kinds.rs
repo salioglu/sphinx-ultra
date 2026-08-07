@@ -30,3 +30,9 @@ pub const LINE: &str = "line";
 pub const COMMENT: &str = "comment";
 pub const TARGET: &str = "target";
 pub const SYSTEM_MESSAGE: &str = "system_message";
+
+// wave 2: inline nodes
+pub const EMPHASIS: &str = "emphasis";
+pub const STRONG: &str = "strong";
+pub const LITERAL: &str = "literal";
+pub const PROBLEMATIC: &str = "problematic";

@@ -651,9 +651,17 @@ impl<'a> BlockParser<'a> {
         let (text, expect_literal) = strip_literal_colons(&joined);
         let span = self.span_of(lines, start, end.saturating_sub(1));
         if !text.is_empty() {
+            let result = super::inline::parse_inline(
+                &text,
+                span,
+                lines[start].lineno,
+                &mut self.registry,
+                self.source_path,
+            );
             let mut para = Node::elem(kinds::PARAGRAPH, span);
-            para.children.push(Node::text_node(text, span));
+            para.children = result.nodes;
             out.push(para);
+            out.extend(result.messages);
         }
         *pos = end;
 

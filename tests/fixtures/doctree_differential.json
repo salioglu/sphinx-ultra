@@ -1045,6 +1045,168 @@
       "rst": "para::\n\n    real literal\n"
     },
     {
+      "family": "inline_basics",
+      "name": "inline_basics.simple_emphasis",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        before \n        <emphasis>\n            emph\n         after\n",
+      "rst": "before *emph* after\n"
+    },
+    {
+      "family": "inline_basics",
+      "name": "inline_basics.three_kinds",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <emphasis>\n            a\n         \n        <strong>\n            b\n         \n        <literal>\n            c\n",
+      "rst": "*a* **b** ``c``\n"
+    },
+    {
+      "family": "inline_basics",
+      "name": "inline_basics.comma_after",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        a \n        <emphasis>\n            b\n        , c\n",
+      "rst": "a *b*, c\n"
+    },
+    {
+      "family": "inline_basics",
+      "name": "inline_basics.word_chars_block",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        a*b*c\n    <paragraph>\n        2*3*4\n",
+      "rst": "a*b*c\n\n2*3*4\n"
+    },
+    {
+      "family": "inline_basics",
+      "name": "inline_basics.hyphen_before",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        x-\n        <emphasis>\n            emph\n         y\n",
+      "rst": "x-*emph* y\n"
+    },
+    {
+      "family": "inline_basics",
+      "name": "inline_basics.parens_around",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        (\n        <emphasis>\n            emph\n        )\n",
+      "rst": "(*emph*)\n"
+    },
+    {
+      "family": "inline_basics",
+      "name": "inline_basics.quoted_suppression",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        \"*\" and '*' and (*) stay plain\n",
+      "rst": "\"*\" and '*' and (*) stay plain\n"
+    },
+    {
+      "family": "inline_basics",
+      "name": "inline_basics.end_of_text_star",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        word *\n",
+      "rst": "word *\n"
+    },
+    {
+      "family": "inline_basics",
+      "name": "inline_basics.unclosed_emphasis",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            *\n        oops\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Inline emphasis start-string without end-string.\n",
+      "rst": "*oops\n"
+    },
+    {
+      "family": "inline_basics",
+      "name": "inline_basics.unclosed_strong",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            **\n        oops\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Inline strong start-string without end-string.\n",
+      "rst": "**oops\n"
+    },
+    {
+      "family": "inline_basics",
+      "name": "inline_basics.unclosed_literal",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            ``\n        oops\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Inline literal start-string without end-string.\n",
+      "rst": "``oops\n"
+    },
+    {
+      "family": "inline_basics",
+      "name": "inline_basics.unclosed_mid_text",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        start \n        <problematic ids=\"id2\" refid=\"id1\">\n            *\n        oops end\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Inline emphasis start-string without end-string.\n",
+      "rst": "start *oops end\n"
+    },
+    {
+      "family": "inline_basics",
+      "name": "inline_basics.double_problematic",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        (\n        <problematic ids=\"id2\" refid=\"id1\">\n            *\n        emph \n        <problematic ids=\"id4\" refid=\"id3\">\n            *\n        nope\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Inline emphasis start-string without end-string.\n    <system_message backrefs=\"id4\" ids=\"id3\" level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Inline emphasis start-string without end-string.\n",
+      "rst": "(*emph *nope\n"
+    },
+    {
+      "family": "inline_basics",
+      "name": "inline_basics.no_nesting_emphasis",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <emphasis>\n            a **b*\n         c*\n",
+      "rst": "*a **b** c*\n"
+    },
+    {
+      "family": "inline_basics",
+      "name": "inline_basics.no_nesting_strong",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <strong>\n            a *b* c\n",
+      "rst": "**a *b* c**\n"
+    },
+    {
+      "family": "inline_basics",
+      "name": "inline_basics.triple_stars",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <strong>\n            *x*\n",
+      "rst": "***x***\n"
+    },
+    {
+      "family": "inline_basics",
+      "name": "inline_basics.first_end_wins",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <emphasis>\n            word *word\n",
+      "rst": "*word *word*\n"
+    },
+    {
+      "family": "inline_basics",
+      "name": "inline_basics.trailing_wordchar_problematic",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            *\n        emph*s\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Inline emphasis start-string without end-string.\n",
+      "rst": "*emph*s\n"
+    },
+    {
+      "family": "inline_basics",
+      "name": "inline_basics.literal_protects_markup",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <literal>\n            *not markup*\n",
+      "rst": "``*not markup*``\n"
+    },
+    {
+      "family": "inline_basics",
+      "name": "inline_basics.literal_keeps_backslash",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <literal>\n            a\\*b\n",
+      "rst": "``a\\*b``\n"
+    },
+    {
+      "family": "inline_basics",
+      "name": "inline_basics.escaped_stars_plain",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        *not markup*\n",
+      "rst": "\\*not markup\\*\n"
+    },
+    {
+      "family": "inline_basics",
+      "name": "inline_basics.punct_after_end",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <emphasis>\n            emph\n        . and \n        <emphasis>\n            emph\n        -like and \n        <emphasis>\n            emph\n        , done\n",
+      "rst": "*emph*. and *emph*-like and *emph*, done\n"
+    },
+    {
+      "family": "inline_basics",
+      "name": "inline_basics.escaped_space_joins",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        onetwo\n",
+      "rst": "one\\ two\n"
+    },
+    {
+      "family": "inline_basics",
+      "name": "inline_basics.markup_spans_lines",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <emphasis>\n            multi\n            line\n         end\n",
+      "rst": "*multi\nline* end\n"
+    },
+    {
+      "family": "inline_basics",
+      "name": "inline_basics.emphasis_in_quote",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <paragraph>\n            quoted \n            <emphasis>\n                emph\n             here\n",
+      "rst": "Para.\n\n    quoted *emph* here\n"
+    },
+    {
+      "family": "inline_basics",
+      "name": "inline_basics.emphasis_in_list",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                item \n                <emphasis>\n                    emph\n                 text\n",
+      "rst": "- item *emph* text\n"
+    },
+    {
+      "family": "inline_basics",
+      "name": "inline_basics.unclosed_in_list_item",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                <problematic ids=\"id2\" refid=\"id1\">\n                    *\n                oops in item\n            <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n                <paragraph>\n                    Inline emphasis start-string without end-string.\n",
+      "rst": "- *oops in item\n"
+    },
+    {
       "family": "review",
       "name": "review.attr_no_space",
       "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <paragraph>\n            body\n        <attribution>\n            Author\n",

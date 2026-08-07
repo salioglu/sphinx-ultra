@@ -57,6 +57,11 @@ SUPPORTED_KINDS = {
     "comment",
     "target",
     "system_message",
+    # wave 2: inline basics
+    "emphasis",
+    "strong",
+    "literal",
+    "problematic",
 }
 
 # (family, name, rst) — names unique, families floor-checked below.
@@ -248,6 +253,34 @@ CASES = [
     ("hardening", "quoted_literal_at_eof", "q::\n\n> a\n> b\n"),
     ("hardening", "comment_tab_continuation", ".. c\n\tbody via tab\n"),
     ("hardening", "deflist_term_double_colon_blank_ok", "para::\n\n    real literal\n"),
+    # ----- wave 2: inline basics (probe-verified inputs) -----
+    ("inline_basics", "simple_emphasis", "before *emph* after\n"),
+    ("inline_basics", "three_kinds", "*a* **b** ``c``\n"),
+    ("inline_basics", "comma_after", "a *b*, c\n"),
+    ("inline_basics", "word_chars_block", "a*b*c\n\n2*3*4\n"),
+    ("inline_basics", "hyphen_before", "x-*emph* y\n"),
+    ("inline_basics", "parens_around", "(*emph*)\n"),
+    ("inline_basics", "quoted_suppression", "\"*\" and '*' and (*) stay plain\n"),
+    ("inline_basics", "end_of_text_star", "word *\n"),
+    ("inline_basics", "unclosed_emphasis", "*oops\n"),
+    ("inline_basics", "unclosed_strong", "**oops\n"),
+    ("inline_basics", "unclosed_literal", "``oops\n"),
+    ("inline_basics", "unclosed_mid_text", "start *oops end\n"),
+    ("inline_basics", "double_problematic", "(*emph *nope\n"),
+    ("inline_basics", "no_nesting_emphasis", "*a **b** c*\n"),
+    ("inline_basics", "no_nesting_strong", "**a *b* c**\n"),
+    ("inline_basics", "triple_stars", "***x***\n"),
+    ("inline_basics", "first_end_wins", "*word *word*\n"),
+    ("inline_basics", "trailing_wordchar_problematic", "*emph*s\n"),
+    ("inline_basics", "literal_protects_markup", "``*not markup*``\n"),
+    ("inline_basics", "literal_keeps_backslash", "``a\\*b``\n"),
+    ("inline_basics", "escaped_stars_plain", "\\*not markup\\*\n"),
+    ("inline_basics", "punct_after_end", "*emph*. and *emph*-like and *emph*, done\n"),
+    ("inline_basics", "escaped_space_joins", "one\\ two\n"),
+    ("inline_basics", "markup_spans_lines", "*multi\nline* end\n"),
+    ("inline_basics", "emphasis_in_quote", "Para.\n\n    quoted *emph* here\n"),
+    ("inline_basics", "emphasis_in_list", "- item *emph* text\n"),
+    ("inline_basics", "unclosed_in_list_item", "- *oops in item\n"),
     # ----- review round (adversarial-review confirmed findings, 2026-08-07) -----
     ("review", "attr_no_space", "Para.\n\n    body\n\n    --Author\n"),
     ("review", "attr_no_space_emdash", "Para.\n\n    body\n\n    \u2014Author\n"),
@@ -343,7 +376,7 @@ def main() -> int:
         "paragraphs": 4, "sections": 8, "transition": 4, "lists_bullet": 8,
         "lists_enum": 8, "deflist": 8, "quote": 8, "literal": 8,
         "comment_target": 8, "lineblock": 4, "doctest": 4, "errors": 12,
-        "hardening": 20, "mixtures": 8, "review": 45,
+        "hardening": 20, "mixtures": 8, "review": 45, "inline_basics": 25,
     }
     counts: dict = {}
     for family, _, _ in CASES:

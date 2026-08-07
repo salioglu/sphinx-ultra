@@ -339,6 +339,12 @@ impl IdRegistry {
         node.attrs.ids.push(id);
     }
 
+    /// Allocate a bare auto id (`idN`) — used by the inline parser for
+    /// problematic/system_message pairs.
+    pub fn allocate_auto_id(&mut self) -> String {
+        self.allocate_id(&[])
+    }
+
     pub fn take_fixups(&mut self) -> Vec<DupnameFixup> {
         std::mem::take(&mut self.fixups)
     }

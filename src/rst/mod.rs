@@ -10,7 +10,9 @@
 //! probe notes in docs/superpowers/plans/2026-08-07-m2-wave1-probes.md.
 
 mod block;
+pub mod inline;
 pub mod lines;
+mod punctuation;
 
 use crate::doctree::Doctree;
 
