@@ -76,6 +76,15 @@ def main() -> int:
         out.append(f"    ('\\u{{{ord(k):x}}}', {rust_str(quote_pairs[k])}),\n")
     out.append("];\n")
 
+    import docutils.utils.urischemes as urischemes
+
+    out.append("\n/// docutils `urischemes.schemes` keys (lowercase), for standalone-URI\n")
+    out.append("/// scheme validation.\n")
+    out.append("pub const URI_SCHEMES: &[&str] = &[\n")
+    for s in sorted(urischemes.schemes):
+        out.append(f"    {s!r},\n".replace("'", '"'))
+    out.append("];\n")
+
     text = "".join(out)
     with open("src/rst/punctuation.rs", "w", encoding="utf-8") as f:
         f.write(text)

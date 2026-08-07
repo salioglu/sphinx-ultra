@@ -1267,6 +1267,276 @@
       "rst": "*Same*\n======\n\nx\n\nSame\n====\n\ny\n"
     },
     {
+      "family": "inline_refs",
+      "name": "inline_refs.named_word_ref",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <reference name=\"word\" refname=\"word\">\n            word\n         here.\n",
+      "rst": "See word_ here.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.cased_word_ref",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <reference name=\"Word\" refname=\"word\">\n            Word\n         now.\n",
+      "rst": "See Word_ now.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.ref_with_target",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <reference name=\"word\" refname=\"word\">\n            word\n         here.\n    <target ids=\"word\" names=\"word\" refuri=\"https://example.com\">\n",
+      "rst": "See word_ here.\n\n.. _word: https://example.com\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.phrase_ref",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <reference name=\"Two Words\" refname=\"two words\">\n            Two Words\n         here.\n",
+      "rst": "See `Two Words`_ here.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.phrase_ref_spaces",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <reference name=\"two words\" refname=\"two words\">\n            two   words\n         (extra spaces) here.\n",
+      "rst": "See `two   words`_ (extra spaces) here.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.phrase_ref_multiline",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <reference name=\"two words\" refname=\"two words\">\n            two\n            words\n         here.\n",
+      "rst": "See `two\nwords`_ here.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.anonymous_word",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <reference anonymous=\"1\" name=\"word\">\n            word\n         here.\n",
+      "rst": "See word__ here.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.anonymous_phrase",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <reference anonymous=\"1\" name=\"some phrase\">\n            some phrase\n         here.\n",
+      "rst": "See `some phrase`__ here.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.anon_trailing_punct",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Anon \n        <reference anonymous=\"1\" name=\"word\">\n            word\n        .\n",
+      "rst": "Anon word__.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.embedded_uri",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <reference name=\"text\" refuri=\"https://x/\">\n            text\n        <target ids=\"text\" names=\"text\" refuri=\"https://x/\">\n         here.\n",
+      "rst": "See `text <https://x/>`_ here.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.embedded_uri_anon",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <reference name=\"text\" refuri=\"https://x/\">\n            text\n         here.\n",
+      "rst": "See `text <https://x/>`__ here.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.embedded_uri_multiline",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <reference name=\"a b\" refuri=\"https://long.example/path\">\n            a b\n        <target ids=\"a-b\" names=\"a\\ b\" refuri=\"https://long.example/path\">\n         here.\n",
+      "rst": "See `a b\n<https://long.example/\npath>`_ here.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.embedded_alias",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <reference name=\"text\" refname=\"alias\">\n            text\n        <target ids=\"text\" names=\"text\" refname=\"alias\">\n         here.\n",
+      "rst": "See `text <alias_>`_ here.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.embedded_alias_anon",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <reference name=\"text\" refname=\"alias\">\n            text\n         here.\n",
+      "rst": "See `text <alias_>`__ here.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.embedded_alias_phrase",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <reference name=\"text\" refname=\"two words\">\n            text\n        <target ids=\"text\" names=\"text\" refname=\"two words\">\n         here.\n",
+      "rst": "See `text <two words_>`_ here.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.embedded_email",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <reference name=\"mail me\" refuri=\"mailto:foo@example.com\">\n            mail me\n        <target ids=\"mail-me\" names=\"mail\\ me\" refuri=\"mailto:foo@example.com\">\n         now.\n",
+      "rst": "See `mail me <foo@example.com>`_ now.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.embedded_escaped_underscore",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <reference name=\"text\" refuri=\"alias_\">\n            text\n        <target ids=\"text\" names=\"text\" refuri=\"alias_\">\n         now.\n",
+      "rst": "See `text <alias\\_>`_ now.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.embedded_relative_uri",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <reference name=\"text\" refuri=\"not-a-uri\">\n            text\n        <target ids=\"text\" names=\"text\" refuri=\"not-a-uri\">\n         now.\n",
+      "rst": "See `text <not-a-uri>`_ now.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.embedded_omitted_text",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <reference name=\"https://x/\" refuri=\"https://x/\">\n            https://x/\n        <target ids=\"https-x\" names=\"https://x/\" refuri=\"https://x/\">\n         here.\n",
+      "rst": "See `<https://x/>`_ here.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.inline_internal_target",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Here is \n        <target ids=\"marked-text\" names=\"marked\\ text\">\n            marked text\n         inline.\n",
+      "rst": "Here is _`marked text` inline.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.inline_target_cased",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Here is \n        <target ids=\"two-words\" names=\"two\\ words\">\n            Two Words\n         inline.\n",
+      "rst": "Here is _`Two Words` inline.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.underscore_word_plain",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        A _word and \n        <target ids=\"target\" names=\"target\">\n            target\n         here.\n",
+      "rst": "A _word and _`target` here.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.midword_target_plain",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        midword_`no target` here.\n",
+      "rst": "midword_`no target` here.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.bare_interpreted",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <title_reference>\n            interpreted\n         here.\n",
+      "rst": "See `interpreted` here.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.footnote_refs_all",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Refs \n        <footnote_reference ids=\"id1\" refname=\"1\">\n            1\n         \n        <footnote_reference auto=\"1\" ids=\"id2\">\n         \n        <footnote_reference auto=\"1\" ids=\"id3\" refname=\"label\">\n         \n        <footnote_reference auto=\"*\" ids=\"id4\">\n         end.\n",
+      "rst": "Refs [1]_ [#]_ [#label]_ [*]_ end.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.footnote_ref_cased",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Ref \n        <footnote_reference auto=\"1\" ids=\"id1\" refname=\"label\">\n         end.\n",
+      "rst": "Ref [#Label]_ end.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.footnote_ref_ten",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Ref \n        <footnote_reference ids=\"id1\" refname=\"10\">\n            10\n         now.\n",
+      "rst": "Ref [10]_ now.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.footnote_ref_space_breaks",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Bad [1] _ and good \n        <footnote_reference ids=\"id1\" refname=\"1\">\n            1\n         here.\n",
+      "rst": "Bad [1] _ and good [1]_ here.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.citation_ref",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Cite \n        <citation_reference ids=\"id1\" refname=\"cite2020\">\n            cite2020\n         end.\n",
+      "rst": "Cite [cite2020]_ end.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.citation_ref_dotted",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Cite \n        <citation_reference ids=\"id1\" refname=\"cite.2020-x\">\n            Cite.2020-X\n         end.\n",
+      "rst": "Cite [Cite.2020-X]_ end.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.substitution_refs",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        A \n        <substitution_reference refname=\"sub\">\n            sub\n         B \n        <reference refname=\"sub2\">\n            <substitution_reference refname=\"sub2\">\n                sub2\n         C \n        <reference anonymous=\"1\">\n            <substitution_reference refname=\"sub3\">\n                sub3\n         D.\n",
+      "rst": "A |sub| B |sub2|_ C |sub3|__ D.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.substitution_cased",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        A \n        <reference refname=\"sub name\">\n            <substitution_reference refname=\"Sub Name\">\n                Sub Name\n         B.\n",
+      "rst": "A |Sub Name|_ B.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.substitution_broken",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        A \n        <problematic ids=\"id2\" refid=\"id1\">\n            |\n        sub|_z now.\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Inline substitution_reference start-string without end-string.\n",
+      "rst": "A |sub|_z now.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.standalone_uris",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Go to \n        <reference refuri=\"https://x\">\n            https://x\n         and \n        <reference refuri=\"http://example.com/path?q=1\">\n            http://example.com/path?q=1\n         now.\n",
+      "rst": "Go to https://x and http://example.com/path?q=1 now.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.www_not_a_link",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Go to www.x.com now.\n",
+      "rst": "Go to www.x.com now.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.unknown_scheme",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See xyz:abc here.\n",
+      "rst": "See xyz:abc here.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.uri_case_preserved",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <reference refuri=\"HTTPS://EXAMPLE.COM/Path\">\n            HTTPS://EXAMPLE.COM/Path\n         here.\n",
+      "rst": "See HTTPS://EXAMPLE.COM/Path here.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.escaped_scheme",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See https://x.example/ here.\n",
+      "rst": "See https\\://x.example/ here.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.bare_email",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Write \n        <reference refuri=\"mailto:foo.bar-baz@example.com\">\n            foo.bar-baz@example.com\n        . Done.\n",
+      "rst": "Write foo.bar-baz@example.com. Done.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.mailto_email",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Write \n        <reference refuri=\"mailto:foo@example.com\">\n            mailto:foo@example.com\n         please.\n",
+      "rst": "Write mailto:foo@example.com please.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.uri_trailing_punct",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <reference refuri=\"https://x.example/\">\n            https://x.example/\n        , and (\n        <reference refuri=\"https://y.example/\">\n            https://y.example/\n        ) or \n        <reference refuri=\"https://z.example/\">\n            https://z.example/\n        .\n",
+      "rst": "See https://x.example/, and (https://y.example/) or https://z.example/.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.snake_case_ref",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <reference name=\"foo_bar\" refname=\"foo_bar\">\n            foo_bar\n         here.\n",
+      "rst": "See foo_bar_ here.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.double_underscore_not_ref",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See foo__bar and __init__ here.\n",
+      "rst": "See foo__bar and __init__ here.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.word_ref_end_sentence",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <reference name=\"word\" refname=\"word\">\n            word\n        . Done.\n",
+      "rst": "See word_. Done.\n"
+    },
+    {
+      "family": "inline_refs",
+      "name": "inline_refs.escaped_word_ref",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See word_ here.\n",
+      "rst": "See word\\_ here.\n"
+    },
+    {
       "family": "review",
       "name": "review.attr_no_space",
       "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <paragraph>\n            body\n        <attribution>\n            Author\n",
