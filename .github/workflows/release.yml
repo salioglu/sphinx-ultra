@@ -166,7 +166,7 @@ jobs:
         cat "${{ env.ASSET }}.sha256"
 
     - name: Upload release archive
-      uses: softprops/action-gh-release@v2
+      uses: softprops/action-gh-release@v3
       with:
         files: |
           ${{ env.ASSET }}
