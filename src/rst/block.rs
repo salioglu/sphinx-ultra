@@ -2447,18 +2447,18 @@ impl<'a> BlockParser<'a> {
         let (block, consumed, _indent, _term) = indented_block(lines, start + 1);
         *pos = start + 1 + consumed;
         let span = self.span_of(lines, start, start + consumed);
-        // Full raw source (original indentation preserved, trailing blanks
-        // trimmed) — reproduced in EVERY directive error literal.
-        let mut raw_lines: Vec<&str> = vec![lines[start].text];
-        for l in &lines[start + 1..start + 1 + consumed] {
-            raw_lines.push(l.text);
+        // Full raw source (original indentation preserved) — reproduced in
+        // EVERY directive error literal. Fixture-verified: docutils'
+        // block_text spans the marker through ALL trailing blank lines
+        // (the final newline then disappears in line-splitting, so exactly
+        // one trailing blank renders in the literal).
+        let mut raw_end = start + 1 + consumed;
+        while lines.get(raw_end).map(|l| l.is_blank()).unwrap_or(false) {
+            raw_end += 1;
         }
-        while raw_lines
-            .last()
-            .map(|l| l.trim().is_empty())
-            .unwrap_or(false)
-        {
-            raw_lines.pop();
+        let mut raw_lines: Vec<&str> = vec![lines[start].text];
+        for l in &lines[start + 1..raw_end] {
+            raw_lines.push(l.text);
         }
         let rawsource = raw_lines.join("\n");
 
@@ -2483,229 +2483,291 @@ impl<'a> BlockParser<'a> {
             return;
         };
 
+        // MarkupError wrapper (states.py:2274-2281): uses the directive
+        // name AS WRITTEN (`.. NOTE::` errors say "NOTE").
         let dir_error = |me: &Self, detail: &str| -> Node {
             messages::with_literal(
                 me.msg(
                     messages::ERROR,
-                    &format!("Error in \"{lower}\" directive:\n{detail}."),
+                    &format!("Error in \"{name}\" directive:\n{detail}."),
                     lineno,
                 ),
                 &rawsource,
             )
         };
 
-        // Split the block: arg_block = first_rest + lines up to the first
-        // blank; content = everything after the first blank line.
-        let mut arg_lines: Vec<LineRef<'a>> = Vec::new();
-        if !first_rest.trim().is_empty() {
-            let offset = lines[start].text.len() - first_rest.len();
-            arg_lines.push(LineRef::new(
-                lines[start].text[offset..].trim_start(),
+        // ---- parse_directive_block (states.py:2301-2345), exact order ----
+        // `indented` mirrors get_first_known_indented(match.end(),
+        // strip_top=0): the marker-line remainder after `::` and ALL
+        // following spaces, then the (already dedented) indented block.
+        let mut indented: Vec<LineRef<'a>> = Vec::new();
+        {
+            let first_line = first_rest.trim_start_matches(' ');
+            let offset = lines[start].text.len() - first_line.len();
+            indented.push(LineRef::new(
+                &lines[start].text[offset..],
                 lineno,
                 lines[start].src_start,
                 lines[start].src_end,
             ));
         }
-        let mut content: Vec<LineRef<'a>> = Vec::new();
-        let mut seen_blank = false;
-        for l in &block {
-            if seen_blank {
-                content.push(*l);
-            } else if l.is_blank() {
-                seen_blank = true;
-            } else {
-                arg_lines.push(*l);
+        indented.extend(block.iter().copied());
+        // Exactly ONE leading blank line is trimmed, then all trailing.
+        if indented.first().map(|l| l.is_blank()).unwrap_or(false) {
+            indented.remove(0);
+        }
+        while indented.last().map(|l| l.is_blank()).unwrap_or(false) {
+            indented.pop();
+        }
+
+        // Split arg block vs content at the first blank line — only when
+        // the directive declares arguments or options.
+        let declares_specs = spec.required_arguments > 0
+            || spec.optional_arguments > 0
+            || !spec.option_spec.is_empty();
+        let mut arg_block: Vec<LineRef<'a>>;
+        let mut content: Vec<LineRef<'a>>;
+        let blank_idx;
+        if !indented.is_empty() && declares_specs {
+            blank_idx = indented
+                .iter()
+                .position(|l| l.is_blank())
+                .unwrap_or(indented.len());
+            arg_block = indented[..blank_idx].to_vec();
+            content = indented
+                .get(blank_idx + 1..)
+                .map(|s| s.to_vec())
+                .unwrap_or_default();
+        } else {
+            blank_idx = 0;
+            arg_block = Vec::new();
+            content = indented.clone();
+        }
+
+        // Options before arguments (parse_directive_options,
+        // states.py:2347-2363): the arg block splits at the FIRST
+        // field-marker line.
+        let mut options: Vec<(String, OptVal)> = Vec::new();
+        if !spec.option_spec.is_empty() {
+            if let Some(k) = arg_block
+                .iter()
+                .position(|l| field_marker(l.text).is_some())
+            {
+                let opt_block = arg_block.split_off(k);
+                match parse_extension_options(&opt_block, spec.option_spec) {
+                    Ok(opts) => options = opts,
+                    Err(detail) => {
+                        out.push(dir_error(self, &detail));
+                        return;
+                    }
+                }
             }
         }
-        // Trim leading blanks of content.
+
+        // Leftover argument lines become content for argument-less
+        // directives (probe X6), re-joined with the blank separator and
+        // everything after it (states.py:2330-2334).
+        if !arg_block.is_empty() && spec.required_arguments == 0 && spec.optional_arguments == 0 {
+            let mut rejoined = arg_block.clone();
+            rejoined.extend(indented[blank_idx.min(indented.len())..].iter().copied());
+            content = rejoined;
+            arg_block.clear();
+        }
         while content.first().map(|l| l.is_blank()).unwrap_or(false) {
             content.remove(0);
         }
 
-        // Options: the arg block splits at the FIRST field-marker line.
-        let mut argument_lines: Vec<LineRef<'a>> = Vec::new();
-        let mut option_lines: Vec<LineRef<'a>> = Vec::new();
-        let mut in_options = false;
-        for l in &arg_lines {
-            if !in_options && field_marker(l.text).is_some() {
-                in_options = true;
-            }
-            if in_options {
-                option_lines.push(*l);
-            } else {
-                argument_lines.push(*l);
-            }
-        }
-
-        // Parse options.
-        let mut classes: Vec<String> = Vec::new();
-        let mut node_name: Option<String> = None;
-        let mut i = 0usize;
-        while i < option_lines.len() {
-            let l = option_lines[i];
-            let Some((opt_name, body_start)) = field_marker(l.text) else {
-                out.push(dir_error(self, "invalid option block"));
-                return;
-            };
-            // option value: rest of line + deeper-indented continuations
-            let mut value = l.text[body_start..].trim().to_string();
-            let mut j = i + 1;
-            while j < option_lines.len()
-                && option_lines[j].indent() > 0
-                && field_marker(option_lines[j].text).is_none()
-            {
-                if !value.is_empty() {
-                    value.push(' ');
-                }
-                value.push_str(option_lines[j].text.trim());
-                j += 1;
-            }
-            if j < option_lines.len()
-                && option_lines[j].indent() == 0
-                && field_marker(option_lines[j].text).is_none()
-            {
-                out.push(dir_error(self, "invalid option block"));
-                return;
-            }
-            match opt_name.to_lowercase().as_str() {
-                "class" if spec.allow_class => {
-                    if value.is_empty() {
-                        out.push(dir_error(
-                            self,
-                            "invalid option value: (option: \"class\"; value: None)\nargument required but none supplied",
-                        ));
-                        return;
-                    }
-                    for word in value.split_whitespace() {
-                        classes.push(ids::make_id(word));
-                    }
-                }
-                "name" if spec.allow_class => {
-                    node_name = Some(value.clone());
-                }
-                other => {
-                    out.push(dir_error(self, &format!("unknown option: \"{other}\"")));
+        // Arguments (parse_directive_arguments, states.py:2365-2380).
+        let mut arguments: Vec<String> = Vec::new();
+        if spec.required_arguments + spec.optional_arguments > 0 {
+            let arg_text = arg_block
+                .iter()
+                .map(|l| l.text)
+                .collect::<Vec<_>>()
+                .join("\n");
+            match parse_directive_arguments(&arg_text, &spec) {
+                Ok(a) => arguments = a,
+                Err(detail) => {
+                    out.push(dir_error(self, &detail));
                     return;
                 }
             }
-            i = j;
         }
 
-        // Arguments / leftover argument lines become content for
-        // zero-argument directives (probe X6).
-        let mut effective_content = content;
+        // The content-permission check runs LAST (states.py:2343-2344).
+        if !content.is_empty() && !spec.has_content {
+            out.push(dir_error(self, "no content permitted"));
+            return;
+        }
+
+        let input = DirectiveInput {
+            name,
+            arguments,
+            options,
+            content,
+            span,
+            lineno,
+            rawsource: &rawsource,
+        };
         match spec.kind {
-            DirectiveKind::Admonition(kind) => {
-                if !argument_lines.is_empty() {
-                    let mut pre = argument_lines.clone();
-                    if !effective_content.is_empty() {
-                        pre.push(LineRef::new(
-                            "",
-                            lineno,
-                            lines[start].src_start,
-                            lines[start].src_end,
-                        ));
-                    }
-                    pre.extend(effective_content.iter().copied());
-                    effective_content = pre;
-                }
-                if effective_content.iter().all(|l| l.is_blank()) {
-                    out.push(messages::with_literal(
-                        self.msg(
-                            messages::ERROR,
-                            &format!(
-                                "Content block expected for the \"{lower}\" directive; none found."
-                            ),
-                            lineno,
-                        ),
-                        &rawsource,
-                    ));
-                    return;
-                }
-                let mut node = Node::elem(kind, span);
-                node.attrs.classes = classes;
-                if let Some(n) = node_name {
-                    node.attrs.names.push(ids::fully_normalize_name(&n));
-                    let msg = self.registry.set_id_explicit(
-                        &mut node,
-                        lineno,
-                        self.source_path,
-                        true,
-                        None,
-                    );
-                    if let Some(m) = msg {
-                        out.push(m);
-                    }
-                }
-                self.line_bias += 1;
-                node.children
-                    .extend(self.parse_elements(&effective_content));
-                self.line_bias -= 1;
-                out.push(node);
+            DirectiveKind::Admonition(kind) => self.run_admonition(kind, input, out),
+            DirectiveKind::GenericAdmonition => self.run_generic_admonition(input, out),
+            DirectiveKind::Image => self.run_image(input, out),
+        }
+    }
+
+    /// DirectiveError-style error (raised by a directive's own run()):
+    /// message text VERBATIM — no 'Error in "X" directive:' prefix — plus
+    /// the raw block as a literal_block child (states.py:2287-2291).
+    fn directive_run_error(&self, text: &str, lineno: u32, rawsource: &str) -> Node {
+        messages::with_literal(self.msg(messages::ERROR, text, lineno), rawsource)
+    }
+
+    /// assert_has_content() (rst/__init__.py:370-377).
+    fn directive_content_error(&self, name: &str, lineno: u32, rawsource: &str) -> Node {
+        self.directive_run_error(
+            &format!("Content block expected for the \"{name}\" directive; none found."),
+            lineno,
+            rawsource,
+        )
+    }
+
+    /// add_name() (rst/__init__.py:379-389): the :name: option registers an
+    /// explicit target on the node.
+    fn directive_add_name(
+        &mut self,
+        node: &mut Node,
+        options: &[(String, OptVal)],
+        lineno: u32,
+        out: &mut Vec<Node>,
+    ) {
+        if let Some(OptVal::Str(n)) = opt_get(options, "name") {
+            node.attrs.names.push(ids::fully_normalize_name(n));
+            let msg = self
+                .registry
+                .set_id_explicit(node, lineno, self.source_path, true, None);
+            if let Some(m) = msg {
+                out.push(m);
             }
-            DirectiveKind::GenericAdmonition => {
-                if argument_lines.is_empty() {
-                    out.push(dir_error(self, "1 argument(s) required, 0 supplied"));
-                    return;
-                }
-                let title_text = argument_lines
-                    .iter()
-                    .map(|l| l.text.trim())
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                if effective_content.iter().all(|l| l.is_blank()) {
-                    out.push(messages::with_literal(
-                        self.msg(
-                            messages::ERROR,
-                            &format!(
-                                "Content block expected for the \"{lower}\" directive; none found."
-                            ),
-                            lineno,
-                        ),
-                        &rawsource,
-                    ));
-                    return;
-                }
-                let mut node = Node::elem("admonition", span);
-                if classes.is_empty() {
-                    node.attrs
-                        .classes
-                        .push(format!("admonition-{}", ids::make_id(&title_text)));
-                } else {
-                    node.attrs.classes = classes;
-                }
-                if let Some(n) = node_name {
-                    node.attrs.names.push(ids::fully_normalize_name(&n));
-                    let msg = self.registry.set_id_explicit(
-                        &mut node,
-                        lineno,
-                        self.source_path,
-                        true,
-                        None,
-                    );
-                    if let Some(m) = msg {
-                        out.push(m);
-                    }
-                }
-                let inline = super::inline::parse_inline(
-                    &title_text,
-                    span,
-                    lineno,
-                    &mut self.registry,
-                    self.source_path,
-                );
-                let mut title = Node::elem(kinds::TITLE, span);
-                title.children = inline.nodes;
-                node.children.push(title);
-                for m in inline.messages {
-                    node.children.push(m);
-                }
-                self.line_bias += 1;
-                node.children
-                    .extend(self.parse_elements(&effective_content));
-                self.line_bias -= 1;
-                out.push(node);
+        }
+    }
+
+    fn run_admonition(
+        &mut self,
+        kind: &'static str,
+        input: DirectiveInput<'a, '_>,
+        out: &mut Vec<Node>,
+    ) {
+        if input.content.is_empty() {
+            out.push(self.directive_content_error(input.name, input.lineno, input.rawsource));
+            return;
+        }
+        let mut node = Node::elem(kind, input.span);
+        if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
+            node.attrs.classes.extend(classes.iter().cloned());
+        }
+        self.directive_add_name(&mut node, &input.options, input.lineno, out);
+        node.children.extend(self.parse_elements(&input.content));
+        out.push(node);
+    }
+
+    fn run_generic_admonition(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        if input.content.is_empty() {
+            out.push(self.directive_content_error(input.name, input.lineno, input.rawsource));
+            return;
+        }
+        let title_text = input.arguments[0].clone();
+        let mut node = Node::elem("admonition", input.span);
+        match opt_get(&input.options, "class") {
+            Some(OptVal::StrList(classes)) => {
+                node.attrs.classes.extend(classes.iter().cloned());
             }
+            _ => {
+                // Auto class from the title, only without :class:
+                // (admonitions.py:44-46).
+                node.attrs
+                    .classes
+                    .push(format!("admonition-{}", ids::make_id(&title_text)));
+            }
+        }
+        self.directive_add_name(&mut node, &input.options, input.lineno, out);
+        let inline = super::inline::parse_inline(
+            &title_text,
+            input.span,
+            input.lineno,
+            &mut self.registry,
+            self.source_path,
+        );
+        let mut title = Node::elem(kinds::TITLE, input.span);
+        title.children = inline.nodes;
+        node.children.push(title);
+        for m in inline.messages {
+            node.children.push(m);
+        }
+        node.children.extend(self.parse_elements(&input.content));
+        out.push(node);
+    }
+
+    fn run_image(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        // Two-stage :align: validation (images.py:53-63): the converter
+        // accepted all six values; at body level only horizontal ones are
+        // legal. This is a DirectiveError whose text CONTAINS its own
+        // 'Error in …' lead — the machinery adds no prefix. Two spaces
+        // before 'Valid' are docutils-verbatim.
+        if let Some(OptVal::Str(align)) = opt_get(&input.options, "align") {
+            if matches!(align.as_str(), "top" | "middle" | "bottom") {
+                out.push(self.directive_run_error(
+                    &format!(
+                        "Error in \"{}\" directive: \"{}\" is not a valid value for the \"align\" option.  Valid values for \"align\" are: \"left\", \"center\", \"right\".",
+                        input.name, align
+                    ),
+                    input.lineno,
+                    input.rawsource,
+                ));
+                return;
+            }
+        }
+        let uri = uri_from_argument(&input.arguments[0]);
+        // :target: wraps the image in a reference (images.py:74-93).
+        let mut reference: Option<Node> = None;
+        if let Some(OptVal::Str(target)) = opt_get(&input.options, "target") {
+            let mut node = Node::elem(kinds::REFERENCE, input.span);
+            match parse_image_target(target) {
+                ImageTarget::Refname { name, refname } => {
+                    node.set("name", AttrValue::Str(name));
+                    node.set("refname", AttrValue::Str(refname));
+                }
+                ImageTarget::Refuri(refuri) => {
+                    node.set("refuri", AttrValue::Str(refuri));
+                }
+            }
+            reference = Some(node);
+        }
+        let mut image = Node::elem("image", input.span);
+        for (name, val) in &input.options {
+            match (name.as_str(), val) {
+                ("alt", OptVal::Str(v)) => image.set("alt", AttrValue::Str(v.clone())),
+                ("height", OptVal::Str(v)) => image.set("height", AttrValue::Str(v.clone())),
+                ("width", OptVal::Str(v)) => image.set("width", AttrValue::Str(v.clone())),
+                ("align", OptVal::Str(v)) => image.set("align", AttrValue::Str(v.clone())),
+                ("loading", OptVal::Str(v)) => image.set("loading", AttrValue::Str(v.clone())),
+                ("scale", OptVal::Int(v)) => image.set("scale", AttrValue::Int(*v)),
+                ("class", OptVal::StrList(v)) => {
+                    image.attrs.classes.extend(v.iter().cloned());
+                }
+                // `name`/`target` are consumed by add_name / the
+                // reference wrapper.
+                _ => {}
+            }
+        }
+        image.set("uri", AttrValue::Str(uri));
+        self.directive_add_name(&mut image, &input.options, input.lineno, out);
+        match reference {
+            Some(mut r) => {
+                r.children.push(image);
+                out.push(r);
+            }
+            None => out.push(image),
         }
     }
 
@@ -3122,24 +3184,90 @@ fn directive_marker(rest: &str) -> Option<(String, &str)> {
     Some((name, &rest[byte_after..]))
 }
 
+#[derive(Clone, Copy)]
 enum DirectiveKind {
     /// note/warning/... : content-only, node kind = tagname.
     Admonition(&'static str),
     /// `.. admonition:: Title` with required title argument.
     GenericAdmonition,
+    /// `.. image:: uri` (images.py Image).
+    Image,
 }
 
+/// The docutils Directive class contract (rst/__init__.py:305-318).
+#[derive(Clone, Copy)]
 struct DirectiveSpec {
+    required_arguments: usize,
+    optional_arguments: usize,
+    final_argument_whitespace: bool,
+    has_content: bool,
+    option_spec: &'static [(&'static str, Conv)],
     kind: DirectiveKind,
-    /// :class:/:name: options accepted (all wave-3 task-3 directives).
-    allow_class: bool,
 }
+
+/// Option converters (directives/__init__.py:156-481). Each mirrors one
+/// docutils conversion function, including its exact error text.
+#[derive(Clone, Copy)]
+enum Conv {
+    Unchanged,
+    UnchangedRequired,
+    Percentage,
+    LengthOrUnitless,
+    LengthOrPercentageOrUnitless,
+    ClassOption,
+    Choice(&'static [&'static str]),
+}
+
+/// Converted option values (Python-typed in docutils: None/str/int/list).
+#[derive(Clone, Debug, PartialEq)]
+enum OptVal {
+    Str(String),
+    Int(i64),
+    StrList(Vec<String>),
+}
+
+/// The arguments/options/content/etc. handed to a directive's run().
+struct DirectiveInput<'a, 'r> {
+    /// The directive name AS WRITTEN (docutils self.name; error messages
+    /// reproduce the original case).
+    name: &'r str,
+    arguments: Vec<String>,
+    options: Vec<(String, OptVal)>,
+    content: Vec<LineRef<'a>>,
+    span: Span,
+    lineno: u32,
+    rawsource: &'r str,
+}
+
+fn opt_get<'o>(options: &'o [(String, OptVal)], name: &str) -> Option<&'o OptVal> {
+    options.iter().find(|(n, _)| n == name).map(|(_, v)| v)
+}
+
+const ADMONITION_OPTS: &[(&str, Conv)] = &[("class", Conv::ClassOption), ("name", Conv::Unchanged)];
+
+const IMAGE_ALIGN_VALUES: &[&str] = &["top", "middle", "bottom", "left", "center", "right"];
+const IMAGE_LOADING_VALUES: &[&str] = &["embed", "link", "lazy"];
+const IMAGE_OPTS: &[(&str, Conv)] = &[
+    ("alt", Conv::Unchanged),
+    ("height", Conv::LengthOrUnitless),
+    ("width", Conv::LengthOrPercentageOrUnitless),
+    ("scale", Conv::Percentage),
+    ("align", Conv::Choice(IMAGE_ALIGN_VALUES)),
+    ("target", Conv::UnchangedRequired),
+    ("loading", Conv::Choice(IMAGE_LOADING_VALUES)),
+    ("class", Conv::ClassOption),
+    ("name", Conv::Unchanged),
+];
 
 fn directive_spec(lower: &str) -> Option<DirectiveSpec> {
     let adm = |k: &'static str| {
         Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 0,
+            final_argument_whitespace: true,
+            has_content: true,
+            option_spec: ADMONITION_OPTS,
             kind: DirectiveKind::Admonition(k),
-            allow_class: true,
         })
     };
     match lower {
@@ -3153,11 +3281,422 @@ fn directive_spec(lower: &str) -> Option<DirectiveSpec> {
         "error" => adm("error"),
         "attention" => adm("attention"),
         "admonition" => Some(DirectiveSpec {
+            required_arguments: 1,
+            optional_arguments: 0,
+            final_argument_whitespace: true,
+            has_content: true,
+            option_spec: ADMONITION_OPTS,
             kind: DirectiveKind::GenericAdmonition,
-            allow_class: true,
+        }),
+        "image" => Some(DirectiveSpec {
+            required_arguments: 1,
+            optional_arguments: 0,
+            final_argument_whitespace: true,
+            has_content: false,
+            option_spec: IMAGE_OPTS,
+            kind: DirectiveKind::Image,
         }),
         _ => None,
     }
+}
+
+/// parse_directive_arguments (states.py:2365-2380).
+fn parse_directive_arguments(arg_text: &str, spec: &DirectiveSpec) -> Result<Vec<String>, String> {
+    let required = spec.required_arguments;
+    let optional = spec.optional_arguments;
+    let words: Vec<&str> = arg_text.split_whitespace().collect();
+    if words.len() < required {
+        return Err(format!(
+            "{} argument(s) required, {} supplied",
+            required,
+            words.len()
+        ));
+    }
+    if words.len() > required + optional {
+        if spec.final_argument_whitespace {
+            return Ok(py_split_max(arg_text, required + optional - 1));
+        }
+        return Err(format!(
+            "maximum {} argument(s) allowed, {} supplied",
+            required + optional,
+            words.len()
+        ));
+    }
+    Ok(words.iter().map(|w| w.to_string()).collect())
+}
+
+/// Python `str.split(None, maxsplit)`: whitespace runs separate the first
+/// `maxsplit` tokens; the remainder keeps internal whitespace verbatim.
+fn py_split_max(text: &str, maxsplit: usize) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = text.trim_start();
+    for _ in 0..maxsplit {
+        if rest.is_empty() {
+            return out;
+        }
+        match rest.find(char::is_whitespace) {
+            Some(i) => {
+                out.push(rest[..i].to_string());
+                rest = rest[i..].trim_start();
+            }
+            None => {
+                out.push(rest.to_string());
+                return out;
+            }
+        }
+    }
+    if !rest.is_empty() {
+        out.push(rest.to_string());
+    }
+    out
+}
+
+/// parse_extension_options + extract_options + assemble_option_dict
+/// (states.py:2382-2413, utils.py:274-369). Errors return the MarkupError
+/// detail string; the caller adds the 'Error in "X" directive:' wrapper.
+fn parse_extension_options(
+    opt_block: &[LineRef<'_>],
+    option_spec: &'static [(&'static str, Conv)],
+) -> Result<Vec<(String, OptVal)>, String> {
+    // Pass 1 (extract_options): collect (lowercased name, body) fields.
+    // A multi-word field name errors during this pass, in field order.
+    let mut fields: Vec<(String, Option<String>)> = Vec::new();
+    let mut i = 0usize;
+    while i < opt_block.len() {
+        let l = opt_block[i];
+        let marker = if l.indent() == 0 {
+            field_marker(l.text)
+        } else {
+            None
+        };
+        let Some((raw_name, body_start)) = marker else {
+            return Err("invalid option block".to_string());
+        };
+        let mut body_lines: Vec<&str> = Vec::new();
+        let first = l.text[body_start..].trim_start_matches(' ');
+        if !first.is_empty() {
+            body_lines.push(first);
+        }
+        // Continuation lines (any deeper indent) join the field body,
+        // dedented by their common indent, '\n'-separated.
+        let mut j = i + 1;
+        while j < opt_block.len() && opt_block[j].indent() > 0 {
+            j += 1;
+        }
+        let conts = &opt_block[i + 1..j];
+        let min_indent = conts.iter().map(|c| c.indent()).min().unwrap_or(0);
+        for c in conts {
+            body_lines.push(&c.text[min_indent.min(c.indent())..]);
+        }
+        if raw_name.split_whitespace().count() != 1 {
+            return Err(
+                "invalid option data: extension option field name may not contain multiple words"
+                    .to_string(),
+            );
+        }
+        let body = if body_lines.is_empty() {
+            None
+        } else {
+            Some(body_lines.join("\n"))
+        };
+        fields.push((raw_name.to_lowercase(), body));
+        i = j;
+    }
+    // Pass 2 (assemble_option_dict): unknown, then duplicate, then convert.
+    let mut out: Vec<(String, OptVal)> = Vec::new();
+    for (name, body) in &fields {
+        let Some((_, conv)) = option_spec.iter().find(|(n, _)| n == name) else {
+            return Err(format!("unknown option: \"{name}\""));
+        };
+        if out.iter().any(|(n, _)| n == name) {
+            return Err(format!("invalid option data: duplicate option \"{name}\""));
+        }
+        match convert_option(*conv, body.as_deref()) {
+            Ok(v) => out.push((name.clone(), v)),
+            Err(detail) => {
+                return Err(format!(
+                    "invalid option value: (option: \"{}\"; value: {})\n{}",
+                    name,
+                    py_repr(body.as_deref()),
+                    detail
+                ));
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn convert_option(conv: Conv, value: Option<&str>) -> Result<OptVal, String> {
+    match conv {
+        Conv::Unchanged => Ok(OptVal::Str(value.unwrap_or("").to_string())),
+        Conv::UnchangedRequired => match value {
+            None => Err("argument required but none supplied".to_string()),
+            Some(v) => Ok(OptVal::Str(v.to_string())),
+        },
+        Conv::Percentage => {
+            // percentage(): rstrip(' %'), then nonnegative_int; None slips
+            // through to int(None)'s TypeError (directives/__init__.py:235).
+            let Some(v) = value else {
+                return Err(
+                    "int() argument must be a string, a bytes-like object or a real number, not 'NoneType'"
+                        .to_string(),
+                );
+            };
+            nonnegative_int(v.trim_end_matches([' ', '%']))
+        }
+        Conv::LengthOrUnitless => {
+            let Some(v) = value else {
+                return Err("expected string or bytes-like object, got 'NoneType'".to_string());
+            };
+            let mut units: Vec<&str> = CSS3_LENGTH_UNITS.to_vec();
+            units.push("");
+            get_measure(v, &units).map(OptVal::Str)
+        }
+        Conv::LengthOrPercentageOrUnitless => {
+            let Some(v) = value else {
+                return Err("expected string or bytes-like object, got 'NoneType'".to_string());
+            };
+            let mut units: Vec<&str> = CSS3_LENGTH_UNITS.to_vec();
+            units.push("%");
+            match get_measure(v, &units) {
+                Ok(m) => Ok(OptVal::Str(m)),
+                Err(first_error) => match get_measure(v, &[""]) {
+                    Ok(m) => Ok(OptVal::Str(m)),
+                    Err(_) => Err(first_error),
+                },
+            }
+        }
+        Conv::ClassOption => {
+            let Some(v) = value else {
+                return Err("argument required but none supplied".to_string());
+            };
+            let mut names = Vec::new();
+            for word in v.split_whitespace() {
+                let id = ids::make_id(word);
+                if id.is_empty() {
+                    return Err(format!("cannot make \"{word}\" into a class name"));
+                }
+                names.push(id);
+            }
+            Ok(OptVal::StrList(names))
+        }
+        Conv::Choice(values) => {
+            let Some(v) = value else {
+                return Err(format!(
+                    "must supply an argument; choose from {}",
+                    format_choice_values(values)
+                ));
+            };
+            let lowered = v.trim().to_lowercase();
+            if values.contains(&lowered.as_str()) {
+                Ok(OptVal::Str(lowered))
+            } else {
+                Err(format!(
+                    "\"{v}\" unknown; choose from {}",
+                    format_choice_values(values)
+                ))
+            }
+        }
+    }
+}
+
+/// format_values (directives/__init__.py:448-450).
+fn format_choice_values(values: &[&str]) -> String {
+    let init = values[..values.len() - 1]
+        .iter()
+        .map(|v| format!("\"{v}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{}, or \"{}\"", init, values[values.len() - 1])
+}
+
+/// nonnegative_int (directives/__init__.py:224-231), with Python's own
+/// int() error text for bad literals.
+fn nonnegative_int(s: &str) -> Result<OptVal, String> {
+    match py_int(s) {
+        Some(n) if n >= 0 => Ok(OptVal::Int(n)),
+        Some(_) => Err("negative value; must be positive or zero".to_string()),
+        None => Err(format!(
+            "invalid literal for int() with base 10: {}",
+            py_repr(Some(s))
+        )),
+    }
+}
+
+/// Python int(str): optional sign + decimal digits, surrounding whitespace
+/// ignored.
+fn py_int(s: &str) -> Option<i64> {
+    let t = s.trim();
+    let body = t.strip_prefix(['+', '-']).unwrap_or(t);
+    if body.is_empty() || !body.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    t.parse::<i64>().ok()
+}
+
+/// Python repr() for option-value error messages (strings and None).
+fn py_repr(value: Option<&str>) -> String {
+    match value {
+        None => "None".to_string(),
+        Some(s) => {
+            let quote = if s.contains('\'') && !s.contains('"') {
+                '"'
+            } else {
+                '\''
+            };
+            let mut out = String::new();
+            out.push(quote);
+            for c in s.chars() {
+                match c {
+                    '\\' => out.push_str("\\\\"),
+                    '\n' => out.push_str("\\n"),
+                    '\r' => out.push_str("\\r"),
+                    '\t' => out.push_str("\\t"),
+                    c if c == quote => {
+                        out.push('\\');
+                        out.push(c);
+                    }
+                    c => out.push(c),
+                }
+            }
+            out.push(quote);
+            out
+        }
+    }
+}
+
+/// CSS3_LENGTH_UNITS (directives/__init__.py:247-248).
+const CSS3_LENGTH_UNITS: &[&str] = &[
+    "em", "ex", "ch", "rem", "vw", "vh", "vmin", "vmax", "cm", "mm", "Q", "in", "pt", "pc", "px",
+];
+
+/// get_measure (directives/__init__.py:260-274) over nodes.parse_measure
+/// (nodes.py:3084-3107). Returns the normalized `{value}{unit}` string.
+fn get_measure(argument: &str, units: &[&str]) -> Result<String, String> {
+    let no_valid = || format!("\"{argument}\" is no valid measure.");
+    // fullmatch: (-?[0-9.]+) *([a-zA-Zµ]*|%?)
+    let s = argument;
+    let digits_start = if s.starts_with('-') { 1 } else { 0 };
+    let mut j = digits_start;
+    let bytes = s.as_bytes();
+    while j < bytes.len() && (bytes[j].is_ascii_digit() || bytes[j] == b'.') {
+        j += 1;
+    }
+    if j == digits_start {
+        return Err(no_valid());
+    }
+    let number = &s[..j];
+    let mut k = j;
+    while k < bytes.len() && bytes[k] == b' ' {
+        k += 1;
+    }
+    let unit = &s[k..];
+    let unit_ok = unit == "%" || unit.chars().all(|c| c.is_ascii_alphabetic() || c == 'µ');
+    if !unit_ok {
+        return Err(no_valid());
+    }
+    // Python: int() first, float() second; negative or unlisted unit is
+    // the units-list error.
+    let (negative, norm) = if let Some(n) = py_int(number) {
+        (n < 0, n.to_string())
+    } else if let Ok(f) = number.parse::<f64>() {
+        (f < 0.0, py_float_str(f))
+    } else {
+        return Err(no_valid());
+    };
+    if negative || !units.contains(&unit) {
+        return Err(format!(
+            "not a positive number or measure of one of the following units:\n{}",
+            units
+                .iter()
+                .filter(|u| !u.is_empty())
+                .copied()
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    Ok(format!("{norm}{unit}"))
+}
+
+/// Python float repr for simple decimals (1.0 -> "1.0", 1.5 -> "1.5").
+fn py_float_str(f: f64) -> String {
+    if f == f.trunc() && f.abs() < 1e16 {
+        format!("{f:.1}")
+    } else {
+        format!("{f}")
+    }
+}
+
+/// directives.uri (directives/__init__.py:209-221): unescaped whitespace is
+/// removed; backslash-escaped whitespace separates space-joined parts.
+fn uri_from_argument(argument: &str) -> String {
+    let escaped = super::inline::escape2null(argument);
+    let mut parts: Vec<&str> = Vec::new();
+    for chunk in escaped.split("\x00 ") {
+        parts.extend(chunk.split("\x00\n"));
+    }
+    parts
+        .iter()
+        .map(|p| {
+            super::inline::unescape(p, false)
+                .split_whitespace()
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// states.py parse_target (2095-2113) for the image :target: option: a
+/// block whose last line ends in `_` may be an indirect reference;
+/// otherwise it is a refuri with all whitespace removed.
+enum ImageTarget {
+    Refname { name: String, refname: String },
+    Refuri(String),
+}
+
+fn parse_image_target(target: &str) -> ImageTarget {
+    let lines: Vec<&str> = target.lines().collect();
+    let ends_underscore = lines
+        .iter()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .map(|l| l.trim().ends_with('_'))
+        .unwrap_or(false);
+    if ends_underscore {
+        let joined = lines.iter().map(|l| l.trim()).collect::<Vec<_>>().join(" ");
+        if let Some(data) = reference_data_from_link(&joined) {
+            return ImageTarget::Refname {
+                name: ids::whitespace_normalize_name(&data),
+                refname: ids::fully_normalize_name(&data),
+            };
+        }
+    }
+    ImageTarget::Refuri(target.split_whitespace().collect::<String>())
+}
+
+/// Like [`reference_name_from_link`] but returns the reference TEXT
+/// (simple name or phrase) before normalization — docutils is_reference().
+fn reference_data_from_link(link: &str) -> Option<String> {
+    let joined = ids::whitespace_normalize_name(link);
+    let body = joined.strip_suffix('_')?;
+    if body.ends_with('\\') {
+        return None;
+    }
+    if let Some(phrase) = body.strip_prefix('`').and_then(|b| b.strip_suffix('`')) {
+        if phrase.is_empty() {
+            return None;
+        }
+        return Some(phrase.to_string());
+    }
+    if !body.is_empty()
+        && !body.ends_with('_')
+        && !body.contains(char::is_whitespace)
+        && !body.contains('`')
+        && !body.contains('\\')
+    {
+        return Some(body.to_string());
+    }
+    None
 }
 
 /// docutils `simplename` over a char slice (see rst::inline for the

@@ -2401,6 +2401,282 @@
       "rst": ".. note:: content\nadjacent para\n"
     },
     {
+      "family": "dir_options",
+      "name": "dir_options.unknown_option_uppercase_name",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"NOTE\" directive:\n            unknown option: \"bogus\".\n        <literal_block xml:space=\"preserve\">\n            .. NOTE::\n               :bogus: x\n            \n               Body.\n",
+      "rst": ".. NOTE::\n   :bogus: x\n\n   Body.\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.duplicate_option",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"note\" directive:\n            invalid option data: duplicate option \"class\".\n        <literal_block xml:space=\"preserve\">\n            .. note::\n               :class: a\n               :class: b\n            \n               Body.\n",
+      "rst": ".. note::\n   :class: a\n   :class: b\n\n   Body.\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.duplicate_option_mixed_case",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"note\" directive:\n            invalid option data: duplicate option \"class\".\n        <literal_block xml:space=\"preserve\">\n            .. note::\n               :Class: a\n               :class: b\n            \n               Body.\n",
+      "rst": ".. note::\n   :Class: a\n   :class: b\n\n   Body.\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.multiword_field_name",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"note\" directive:\n            invalid option data: extension option field name may not contain multiple words.\n        <literal_block xml:space=\"preserve\">\n            .. note::\n               :class extra: v\n            \n               Body.\n",
+      "rst": ".. note::\n   :class extra: v\n\n   Body.\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.multiword_beats_unknown",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"note\" directive:\n            invalid option data: extension option field name may not contain multiple words.\n        <literal_block xml:space=\"preserve\">\n            .. note::\n               :bogus: x\n               :class extra: v\n            \n               Body.\n",
+      "rst": ".. note::\n   :bogus: x\n   :class extra: v\n\n   Body.\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.class_empty_value",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"note\" directive:\n            invalid option value: (option: \"class\"; value: None)\n            argument required but none supplied.\n        <literal_block xml:space=\"preserve\">\n            .. note::\n               :class:\n            \n               Body.\n",
+      "rst": ".. note::\n   :class:\n\n   Body.\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.name_empty_value",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note ids=\"id1\" names=\"\">\n        <paragraph>\n            Body text.\n",
+      "rst": ".. note::\n   :name:\n\n   Body text.\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.name_and_class",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note classes=\"foo bar\" ids=\"target-one\" names=\"target\\ one\">\n        <paragraph>\n            Body.\n",
+      "rst": ".. note::\n   :class: foo bar\n   :name: target one\n\n   Body.\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.option_value_continuation",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note classes=\"foo bar continued\">\n        <paragraph>\n            Body text.\n",
+      "rst": ".. note::\n   :class: foo\n      bar continued\n\n   Body text.\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.options_after_blank_are_content",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note classes=\"foo\">\n        <field_list>\n            <field>\n                <field_name>\n                    name\n                <field_body>\n                    <paragraph>\n                        bar\n        <paragraph>\n            Body.\n",
+      "rst": ".. note::\n   :class: foo\n\n   :name: bar\n\n   Body.\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.two_blanks_before_content",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note classes=\"foo\">\n        <paragraph>\n            Body after two blank lines.\n",
+      "rst": ".. note::\n   :class: foo\n\n\n   Body after two blank lines.\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.malformed_field_marker_to_content",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <paragraph>\n            :class value\n        <paragraph>\n            Body.\n",
+      "rst": ".. note::\n   :class value\n\n   Body.\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.field_body_blockquote_promotion",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note classes=\"first para\">\n        <block_quote>\n            <paragraph>\n                second para\n        <paragraph>\n            Body text.\n",
+      "rst": ".. note::\n   :class: first para\n\n       second para\n\n   Body text.\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.admonition_multiline_title",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <admonition classes=\"admonition-the-title-continues-here\">\n        <title>\n            The Title\n            continues here\n        <paragraph>\n            Body text.\n",
+      "rst": ".. admonition:: The Title\n   continues here\n\n   Body text.\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.admonition_punct_title_class",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <admonition classes=\"admonition-\">\n        <title>\n            !!!\n        <paragraph>\n            Body.\n",
+      "rst": ".. admonition:: !!!\n\n   Body.\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.note_empty_uppercase",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"NOTE\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. NOTE::\n",
+      "rst": ".. NOTE::\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.note_marker_line_content_only",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <paragraph>\n            This whole line becomes content, not an argument.\n",
+      "rst": ".. note:: This whole line becomes content, not an argument.\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.warning_continuation_content",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <warning>\n        <paragraph>\n            Danger\n            ahead. This continues the paragraph.\n        <paragraph>\n            Second paragraph of warning.\n",
+      "rst": ".. warning:: Danger\n   ahead. This continues the paragraph.\n\n   Second paragraph of warning.\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.unexpected_indentation_in_note",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <definition_list>\n            <definition_list_item>\n                <term>\n                    a\n                <definition>\n                    <paragraph>\n                        b\n",
+      "rst": ".. note::\n\n   a\n     b\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.note_content_unindent_warning",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <paragraph>\n            para\n    <system_message level=\"2\" line=\"4\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Explicit markup ends without a blank line; unexpected unindent.\n    <paragraph>\n        after\n",
+      "rst": ".. note::\n\n   para\nafter\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.trailing_blanks_rawsource",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            No directive entry for \"frobnicate\" in module \"docutils.parsers.rst.languages.en\".\n            Trying \"frobnicate\" as canonical directive name.\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown directive type \"frobnicate\".\n        <literal_block xml:space=\"preserve\">\n            .. frobnicate:: x\n            \n               c\n            \n    <paragraph>\n        after\n",
+      "rst": ".. frobnicate:: x\n\n   c\n\n\nafter\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.trailing_blanks_eof",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            No directive entry for \"frobnicate\" in module \"docutils.parsers.rst.languages.en\".\n            Trying \"frobnicate\" as canonical directive name.\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown directive type \"frobnicate\".\n        <literal_block xml:space=\"preserve\">\n            .. frobnicate:: x\n            \n               c\n            \n",
+      "rst": ".. frobnicate:: x\n\n   c\n\n\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.trailing_blank_single",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            No directive entry for \"frobnicate\" in module \"docutils.parsers.rst.languages.en\".\n            Trying \"frobnicate\" as canonical directive name.\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown directive type \"frobnicate\".\n        <literal_block xml:space=\"preserve\">\n            .. frobnicate:: x\n            \n               c\n    <paragraph>\n        after\n",
+      "rst": ".. frobnicate:: x\n\n   c\n\nafter\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.consecutive_directives_no_blank",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <paragraph>\n            one\n    <note>\n        <paragraph>\n            two\n",
+      "rst": ".. note:: one\n.. note:: two\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.minimal",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <image uri=\"picture.png\">\n",
+      "rst": ".. image:: picture.png\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.multiword_uri_collapses",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <image uri=\"picturewithspaces.png\">\n",
+      "rst": ".. image:: picture with spaces.png\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.multiline_uri",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <image uri=\"picture.png\">\n",
+      "rst": ".. image:: pic\n   ture.png\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.full_options",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <image align=\"left\" alt=\"alt text\" height=\"100px\" scale=\"50\" uri=\"picture.png\" width=\"200px\">\n",
+      "rst": ".. image:: picture.png\n   :alt: alt text\n   :height: 100px\n   :width: 200 px\n   :scale: 50 %\n   :align: left\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.align_vertical_error",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"image\" directive: \"top\" is not a valid value for the \"align\" option.  Valid values for \"align\" are: \"left\", \"center\", \"right\".\n        <literal_block xml:space=\"preserve\">\n            .. image:: pic.png\n               :align: top\n",
+      "rst": ".. image:: pic.png\n   :align: top\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.align_invalid_choice",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"image\" directive:\n            invalid option value: (option: \"align\"; value: 'sideways')\n            \"sideways\" unknown; choose from \"top\", \"middle\", \"bottom\", \"left\", \"center\", or \"right\".\n        <literal_block xml:space=\"preserve\">\n            .. image:: pic.png\n               :align: sideways\n",
+      "rst": ".. image:: pic.png\n   :align: sideways\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.scale_not_number",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"image\" directive:\n            invalid option value: (option: \"scale\"; value: 'notanumber')\n            invalid literal for int() with base 10: 'notanumber'.\n        <literal_block xml:space=\"preserve\">\n            .. image:: pic.png\n               :scale: notanumber\n",
+      "rst": ".. image:: pic.png\n   :scale: notanumber\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.scale_negative",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"image\" directive:\n            invalid option value: (option: \"scale\"; value: '-5')\n            negative value; must be positive or zero.\n        <literal_block xml:space=\"preserve\">\n            .. image:: pic.png\n               :scale: -5\n",
+      "rst": ".. image:: pic.png\n   :scale: -5\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.width_banana",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"image\" directive:\n            invalid option value: (option: \"width\"; value: 'banana')\n            \"banana\" is no valid measure..\n        <literal_block xml:space=\"preserve\">\n            .. image:: pic.png\n               :width: banana\n",
+      "rst": ".. image:: pic.png\n   :width: banana\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.width_percentage",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <image uri=\"pic.png\" width=\"50%\">\n",
+      "rst": ".. image:: pic.png\n   :width: 50%\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.width_unitless",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <image uri=\"pic.png\" width=\"120\">\n",
+      "rst": ".. image:: pic.png\n   :width: 120\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.height_bad_unit",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"image\" directive:\n            invalid option value: (option: \"height\"; value: '10banana')\n            not a positive number or measure of one of the following units:\n            em, ex, ch, rem, vw, vh, vmin, vmax, cm, mm, Q, in, pt, pc, px.\n        <literal_block xml:space=\"preserve\">\n            .. image:: pic.png\n               :height: 10banana\n",
+      "rst": ".. image:: pic.png\n   :height: 10banana\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.height_decimal_em",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <image height=\"1.5em\" uri=\"pic.png\">\n",
+      "rst": ".. image:: pic.png\n   :height: 1.5em\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.target_url",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <reference refuri=\"https://example.com/page\">\n        <image uri=\"pic.png\">\n",
+      "rst": ".. image:: pic.png\n   :target: https://example.com/page\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.target_refname_simple",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <reference name=\"sometarget\" refname=\"sometarget\">\n        <image uri=\"pic.png\">\n",
+      "rst": ".. image:: pic.png\n   :target: sometarget_\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.target_refname_phrase",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <reference name=\"some phrase\" refname=\"some phrase\">\n        <image uri=\"pic.png\">\n",
+      "rst": ".. image:: pic.png\n   :target: `some phrase`_\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.target_empty",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"image\" directive:\n            invalid option value: (option: \"target\"; value: None)\n            argument required but none supplied.\n        <literal_block xml:space=\"preserve\">\n            .. image:: pic.png\n               :target:\n",
+      "rst": ".. image:: pic.png\n   :target:\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.loading_option",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <image loading=\"lazy\" uri=\"pic.png\">\n",
+      "rst": ".. image:: pic.png\n   :loading: lazy\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.class_and_name",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <image classes=\"big shot\" ids=\"my-pic\" names=\"my\\ pic\" uri=\"pic.png\">\n",
+      "rst": ".. image:: pic.png\n   :class: big shot\n   :name: my pic\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.missing_arg",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"image\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. image::\n",
+      "rst": ".. image::\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.content_not_permitted",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"image\" directive:\n            no content permitted.\n        <literal_block xml:space=\"preserve\">\n            .. image:: pic.png\n            \n               caption text\n",
+      "rst": ".. image:: pic.png\n\n   caption text\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.second_uri_line_no_blank",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <image uri=\"pic.pngsecondlineofuri\">\n",
+      "rst": ".. image:: pic.png\n   second line of uri\n"
+    },
+    {
       "family": "review2",
       "name": "review2.multi_segment_role",
       "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            :py:func:`target`\n         end.\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            No role entry for \"py:func\" in module \"docutils.parsers.rst.languages.en\".\n            Trying \"py:func\" as canonical role name.\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown interpreted text role \"py:func\".\n",

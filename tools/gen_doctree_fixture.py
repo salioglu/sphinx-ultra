@@ -104,7 +104,11 @@ SUPPORTED_KINDS = {
     "error",
     "attention",
     "admonition",
+    "image",
 }
+
+# Families whose snippets intentionally exercise the directive machinery.
+DIRECTIVE_FAMILIES = ("dir_core", "dir_admonitions", "dir_options", "dir_image")
 
 # (family, name, rst) — names unique, families floor-checked below.
 CASES = [
@@ -531,6 +535,54 @@ CASES = [
     ("dir_admonitions", "note_named", ".. note::\n   :name: my-note\n\n   Body.\n"),
     ("dir_admonitions", "nested_admonition", ".. note::\n\n   .. warning::\n\n      inner\n"),
     ("dir_admonitions", "directive_no_blank_after", ".. note:: content\nadjacent para\n"),
+    # ----- wave 3: option/argument/content machinery (probe families O/A/C/X) -----
+    ("dir_options", "unknown_option_uppercase_name", ".. NOTE::\n   :bogus: x\n\n   Body.\n"),
+    ("dir_options", "duplicate_option", ".. note::\n   :class: a\n   :class: b\n\n   Body.\n"),
+    ("dir_options", "duplicate_option_mixed_case", ".. note::\n   :Class: a\n   :class: b\n\n   Body.\n"),
+    ("dir_options", "multiword_field_name", ".. note::\n   :class extra: v\n\n   Body.\n"),
+    ("dir_options", "multiword_beats_unknown", ".. note::\n   :bogus: x\n   :class extra: v\n\n   Body.\n"),
+    ("dir_options", "class_empty_value", ".. note::\n   :class:\n\n   Body.\n"),
+    ("dir_options", "name_empty_value", ".. note::\n   :name:\n\n   Body text.\n"),
+    ("dir_options", "name_and_class", ".. note::\n   :class: foo bar\n   :name: target one\n\n   Body.\n"),
+    ("dir_options", "option_value_continuation", ".. note::\n   :class: foo\n      bar continued\n\n   Body text.\n"),
+    ("dir_options", "options_after_blank_are_content", ".. note::\n   :class: foo\n\n   :name: bar\n\n   Body.\n"),
+    ("dir_options", "two_blanks_before_content", ".. note::\n   :class: foo\n\n\n   Body after two blank lines.\n"),
+    ("dir_options", "malformed_field_marker_to_content", ".. note::\n   :class value\n\n   Body.\n"),
+    ("dir_options", "field_body_blockquote_promotion", ".. note::\n   :class: first para\n\n       second para\n\n   Body text.\n"),
+    ("dir_options", "admonition_multiline_title", ".. admonition:: The Title\n   continues here\n\n   Body text.\n"),
+    ("dir_options", "admonition_punct_title_class", ".. admonition:: !!!\n\n   Body.\n"),
+    ("dir_options", "note_empty_uppercase", ".. NOTE::\n"),
+    ("dir_options", "note_marker_line_content_only", ".. note:: This whole line becomes content, not an argument.\n"),
+    ("dir_options", "warning_continuation_content", ".. warning:: Danger\n   ahead. This continues the paragraph.\n\n   Second paragraph of warning.\n"),
+    ("dir_options", "unexpected_indentation_in_note", ".. note::\n\n   a\n     b\n"),
+    ("dir_options", "note_content_unindent_warning", ".. note::\n\n   para\nafter\n"),
+    ("dir_options", "trailing_blanks_rawsource", ".. frobnicate:: x\n\n   c\n\n\nafter\n"),
+    ("dir_options", "trailing_blanks_eof", ".. frobnicate:: x\n\n   c\n\n\n"),
+    ("dir_options", "trailing_blank_single", ".. frobnicate:: x\n\n   c\n\nafter\n"),
+    ("dir_options", "consecutive_directives_no_blank", ".. note:: one\n.. note:: two\n"),
+    # ----- wave 3: image directive (converters + target wrapping) -----
+    ("dir_image", "minimal", ".. image:: picture.png\n"),
+    ("dir_image", "multiword_uri_collapses", ".. image:: picture with spaces.png\n"),
+    ("dir_image", "multiline_uri", ".. image:: pic\n   ture.png\n"),
+    ("dir_image", "full_options", ".. image:: picture.png\n   :alt: alt text\n   :height: 100px\n   :width: 200 px\n   :scale: 50 %\n   :align: left\n"),
+    ("dir_image", "align_vertical_error", ".. image:: pic.png\n   :align: top\n"),
+    ("dir_image", "align_invalid_choice", ".. image:: pic.png\n   :align: sideways\n"),
+    ("dir_image", "scale_not_number", ".. image:: pic.png\n   :scale: notanumber\n"),
+    ("dir_image", "scale_negative", ".. image:: pic.png\n   :scale: -5\n"),
+    ("dir_image", "width_banana", ".. image:: pic.png\n   :width: banana\n"),
+    ("dir_image", "width_percentage", ".. image:: pic.png\n   :width: 50%\n"),
+    ("dir_image", "width_unitless", ".. image:: pic.png\n   :width: 120\n"),
+    ("dir_image", "height_bad_unit", ".. image:: pic.png\n   :height: 10banana\n"),
+    ("dir_image", "height_decimal_em", ".. image:: pic.png\n   :height: 1.5em\n"),
+    ("dir_image", "target_url", ".. image:: pic.png\n   :target: https://example.com/page\n"),
+    ("dir_image", "target_refname_simple", ".. image:: pic.png\n   :target: sometarget_\n"),
+    ("dir_image", "target_refname_phrase", ".. image:: pic.png\n   :target: `some phrase`_\n"),
+    ("dir_image", "target_empty", ".. image:: pic.png\n   :target:\n"),
+    ("dir_image", "loading_option", ".. image:: pic.png\n   :loading: lazy\n"),
+    ("dir_image", "class_and_name", ".. image:: pic.png\n   :class: big shot\n   :name: my pic\n"),
+    ("dir_image", "missing_arg", ".. image::\n"),
+    ("dir_image", "content_not_permitted", ".. image:: pic.png\n\n   caption text\n"),
+    ("dir_image", "second_uri_line_no_blank", ".. image:: pic.png\n   second line of uri\n"),
     # ----- wave 2 review round (Sonnet adversarial review, 2026-08-07) -----
     ("review2", "multi_segment_role", ":py:func:`target` end.\n"),
     ("review2", "multi_segment_role_three", ":a:b:c:`text` end.\n"),
@@ -641,7 +693,7 @@ def main() -> int:
         "paragraphs": 4, "sections": 8, "transition": 4, "lists_bullet": 8,
         "lists_enum": 8, "deflist": 8, "quote": 8, "literal": 8,
         "comment_target": 8, "lineblock": 4, "doctest": 4, "errors": 12,
-        "hardening": 20, "mixtures": 8, "review": 45, "inline_basics": 25, "inline_carriers": 10, "inline_refs": 40, "inline_roles": 20, "footnotes": 14, "fields": 15, "options": 10, "tables_grid": 18, "tables_simple": 12, "w2_hardening": 15, "review2": 12, "dir_core": 10, "dir_admonitions": 14,
+        "hardening": 20, "mixtures": 8, "review": 45, "inline_basics": 25, "inline_carriers": 10, "inline_refs": 40, "inline_roles": 20, "footnotes": 14, "fields": 15, "options": 10, "tables_grid": 18, "tables_simple": 12, "w2_hardening": 15, "review2": 12, "dir_core": 10, "dir_admonitions": 14, "dir_options": 20, "dir_image": 18,
     }
     counts: dict = {}
     for family, _, _ in CASES:
@@ -664,12 +716,12 @@ def main() -> int:
         # nodes are all "supported". Two guards: output text, and directive
         # syntax in the SOURCE (catches quietly-succeeding directives like
         # `.. highlights::` whose output nodes are all supported kinds).
-        if family not in ("dir_core", "dir_admonitions") and (
+        if family not in DIRECTIVE_FAMILIES and (
             "Unknown directive type" in pseudo or "No directive entry" in pseudo
         ):
             bad.append(f"{name}: snippet reaches directive machinery")
             continue
-        if family not in ("dir_core", "dir_admonitions") and re.search(
+        if family not in DIRECTIVE_FAMILIES and re.search(
             r"^\s*\.\. +(?!_)[\w][\w.+:-]* *::", rst, re.M
         ):
             bad.append(f"{name}: directive-shaped syntax in source")
