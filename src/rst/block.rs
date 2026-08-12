@@ -1508,12 +1508,16 @@ impl<'a> BlockParser<'a> {
 
         // Body: first-line remainder + following indented block (blanks
         // between marker and block allowed; docutils get_first_known_indented).
-        let first_rest: String = chars
-            .get(after + 1..)
-            .map(|c| c.iter().collect())
-            .unwrap_or_default();
-        let first_rest = if chars.get(after) == Some(&' ') {
-            first_rest
+        // docutils' footnote pattern consumes ALL whitespace after `]`.
+        let mut rest_from = after;
+        while chars.get(rest_from) == Some(&' ') {
+            rest_from += 1;
+        }
+        let first_rest: String = if rest_from > after {
+            chars
+                .get(rest_from..)
+                .map(|c| c.iter().collect())
+                .unwrap_or_default()
         } else {
             String::new()
         };
@@ -1768,10 +1772,29 @@ impl<'a> BlockParser<'a> {
         }
         let mut block: Vec<LineRef<'a>> = lines[start..end].to_vec();
         *pos = end;
+        // docutils left-edge check: trim at the first line not starting
+        // with '+' or '|'; the remainder re-parses and a blank-line
+        // warning fires. The trim index feeds the stale-line quirk of the
+        // bottom-corrupt error.
+        let mut trailing_warning = None;
+        let mut stale_i = block.len() - 1;
+        for (i, l) in block.iter().enumerate().skip(1) {
+            let t = l.text.trim_end();
+            if !(t.starts_with('+') || t.starts_with('|')) {
+                stale_i = i;
+                trailing_warning = Some(self.msg(
+                    messages::WARNING,
+                    "Blank line required after table.",
+                    l.lineno,
+                ));
+                block.truncate(i);
+                *pos = start + i;
+                break;
+            }
+        }
         // docutils trims a non-border tail back to the LAST valid border
         // (the remainder re-parses, with a blank-line-required warning),
         // BEFORE any alignment checks.
-        let mut trailing_warning = None;
         if !is_grid_table_top(block[block.len() - 1].text.trim_end()) {
             let mut found = None;
             for i in (2..block.len() - 1).rev() {
@@ -1784,11 +1807,13 @@ impl<'a> BlockParser<'a> {
                 let next_lineno = block[i + 1].lineno;
                 block.truncate(i + 1);
                 *pos = start + i + 1;
-                trailing_warning = Some(self.msg(
-                    messages::WARNING,
-                    "Blank line required after table.",
-                    next_lineno,
-                ));
+                if trailing_warning.is_none() {
+                    trailing_warning = Some(self.msg(
+                        messages::WARNING,
+                        "Blank line required after table.",
+                        next_lineno,
+                    ));
+                }
             }
         }
         let raw_block: Vec<String> = block.iter().map(|l| l.text.to_string()).collect();
@@ -1803,26 +1828,43 @@ impl<'a> BlockParser<'a> {
                 raw_block.join("\n").trim_end(),
             )
         };
-        // right-border alignment
-        let width = char_len(block[0].text.trim_end());
+        // right-border alignment (DISPLAY columns: east-asian wide = 2)
+        let width = column_width(block[0].text.trim_end());
         for l in block.iter().skip(1) {
             let t = l.text.trim_end();
-            if char_len(t) != width || !(t.ends_with('+') || t.ends_with('|')) {
+            if column_width(t) != width || !(t.ends_with('+') || t.ends_with('|')) {
                 out.push(malformed("Right border not aligned or missing.", l.lineno));
+                if let Some(w) = trailing_warning {
+                    out.push(w);
+                }
                 return;
             }
         }
-        // bottom border must be a grid border
+        // bottom border must be a grid border (line anchor reproduces
+        // docutils' stale-index quirk: the last line the edge scans reached)
         if !is_grid_table_top(block[block.len() - 1].text.trim_end()) {
-            let lineno = block[block.len() - 1].lineno;
+            let lineno = lines[(start + stale_i).min(lines.len() - 1)].lineno;
             out.push(malformed("Bottom border missing or corrupt.", lineno));
+            if let Some(w) = trailing_warning {
+                out.push(w);
+            }
             return;
         }
 
-        // grid as char matrix (head/body sep '=' converted to '-')
+        // grid as DISPLAY-column matrix (wide chars followed by a filler;
+        // head/body sep '=' converted to '-')
         let mut grid: Vec<Vec<char>> = block
             .iter()
-            .map(|l| l.text.trim_end().chars().collect())
+            .map(|l| {
+                let mut row = Vec::new();
+                for c in l.text.trim_end().chars() {
+                    row.push(c);
+                    if unicode_width::UnicodeWidthChar::width(c).unwrap_or(1) == 2 {
+                        row.push('\u{fffd}');
+                    }
+                }
+                row
+            })
             .collect();
         let mut head_sep: Option<usize> = None;
         for (i, row) in grid.iter_mut().enumerate() {
@@ -1887,7 +1929,10 @@ impl<'a> BlockParser<'a> {
         // completeness: every column spanned to the bottom
         let bottom_row = nrows - 1;
         if rowseps.last() != Some(&bottom_row) && !cells.is_empty() {
-            out.push(malformed("Parse incomplete.", block[0].lineno));
+            out.push(malformed(
+                "Malformed table; parse incomplete.",
+                block[0].lineno,
+            ));
             return;
         }
         let _ = done_to;
@@ -1933,7 +1978,7 @@ impl<'a> BlockParser<'a> {
             // cell block: rows top+1..bottom, cols left+1..right
             let mut cell_lines: Vec<LineRef<'a>> = Vec::new();
             for l in block.iter().take(bottom).skip(top + 1) {
-                let text = char_slice(l.text, left + 1, right);
+                let text = display_slice(l.text, left + 1, right);
                 cell_lines.push(LineRef::new(text, l.lineno, l.src_start, l.src_end));
             }
             let base = cell_lines
@@ -2014,7 +2059,7 @@ impl<'a> BlockParser<'a> {
         let mut found_at = None;
         let mut end = None;
         let mut i = start + 1;
-        while i < lines.len() && !lines[i].is_blank() {
+        while i < lines.len() {
             let t = lines[i].text.trim_end();
             if is_simple_table_border(t) {
                 if char_len(t) != toplen {
@@ -2194,7 +2239,7 @@ impl<'a> BlockParser<'a> {
                 }
                 continue;
             }
-            let fc_text = char_slice(line, first_col.0, first_col.1);
+            let fc_text = display_slice(line, first_col.0, first_col.1);
             if !fc_text.trim().is_empty() {
                 if let Some(s) = open.take() {
                     rows.push(RawRow {
@@ -2225,7 +2270,7 @@ impl<'a> BlockParser<'a> {
                 for w2 in row.cols.windows(2) {
                     let (_, e1) = w2[0];
                     let (s2, _) = w2[1];
-                    if !char_slice(line, e1, s2).trim().is_empty() {
+                    if !display_slice(line, e1, s2).trim().is_empty() {
                         out.push(malformed(
                             &format!("Text in column margin in table line {}.", bi + 1),
                             block[bi].lineno,
@@ -2234,11 +2279,13 @@ impl<'a> BlockParser<'a> {
                     }
                 }
                 let row_border_end = row.cols.last().map(|(_, e)| *e).unwrap_or(border_end);
-                let tail = char_slice(line, row_border_end, char_len(line));
+                let tail = display_slice(line, row_border_end, column_width(line));
                 if !tail.trim().is_empty() {
                     let last_start = row.cols.last().map(|(s, _)| *s).unwrap_or(0);
                     let extent = last_start
-                        + char_len(char_slice(line, last_start, char_len(line)).trim_end());
+                        + column_width(
+                            display_slice(line, last_start, column_width(line)).trim_end(),
+                        );
                     last_col_end = last_col_end.max(extent);
                 }
             }
@@ -2290,17 +2337,11 @@ impl<'a> BlockParser<'a> {
                 }
                 // cell block
                 let mut cell_lines: Vec<LineRef<'a>> = Vec::new();
+                #[allow(clippy::needless_range_loop)]
                 for bi in row.start..row.end.min(bottom) {
                     let l = &block[bi];
-                    let text = char_slice(&work[bi], *cs, ce_eff).trim_end();
-                    // borrow from the original line where possible; work is
-                    // trimmed copy — slice original text at same char cols
-                    let orig = char_slice(l.text, *cs, ce_eff.min(char_len(l.text)));
-                    let use_text = if char_len(orig.trim_end()) == char_len(text) {
-                        orig.trim_end()
-                    } else {
-                        orig
-                    };
+                    let orig = display_slice(l.text, *cs, ce_eff.min(column_width(l.text)));
+                    let use_text = orig.trim_end();
                     cell_lines.push(LineRef::new(use_text, l.lineno, l.src_start, l.src_end));
                 }
                 let base = cell_lines
@@ -2599,10 +2640,10 @@ fn parse_one_option(part: &str) -> Option<(String, Option<(String, String)>)> {
 }
 
 fn is_grid_table_top(text: &str) -> bool {
-    // \+-[-+]+-\+ *$
+    // \+-[-+]+-\+ *$  (minimum "+-x-+": 5 chars)
     let t = text.trim_end();
     let chars: Vec<char> = t.chars().collect();
-    chars.len() >= 4
+    chars.len() >= 5
         && chars[0] == '+'
         && chars[chars.len() - 1] == '+'
         && chars[1] == '-'
@@ -2613,10 +2654,10 @@ fn is_grid_table_top(text: &str) -> bool {
 }
 
 fn is_grid_head_sep(text: &str) -> bool {
-    // \+=[=+]+=\+ *$
+    // \+=[=+]+=\+ *$  (minimum 5 chars)
     let t = text.trim_end();
     let chars: Vec<char> = t.chars().collect();
-    chars.len() >= 4
+    chars.len() >= 5
         && chars[0] == '+'
         && chars[chars.len() - 1] == '+'
         && chars[1] == '='
@@ -2655,19 +2696,33 @@ fn is_simple_table_top(text: &str) -> bool {
     runs >= 2
 }
 
-/// Byte-safe slice of a &str by CHAR column range.
-fn char_slice(text: &str, from: usize, to: usize) -> &str {
-    let mut idx = text.char_indices().skip(from);
-    let start = match idx.next() {
-        Some((i, _)) => i,
-        None => return "",
-    };
-    let end = text
-        .char_indices()
-        .nth(to)
-        .map(|(i, _)| i)
-        .unwrap_or(text.len());
-    &text[start..end]
+/// Byte offsets per DISPLAY column (east-asian wide chars occupy two
+/// columns; the second maps to the char's end so mid-char boundaries
+/// exclude it — matching docutils' double-width padding behavior).
+fn display_byte_index(text: &str) -> Vec<usize> {
+    let mut index = Vec::with_capacity(text.len() + 1);
+    for (b, c) in text.char_indices() {
+        index.push(b);
+        if unicode_width::UnicodeWidthChar::width(c).unwrap_or(1) == 2 {
+            index.push(b + c.len_utf8());
+        }
+    }
+    index.push(text.len());
+    index
+}
+
+/// Slice by DISPLAY column range (byte-safe; mid-wide-char boundaries
+/// clamp to char edges).
+fn display_slice(text: &str, from: usize, to: usize) -> &str {
+    let index = display_byte_index(text);
+    let n = index.len() - 1;
+    let start = index[from.min(n)];
+    let end = index[to.min(n)];
+    if start >= end {
+        ""
+    } else {
+        &text[start..end]
+    }
 }
 
 /// Trace one grid cell from its top-left '+': returns (bottom, right,

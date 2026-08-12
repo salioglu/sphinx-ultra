@@ -494,6 +494,21 @@ CASES = [
     ("w2_hardening", "problematic_in_deep_nesting", "- item\n\n  - inner *oops\n"),
     ("w2_hardening", "literal_role_vs_literal_block", ":literal:`x`::\n\n    block\n"),
     ("w2_hardening", "pep_in_footnote", ".. [1] See :pep:`8` for style.\n"),
+    # ----- wave 2 review round (Sonnet adversarial review, 2026-08-07) -----
+    ("review2", "multi_segment_role", ":py:func:`target` end.\n"),
+    ("review2", "multi_segment_role_three", ":a:b:c:`text` end.\n"),
+    ("review2", "multi_segment_unknown", ":math:sub:`text` end.\n"),
+    ("review2", "embedded_link_interior_gt", "`text <a>x>`_ end.\n"),
+    ("review2", "embedded_link_escaped_gt", "`text <a\\>`_ end.\n"),
+    ("review2", "simple_table_multiparagraph_cell", "=====  =====\ncol 1  col 2\n=====  =====\n3      - Second column of row 3.\n\n       - Second item in bullet\n         list (row 3, column 2).\n4      x\n=====  =====\n"),
+    ("review2", "grid_left_edge_break", "+---+\n| A |\nxyz\n+---+\n"),
+    ("review2", "grid_width4_border_not_table", "+--+\n|AB|\n+--+\n"),
+    ("review2", "grid_nonrectangular_incomplete", "+--------------+--------------+\n| A bad table. |              |\n+--------------+              |\n| Cells must be rectangles.   |\n+-----------------------------+\n"),
+    ("review2", "grid_cjk_cells", "+--------+------+\n| \u6f22\u5b57   | col2 |\n+--------+------+\n| x      | y    |\n+--------+------+\n"),
+    ("review2", "simple_cjk_cells", "=====  =====\ncol 1  col 2\n=====  =====\n\u6f22\u5b57   B\n=====  =====\n"),
+    ("review2", "footnote_two_spaces", ".. [1]  Two spaces after label.\n"),
+    ("review2", "footnote_two_spaces_continuation", ".. [1]  First line two spaces.\n   Continuation at indent 3.\n"),
+    ("review2", "citation_two_spaces", ".. [CIT]  Two spaces citation.\n"),
     # ----- review round (adversarial-review confirmed findings, 2026-08-07) -----
     ("review", "attr_no_space", "Para.\n\n    body\n\n    --Author\n"),
     ("review", "attr_no_space_emdash", "Para.\n\n    body\n\n    \u2014Author\n"),
@@ -589,7 +604,7 @@ def main() -> int:
         "paragraphs": 4, "sections": 8, "transition": 4, "lists_bullet": 8,
         "lists_enum": 8, "deflist": 8, "quote": 8, "literal": 8,
         "comment_target": 8, "lineblock": 4, "doctest": 4, "errors": 12,
-        "hardening": 20, "mixtures": 8, "review": 45, "inline_basics": 25, "inline_carriers": 10, "inline_refs": 40, "inline_roles": 20, "footnotes": 14, "fields": 15, "options": 10, "tables_grid": 18, "tables_simple": 12, "w2_hardening": 15,
+        "hardening": 20, "mixtures": 8, "review": 45, "inline_basics": 25, "inline_carriers": 10, "inline_refs": 40, "inline_roles": 20, "footnotes": 14, "fields": 15, "options": 10, "tables_grid": 18, "tables_simple": 12, "w2_hardening": 15, "review2": 12,
     }
     counts: dict = {}
     for family, _, _ in CASES:

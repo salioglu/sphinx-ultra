@@ -2251,6 +2251,90 @@
       "rst": ".. [1] See :pep:`8` for style.\n"
     },
     {
+      "family": "review2",
+      "name": "review2.multi_segment_role",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            :py:func:`target`\n         end.\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            No role entry for \"py:func\" in module \"docutils.parsers.rst.languages.en\".\n            Trying \"py:func\" as canonical role name.\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown interpreted text role \"py:func\".\n",
+      "rst": ":py:func:`target` end.\n"
+    },
+    {
+      "family": "review2",
+      "name": "review2.multi_segment_role_three",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            :a:b:c:`text`\n         end.\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            No role entry for \"a:b:c\" in module \"docutils.parsers.rst.languages.en\".\n            Trying \"a:b:c\" as canonical role name.\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown interpreted text role \"a:b:c\".\n",
+      "rst": ":a:b:c:`text` end.\n"
+    },
+    {
+      "family": "review2",
+      "name": "review2.multi_segment_unknown",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            :math:sub:`text`\n         end.\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            No role entry for \"math:sub\" in module \"docutils.parsers.rst.languages.en\".\n            Trying \"math:sub\" as canonical role name.\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown interpreted text role \"math:sub\".\n",
+      "rst": ":math:sub:`text` end.\n"
+    },
+    {
+      "family": "review2",
+      "name": "review2.embedded_link_interior_gt",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <reference name=\"text <a>x>\" refname=\"text <a>x>\">\n            text <a>x>\n         end.\n",
+      "rst": "`text <a>x>`_ end.\n"
+    },
+    {
+      "family": "review2",
+      "name": "review2.embedded_link_escaped_gt",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <reference name=\"text <a>\" refname=\"text <a>\">\n            text <a>\n         end.\n",
+      "rst": "`text <a\\>`_ end.\n"
+    },
+    {
+      "family": "review2",
+      "name": "review2.simple_table_multiparagraph_cell",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"5\">\n            <colspec colwidth=\"25\">\n            <thead>\n                <row>\n                    <entry>\n                        <paragraph>\n                            col 1\n                    <entry>\n                        <paragraph>\n                            col 2\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            3\n                    <entry>\n                        <bullet_list bullet=\"-\">\n                            <list_item>\n                                <paragraph>\n                                    Second column of row 3.\n                            <list_item>\n                                <paragraph>\n                                    Second item in bullet\n                                    list (row 3, column 2).\n                <row>\n                    <entry>\n                        <paragraph>\n                            4\n                    <entry>\n                        <paragraph>\n                            x\n",
+      "rst": "=====  =====\ncol 1  col 2\n=====  =====\n3      - Second column of row 3.\n\n       - Second item in bullet\n         list (row 3, column 2).\n4      x\n=====  =====\n"
+    },
+    {
+      "family": "review2",
+      "name": "review2.grid_left_edge_break",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Malformed table.\n            Bottom border missing or corrupt.\n        <literal_block xml:space=\"preserve\">\n            +---+\n            | A |\n    <system_message level=\"2\" line=\"3\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Blank line required after table.\n    <paragraph>\n        xyz\n        +---+\n",
+      "rst": "+---+\n| A |\nxyz\n+---+\n"
+    },
+    {
+      "family": "review2",
+      "name": "review2.grid_width4_border_not_table",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        +--+\n        <substitution_reference refname=\"AB\">\n            AB\n        \n        +--+\n",
+      "rst": "+--+\n|AB|\n+--+\n"
+    },
+    {
+      "family": "review2",
+      "name": "review2.grid_nonrectangular_incomplete",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Malformed table.\n            Malformed table; parse incomplete.\n        <literal_block xml:space=\"preserve\">\n            +--------------+--------------+\n            | A bad table. |              |\n            +--------------+              |\n            | Cells must be rectangles.   |\n            +-----------------------------+\n",
+      "rst": "+--------------+--------------+\n| A bad table. |              |\n+--------------+              |\n| Cells must be rectangles.   |\n+-----------------------------+\n"
+    },
+    {
+      "family": "review2",
+      "name": "review2.grid_cjk_cells",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"8\">\n            <colspec colwidth=\"6\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            漢字\n                    <entry>\n                        <paragraph>\n                            col2\n                <row>\n                    <entry>\n                        <paragraph>\n                            x\n                    <entry>\n                        <paragraph>\n                            y\n",
+      "rst": "+--------+------+\n| 漢字   | col2 |\n+--------+------+\n| x      | y    |\n+--------+------+\n"
+    },
+    {
+      "family": "review2",
+      "name": "review2.simple_cjk_cells",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"5\">\n            <colspec colwidth=\"5\">\n            <thead>\n                <row>\n                    <entry>\n                        <paragraph>\n                            col 1\n                    <entry>\n                        <paragraph>\n                            col 2\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            漢字\n                    <entry>\n                        <paragraph>\n                            B\n",
+      "rst": "=====  =====\ncol 1  col 2\n=====  =====\n漢字   B\n=====  =====\n"
+    },
+    {
+      "family": "review2",
+      "name": "review2.footnote_two_spaces",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <footnote ids=\"id1\" names=\"1\">\n        <label>\n            1\n        <paragraph>\n            Two spaces after label.\n",
+      "rst": ".. [1]  Two spaces after label.\n"
+    },
+    {
+      "family": "review2",
+      "name": "review2.footnote_two_spaces_continuation",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <footnote ids=\"id1\" names=\"1\">\n        <label>\n            1\n        <paragraph>\n            First line two spaces.\n            Continuation at indent 3.\n",
+      "rst": ".. [1]  First line two spaces.\n   Continuation at indent 3.\n"
+    },
+    {
+      "family": "review2",
+      "name": "review2.citation_two_spaces",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <citation ids=\"cit\" names=\"cit\">\n        <label>\n            CIT\n        <paragraph>\n            Two spaces citation.\n",
+      "rst": ".. [CIT]  Two spaces citation.\n"
+    },
+    {
       "family": "review",
       "name": "review.attr_no_space",
       "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <paragraph>\n            body\n        <attribution>\n            Author\n",

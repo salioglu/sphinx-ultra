@@ -199,6 +199,11 @@ fn is_emailc(c: char) -> bool {
 struct Inliner<'a> {
     /// escape2null'd text as a char vector (positions are char indices).
     chars: Vec<char>,
+    /// Earliest position from which an end-string search is known to fail,
+    /// per (end char, length) — validity is position-local, so one failed
+    /// full scan means all later scans fail too (kills the O(n^2)
+    /// unclosed-markup pathology).
+    failed_end_search: std::collections::HashMap<(char, usize), usize>,
     span: Span,
     lineno: u32,
     source_path: &'a str,
@@ -242,7 +247,18 @@ impl<'a> Inliner<'a> {
     /// content (docutils `endmatch.start(1) >= 1`). Lookbehind: emphasis/
     /// strong forbid whitespace AND `\x00` before the end-string; literals
     /// forbid only whitespace (`allow_null_before`).
-    fn find_end(&self, from: usize, end_str: &[char], allow_null_before: bool) -> Option<usize> {
+    fn find_end(
+        &mut self,
+        from: usize,
+        end_str: &[char],
+        allow_null_before: bool,
+    ) -> Option<usize> {
+        let key = (end_str[0], end_str.len());
+        if let Some(fail_from) = self.failed_end_search.get(&key) {
+            if from >= *fail_from {
+                return None;
+            }
+        }
         let n = self.chars.len();
         let len = end_str.len();
         // content non-empty: end-string can start at from+1 at the earliest
@@ -262,6 +278,7 @@ impl<'a> Inliner<'a> {
             }
             i += 1;
         }
+        self.failed_end_search.insert(key, from);
         None
     }
 
@@ -275,6 +292,16 @@ impl<'a> Inliner<'a> {
     /// docutils `implicit_inline`: standalone URIs and emails inside plain
     /// text runs become reference nodes.
     fn implicit_inline(&mut self, text: &str) {
+        // Cheap pre-checks: without ':' no scheme URI can match; without
+        // '@' no email can match (kills quadratic rescans over ordinary
+        // hyphenated text).
+        if !text.contains(':') && !text.contains('@') {
+            let out = unescape(text, false);
+            if !out.is_empty() {
+                self.nodes.push(Node::text_node(out, self.span));
+            }
+            return;
+        }
         let chars: Vec<char> = text.chars().collect();
         let n = chars.len();
         let mut emitted_upto = 0usize;
@@ -585,33 +612,41 @@ impl<'a> Inliner<'a> {
     }
 
     /// `:name:` immediately before position `i` with a valid construct
-    /// prefix before it. Returns (construct_start, role_name).
+    /// prefix before it. The name may be COLON-JOINED (`:py:func:` — ':'
+    /// is a simplename separator), so scan back through the whole
+    /// word/separator run to the OUTERMOST candidate colon (docutils'
+    /// leftmost-match semantics). Returns (construct_start, role_name).
     fn role_prefix_before(&self, i: usize) -> Option<(usize, String)> {
         if i < 3 || self.chars[i - 1] != ':' {
             return None;
         }
-        // scan backward for the opening ':'
+        // Scan backward over word chars and simplename separators to find
+        // the earliest possible opening colon.
         let mut j = i - 1;
         while j > 0 {
-            j -= 1;
-            let c = self.chars[j];
-            if c == ':' {
-                let name: String = self.chars[j + 1..i - 1].iter().collect();
+            let c = self.chars[j - 1];
+            if is_word_char(c) || matches!(c, '-' | '.' | '+' | ':') {
+                j -= 1;
+            } else {
+                break;
+            }
+        }
+        // Try opening colons from the OUTERMOST inward.
+        let mut k = j;
+        while k + 1 < i - 1 {
+            if self.chars[k] == ':' {
+                let name: String = self.chars[k + 1..i - 1].iter().collect();
                 let name_chars: Vec<char> = name.chars().collect();
-                if name_chars.is_empty()
-                    || match_simplename(&name_chars, 0) != Some(name_chars.len())
+                if !name_chars.is_empty()
+                    && match_simplename(&name_chars, 0) == Some(name_chars.len())
                 {
-                    return None;
+                    let prev = k.checked_sub(1).map(|p| self.chars[p]);
+                    if is_start_prefix_ok(prev) {
+                        return Some((k, name));
+                    }
                 }
-                let prev = j.checked_sub(1).map(|p| self.chars[p]);
-                if !is_start_prefix_ok(prev) {
-                    return None;
-                }
-                return Some((j, name));
             }
-            if !(is_word_char(c) || matches!(c, '-' | '.' | '+')) {
-                return None;
-            }
+            k += 1;
         }
         None
     }
@@ -1065,6 +1100,10 @@ fn find_embedded_link(raw: &str) -> Option<(String, String)> {
     }
     let chars: Vec<char> = raw.chars().collect();
     let n = chars.len();
+    // The closing '>' must be unescaped.
+    if n >= 2 && chars[n - 2] == NULL {
+        return None;
+    }
     // find matching unescaped '<' scanning backward
     let mut open = None;
     for k in (0..n - 1).rev() {
@@ -1074,6 +1113,20 @@ fn find_embedded_link(raw: &str) -> Option<(String, String)> {
         }
     }
     let open = open?;
+    // docutils: link content is ([^<>]|\x00[<>])+ — any unescaped '<' or
+    // '>' inside invalidates the whole embedded link.
+    let mut m = open + 1;
+    while m < n - 1 {
+        let c = chars[m];
+        if c == NULL {
+            m += 2;
+            continue;
+        }
+        if c == '<' || c == '>' {
+            return None;
+        }
+        m += 1;
+    }
     if open > 0 {
         // must be preceded by whitespace
         let before = chars[open - 1];
@@ -1187,6 +1240,7 @@ pub fn parse_inline(
         nodes: Vec::new(),
         messages: Vec::new(),
         pending: String::new(),
+        failed_end_search: std::collections::HashMap::new(),
     };
     inliner.run();
     InlineResult {

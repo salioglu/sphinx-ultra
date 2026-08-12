@@ -31,7 +31,13 @@ fn write_node(node: &Node, depth: usize, out: &mut String) {
     let indent = "    ".repeat(depth);
     if node.kind == kinds::TEXT {
         if let Some(text) = &node.text {
-            for line in text.split('\n') {
+            // Python str.splitlines() semantics: a trailing newline does
+            // NOT produce a final empty line (interior empties are kept).
+            let mut lines: Vec<&str> = text.split('\n').collect();
+            if lines.len() > 1 && lines.last() == Some(&"") {
+                lines.pop();
+            }
+            for line in lines {
                 out.push_str(&indent);
                 out.push_str(line);
                 out.push('\n');
