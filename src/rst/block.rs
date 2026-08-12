@@ -1345,6 +1345,10 @@ impl<'a> BlockParser<'a> {
                 return;
             }
         }
+        // docutils explicit_construct(): a construct whose parse raises
+        // MarkupError queues a WARNING and falls through to the comment
+        // path, which re-absorbs the whole block (through internal blanks).
+        let mut construct_error: Option<Node> = None;
         if rest.starts_with('_') {
             // Target attempt: the marker (name + link) may span ADJACENT
             // indented continuation lines; parse the joined form.
@@ -1413,26 +1417,26 @@ impl<'a> BlockParser<'a> {
                     out.push(target);
                 }
                 None => {
-                    // Malformed target: comment + WARNING (fixture-verified).
-                    let mut text_lines: Vec<String> = vec![rest.to_string()];
-                    text_lines.extend(cont.iter().map(|s| s.to_string()));
-                    let mut comment = Node::elem(kinds::COMMENT, span);
-                    comment.set("xml:space", AttrValue::Str("preserve".to_string()));
-                    comment
-                        .children
-                        .push(Node::text_node(text_lines.join("\n"), span));
-                    out.push(comment);
-                    out.push(self.msg(messages::WARNING, "malformed hyperlink target.", lineno));
+                    // Malformed target: queue the WARNING and fall through
+                    // to the comment path below (fixture-verified: the
+                    // comment re-absorbs the block through blank lines).
+                    *pos = start;
+                    construct_error =
+                        Some(self.msg(messages::WARNING, "malformed hyperlink target.", lineno));
                 }
             }
-            self.warn_explicit_markup_end(lines, *pos, out);
-            return;
+            if construct_error.is_none() {
+                self.warn_explicit_markup_end(lines, *pos, out);
+                return;
+            }
         }
 
-        if let Some((name, first_rest)) = directive_marker(rest) {
-            self.parse_directive(lines, pos, &name, first_rest, out);
-            self.warn_explicit_markup_end(lines, *pos, out);
-            return;
+        if construct_error.is_none() {
+            if let Some((name, first_rest)) = directive_marker(rest) {
+                self.parse_directive(lines, pos, &name, first_rest, out);
+                self.warn_explicit_markup_end(lines, *pos, out);
+                return;
+            }
         }
 
         // Comment. Probe-verified continuation rules: a comment with first-
@@ -1475,6 +1479,9 @@ impl<'a> BlockParser<'a> {
                 .push(Node::text_node(text_lines.join("\n"), span));
         }
         out.push(comment);
+        if let Some(err) = construct_error {
+            out.push(err);
+        }
         self.warn_explicit_markup_end(lines, *pos, out);
     }
 
@@ -2446,7 +2453,11 @@ impl<'a> BlockParser<'a> {
         for l in &lines[start + 1..start + 1 + consumed] {
             raw_lines.push(l.text);
         }
-        while raw_lines.last().map(|l| l.trim().is_empty()).unwrap_or(false) {
+        while raw_lines
+            .last()
+            .map(|l| l.trim().is_empty())
+            .unwrap_or(false)
+        {
             raw_lines.pop();
         }
         let rawsource = raw_lines.join("\n");
@@ -2496,18 +2507,16 @@ impl<'a> BlockParser<'a> {
             ));
         }
         let mut content: Vec<LineRef<'a>> = Vec::new();
-        let mut in_content = arg_lines.is_empty() && first_rest.trim().is_empty() && false;
         let mut seen_blank = false;
         for l in &block {
             if seen_blank {
                 content.push(*l);
             } else if l.is_blank() {
                 seen_blank = true;
-            } else if !in_content {
+            } else {
                 arg_lines.push(*l);
             }
         }
-        let _ = in_content;
         // Trim leading blanks of content.
         while content.first().map(|l| l.is_blank()).unwrap_or(false) {
             content.remove(0);
@@ -2563,9 +2572,7 @@ impl<'a> BlockParser<'a> {
                     if value.is_empty() {
                         out.push(dir_error(
                             self,
-                            &format!(
-                                "invalid option value: (option: \"class\"; value: None)\nargument required but none supplied"
-                            ),
+                            "invalid option value: (option: \"class\"; value: None)\nargument required but none supplied",
                         ));
                         return;
                     }
@@ -2577,10 +2584,7 @@ impl<'a> BlockParser<'a> {
                     node_name = Some(value.clone());
                 }
                 other => {
-                    out.push(dir_error(
-                        self,
-                        &format!("unknown option: \"{other}\""),
-                    ));
+                    out.push(dir_error(self, &format!("unknown option: \"{other}\"")));
                     return;
                 }
             }
@@ -2634,7 +2638,8 @@ impl<'a> BlockParser<'a> {
                     }
                 }
                 self.line_bias += 1;
-                node.children.extend(self.parse_elements(&effective_content));
+                node.children
+                    .extend(self.parse_elements(&effective_content));
                 self.line_bias -= 1;
                 out.push(node);
             }
@@ -2696,7 +2701,8 @@ impl<'a> BlockParser<'a> {
                     node.children.push(m);
                 }
                 self.line_bias += 1;
-                node.children.extend(self.parse_elements(&effective_content));
+                node.children
+                    .extend(self.parse_elements(&effective_content));
                 self.line_bias -= 1;
                 out.push(node);
             }
