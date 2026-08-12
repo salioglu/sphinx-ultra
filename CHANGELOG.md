@@ -13,6 +13,14 @@ everything forward is [ROADMAP.md](ROADMAP.md).
 
 ### Added
 
+- M2 wave 2 (library-only): the docutils inline parser — emphasis/strong/
+  literal, all reference forms (named/phrase/anonymous/embedded with inline
+  targets), built-in interpreted-text roles (incl. PEP/RFC references),
+  footnote/citation/substitution references, standalone URIs and emails,
+  docutils escape semantics — plus footnote and citation definitions, field
+  lists, full option lists, and grid + simple tables with docutils-exact
+  error recovery. The differential fixture now covers 426 cases at zero
+  divergence against docutils 0.22.4.
 - M2 wave 1 (library-only, not yet wired into the build): typed doctree IR
   with docutils-equivalent node semantics and source spans (`src/doctree/`),
   and a docutils-fidelity recursive-descent RST **block** parser

@@ -20,6 +20,10 @@ use super::lines::Lines;
 const ADORNMENT_CHARS: &str = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
 const BULLET_CHARS: [char; 6] = ['*', '+', '-', '\u{2022}', '\u{2023}', '\u{2043}'];
 
+/// A pending block-quote segment: accumulated body lines plus an optional
+/// (attribution node, marker lineno) that closed it.
+type QuoteSegment<'a> = (Vec<LineRef<'a>>, Option<(Node, u32)>);
+
 #[derive(Copy, Clone, Debug)]
 struct LineRef<'a> {
     text: &'a str,
@@ -126,6 +130,10 @@ pub(crate) struct BlockParser<'a> {
     registry: IdRegistry,
     styles: Vec<(char, bool)>,
     depth: usize,
+    /// +1 inside table-cell nested parses: docutils' state-machine-derived
+    /// line numbers (the unindent/unexpected-indentation family) run one
+    /// high there (probe-verified); content-anchored messages stay absolute.
+    line_bias: u32,
 }
 
 impl<'a> BlockParser<'a> {
@@ -142,6 +150,7 @@ impl<'a> BlockParser<'a> {
             registry: IdRegistry::new(),
             styles: Vec::new(),
             depth: 0,
+            line_bias: 0,
         }
     }
 
@@ -160,6 +169,11 @@ impl<'a> BlockParser<'a> {
 
     fn msg(&self, level: u8, text: &str, lineno: u32) -> Node {
         messages::system_message(level, text, lineno, self.source_path)
+    }
+
+    /// For state-machine-position-derived messages (see `line_bias`).
+    fn msg_sm(&self, level: u8, text: &str, lineno: u32) -> Node {
+        messages::system_message(level, text, lineno + self.line_bias, self.source_path)
     }
 
     /// Probe-verified: an explicit-markup element (comment/target) followed
@@ -277,20 +291,29 @@ impl<'a> BlockParser<'a> {
             Self::close_section(root, stack);
         }
 
+        let inline = super::inline::parse_inline(
+            &start.title,
+            start.span,
+            start.title_lineno,
+            &mut self.registry,
+            self.source_path,
+        );
+        let mut title = Node::elem(kinds::TITLE, start.span);
+        title.children = inline.nodes;
+        // Section name from the title's TEXT content (markup stripped).
         let mut section = Node::elem(kinds::SECTION, start.span);
         section
             .attrs
             .names
-            .push(ids::fully_normalize_name(&start.title));
+            .push(ids::fully_normalize_name(&title.astext()));
         let dup_info =
             self.registry
                 .set_id_implicit(&mut section, start.underline_lineno, self.source_path);
-        let mut title = Node::elem(kinds::TITLE, start.span);
-        title
-            .children
-            .push(Node::text_node(start.title.clone(), start.span));
         section.children.push(title);
         for m in start.messages {
+            section.children.push(m);
+        }
+        for m in inline.messages {
             section.children.push(m);
         }
         if let Some(info) = dup_info {
@@ -359,12 +382,28 @@ impl<'a> BlockParser<'a> {
             }
             // invalid list start: fall through to the text path
         }
+        if field_marker(text).is_some() {
+            self.parse_field_list(lines, pos, out);
+            return None;
+        }
+        if option_group_marker(text).is_some() && self.option_item_viable(lines, *pos) {
+            self.parse_option_list(lines, pos, out);
+            return None;
+        }
         if text.starts_with(">>> ") || text == ">>>" {
             self.parse_doctest(lines, pos, out);
             return None;
         }
         if text == "|" || text.starts_with("| ") {
             self.parse_line_block(lines, pos, out);
+            return None;
+        }
+        if is_grid_table_top(text) {
+            self.parse_grid_table(lines, pos, out);
+            return None;
+        }
+        if is_simple_table_top(text) {
+            self.parse_simple_table(lines, pos, out);
             return None;
         }
         if text == ".." || text.starts_with(".. ") {
@@ -651,9 +690,17 @@ impl<'a> BlockParser<'a> {
         let (text, expect_literal) = strip_literal_colons(&joined);
         let span = self.span_of(lines, start, end.saturating_sub(1));
         if !text.is_empty() {
+            let result = super::inline::parse_inline(
+                &text,
+                span,
+                lines[start].lineno,
+                &mut self.registry,
+                self.source_path,
+            );
             let mut para = Node::elem(kinds::PARAGRAPH, span);
-            para.children.push(Node::text_node(text, span));
+            para.children = result.nodes;
             out.push(para);
+            out.extend(result.messages);
         }
         *pos = end;
 
@@ -663,7 +710,7 @@ impl<'a> BlockParser<'a> {
             && lines[end].indent() > 0
             && end - start >= 2
         {
-            out.push(self.msg(
+            out.push(self.msg_sm(
                 messages::ERROR,
                 "Unexpected indentation.",
                 lines[end].lineno,
@@ -711,7 +758,7 @@ impl<'a> BlockParser<'a> {
             out.push(lb);
             *pos = p + consumed;
             if let Some(term) = terminator {
-                out.push(self.msg(
+                out.push(self.msg_sm(
                     messages::WARNING,
                     "Literal block ends without a blank line; unexpected unindent.",
                     term,
@@ -801,7 +848,7 @@ impl<'a> BlockParser<'a> {
         list.span = self.span_of(lines, start, pos.saturating_sub(1));
         out.push(list);
         if let Some(l) = warn_line {
-            out.push(self.msg(
+            out.push(self.msg_sm(
                 messages::WARNING,
                 "Bullet list ends without a blank line; unexpected unindent.",
                 l,
@@ -957,7 +1004,7 @@ impl<'a> BlockParser<'a> {
         let first_lineno = lines[start].lineno;
         out.push(list);
         if let Some(l) = warn_line {
-            out.push(self.msg(
+            out.push(self.msg_sm(
                 messages::WARNING,
                 "Enumerated list ends without a blank line; unexpected unindent.",
                 l,
@@ -1030,16 +1077,36 @@ impl<'a> BlockParser<'a> {
             let term_span = self.span_of(lines, *pos, *pos);
             let mut parts = split_classifiers(term_line.text).into_iter();
             let term_text = parts.next().unwrap_or_default();
+            let mut term_msgs = Vec::new();
+            let inline = super::inline::parse_inline(
+                &term_text,
+                term_span,
+                term_line.lineno,
+                &mut self.registry,
+                self.source_path,
+            );
             let mut term = Node::elem(kinds::TERM, term_span);
-            term.children.push(Node::text_node(term_text, term_span));
+            term.children = inline.nodes;
+            term_msgs.extend(inline.messages);
             item.children.push(term);
             for classifier in parts {
+                let inline = super::inline::parse_inline(
+                    &classifier,
+                    term_span,
+                    term_line.lineno,
+                    &mut self.registry,
+                    self.source_path,
+                );
                 let mut c = Node::elem(kinds::CLASSIFIER, term_span);
-                c.children.push(Node::text_node(classifier, term_span));
+                c.children = inline.nodes;
+                term_msgs.extend(inline.messages);
                 item.children.push(c);
             }
             let mut definition =
                 Node::elem(kinds::DEFINITION, self.span_of(lines, *pos + 1, item_last));
+            // Fixture-verified: term/classifier inline messages land INSIDE
+            // the definition, before its content.
+            definition.children.append(&mut term_msgs);
             if term_line.text.ends_with("::") {
                 // Probe-verified: docutils flags a term ending in `::`.
                 definition.children.push(self.msg(
@@ -1066,6 +1133,8 @@ impl<'a> BlockParser<'a> {
                     && Self::bullet_marker(l.text).is_none()
                     && parse_enumerator(l.text).is_none()
                     && adornment_char(l.text).is_none()
+                    && field_marker(l.text).is_none()
+                    && option_group_marker(l.text).is_none()
                     && !l.text.starts_with(".. ")
                     && l.text != ".."
                     && !l.text.starts_with("| ")
@@ -1087,7 +1156,7 @@ impl<'a> BlockParser<'a> {
         dl.span = self.span_of(lines, start, pos.saturating_sub(1));
         out.push(dl);
         if let Some(l) = warn_line {
-            out.push(self.msg(
+            out.push(self.msg_sm(
                 messages::WARNING,
                 "Definition list ends without a blank line; unexpected unindent.",
                 l,
@@ -1106,7 +1175,7 @@ impl<'a> BlockParser<'a> {
         let span = self.span_of(lines, start, start + consumed - 1);
 
         // Split into blank-separated chunks; attribution chunks close quotes.
-        let mut quotes: Vec<(Vec<LineRef<'a>>, Option<Node>)> = Vec::new();
+        let mut quotes: Vec<QuoteSegment<'a>> = Vec::new();
         let mut acc: Vec<LineRef<'a>> = Vec::new();
         let mut i = 0usize;
         while i < block.len() {
@@ -1134,16 +1203,29 @@ impl<'a> BlockParser<'a> {
         for (body, attribution) in quotes {
             let mut quote = Node::elem(kinds::BLOCK_QUOTE, span);
             quote.children = self.parse_elements(&body);
-            if let Some(a) = attribution {
+            let mut attr_messages = Vec::new();
+            if let Some((raw_attr, lineno)) = attribution {
+                let raw = raw_attr.astext();
+                let inline = super::inline::parse_inline(
+                    &raw,
+                    raw_attr.span,
+                    lineno,
+                    &mut self.registry,
+                    self.source_path,
+                );
+                let mut a = Node::elem(kinds::ATTRIBUTION, raw_attr.span);
+                a.children = inline.nodes;
+                attr_messages = inline.messages;
                 quote.children.push(a);
             }
             if quote.children.is_empty() {
                 continue;
             }
             out.push(quote);
+            out.append(&mut attr_messages);
         }
         if let Some(t) = terminator {
-            out.push(self.msg(
+            out.push(self.msg_sm(
                 messages::WARNING,
                 "Block quote ends without a blank line; unexpected unindent.",
                 t,
@@ -1206,19 +1288,34 @@ impl<'a> BlockParser<'a> {
                 break;
             }
         }
-        // Resolve inherited depths.
-        let mut resolved: Vec<(usize, String)> = Vec::with_capacity(items.len());
+        // Resolve inherited depths and inline-parse each line's text.
+        let span = self.span_of(lines, start, p - 1);
+        let first_lineno = lines[start].lineno;
+        let mut resolved: Vec<(usize, Vec<Node>)> = Vec::with_capacity(items.len());
+        let mut lb_messages: Vec<Node> = Vec::new();
         let mut prev_depth = 0usize;
         for (depth, text) in items {
             let d = depth.unwrap_or(prev_depth);
             prev_depth = d;
-            resolved.push((d, text));
+            if text.is_empty() {
+                resolved.push((d, Vec::new()));
+            } else {
+                let inline = super::inline::parse_inline(
+                    &text,
+                    span,
+                    first_lineno,
+                    &mut self.registry,
+                    self.source_path,
+                );
+                lb_messages.extend(inline.messages);
+                resolved.push((d, inline.nodes));
+            }
         }
-        let span = self.span_of(lines, start, p - 1);
-        out.push(build_line_block(&resolved, span, 0));
+        out.push(build_line_block(&mut resolved, span, 0));
+        out.append(&mut lb_messages);
         // Fixture-verified: warning anchored to the LAST line-block line.
         if p < lines.len() && !lines[p].is_blank() {
-            out.push(self.msg(
+            out.push(self.msg_sm(
                 messages::WARNING,
                 "Line block ends without a blank line.",
                 lines[p - 1].lineno,
@@ -1241,6 +1338,13 @@ impl<'a> BlockParser<'a> {
             line.text[2..].trim_start()
         };
 
+        if rest.starts_with('[') {
+            if let Some(next_pos) = self.try_footnote_def(lines, pos, rest, out) {
+                *pos = next_pos;
+                self.warn_explicit_markup_end(lines, *pos, out);
+                return;
+            }
+        }
         if rest.starts_with('_') {
             // Target attempt: the marker (name + link) may span ADJACENT
             // indented continuation lines; parse the joined form.
@@ -1368,6 +1472,952 @@ impl<'a> BlockParser<'a> {
         self.warn_explicit_markup_end(lines, *pos, out);
     }
 
+    /// `.. [label]` footnote and citation definitions. Returns the new
+    /// position past the construct, or None when `rest` is not a valid
+    /// footnote/citation marker (falls through to comment).
+    fn try_footnote_def(
+        &mut self,
+        lines: &[LineRef<'a>],
+        pos: &mut usize,
+        rest: &str,
+        out: &mut Vec<Node>,
+    ) -> Option<usize> {
+        let chars: Vec<char> = rest.chars().collect();
+        let mut j = 1usize; // past '['
+        let label_start = j;
+        match chars.get(j) {
+            Some('#') => {
+                j += 1;
+                if let Some(len) = match_simplename_chars(&chars, j) {
+                    j += len;
+                }
+            }
+            Some('*') => j += 1,
+            _ => j += match_simplename_chars(&chars, j)?,
+        }
+        if chars.get(j) != Some(&']') {
+            return None;
+        }
+        let after = j + 1;
+        if !(chars.len() == after || chars.get(after) == Some(&' ')) {
+            return None;
+        }
+        let label: String = chars[label_start..j].iter().collect();
+        let start = *pos;
+        let lineno = lines[start].lineno;
+
+        // Body: first-line remainder + following indented block (blanks
+        // between marker and block allowed; docutils get_first_known_indented).
+        // docutils' footnote pattern consumes ALL whitespace after `]`.
+        let mut rest_from = after;
+        while chars.get(rest_from) == Some(&' ') {
+            rest_from += 1;
+        }
+        let first_rest: String = if rest_from > after {
+            chars
+                .get(rest_from..)
+                .map(|c| c.iter().collect())
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+        let (block, consumed, _indent, _term) = indented_block(lines, start + 1);
+        let mut body: Vec<LineRef<'a>> = Vec::new();
+        if !first_rest.trim().is_empty() {
+            // remainder starts at a virtual column; treat as its own line
+            body.push(LineRef::new(
+                rest_after(
+                    lines[start].text,
+                    lines[start].text.chars().count() - first_rest.chars().count(),
+                ),
+                lineno,
+                lines[start].src_start,
+                lines[start].src_end,
+            ));
+        }
+        for l in &block {
+            body.push(*l);
+        }
+
+        let is_citation =
+            !label.starts_with('#') && label != "*" && !label.chars().all(|c| c.is_ascii_digit());
+        let kind = if is_citation {
+            kinds::CITATION
+        } else {
+            kinds::FOOTNOTE
+        };
+        let span = self.span_of(lines, start, start + consumed);
+        let mut node = Node::elem(kind, span);
+        let mut has_label_child = false;
+        if is_citation {
+            node.attrs.names.push(ids::fully_normalize_name(&label));
+            has_label_child = true;
+        } else if label == "*" {
+            node.set("auto", AttrValue::Str("*".to_string()));
+        } else if let Some(rest_label) = label.strip_prefix('#') {
+            node.set("auto", AttrValue::Int(1));
+            if !rest_label.is_empty() {
+                node.attrs.names.push(ids::fully_normalize_name(rest_label));
+            }
+        } else {
+            node.attrs.names.push(ids::fully_normalize_name(&label));
+            has_label_child = true;
+        }
+        let msg = if node.attrs.names.is_empty() {
+            self.registry.set_id_anonymous(&mut node);
+            None
+        } else {
+            self.registry
+                .set_id_explicit(&mut node, lineno, self.source_path, true, None)
+        };
+        if has_label_child {
+            let mut lab = Node::elem(kinds::LABEL, span);
+            lab.children.push(Node::text_node(label.clone(), span));
+            node.children.push(lab);
+        }
+        if let Some(m) = msg {
+            node.children.push(m);
+        }
+        let content = self.parse_elements(&body);
+        if content.is_empty() {
+            let text = if is_citation {
+                "Citation content expected."
+            } else {
+                "Footnote content expected."
+            };
+            node.children
+                .push(self.msg(messages::WARNING, text, lineno));
+        } else {
+            node.children.extend(content);
+        }
+        out.push(node);
+        Some(start + 1 + consumed)
+    }
+
+    /// Field lists: `:name: value` markers (probe-verified regex port).
+    fn parse_field_list(&mut self, lines: &[LineRef<'a>], pos: &mut usize, out: &mut Vec<Node>) {
+        let start = *pos;
+        let mut fl = Node::elem(kinds::FIELD_LIST, Span::ZERO);
+        let mut warn_line: Option<u32> = None;
+        loop {
+            let line = lines[*pos];
+            let (name_raw, body_start) = field_marker(line.text).expect("checked by caller");
+            let lineno = line.lineno;
+            let field_span = self.span_of(lines, *pos, *pos);
+            // body: marker-line remainder + any-indent continuation block
+            let first_rest = line.text[body_start..].trim_start();
+            let (block, consumed, _i, terminator) = indented_block(lines, *pos + 1);
+            let mut body_lines: Vec<LineRef<'a>> = Vec::new();
+            if !first_rest.is_empty() {
+                let offset = line.text.len() - first_rest.len();
+                body_lines.push(LineRef::new(
+                    &line.text[offset..],
+                    lineno,
+                    line.src_start,
+                    line.src_end,
+                ));
+            }
+            body_lines.extend(block.iter().copied());
+            *pos += 1 + consumed;
+
+            let name_inline = super::inline::parse_inline(
+                &name_raw,
+                field_span,
+                lineno,
+                &mut self.registry,
+                self.source_path,
+            );
+            let mut field = Node::elem(kinds::FIELD, field_span);
+            let mut fname = Node::elem(kinds::FIELD_NAME, field_span);
+            fname.children = name_inline.nodes;
+            field.children.push(fname);
+            let mut fbody = Node::elem(kinds::FIELD_BODY, field_span);
+            fbody.children.extend(name_inline.messages);
+            fbody.children.extend(self.parse_elements(&body_lines));
+            field.children.push(fbody);
+            fl.children.push(field);
+
+            // continue on the next field marker (blanks allowed between)
+            let mut p = *pos;
+            while p < lines.len() && lines[p].is_blank() {
+                p += 1;
+            }
+            let continues =
+                p < lines.len() && lines[p].indent() == 0 && field_marker(lines[p].text).is_some();
+            if continues {
+                *pos = p;
+                continue;
+            }
+            let _ = terminator;
+            // Adjacency: any non-blank line directly after the field body
+            // (indented-block terminator OR a col-0 line) warns.
+            if let Some(l) = lines.get(*pos) {
+                if !l.is_blank() {
+                    warn_line = Some(l.lineno);
+                }
+            }
+            break;
+        }
+        fl.span = self.span_of(lines, start, pos.saturating_sub(1));
+        out.push(fl);
+        if let Some(l) = warn_line {
+            out.push(self.msg_sm(
+                messages::WARNING,
+                "Field list ends without a blank line; unexpected unindent.",
+                l,
+            ));
+        }
+    }
+
+    /// An option marker line is only a list item when it has a two-space
+    /// description or an indented following line (else: paragraph).
+    fn option_item_viable(&self, lines: &[LineRef<'a>], at: usize) -> bool {
+        let (_, desc) = match option_group_marker(lines[at].text) {
+            Some(r) => r,
+            None => return false,
+        };
+        if !desc.is_empty() {
+            return true;
+        }
+        lines
+            .get(at + 1)
+            .map(|l| !l.is_blank() && l.indent() > 0)
+            .unwrap_or(false)
+    }
+
+    fn parse_option_list(&mut self, lines: &[LineRef<'a>], pos: &mut usize, out: &mut Vec<Node>) {
+        let start = *pos;
+        let mut ol = Node::elem(kinds::OPTION_LIST, Span::ZERO);
+        let mut warn_line: Option<u32> = None;
+        loop {
+            let line = lines[*pos];
+            let (specs, desc) = option_group_marker(line.text).expect("checked by caller");
+            let span = self.span_of(lines, *pos, *pos);
+            let (block, consumed, _i, terminator) = indented_block(lines, *pos + 1);
+            let mut body_lines: Vec<LineRef<'a>> = Vec::new();
+            if !desc.is_empty() {
+                let offset = line.text.len() - desc.len();
+                body_lines.push(LineRef::new(
+                    &line.text[offset..],
+                    line.lineno,
+                    line.src_start,
+                    line.src_end,
+                ));
+            }
+            body_lines.extend(block.iter().copied());
+            *pos += 1 + consumed;
+
+            let mut item = Node::elem(kinds::OPTION_LIST_ITEM, span);
+            let mut group = Node::elem(kinds::OPTION_GROUP, span);
+            for (opt_string, arg) in specs {
+                let mut opt = Node::elem(kinds::OPTION, span);
+                let mut os = Node::elem(kinds::OPTION_STRING, span);
+                os.children.push(Node::text_node(opt_string, span));
+                opt.children.push(os);
+                if let Some((delim, argtext)) = arg {
+                    let mut oa = Node::elem(kinds::OPTION_ARGUMENT, span);
+                    oa.set("delimiter", AttrValue::Str(delim));
+                    oa.children.push(Node::text_node(argtext, span));
+                    opt.children.push(oa);
+                }
+                group.children.push(opt);
+            }
+            item.children.push(group);
+            let mut description = Node::elem(kinds::DESCRIPTION, span);
+            description.children = self.parse_elements(&body_lines);
+            item.children.push(description);
+            ol.children.push(item);
+
+            let mut p = *pos;
+            while p < lines.len() && lines[p].is_blank() {
+                p += 1;
+            }
+            let continues = p < lines.len()
+                && lines[p].indent() == 0
+                && option_group_marker(lines[p].text).is_some()
+                && self.option_item_viable(lines, p);
+            if continues {
+                *pos = p;
+                continue;
+            }
+            let _ = terminator;
+            if let Some(l) = lines.get(*pos) {
+                if !l.is_blank() {
+                    warn_line = Some(l.lineno);
+                }
+            }
+            break;
+        }
+        ol.span = self.span_of(lines, start, pos.saturating_sub(1));
+        out.push(ol);
+        if let Some(l) = warn_line {
+            out.push(self.msg_sm(
+                messages::WARNING,
+                "Option list ends without a blank line; unexpected unindent.",
+                l,
+            ));
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // grid tables (docutils tableparser.GridTableParser port)
+    // ------------------------------------------------------------------
+
+    fn parse_grid_table(&mut self, lines: &[LineRef<'a>], pos: &mut usize, out: &mut Vec<Node>) {
+        let start = *pos;
+        // isolate: consume until blank line
+        let mut end = *pos;
+        while end < lines.len() && !lines[end].is_blank() {
+            end += 1;
+        }
+        let mut block: Vec<LineRef<'a>> = lines[start..end].to_vec();
+        *pos = end;
+        // docutils left-edge check: trim at the first line not starting
+        // with '+' or '|'; the remainder re-parses and a blank-line
+        // warning fires. The trim index feeds the stale-line quirk of the
+        // bottom-corrupt error.
+        let mut trailing_warning = None;
+        let mut stale_i = block.len() - 1;
+        for (i, l) in block.iter().enumerate().skip(1) {
+            let t = l.text.trim_end();
+            if !(t.starts_with('+') || t.starts_with('|')) {
+                stale_i = i;
+                trailing_warning = Some(self.msg(
+                    messages::WARNING,
+                    "Blank line required after table.",
+                    l.lineno,
+                ));
+                block.truncate(i);
+                *pos = start + i;
+                break;
+            }
+        }
+        // docutils trims a non-border tail back to the LAST valid border
+        // (the remainder re-parses, with a blank-line-required warning),
+        // BEFORE any alignment checks.
+        if !is_grid_table_top(block[block.len() - 1].text.trim_end()) {
+            let mut found = None;
+            for i in (2..block.len() - 1).rev() {
+                if is_grid_table_top(block[i].text.trim_end()) {
+                    found = Some(i);
+                    break;
+                }
+            }
+            if let Some(i) = found {
+                let next_lineno = block[i + 1].lineno;
+                block.truncate(i + 1);
+                *pos = start + i + 1;
+                if trailing_warning.is_none() {
+                    trailing_warning = Some(self.msg(
+                        messages::WARNING,
+                        "Blank line required after table.",
+                        next_lineno,
+                    ));
+                }
+            }
+        }
+        let raw_block: Vec<String> = block.iter().map(|l| l.text.to_string()).collect();
+        let malformed = |detail: &str, lineno: u32| -> Node {
+            messages::with_literal(
+                messages::system_message(
+                    messages::ERROR,
+                    &format!("Malformed table.\n{detail}"),
+                    lineno,
+                    self.source_path,
+                ),
+                raw_block.join("\n").trim_end(),
+            )
+        };
+        // right-border alignment (DISPLAY columns: east-asian wide = 2)
+        let width = column_width(block[0].text.trim_end());
+        for l in block.iter().skip(1) {
+            let t = l.text.trim_end();
+            if column_width(t) != width || !(t.ends_with('+') || t.ends_with('|')) {
+                out.push(malformed("Right border not aligned or missing.", l.lineno));
+                if let Some(w) = trailing_warning {
+                    out.push(w);
+                }
+                return;
+            }
+        }
+        // bottom border must be a grid border (line anchor reproduces
+        // docutils' stale-index quirk: the last line the edge scans reached)
+        if !is_grid_table_top(block[block.len() - 1].text.trim_end()) {
+            let lineno = lines[(start + stale_i).min(lines.len() - 1)].lineno;
+            out.push(malformed("Bottom border missing or corrupt.", lineno));
+            if let Some(w) = trailing_warning {
+                out.push(w);
+            }
+            return;
+        }
+
+        // grid as DISPLAY-column matrix (wide chars followed by a filler;
+        // head/body sep '=' converted to '-')
+        let mut grid: Vec<Vec<char>> = block
+            .iter()
+            .map(|l| {
+                let mut row = Vec::new();
+                for c in l.text.trim_end().chars() {
+                    row.push(c);
+                    if unicode_width::UnicodeWidthChar::width(c).unwrap_or(1) == 2 {
+                        row.push('\u{fffd}');
+                    }
+                }
+                row
+            })
+            .collect();
+        let mut head_sep: Option<usize> = None;
+        for (i, row) in grid.iter_mut().enumerate() {
+            let s: String = row.iter().collect();
+            if is_grid_head_sep(&s) {
+                if let Some(first) = head_sep {
+                    out.push(malformed(
+                        &format!(
+                            "Multiple head/body row separators (table lines {} and {}); only one allowed.",
+                            first + 1,
+                            i + 1
+                        ),
+                        block[0].lineno,
+                    ));
+                    return;
+                }
+                head_sep = Some(i);
+                for c in row.iter_mut() {
+                    if *c == '=' {
+                        *c = '-';
+                    }
+                }
+            }
+        }
+        let nrows = grid.len();
+        let at = |r: usize, c: usize| -> char {
+            *grid.get(r).and_then(|row| row.get(c)).unwrap_or(&' ')
+        };
+
+        // trace cells from top-left corners
+        let mut cells: Vec<(usize, usize, usize, usize)> = Vec::new();
+        let mut colseps: Vec<usize> = vec![0];
+        let mut rowseps: Vec<usize> = vec![0];
+        let mut corners: Vec<(usize, usize)> = vec![(0, 0)];
+        let mut done_to: Vec<(usize, usize)> = Vec::new(); // (left, bottom) per traced cell
+        while let Some((top, left)) = corners.pop() {
+            if cells
+                .iter()
+                .any(|(t, l, b, r)| *t <= top && top < *b && *l <= left && left < *r)
+            {
+                continue;
+            }
+            if at(top, left) != '+' {
+                continue;
+            }
+            if let Some((bottom, right, mut cseps, mut rseps)) = trace_cell(&grid, top, left) {
+                cells.push((top, left, bottom, right));
+                colseps.append(&mut cseps);
+                rowseps.append(&mut rseps);
+                corners.push((top, right));
+                corners.push((bottom, left));
+                done_to.push((left, bottom));
+                corners.sort();
+                corners.dedup();
+            }
+        }
+        colseps.sort_unstable();
+        colseps.dedup();
+        rowseps.sort_unstable();
+        rowseps.dedup();
+
+        // completeness: every column spanned to the bottom
+        let bottom_row = nrows - 1;
+        if rowseps.last() != Some(&bottom_row) && !cells.is_empty() {
+            out.push(malformed(
+                "Malformed table; parse incomplete.",
+                block[0].lineno,
+            ));
+            return;
+        }
+        let _ = done_to;
+
+        // structure
+        let ncols = colseps.len().saturating_sub(1);
+        let colwidths: Vec<usize> = colseps.windows(2).map(|w| w[1] - w[0] - 1).collect();
+        let row_of = |o: usize| rowseps.iter().position(|r| *r == o);
+        let col_of = |o: usize| colseps.iter().position(|c| *c == o);
+        let nrows_struct = rowseps.len().saturating_sub(1);
+        // rows[r][c] = Option<entry>
+        let mut entries: Vec<Vec<Option<Node>>> = vec![];
+        for _ in 0..nrows_struct {
+            entries.push((0..ncols).map(|_| None).collect());
+        }
+        let mut covered: Vec<Vec<bool>> = vec![vec![false; ncols]; nrows_struct];
+        let mut cell_list = cells.clone();
+        cell_list.sort();
+        for (top, left, bottom, right) in cell_list {
+            let (Some(rn), Some(cn), Some(rb), Some(cr)) =
+                (row_of(top), col_of(left), row_of(bottom), col_of(right))
+            else {
+                continue;
+            };
+            if covered[rn][cn] {
+                continue;
+            }
+            let morerows = rb - rn - 1;
+            let morecols = cr - cn - 1;
+            for row in covered.iter_mut().take(rb).skip(rn) {
+                for cell in row.iter_mut().take(cr).skip(cn) {
+                    *cell = true;
+                }
+            }
+            let span = self.span_of(lines, start + top, start + bottom);
+            let mut entry = Node::elem(kinds::ENTRY, span);
+            if morecols > 0 {
+                entry.set("morecols", AttrValue::Int(morecols as i64));
+            }
+            if morerows > 0 {
+                entry.set("morerows", AttrValue::Int(morerows as i64));
+            }
+            // cell block: rows top+1..bottom, cols left+1..right
+            let mut cell_lines: Vec<LineRef<'a>> = Vec::new();
+            for l in block.iter().take(bottom).skip(top + 1) {
+                let text = display_slice(l.text, left + 1, right);
+                cell_lines.push(LineRef::new(text, l.lineno, l.src_start, l.src_end));
+            }
+            let base = cell_lines
+                .iter()
+                .filter(|l| !l.text.trim().is_empty())
+                .map(|l| l.indent())
+                .min()
+                .unwrap_or(0);
+            let dedented: Vec<LineRef<'a>> = cell_lines
+                .iter()
+                .map(|l| {
+                    if l.text.trim().is_empty() {
+                        LineRef::new("", l.lineno, l.src_start, l.src_end)
+                    } else {
+                        let mut d = l.dedented(base);
+                        // strip trailing whitespace inside the cell view
+                        d.text = d.text.trim_end();
+                        d
+                    }
+                })
+                .collect();
+            if dedented.iter().any(|l| !l.text.is_empty()) {
+                self.line_bias += 1;
+                entry.children = self.parse_elements(&dedented);
+                self.line_bias -= 1;
+            }
+            entries[rn][cn] = Some(entry);
+        }
+
+        let table_span = self.span_of(lines, start, end.saturating_sub(1));
+        let mut table = Node::elem(kinds::TABLE, table_span);
+        let mut tgroup = Node::elem(kinds::TGROUP, table_span);
+        tgroup.set("cols", AttrValue::Int(ncols as i64));
+        for w in &colwidths {
+            let mut cs = Node::elem(kinds::COLSPEC, table_span);
+            cs.set("colwidth", AttrValue::Int(*w as i64));
+            tgroup.children.push(cs);
+        }
+        let head_rows = head_sep.and_then(row_of).unwrap_or(0);
+        let build_rows = |range: std::ops::Range<usize>, entries: &mut Vec<Vec<Option<Node>>>| {
+            let mut rows = Vec::new();
+            for r in range {
+                let mut row = Node::elem(kinds::ROW, table_span);
+                for slot in entries[r].iter_mut() {
+                    if let Some(e) = slot.take() {
+                        row.children.push(e);
+                    }
+                }
+                rows.push(row);
+            }
+            rows
+        };
+        if head_sep.is_some() && head_rows > 0 {
+            let mut thead = Node::elem(kinds::THEAD, table_span);
+            thead.children = build_rows(0..head_rows, &mut entries);
+            tgroup.children.push(thead);
+        } else if head_sep.is_some() {
+            let mut thead = Node::elem(kinds::THEAD, table_span);
+            thead.children = build_rows(0..0, &mut entries);
+            let _ = &mut thead;
+            tgroup.children.push(thead);
+        }
+        let mut tbody = Node::elem(kinds::TBODY, table_span);
+        tbody.children = build_rows(head_rows..nrows_struct, &mut entries);
+        tgroup.children.push(tbody);
+        table.children.push(tgroup);
+        out.push(table);
+        if let Some(w) = trailing_warning {
+            out.push(w);
+        }
+    }
+
+    fn parse_simple_table(&mut self, lines: &[LineRef<'a>], pos: &mut usize, out: &mut Vec<Node>) {
+        let start = *pos;
+        let toplen = char_len(lines[start].text.trim_end());
+        // isolate: find border candidates (=-runs line, same stripped length)
+        let mut found = 0usize;
+        let mut found_at = None;
+        let mut end = None;
+        let mut i = start + 1;
+        while i < lines.len() {
+            let t = lines[i].text.trim_end();
+            if is_simple_table_border(t) {
+                if char_len(t) != toplen {
+                    let raw: Vec<String> = lines[start..=i]
+                        .iter()
+                        .map(|l| l.text.to_string())
+                        .collect();
+                    out.push(messages::with_literal(
+                        self.msg(
+                            messages::ERROR,
+                            "Malformed table.\nBottom border or header rule does not match top border.",
+                            lines[i].lineno,
+                        ),
+                        raw.join("\n").trim_end(),
+                    ));
+                    *pos = i + 1;
+                    return;
+                }
+                found += 1;
+                found_at = Some(i);
+                if found == 2
+                    || i + 1 >= lines.len()
+                    || lines.get(i + 1).map(|l| l.is_blank()).unwrap_or(true)
+                {
+                    end = Some(i);
+                    break;
+                }
+            }
+            i += 1;
+        }
+        let Some(end) = end else {
+            // no bottom border
+            let (block_end, extra) = match found_at {
+                Some(f) => (f, " or no blank line after table bottom"),
+                None => (i.saturating_sub(1).max(start), ""),
+            };
+            let raw: Vec<String> = lines[start..=block_end.min(lines.len() - 1)]
+                .iter()
+                .map(|l| l.text.to_string())
+                .collect();
+            out.push(messages::with_literal(
+                self.msg(
+                    messages::ERROR,
+                    &format!("Malformed table.\nNo bottom table border found{extra}."),
+                    lines[start].lineno,
+                ),
+                raw.join("\n").trim_end(),
+            ));
+            *pos = block_end + 1;
+            if !extra.is_empty() {
+                if let Some(l) = lines.get(*pos).filter(|l| !l.is_blank()) {
+                    out.push(self.msg(
+                        messages::WARNING,
+                        "Blank line required after table.",
+                        l.lineno,
+                    ));
+                }
+            }
+            return;
+        };
+        *pos = end + 1;
+        let blank_after_ok = lines.get(*pos).map(|l| l.is_blank()).unwrap_or(true);
+
+        let block: Vec<LineRef<'a>> = lines[start..=end].to_vec();
+        let raw_block: Vec<String> = block.iter().map(|l| l.text.to_string()).collect();
+        let malformed = |detail: &str, lineno: u32| -> Node {
+            messages::with_literal(
+                messages::system_message(
+                    messages::ERROR,
+                    &format!("Malformed table.\n{detail}"),
+                    lineno,
+                    self.source_path,
+                ),
+                raw_block.join("\n").trim_end(),
+            )
+        };
+
+        // columns from the top border '=' runs
+        let top_chars: Vec<char> = block[0].text.trim_end().chars().collect();
+        let mut columns: Vec<(usize, usize)> = Vec::new();
+        let mut run_start = None;
+        for (ci, c) in top_chars.iter().enumerate() {
+            if *c == '=' {
+                if run_start.is_none() {
+                    run_start = Some(ci);
+                }
+            } else if let Some(s) = run_start.take() {
+                columns.push((s, ci));
+            }
+        }
+        if let Some(s) = run_start {
+            columns.push((s, top_chars.len()));
+        }
+        let border_end = columns.last().map(|(_, e)| *e).unwrap_or(0);
+
+        // interior head/body sep: full-'='-runs line converted to span line
+        let mut head_sep_row: Option<usize> = None; // index into block
+        let mut work: Vec<String> = block
+            .iter()
+            .map(|l| l.text.trim_end().to_string())
+            .collect();
+        let n = work.len();
+        for (bi, w) in work.iter_mut().enumerate() {
+            if bi > 0 && bi < n - 1 && is_simple_table_border(w) {
+                head_sep_row = Some(bi);
+                *w = w.replace('=', "-");
+            }
+        }
+        let bottom = work.len() - 1;
+        work[0] = work[0].replace('=', "-");
+        work[bottom] = work[bottom].replace('=', "-");
+
+        // rows: (start_line_idx, end_line_idx_exclusive, colspec)
+        struct RawRow {
+            start: usize,
+            end: usize,
+            cols: Vec<(usize, usize)>,
+        }
+        let parse_span_cols =
+            |line: &str, table_line: usize| -> Result<Vec<(usize, usize)>, Box<Node>> {
+                let chars: Vec<char> = line.chars().collect();
+                let mut cols = Vec::new();
+                let mut rs = None;
+                for (ci, c) in chars.iter().enumerate() {
+                    if *c == '-' {
+                        if rs.is_none() {
+                            rs = Some(ci);
+                        }
+                    } else if let Some(s) = rs.take() {
+                        cols.push((s, ci));
+                    }
+                }
+                if let Some(s) = rs {
+                    cols.push((s, chars.len()));
+                }
+                if cols.last().map(|(_, e)| *e) != Some(border_end) {
+                    return Err(Box::new(malformed(
+                        &format!("Column span incomplete in table line {}.", table_line + 1),
+                        block[0].lineno,
+                    )));
+                }
+                Ok(cols)
+            };
+
+        let is_span_line = |s: &str| {
+            let t = s.trim_end();
+            !t.is_empty() && t.starts_with('-') && t.chars().all(|c| matches!(c, '-' | ' '))
+        };
+        let first_col = columns.first().copied().unwrap_or((0, 0));
+        let mut rows: Vec<RawRow> = Vec::new();
+        let mut open: Option<usize> = None;
+        #[allow(clippy::needless_range_loop)]
+        for bi in 1..work.len() {
+            let line = &work[bi];
+            let at_bottom = bi == bottom;
+            if is_span_line(line) || at_bottom {
+                let span_cols = match parse_span_cols(&work[bi], bi) {
+                    Ok(c) => c,
+                    Err(m) => {
+                        out.push(*m);
+                        return;
+                    }
+                };
+                if let Some(s) = open.take() {
+                    rows.push(RawRow {
+                        start: s,
+                        end: bi,
+                        cols: span_cols,
+                    });
+                } else if !at_bottom || rows.is_empty() {
+                    // span line with no open row: empty row
+                    rows.push(RawRow {
+                        start: bi,
+                        end: bi,
+                        cols: span_cols,
+                    });
+                }
+                continue;
+            }
+            let fc_text = display_slice(line, first_col.0, first_col.1);
+            if !fc_text.trim().is_empty() {
+                if let Some(s) = open.take() {
+                    rows.push(RawRow {
+                        start: s,
+                        end: bi,
+                        cols: columns.clone(),
+                    });
+                }
+                open = Some(bi);
+            } else if open.is_none() {
+                // blank first column with no open row: dropped silently
+            }
+        }
+        if let Some(s) = open {
+            rows.push(RawRow {
+                start: s,
+                end: bottom,
+                cols: columns.clone(),
+            });
+        }
+
+        // margin check + last-column extension, per ROW using the row's own
+        // colspec (span rows have merged columns — docutils check_columns).
+        let mut last_col_end = border_end;
+        for row in &rows {
+            for bi in row.start..row.end.min(bottom) {
+                let line = &work[bi];
+                for w2 in row.cols.windows(2) {
+                    let (_, e1) = w2[0];
+                    let (s2, _) = w2[1];
+                    if !display_slice(line, e1, s2).trim().is_empty() {
+                        out.push(malformed(
+                            &format!("Text in column margin in table line {}.", bi + 1),
+                            block[bi].lineno,
+                        ));
+                        return;
+                    }
+                }
+                let row_border_end = row.cols.last().map(|(_, e)| *e).unwrap_or(border_end);
+                let tail = display_slice(line, row_border_end, column_width(line));
+                if !tail.trim().is_empty() {
+                    let last_start = row.cols.last().map(|(s, _)| *s).unwrap_or(0);
+                    let extent = last_start
+                        + column_width(
+                            display_slice(line, last_start, column_width(line)).trim_end(),
+                        );
+                    last_col_end = last_col_end.max(extent);
+                }
+            }
+        }
+
+        // map span cols -> column indices for morecols; validate alignment
+        let col_starts: Vec<usize> = columns.iter().map(|(s, _)| *s).collect();
+        let col_ends: Vec<usize> = columns.iter().map(|(_, e)| *e).collect();
+        let mut built_rows: Vec<(usize, Node)> = Vec::new(); // (start_line, row)
+        for row in &rows {
+            let mut r = Node::elem(kinds::ROW, self.span_of(lines, start, end));
+            for (ci, (cs, ce)) in row.cols.iter().enumerate() {
+                let ce_eff = if ci == row.cols.len() - 1 {
+                    last_col_end.max(*ce)
+                } else {
+                    *ce
+                };
+                let Some(ci_start) = col_starts.iter().position(|s| s == cs) else {
+                    out.push(malformed(
+                        &format!(
+                            "Column span alignment problem in table line {}.",
+                            row.start + 2
+                        ),
+                        block[0].lineno,
+                    ));
+                    return;
+                };
+                let span_end_col = if ci == row.cols.len() - 1 {
+                    columns.len() - 1
+                } else {
+                    match col_ends.iter().position(|e| e == ce) {
+                        Some(p) => p,
+                        None => {
+                            out.push(malformed(
+                                &format!(
+                                    "Column span alignment problem in table line {}.",
+                                    row.start + 2
+                                ),
+                                block[0].lineno,
+                            ));
+                            return;
+                        }
+                    }
+                };
+                let morecols = span_end_col - ci_start;
+                let mut entry = Node::elem(kinds::ENTRY, self.span_of(lines, start, end));
+                if morecols > 0 {
+                    entry.set("morecols", AttrValue::Int(morecols as i64));
+                }
+                // cell block
+                let mut cell_lines: Vec<LineRef<'a>> = Vec::new();
+                #[allow(clippy::needless_range_loop)]
+                for bi in row.start..row.end.min(bottom) {
+                    let l = &block[bi];
+                    let orig = display_slice(l.text, *cs, ce_eff.min(column_width(l.text)));
+                    let use_text = orig.trim_end();
+                    cell_lines.push(LineRef::new(use_text, l.lineno, l.src_start, l.src_end));
+                }
+                let base = cell_lines
+                    .iter()
+                    .filter(|l| !l.text.trim().is_empty())
+                    .map(|l| l.indent())
+                    .min()
+                    .unwrap_or(0);
+                let dedented: Vec<LineRef<'a>> = cell_lines
+                    .iter()
+                    .map(|l| {
+                        if l.text.trim().is_empty() {
+                            LineRef::new("", l.lineno, l.src_start, l.src_end)
+                        } else {
+                            l.dedented(base)
+                        }
+                    })
+                    .collect();
+                if dedented.iter().any(|l| !l.text.is_empty()) {
+                    self.line_bias += 1;
+                    entry.children = self.parse_elements(&dedented);
+                    self.line_bias -= 1;
+                }
+                r.children.push(entry);
+            }
+            built_rows.push((row.start, r));
+        }
+
+        // widened last column affects colwidths
+        let mut colwidths: Vec<usize> = columns.iter().map(|(s, e)| e - s).collect();
+        if let (Some(last), Some((s, _))) = (colwidths.last_mut(), columns.last()) {
+            *last = (*last).max(last_col_end.saturating_sub(*s));
+        }
+
+        let table_span = self.span_of(lines, start, end);
+        let mut table = Node::elem(kinds::TABLE, table_span);
+        let mut tgroup = Node::elem(kinds::TGROUP, table_span);
+        tgroup.set("cols", AttrValue::Int(columns.len() as i64));
+        for w in &colwidths {
+            let mut cs = Node::elem(kinds::COLSPEC, table_span);
+            cs.set("colwidth", AttrValue::Int(*w as i64));
+            tgroup.children.push(cs);
+        }
+        if let Some(sep) = head_sep_row {
+            let mut thead = Node::elem(kinds::THEAD, table_span);
+            let mut tbody_rows = Vec::new();
+            for (rs, r) in built_rows {
+                if rs < sep {
+                    thead.children.push(r);
+                } else {
+                    tbody_rows.push(r);
+                }
+            }
+            tgroup.children.push(thead);
+            let mut tbody = Node::elem(kinds::TBODY, table_span);
+            tbody.children = tbody_rows;
+            tgroup.children.push(tbody);
+        } else {
+            let mut tbody = Node::elem(kinds::TBODY, table_span);
+            tbody.children = built_rows.into_iter().map(|(_, r)| r).collect();
+            tgroup.children.push(tbody);
+        }
+        table.children.push(tgroup);
+        out.push(table);
+
+        if !blank_after_ok {
+            if let Some(l) = lines.get(*pos) {
+                out.push(self.msg(
+                    messages::WARNING,
+                    "Blank line required after table.",
+                    l.lineno,
+                ));
+            }
+        }
+    }
+
     fn parse_anonymous_shortcut(
         &mut self,
         lines: &[LineRef<'a>],
@@ -1415,6 +2465,370 @@ impl<'a> BlockParser<'a> {
 // ----------------------------------------------------------------------
 // free helpers
 // ----------------------------------------------------------------------
+
+/// Field marker: `:name:` where the name may not start with `:`/space,
+/// may not end with a space, and interior `:` is allowed unless followed
+/// by space, backtick, or EOL. The marker must close with `:` + space/EOL.
+/// Returns (raw name, byte index just past the closing colon).
+fn field_marker(text: &str) -> Option<(String, usize)> {
+    let mut chars = text.char_indices();
+    let (_, first) = chars.next()?;
+    if first != ':' {
+        return None;
+    }
+    let mut name = String::new();
+    let mut prev_char: Option<char> = None;
+    let mut it = chars.peekable();
+    // reject :: and ": "
+    match it.peek() {
+        Some((_, ':')) | Some((_, ' ')) | None => return None,
+        _ => {}
+    }
+    while let Some((i, c)) = it.next() {
+        match c {
+            '\\' => {
+                name.push(c);
+                if let Some((_, esc)) = it.next() {
+                    name.push(esc);
+                    prev_char = Some(esc);
+                }
+            }
+            ':' => {
+                let next = it.peek().map(|(_, c)| *c);
+                match next {
+                    None | Some(' ') => {
+                        // closing colon; name may not end with a space
+                        if prev_char == Some(' ') || name.is_empty() {
+                            return None;
+                        }
+                        return Some((name, i + 1));
+                    }
+                    Some('`') => return None,
+                    _ => {
+                        name.push(':');
+                        prev_char = Some(':');
+                    }
+                }
+            }
+            _ => {
+                name.push(c);
+                prev_char = Some(c);
+            }
+        }
+    }
+    None
+}
+
+/// Option-group marker: synonyms split on `, ` (not inside `<>`), each a
+/// short (`-x`/`+x` with optional attached/spaced arg) or long
+/// (`--name`/`/name` with `=`/space arg) option. Returns the specs plus
+/// the description remainder (after 2+ spaces), or None when any synonym
+/// is malformed.
+#[allow(clippy::type_complexity)]
+fn option_group_marker(text: &str) -> Option<(Vec<(String, Option<(String, String)>)>, &str)> {
+    // split marker from description at the first run of 2+ spaces
+    // OUTSIDE angle brackets
+    let mut in_angle = false;
+    let mut marker_end = text.len();
+    let bytes: Vec<(usize, char)> = text.char_indices().collect();
+    let mut k = 0;
+    while k < bytes.len() {
+        let (i, c) = bytes[k];
+        match c {
+            '<' => in_angle = true,
+            '>' => in_angle = false,
+            ' ' if !in_angle && bytes.get(k + 1).map(|(_, c)| *c == ' ').unwrap_or(false) => {
+                marker_end = i;
+                break;
+            }
+            _ => {}
+        }
+        k += 1;
+    }
+    let marker = &text[..marker_end];
+    let desc = text[marker_end..].trim_start();
+
+    // split synonyms on ', ' outside <>
+    let mut specs = Vec::new();
+    let mut parts: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let mut in_angle = false;
+    let mchars: Vec<char> = marker.chars().collect();
+    let mut idx = 0;
+    while idx < mchars.len() {
+        let c = mchars[idx];
+        match c {
+            '<' => {
+                in_angle = true;
+                cur.push(c);
+            }
+            '>' => {
+                in_angle = false;
+                cur.push(c);
+            }
+            ',' if !in_angle && mchars.get(idx + 1) == Some(&' ') => {
+                parts.push(std::mem::take(&mut cur));
+                idx += 1; // skip the space
+            }
+            _ => cur.push(c),
+        }
+        idx += 1;
+    }
+    parts.push(cur);
+
+    for part in &parts {
+        specs.push(parse_one_option(part)?);
+    }
+    Some((specs, desc))
+}
+
+/// One option synonym -> (option_string, Some((delimiter, argument))).
+fn parse_one_option(part: &str) -> Option<(String, Option<(String, String)>)> {
+    let optarg_ok = |s: &str| -> bool {
+        if let Some(inner) = s.strip_prefix('<') {
+            return inner.ends_with('>') && !inner[..inner.len() - 1].contains(['<', '>']);
+        }
+        let mut cs = s.chars();
+        matches!(cs.next(), Some(c) if c.is_ascii_alphabetic())
+            && cs.all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+    };
+    if let Some(rest) = part.strip_prefix("--").or_else(|| part.strip_prefix('/')) {
+        let prefix = if part.starts_with("--") { "--" } else { "/" };
+        // optname [ =|space optarg ]
+        let name_end = rest.find([' ', '=']).unwrap_or(rest.len());
+        let (name, tail) = rest.split_at(name_end);
+        let mut nc = name.chars();
+        let name_ok = matches!(nc.next(), Some(c) if c.is_ascii_alphanumeric())
+            && nc.all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'));
+        if !name_ok {
+            return None;
+        }
+        if tail.is_empty() {
+            return Some((format!("{prefix}{name}"), None));
+        }
+        let delim = &tail[..1];
+        let arg = &tail[1..];
+        if !optarg_ok(arg) {
+            return None;
+        }
+        return Some((
+            format!("{prefix}{name}"),
+            Some((delim.to_string(), arg.to_string())),
+        ));
+    }
+    let rest = part.strip_prefix('-').or_else(|| part.strip_prefix('+'))?;
+    let prefix = &part[..1];
+    let mut rc = rest.chars();
+    let letter = rc.next().filter(|c| c.is_ascii_alphanumeric())?;
+    let tail: String = rc.collect();
+    if tail.is_empty() {
+        return Some((format!("{prefix}{letter}"), None));
+    }
+    if let Some(arg) = tail.strip_prefix(' ') {
+        if !optarg_ok(arg) {
+            return None;
+        }
+        return Some((
+            format!("{prefix}{letter}"),
+            Some((" ".to_string(), arg.to_string())),
+        ));
+    }
+    if !optarg_ok(&tail) {
+        return None;
+    }
+    Some((format!("{prefix}{letter}"), Some((String::new(), tail))))
+}
+
+fn is_grid_table_top(text: &str) -> bool {
+    // \+-[-+]+-\+ *$  (minimum "+-x-+": 5 chars)
+    let t = text.trim_end();
+    let chars: Vec<char> = t.chars().collect();
+    chars.len() >= 5
+        && chars[0] == '+'
+        && chars[chars.len() - 1] == '+'
+        && chars[1] == '-'
+        && chars[chars.len() - 2] == '-'
+        && chars[1..chars.len() - 1]
+            .iter()
+            .all(|c| matches!(c, '-' | '+'))
+}
+
+fn is_grid_head_sep(text: &str) -> bool {
+    // \+=[=+]+=\+ *$  (minimum 5 chars)
+    let t = text.trim_end();
+    let chars: Vec<char> = t.chars().collect();
+    chars.len() >= 5
+        && chars[0] == '+'
+        && chars[chars.len() - 1] == '+'
+        && chars[1] == '='
+        && chars[chars.len() - 2] == '='
+        && chars[1..chars.len() - 1]
+            .iter()
+            .all(|c| matches!(c, '=' | '+'))
+}
+
+/// `=+[ =]*$` — a candidate simple-table border (incl. solid runs).
+fn is_simple_table_border(text: &str) -> bool {
+    let t = text.trim_end();
+    !t.is_empty() && t.starts_with('=') && t.chars().all(|c| matches!(c, '=' | ' '))
+}
+
+fn is_simple_table_top(text: &str) -> bool {
+    // =+( +=+)+ *$  (two or more '=' runs)
+    let t = text.trim_end();
+    if t.is_empty() {
+        return false;
+    }
+    let mut runs = 0;
+    let mut in_run = false;
+    for c in t.chars() {
+        match c {
+            '=' => {
+                if !in_run {
+                    runs += 1;
+                    in_run = true;
+                }
+            }
+            ' ' => in_run = false,
+            _ => return false,
+        }
+    }
+    runs >= 2
+}
+
+/// Byte offsets per DISPLAY column (east-asian wide chars occupy two
+/// columns; the second maps to the char's end so mid-char boundaries
+/// exclude it — matching docutils' double-width padding behavior).
+fn display_byte_index(text: &str) -> Vec<usize> {
+    let mut index = Vec::with_capacity(text.len() + 1);
+    for (b, c) in text.char_indices() {
+        index.push(b);
+        if unicode_width::UnicodeWidthChar::width(c).unwrap_or(1) == 2 {
+            index.push(b + c.len_utf8());
+        }
+    }
+    index.push(text.len());
+    index
+}
+
+/// Slice by DISPLAY column range (byte-safe; mid-wide-char boundaries
+/// clamp to char edges).
+fn display_slice(text: &str, from: usize, to: usize) -> &str {
+    let index = display_byte_index(text);
+    let n = index.len() - 1;
+    let start = index[from.min(n)];
+    let end = index[to.min(n)];
+    if start >= end {
+        ""
+    } else {
+        &text[start..end]
+    }
+}
+
+/// Trace one grid cell from its top-left '+': returns (bottom, right,
+/// column separators seen, row separators seen).
+#[allow(clippy::type_complexity)]
+fn trace_cell(
+    grid: &[Vec<char>],
+    top: usize,
+    left: usize,
+) -> Option<(usize, usize, Vec<usize>, Vec<usize>)> {
+    let at =
+        |r: usize, c: usize| -> Option<char> { grid.get(r).and_then(|row| row.get(c)).copied() };
+    let width = grid.get(top).map(|r| r.len()).unwrap_or(0);
+    // scan right along the top border
+    let mut c = left + 1;
+    let mut top_corners = Vec::new();
+    loop {
+        match at(top, c) {
+            Some('+') => top_corners.push(c),
+            Some('-') => {}
+            _ => break,
+        }
+        c += 1;
+        if c > width + 1 {
+            break;
+        }
+    }
+    for &right in &top_corners {
+        // scan down the right edge
+        let mut r = top + 1;
+        let mut right_corners = Vec::new();
+        loop {
+            match at(r, right) {
+                Some('+') => right_corners.push(r),
+                Some('|') => {}
+                _ => break,
+            }
+            r += 1;
+            if r > grid.len() {
+                break;
+            }
+        }
+        for &bottom in &right_corners {
+            // scan left along the bottom, then up the left edge
+            let mut ok = true;
+            let mut cseps = vec![left, right];
+            for cc in left + 1..right {
+                match at(bottom, cc) {
+                    Some('+') => cseps.push(cc),
+                    Some('-') => {}
+                    _ => {
+                        ok = false;
+                        break;
+                    }
+                }
+            }
+            if !ok {
+                continue;
+            }
+            let mut rseps = vec![top, bottom];
+            for rr in top + 1..bottom {
+                match at(rr, left) {
+                    Some('+') => rseps.push(rr),
+                    Some('|') => {}
+                    _ => {
+                        ok = false;
+                        break;
+                    }
+                }
+            }
+            if !ok {
+                continue;
+            }
+            return Some((bottom, right, cseps, rseps));
+        }
+    }
+    None
+}
+
+/// docutils `simplename` over a char slice (see rst::inline for the
+/// pattern description).
+fn match_simplename_chars(chars: &[char], at: usize) -> Option<usize> {
+    let n = chars.len();
+    let mut i = at;
+    let atom = |c: char| (c.is_alphanumeric() || c == '_') && c != '_';
+    if i >= n || !atom(chars[i]) {
+        return None;
+    }
+    while i < n && atom(chars[i]) {
+        i += 1;
+    }
+    loop {
+        if i < n && matches!(chars[i], '-' | '.' | '_' | '+' | ':') {
+            let sep_end = i + 1;
+            if sep_end < n && atom(chars[sep_end]) {
+                i = sep_end + 1;
+                while i < n && atom(chars[i]) {
+                    i += 1;
+                }
+                continue;
+            }
+        }
+        break;
+    }
+    Some(i - at)
+}
 
 /// Consume an indented block starting at `start`: lines while blank or
 /// indented, up to the LAST indented line (trailing blanks are neither
@@ -1480,7 +2894,7 @@ fn strip_literal_colons(text: &str) -> (String, bool) {
     (text.to_string(), false)
 }
 
-fn attribution_from_chunk(chunk: &[LineRef<'_>], span: Span) -> Option<Node> {
+fn attribution_from_chunk(chunk: &[LineRef<'_>], span: Span) -> Option<(Node, u32)> {
     let first = chunk.first()?;
     if first.indent() != 0 {
         return None;
@@ -1525,19 +2939,17 @@ fn attribution_from_chunk(chunk: &[LineRef<'_>], span: Span) -> Option<Node> {
     }
     let mut attribution = Node::elem(kinds::ATTRIBUTION, span);
     attribution.children.push(Node::text_node(text, span));
-    Some(attribution)
+    Some((attribution, first.lineno))
 }
 
-fn build_line_block(items: &[(usize, String)], span: Span, guard: usize) -> Node {
+fn build_line_block(items: &mut [(usize, Vec<Node>)], span: Span, guard: usize) -> Node {
     let mut lb = Node::elem(kinds::LINE_BLOCK, span);
     // Totality guard mirroring MAX_NEST_DEPTH: absurd nesting flattens
     // instead of overflowing the stack (docutils crashes here).
     if guard >= MAX_NEST_DEPTH {
-        for (_, text) in items {
+        for (_, children) in items.iter_mut() {
             let mut line = Node::elem(kinds::LINE, span);
-            if !text.is_empty() {
-                line.children.push(Node::text_node(text.clone(), span));
-            }
+            line.children = std::mem::take(children);
             lb.children.push(line);
         }
         return lb;
@@ -1545,12 +2957,9 @@ fn build_line_block(items: &[(usize, String)], span: Span, guard: usize) -> Node
     let base = items.iter().map(|(d, _)| *d).min().unwrap_or(0);
     let mut i = 0usize;
     while i < items.len() {
-        let (depth, text) = &items[i];
-        if *depth <= base {
+        if items[i].0 <= base {
             let mut line = Node::elem(kinds::LINE, span);
-            if !text.is_empty() {
-                line.children.push(Node::text_node(text.clone(), span));
-            }
+            line.children = std::mem::take(&mut items[i].1);
             lb.children.push(line);
             i += 1;
         } else {
@@ -1559,7 +2968,7 @@ fn build_line_block(items: &[(usize, String)], span: Span, guard: usize) -> Node
                 i += 1;
             }
             lb.children
-                .push(build_line_block(&items[run_start..i], span, guard + 1));
+                .push(build_line_block(&mut items[run_start..i], span, guard + 1));
         }
     }
     lb
