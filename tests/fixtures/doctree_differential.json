@@ -2677,6 +2677,198 @@
       "rst": ".. image:: pic.png\n   second line of uri\n"
     },
     {
+      "family": "dir_body",
+      "name": "dir_body.topic_basic",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <topic>\n        <title>\n            Topic Title\n        <paragraph>\n            Topic body paragraph.\n",
+      "rst": ".. topic:: Topic Title\n\n   Topic body paragraph.\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.topic_no_body",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"topic\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. topic:: Topic Title\n",
+      "rst": ".. topic:: Topic Title\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.topic_in_note",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                The \"topic\" directive may not be used within topics or body elements.\n            <literal_block xml:space=\"preserve\">\n                .. topic:: Inner\n                \n                   body\n",
+      "rst": ".. note::\n\n   .. topic:: Inner\n\n      body\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.topic_in_list_item",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                item\n            <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n                <paragraph>\n                    The \"topic\" directive may not be used within topics or body elements.\n                <literal_block xml:space=\"preserve\">\n                    .. topic:: Inner\n                    \n                       body\n",
+      "rst": "- item\n\n  .. topic:: Inner\n\n     body\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.topic_class_name",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <topic classes=\"special\" ids=\"my-topic\" names=\"my\\ topic\">\n        <title>\n            T\n        <paragraph>\n            Body.\n",
+      "rst": ".. topic:: T\n   :class: special\n   :name: my topic\n\n   Body.\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.topic_markup_title",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <topic>\n        <title>\n            <emphasis>\n                emphasized\n             title\n        <paragraph>\n            Body.\n",
+      "rst": ".. topic:: *emphasized* title\n\n   Body.\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.sidebar_title_body",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <sidebar>\n        <title>\n            Sidebar Title\n        <paragraph>\n            Sidebar body.\n",
+      "rst": ".. sidebar:: Sidebar Title\n\n   Sidebar body.\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.sidebar_subtitle",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <sidebar>\n        <title>\n            Sidebar Title\n        <subtitle>\n            Sidebar Subtitle\n        <paragraph>\n            Sidebar body.\n",
+      "rst": ".. sidebar:: Sidebar Title\n   :subtitle: Sidebar Subtitle\n\n   Sidebar body.\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.sidebar_subtitle_no_title",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            The \"subtitle\" option may not be used without a title.\n        <literal_block xml:space=\"preserve\">\n            .. sidebar::\n               :subtitle: A Subtitle\n            \n               Body text.\n",
+      "rst": ".. sidebar::\n   :subtitle: A Subtitle\n\n   Body text.\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.sidebar_no_title",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <sidebar>\n        <paragraph>\n            Body only.\n",
+      "rst": ".. sidebar::\n\n   Body only.\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.sidebar_nested_error",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <sidebar>\n        <title>\n            Outer\n        <paragraph>\n            Outer body.\n        <system_message level=\"3\" line=\"5\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                The \"sidebar\" directive may not be used within a sidebar element.\n            <literal_block xml:space=\"preserve\">\n                .. sidebar:: Inner\n                \n                   Inner body.\n",
+      "rst": ".. sidebar:: Outer\n\n   Outer body.\n\n   .. sidebar:: Inner\n\n      Inner body.\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.topic_in_sidebar",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <sidebar>\n        <title>\n            Outer\n        <topic>\n            <title>\n                Inner Topic\n            <paragraph>\n                body\n",
+      "rst": ".. sidebar:: Outer\n\n   .. topic:: Inner Topic\n\n      body\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.rubric_minimal",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <rubric>\n        This is a rubric\n",
+      "rst": ".. rubric:: This is a rubric\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.rubric_options",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <rubric classes=\"myrubricclass\" ids=\"rub1\" names=\"rub1\">\n        Named rubric\n",
+      "rst": ".. rubric:: Named rubric\n   :class: myrubricclass\n   :name: rub1\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.rubric_markup",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <rubric>\n        A \n        <emphasis>\n            marked up\n         rubric\n",
+      "rst": ".. rubric:: A *marked up* rubric\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.rubric_content_error",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"rubric\" directive:\n            no content permitted.\n        <literal_block xml:space=\"preserve\">\n            .. rubric:: Title\n            \n               body not allowed\n",
+      "rst": ".. rubric:: Title\n\n   body not allowed\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.rubric_missing_arg",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"rubric\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. rubric::\n",
+      "rst": ".. rubric::\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.epigraph_attribution",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <block_quote classes=\"epigraph\">\n        <paragraph>\n            Epigraph text.\n        <attribution>\n            Attribution\n",
+      "rst": ".. epigraph::\n\n   Epigraph text.\n\n   -- Attribution\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.highlights_basic",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <block_quote classes=\"highlights\">\n        <paragraph>\n            Highlighted text.\n",
+      "rst": ".. highlights::\n\n   Highlighted text.\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.pull_quote_basic",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <block_quote classes=\"pull-quote\">\n        <paragraph>\n            Pulled text.\n",
+      "rst": ".. pull-quote::\n\n   Pulled text.\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.epigraph_empty",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"epigraph\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. epigraph::\n",
+      "rst": ".. epigraph::\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.epigraph_marker_line",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <block_quote classes=\"epigraph\">\n        <paragraph>\n            text on the marker line\n",
+      "rst": ".. epigraph:: text on the marker line\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.epigraph_unknown_option",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <block_quote classes=\"epigraph\">\n        <field_list>\n            <field>\n                <field_name>\n                    class\n                <field_body>\n                    <paragraph>\n                        x\n        <paragraph>\n            text\n",
+      "rst": ".. epigraph::\n   :class: x\n\n   text\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.compound_two_paras",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <compound>\n        <paragraph>\n            First paragraph of compound.\n        <paragraph>\n            Second paragraph of compound.\n",
+      "rst": ".. compound::\n\n   First paragraph of compound.\n\n   Second paragraph of compound.\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.compound_empty_error",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"compound\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. compound::\n",
+      "rst": ".. compound::\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.compound_class",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <compound classes=\"custom\">\n        <paragraph>\n            Body.\n",
+      "rst": ".. compound::\n   :class: custom\n\n   Body.\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.container_no_class",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <container>\n        <paragraph>\n            Container body.\n",
+      "rst": ".. container::\n\n   Container body.\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.container_classes",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <container classes=\"custom-class another-class\">\n        <paragraph>\n            Container body.\n",
+      "rst": ".. container:: custom-class another-class\n\n   Container body.\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.container_bad_class",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Invalid class attribute value for \"container\" directive: \"!!!\".\n        <literal_block xml:space=\"preserve\">\n            .. container:: !!!\n            \n               Body.\n",
+      "rst": ".. container:: !!!\n\n   Body.\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.container_named",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <container classes=\"cls\" ids=\"cont\" names=\"cont\">\n        <paragraph>\n            Body.\n",
+      "rst": ".. container:: cls\n   :name: cont\n\n   Body.\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.parsed_literal_inline",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <literal_block xml:space=\"preserve\">\n        Text with \n        <emphasis>\n            emphasis\n         and \n        <strong>\n            strong\n         and a\n        <reference name=\"link\" refuri=\"http://example.com\">\n            link\n        <target ids=\"link\" names=\"link\" refuri=\"http://example.com\">\n        .\n",
+      "rst": ".. parsed-literal::\n\n   Text with *emphasis* and **strong** and a\n   `link <http://example.com>`_.\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.parsed_literal_class",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <literal_block classes=\"code-ish\" ids=\"pl1\" names=\"pl1\" xml:space=\"preserve\">\n        plain *escaped* text\n",
+      "rst": ".. parsed-literal::\n   :class: code-ish\n   :name: pl1\n\n   plain \\*escaped\\* text\n"
+    },
+    {
       "family": "review2",
       "name": "review2.multi_segment_role",
       "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            :py:func:`target`\n         end.\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            No role entry for \"py:func\" in module \"docutils.parsers.rst.languages.en\".\n            Trying \"py:func\" as canonical role name.\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown interpreted text role \"py:func\".\n",

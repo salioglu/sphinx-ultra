@@ -134,6 +134,10 @@ pub(crate) struct BlockParser<'a> {
     /// line numbers (the unindent/unexpected-indentation family) run one
     /// high there (probe-verified); content-anchored messages stay absolute.
     line_bias: u32,
+    /// Innermost container node kind during nested content parses (docutils
+    /// `state_machine.node`); None at document/section level. Directives
+    /// like topic/sidebar validate their direct parent against this.
+    nested_node_kind: Option<&'static str>,
 }
 
 impl<'a> BlockParser<'a> {
@@ -151,7 +155,17 @@ impl<'a> BlockParser<'a> {
             styles: Vec::new(),
             depth: 0,
             line_bias: 0,
+            nested_node_kind: None,
         }
+    }
+
+    /// parse_elements with the containing node kind recorded (docutils
+    /// nested_parse: `state_machine.node` = the container element).
+    fn parse_nested(&mut self, lines: &[LineRef<'a>], kind: &'static str) -> Vec<Node> {
+        let saved = self.nested_node_kind.replace(kind);
+        let nodes = self.parse_elements(lines);
+        self.nested_node_kind = saved;
+        nodes
     }
 
     fn span_of(&self, lines: &[LineRef<'_>], first: usize, last: usize) -> Span {
@@ -920,7 +934,7 @@ impl<'a> BlockParser<'a> {
         }
         *pos = last_content + 1;
 
-        let children = self.parse_elements(&body);
+        let children = self.parse_nested(&body, "list_item");
         let mut item = Node::elem(kinds::LIST_ITEM, self.span_of(lines, start, last_content));
         item.children = children;
         item
@@ -1115,7 +1129,9 @@ impl<'a> BlockParser<'a> {
                     term_line.lineno + 1,
                 ));
             }
-            definition.children.extend(self.parse_elements(&block));
+            definition
+                .children
+                .extend(self.parse_nested(&block, "definition"));
             item.children.push(definition);
             dl.children.push(item);
             *pos += 1 + consumed;
@@ -1173,7 +1189,22 @@ impl<'a> BlockParser<'a> {
         let (block, consumed, _indent, terminator) = indented_block(lines, *pos);
         *pos = start + consumed;
         let span = self.span_of(lines, start, start + consumed - 1);
+        out.extend(self.block_quote_elements(&block, span));
+        if let Some(t) = terminator {
+            out.push(self.msg_sm(
+                messages::WARNING,
+                "Block quote ends without a blank line; unexpected unindent.",
+                t,
+            ));
+        }
+    }
 
+    /// docutils `Body.block_quote()`: build block_quote element(s) plus
+    /// interleaved attribution messages from an already-extracted block.
+    /// Shared by indented block quotes and the epigraph/highlights/
+    /// pull-quote directives.
+    fn block_quote_elements(&mut self, block: &[LineRef<'a>], span: Span) -> Vec<Node> {
+        let mut out: Vec<Node> = Vec::new();
         // Split into blank-separated chunks; attribution chunks close quotes.
         let mut quotes: Vec<QuoteSegment<'a>> = Vec::new();
         let mut acc: Vec<LineRef<'a>> = Vec::new();
@@ -1202,7 +1233,7 @@ impl<'a> BlockParser<'a> {
         }
         for (body, attribution) in quotes {
             let mut quote = Node::elem(kinds::BLOCK_QUOTE, span);
-            quote.children = self.parse_elements(&body);
+            quote.children = self.parse_nested(&body, "block_quote");
             let mut attr_messages = Vec::new();
             if let Some((raw_attr, lineno)) = attribution {
                 let raw = raw_attr.astext();
@@ -1224,13 +1255,7 @@ impl<'a> BlockParser<'a> {
             out.push(quote);
             out.append(&mut attr_messages);
         }
-        if let Some(t) = terminator {
-            out.push(self.msg_sm(
-                messages::WARNING,
-                "Block quote ends without a blank line; unexpected unindent.",
-                t,
-            ));
-        }
+        out
     }
 
     // ------------------------------------------------------------------
@@ -1591,7 +1616,7 @@ impl<'a> BlockParser<'a> {
         if let Some(m) = msg {
             node.children.push(m);
         }
-        let content = self.parse_elements(&body);
+        let content = self.parse_nested(&body, if is_citation { "citation" } else { "footnote" });
         if content.is_empty() {
             let text = if is_citation {
                 "Citation content expected."
@@ -1646,7 +1671,9 @@ impl<'a> BlockParser<'a> {
             field.children.push(fname);
             let mut fbody = Node::elem(kinds::FIELD_BODY, field_span);
             fbody.children.extend(name_inline.messages);
-            fbody.children.extend(self.parse_elements(&body_lines));
+            fbody
+                .children
+                .extend(self.parse_nested(&body_lines, "field_body"));
             field.children.push(fbody);
             fl.children.push(field);
 
@@ -1737,7 +1764,7 @@ impl<'a> BlockParser<'a> {
             }
             item.children.push(group);
             let mut description = Node::elem(kinds::DESCRIPTION, span);
-            description.children = self.parse_elements(&body_lines);
+            description.children = self.parse_nested(&body_lines, "description");
             item.children.push(description);
             ol.children.push(item);
 
@@ -2015,7 +2042,7 @@ impl<'a> BlockParser<'a> {
                 .collect();
             if dedented.iter().any(|l| !l.text.is_empty()) {
                 self.line_bias += 1;
-                entry.children = self.parse_elements(&dedented);
+                entry.children = self.parse_nested(&dedented, "entry");
                 self.line_bias -= 1;
             }
             entries[rn][cn] = Some(entry);
@@ -2375,7 +2402,7 @@ impl<'a> BlockParser<'a> {
                     .collect();
                 if dedented.iter().any(|l| !l.text.is_empty()) {
                     self.line_bias += 1;
-                    entry.children = self.parse_elements(&dedented);
+                    entry.children = self.parse_nested(&dedented, "entry");
                     self.line_bias -= 1;
                 }
                 r.children.push(entry);
@@ -2613,7 +2640,219 @@ impl<'a> BlockParser<'a> {
             DirectiveKind::Admonition(kind) => self.run_admonition(kind, input, out),
             DirectiveKind::GenericAdmonition => self.run_generic_admonition(input, out),
             DirectiveKind::Image => self.run_image(input, out),
+            DirectiveKind::PseudoSection(kind) => self.run_pseudo_section(kind, input, out),
+            DirectiveKind::Rubric => self.run_rubric(input, out),
+            DirectiveKind::QuoteClass(class) => self.run_quote_class(class, input, out),
+            DirectiveKind::Compound => self.run_compound(input, out),
+            DirectiveKind::Container => self.run_container(input, out),
+            DirectiveKind::ParsedLiteral => self.run_parsed_literal(input, out),
         }
+    }
+
+    /// topic + sidebar (body.py BasePseudoSection:21-96).
+    fn run_pseudo_section(
+        &mut self,
+        kind: &'static str,
+        input: DirectiveInput<'a, '_>,
+        out: &mut Vec<Node>,
+    ) {
+        // Sidebar's own pre-checks run before the shared context check
+        // (body.py:88-96).
+        if kind == "sidebar" {
+            if self.nested_node_kind == Some("sidebar") {
+                out.push(self.directive_run_error(
+                    &format!(
+                        "The \"{}\" directive may not be used within a sidebar element.",
+                        input.name
+                    ),
+                    input.lineno,
+                    input.rawsource,
+                ));
+                return;
+            }
+            if opt_get(&input.options, "subtitle").is_some() && input.arguments.is_empty() {
+                out.push(self.directive_run_error(
+                    "The \"subtitle\" option may not be used without a title.",
+                    input.lineno,
+                    input.rawsource,
+                ));
+                return;
+            }
+        }
+        // BasePseudoSection context check: allowed parents are the document
+        // root, sections, and sidebars (body.py:33-40).
+        if let Some(parent) = self.nested_node_kind {
+            if parent != "sidebar" {
+                out.push(self.directive_run_error(
+                    &format!(
+                        "The \"{}\" directive may not be used within topics or body elements.",
+                        input.name
+                    ),
+                    input.lineno,
+                    input.rawsource,
+                ));
+                return;
+            }
+        }
+        if input.content.is_empty() {
+            out.push(self.directive_content_error(input.name, input.lineno, input.rawsource));
+            return;
+        }
+        let mut node = Node::elem(kind, input.span);
+        if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
+            node.attrs.classes.extend(classes.iter().cloned());
+        }
+        let mut title_messages: Vec<Node> = Vec::new();
+        if let Some(title_text) = input.arguments.first() {
+            let inline = super::inline::parse_inline(
+                title_text,
+                input.span,
+                input.lineno,
+                &mut self.registry,
+                self.source_path,
+            );
+            let mut title = Node::elem(kinds::TITLE, input.span);
+            title.children = inline.nodes;
+            node.children.push(title);
+            title_messages.extend(inline.messages);
+            if let Some(OptVal::Str(subtitle_text)) = opt_get(&input.options, "subtitle") {
+                let sub_inline = super::inline::parse_inline(
+                    subtitle_text,
+                    input.span,
+                    input.lineno,
+                    &mut self.registry,
+                    self.source_path,
+                );
+                let mut subtitle = Node::elem(kinds::SUBTITLE, input.span);
+                subtitle.children = sub_inline.nodes;
+                node.children.push(subtitle);
+                title_messages.extend(sub_inline.messages);
+            }
+        }
+        node.children.append(&mut title_messages);
+        self.directive_add_name(&mut node, &input.options, input.lineno, out);
+        let content = self.parse_nested(&input.content, kind);
+        node.children.extend(content);
+        out.push(node);
+    }
+
+    /// rubric (body.py:240-254): inline children, no paragraph wrapper,
+    /// inline messages as siblings after the node.
+    fn run_rubric(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        let inline = super::inline::parse_inline(
+            &input.arguments[0],
+            input.span,
+            input.lineno,
+            &mut self.registry,
+            self.source_path,
+        );
+        let mut node = Node::elem("rubric", input.span);
+        node.children = inline.nodes;
+        if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
+            node.attrs.classes.extend(classes.iter().cloned());
+        }
+        self.directive_add_name(&mut node, &input.options, input.lineno, out);
+        out.push(node);
+        out.extend(inline.messages);
+    }
+
+    /// epigraph / highlights / pull-quote (body.py:257-283): standard
+    /// block-quote elements, each block_quote stamped with the class.
+    fn run_quote_class(
+        &mut self,
+        class: &'static str,
+        input: DirectiveInput<'a, '_>,
+        out: &mut Vec<Node>,
+    ) {
+        if input.content.is_empty() {
+            out.push(self.directive_content_error(input.name, input.lineno, input.rawsource));
+            return;
+        }
+        let mut elements = self.block_quote_elements(&input.content, input.span);
+        for el in &mut elements {
+            if el.kind == kinds::BLOCK_QUOTE {
+                el.attrs.classes.push(class.to_string());
+            }
+        }
+        out.extend(elements);
+    }
+
+    /// compound (body.py:286-301).
+    fn run_compound(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        if input.content.is_empty() {
+            out.push(self.directive_content_error(input.name, input.lineno, input.rawsource));
+            return;
+        }
+        let mut node = Node::elem("compound", input.span);
+        if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
+            node.attrs.classes.extend(classes.iter().cloned());
+        }
+        self.directive_add_name(&mut node, &input.options, input.lineno, out);
+        let content = self.parse_nested(&input.content, "compound");
+        node.children.extend(content);
+        out.push(node);
+    }
+
+    /// container (body.py:304-329): classes come from the ARGUMENT.
+    fn run_container(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        if input.content.is_empty() {
+            out.push(self.directive_content_error(input.name, input.lineno, input.rawsource));
+            return;
+        }
+        let mut classes: Vec<String> = Vec::new();
+        if let Some(arg) = input.arguments.first() {
+            match convert_option(Conv::ClassOption, Some(arg)) {
+                Ok(OptVal::StrList(list)) => classes = list,
+                _ => {
+                    out.push(self.directive_run_error(
+                        &format!(
+                            "Invalid class attribute value for \"{}\" directive: \"{}\".",
+                            input.name, arg
+                        ),
+                        input.lineno,
+                        input.rawsource,
+                    ));
+                    return;
+                }
+            }
+        }
+        let mut node = Node::elem("container", input.span);
+        node.attrs.classes.extend(classes);
+        self.directive_add_name(&mut node, &input.options, input.lineno, out);
+        let content = self.parse_nested(&input.content, "container");
+        node.children.extend(content);
+        out.push(node);
+    }
+
+    /// parsed-literal (body.py:132-146): full inline parse inside a
+    /// whitespace-preserving literal_block; messages follow the node.
+    fn run_parsed_literal(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        if input.content.is_empty() {
+            out.push(self.directive_content_error(input.name, input.lineno, input.rawsource));
+            return;
+        }
+        let text = input
+            .content
+            .iter()
+            .map(|l| l.text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let inline = super::inline::parse_inline(
+            &text,
+            input.span,
+            input.lineno,
+            &mut self.registry,
+            self.source_path,
+        );
+        let mut node = Node::elem(kinds::LITERAL_BLOCK, input.span);
+        node.set("xml:space", AttrValue::Str("preserve".to_string()));
+        node.children = inline.nodes;
+        if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
+            node.attrs.classes.extend(classes.iter().cloned());
+        }
+        self.directive_add_name(&mut node, &input.options, input.lineno, out);
+        out.push(node);
+        out.extend(inline.messages);
     }
 
     /// DirectiveError-style error (raised by a directive's own run()):
@@ -2667,7 +2906,8 @@ impl<'a> BlockParser<'a> {
             node.attrs.classes.extend(classes.iter().cloned());
         }
         self.directive_add_name(&mut node, &input.options, input.lineno, out);
-        node.children.extend(self.parse_elements(&input.content));
+        let content = self.parse_nested(&input.content, kind);
+        node.children.extend(content);
         out.push(node);
     }
 
@@ -2704,7 +2944,8 @@ impl<'a> BlockParser<'a> {
         for m in inline.messages {
             node.children.push(m);
         }
-        node.children.extend(self.parse_elements(&input.content));
+        let content = self.parse_nested(&input.content, "admonition");
+        node.children.extend(content);
         out.push(node);
     }
 
@@ -3192,6 +3433,14 @@ enum DirectiveKind {
     GenericAdmonition,
     /// `.. image:: uri` (images.py Image).
     Image,
+    /// topic / sidebar (body.py BasePseudoSection).
+    PseudoSection(&'static str),
+    Rubric,
+    /// epigraph / highlights / pull-quote: block_quote + class.
+    QuoteClass(&'static str),
+    Compound,
+    Container,
+    ParsedLiteral,
 }
 
 /// The docutils Directive class contract (rst/__init__.py:305-318).
@@ -3245,6 +3494,14 @@ fn opt_get<'o>(options: &'o [(String, OptVal)], name: &str) -> Option<&'o OptVal
 
 const ADMONITION_OPTS: &[(&str, Conv)] = &[("class", Conv::ClassOption), ("name", Conv::Unchanged)];
 
+const SIDEBAR_OPTS: &[(&str, Conv)] = &[
+    ("subtitle", Conv::UnchangedRequired),
+    ("class", Conv::ClassOption),
+    ("name", Conv::Unchanged),
+];
+
+const NAME_ONLY_OPTS: &[(&str, Conv)] = &[("name", Conv::Unchanged)];
+
 const IMAGE_ALIGN_VALUES: &[&str] = &["top", "middle", "bottom", "left", "center", "right"];
 const IMAGE_LOADING_VALUES: &[&str] = &["embed", "link", "lazy"];
 const IMAGE_OPTS: &[(&str, Conv)] = &[
@@ -3296,7 +3553,71 @@ fn directive_spec(lower: &str) -> Option<DirectiveSpec> {
             option_spec: IMAGE_OPTS,
             kind: DirectiveKind::Image,
         }),
+        "topic" => Some(DirectiveSpec {
+            required_arguments: 1,
+            optional_arguments: 0,
+            final_argument_whitespace: true,
+            has_content: true,
+            option_spec: ADMONITION_OPTS,
+            kind: DirectiveKind::PseudoSection("topic"),
+        }),
+        "sidebar" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 1,
+            final_argument_whitespace: true,
+            has_content: true,
+            option_spec: SIDEBAR_OPTS,
+            kind: DirectiveKind::PseudoSection("sidebar"),
+        }),
+        "rubric" => Some(DirectiveSpec {
+            required_arguments: 1,
+            optional_arguments: 0,
+            final_argument_whitespace: true,
+            has_content: false,
+            option_spec: ADMONITION_OPTS,
+            kind: DirectiveKind::Rubric,
+        }),
+        "epigraph" => Some(quote_class_spec("epigraph")),
+        "highlights" => Some(quote_class_spec("highlights")),
+        "pull-quote" => Some(quote_class_spec("pull-quote")),
+        "compound" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 0,
+            final_argument_whitespace: false,
+            has_content: true,
+            option_spec: ADMONITION_OPTS,
+            kind: DirectiveKind::Compound,
+        }),
+        "container" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 1,
+            final_argument_whitespace: true,
+            has_content: true,
+            option_spec: NAME_ONLY_OPTS,
+            kind: DirectiveKind::Container,
+        }),
+        "parsed-literal" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 0,
+            final_argument_whitespace: false,
+            has_content: true,
+            option_spec: ADMONITION_OPTS,
+            kind: DirectiveKind::ParsedLiteral,
+        }),
         _ => None,
+    }
+}
+
+/// epigraph/highlights/pull-quote: content-only, NO options at all
+/// (body.py:257-283 — option_spec is not declared).
+fn quote_class_spec(class: &'static str) -> DirectiveSpec {
+    DirectiveSpec {
+        required_arguments: 0,
+        optional_arguments: 0,
+        final_argument_whitespace: false,
+        has_content: true,
+        option_spec: &[],
+        kind: DirectiveKind::QuoteClass(class),
     }
 }
 

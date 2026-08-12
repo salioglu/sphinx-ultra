@@ -105,10 +105,16 @@ SUPPORTED_KINDS = {
     "attention",
     "admonition",
     "image",
+    "topic",
+    "sidebar",
+    "subtitle",
+    "rubric",
+    "compound",
+    "container",
 }
 
 # Families whose snippets intentionally exercise the directive machinery.
-DIRECTIVE_FAMILIES = ("dir_core", "dir_admonitions", "dir_options", "dir_image")
+DIRECTIVE_FAMILIES = ("dir_core", "dir_admonitions", "dir_options", "dir_image", "dir_body")
 
 # (family, name, rst) — names unique, families floor-checked below.
 CASES = [
@@ -583,6 +589,39 @@ CASES = [
     ("dir_image", "missing_arg", ".. image::\n"),
     ("dir_image", "content_not_permitted", ".. image:: pic.png\n\n   caption text\n"),
     ("dir_image", "second_uri_line_no_blank", ".. image:: pic.png\n   second line of uri\n"),
+    # ----- wave 3: simple body directives -----
+    ("dir_body", "topic_basic", ".. topic:: Topic Title\n\n   Topic body paragraph.\n"),
+    ("dir_body", "topic_no_body", ".. topic:: Topic Title\n"),
+    ("dir_body", "topic_in_note", ".. note::\n\n   .. topic:: Inner\n\n      body\n"),
+    ("dir_body", "topic_in_list_item", "- item\n\n  .. topic:: Inner\n\n     body\n"),
+    ("dir_body", "topic_class_name", ".. topic:: T\n   :class: special\n   :name: my topic\n\n   Body.\n"),
+    ("dir_body", "topic_markup_title", ".. topic:: *emphasized* title\n\n   Body.\n"),
+    ("dir_body", "sidebar_title_body", ".. sidebar:: Sidebar Title\n\n   Sidebar body.\n"),
+    ("dir_body", "sidebar_subtitle", ".. sidebar:: Sidebar Title\n   :subtitle: Sidebar Subtitle\n\n   Sidebar body.\n"),
+    ("dir_body", "sidebar_subtitle_no_title", ".. sidebar::\n   :subtitle: A Subtitle\n\n   Body text.\n"),
+    ("dir_body", "sidebar_no_title", ".. sidebar::\n\n   Body only.\n"),
+    ("dir_body", "sidebar_nested_error", ".. sidebar:: Outer\n\n   Outer body.\n\n   .. sidebar:: Inner\n\n      Inner body.\n"),
+    ("dir_body", "topic_in_sidebar", ".. sidebar:: Outer\n\n   .. topic:: Inner Topic\n\n      body\n"),
+    ("dir_body", "rubric_minimal", ".. rubric:: This is a rubric\n"),
+    ("dir_body", "rubric_options", ".. rubric:: Named rubric\n   :class: myrubricclass\n   :name: rub1\n"),
+    ("dir_body", "rubric_markup", ".. rubric:: A *marked up* rubric\n"),
+    ("dir_body", "rubric_content_error", ".. rubric:: Title\n\n   body not allowed\n"),
+    ("dir_body", "rubric_missing_arg", ".. rubric::\n"),
+    ("dir_body", "epigraph_attribution", ".. epigraph::\n\n   Epigraph text.\n\n   -- Attribution\n"),
+    ("dir_body", "highlights_basic", ".. highlights::\n\n   Highlighted text.\n"),
+    ("dir_body", "pull_quote_basic", ".. pull-quote::\n\n   Pulled text.\n"),
+    ("dir_body", "epigraph_empty", ".. epigraph::\n"),
+    ("dir_body", "epigraph_marker_line", ".. epigraph:: text on the marker line\n"),
+    ("dir_body", "epigraph_unknown_option", ".. epigraph::\n   :class: x\n\n   text\n"),
+    ("dir_body", "compound_two_paras", ".. compound::\n\n   First paragraph of compound.\n\n   Second paragraph of compound.\n"),
+    ("dir_body", "compound_empty_error", ".. compound::\n"),
+    ("dir_body", "compound_class", ".. compound::\n   :class: custom\n\n   Body.\n"),
+    ("dir_body", "container_no_class", ".. container::\n\n   Container body.\n"),
+    ("dir_body", "container_classes", ".. container:: custom-class another-class\n\n   Container body.\n"),
+    ("dir_body", "container_bad_class", ".. container:: !!!\n\n   Body.\n"),
+    ("dir_body", "container_named", ".. container:: cls\n   :name: cont\n\n   Body.\n"),
+    ("dir_body", "parsed_literal_inline", ".. parsed-literal::\n\n   Text with *emphasis* and **strong** and a\n   `link <http://example.com>`_.\n"),
+    ("dir_body", "parsed_literal_class", ".. parsed-literal::\n   :class: code-ish\n   :name: pl1\n\n   plain \\*escaped\\* text\n"),
     # ----- wave 2 review round (Sonnet adversarial review, 2026-08-07) -----
     ("review2", "multi_segment_role", ":py:func:`target` end.\n"),
     ("review2", "multi_segment_role_three", ":a:b:c:`text` end.\n"),
@@ -693,7 +732,7 @@ def main() -> int:
         "paragraphs": 4, "sections": 8, "transition": 4, "lists_bullet": 8,
         "lists_enum": 8, "deflist": 8, "quote": 8, "literal": 8,
         "comment_target": 8, "lineblock": 4, "doctest": 4, "errors": 12,
-        "hardening": 20, "mixtures": 8, "review": 45, "inline_basics": 25, "inline_carriers": 10, "inline_refs": 40, "inline_roles": 20, "footnotes": 14, "fields": 15, "options": 10, "tables_grid": 18, "tables_simple": 12, "w2_hardening": 15, "review2": 12, "dir_core": 10, "dir_admonitions": 14, "dir_options": 20, "dir_image": 18,
+        "hardening": 20, "mixtures": 8, "review": 45, "inline_basics": 25, "inline_carriers": 10, "inline_refs": 40, "inline_roles": 20, "footnotes": 14, "fields": 15, "options": 10, "tables_grid": 18, "tables_simple": 12, "w2_hardening": 15, "review2": 12, "dir_core": 10, "dir_admonitions": 14, "dir_options": 20, "dir_image": 18, "dir_body": 30,
     }
     counts: dict = {}
     for family, _, _ in CASES:
