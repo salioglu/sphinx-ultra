@@ -125,9 +125,9 @@ const MAX_NEST_DEPTH: usize = 200;
 
 pub(crate) struct BlockParser<'a> {
     top: Vec<LineRef<'a>>,
-    source_path: &'a str,
+    pub(crate) source_path: &'a str,
     source_len: usize,
-    registry: IdRegistry,
+    pub(crate) registry: IdRegistry,
     styles: Vec<(char, bool)>,
     depth: usize,
     /// +1 inside table-cell nested parses: docutils' state-machine-derived
@@ -1429,6 +1429,12 @@ impl<'a> BlockParser<'a> {
             return;
         }
 
+        if let Some((name, first_rest)) = directive_marker(rest) {
+            self.parse_directive(lines, pos, &name, first_rest, out);
+            self.warn_explicit_markup_end(lines, *pos, out);
+            return;
+        }
+
         // Comment. Probe-verified continuation rules: a comment with first-
         // line text absorbs the following indented block THROUGH internal
         // blank lines; a bare `..` takes a body only when the indented block
@@ -2418,6 +2424,285 @@ impl<'a> BlockParser<'a> {
         }
     }
 
+    /// `.. name:: …` directives: the docutils machinery (probe-verified;
+    /// see 2026-08-13-m2-wave3-probes.md). Wave-3 registry: admonitions +
+    /// generic admonition; more directives arrive in later tasks.
+    fn parse_directive(
+        &mut self,
+        lines: &[LineRef<'a>],
+        pos: &mut usize,
+        name: &str,
+        first_rest: &str,
+        out: &mut Vec<Node>,
+    ) {
+        let start = *pos;
+        let lineno = lines[start].lineno;
+        let (block, consumed, _indent, _term) = indented_block(lines, start + 1);
+        *pos = start + 1 + consumed;
+        let span = self.span_of(lines, start, start + consumed);
+        // Full raw source (original indentation preserved, trailing blanks
+        // trimmed) — reproduced in EVERY directive error literal.
+        let mut raw_lines: Vec<&str> = vec![lines[start].text];
+        for l in &lines[start + 1..start + 1 + consumed] {
+            raw_lines.push(l.text);
+        }
+        while raw_lines.last().map(|l| l.trim().is_empty()).unwrap_or(false) {
+            raw_lines.pop();
+        }
+        let rawsource = raw_lines.join("\n");
+
+        let lower = name.to_lowercase();
+        let Some(spec) = directive_spec(&lower) else {
+            // Unknown: INFO (language-resolution narrative) + ERROR.
+            out.push(self.msg(
+                messages::INFO,
+                &format!(
+                    "No directive entry for \"{name}\" in module \"docutils.parsers.rst.languages.en\".\nTrying \"{name}\" as canonical directive name."
+                ),
+                lineno,
+            ));
+            out.push(messages::with_literal(
+                self.msg(
+                    messages::ERROR,
+                    &format!("Unknown directive type \"{name}\"."),
+                    lineno,
+                ),
+                &rawsource,
+            ));
+            return;
+        };
+
+        let dir_error = |me: &Self, detail: &str| -> Node {
+            messages::with_literal(
+                me.msg(
+                    messages::ERROR,
+                    &format!("Error in \"{lower}\" directive:\n{detail}."),
+                    lineno,
+                ),
+                &rawsource,
+            )
+        };
+
+        // Split the block: arg_block = first_rest + lines up to the first
+        // blank; content = everything after the first blank line.
+        let mut arg_lines: Vec<LineRef<'a>> = Vec::new();
+        if !first_rest.trim().is_empty() {
+            let offset = lines[start].text.len() - first_rest.len();
+            arg_lines.push(LineRef::new(
+                lines[start].text[offset..].trim_start(),
+                lineno,
+                lines[start].src_start,
+                lines[start].src_end,
+            ));
+        }
+        let mut content: Vec<LineRef<'a>> = Vec::new();
+        let mut in_content = arg_lines.is_empty() && first_rest.trim().is_empty() && false;
+        let mut seen_blank = false;
+        for l in &block {
+            if seen_blank {
+                content.push(*l);
+            } else if l.is_blank() {
+                seen_blank = true;
+            } else if !in_content {
+                arg_lines.push(*l);
+            }
+        }
+        let _ = in_content;
+        // Trim leading blanks of content.
+        while content.first().map(|l| l.is_blank()).unwrap_or(false) {
+            content.remove(0);
+        }
+
+        // Options: the arg block splits at the FIRST field-marker line.
+        let mut argument_lines: Vec<LineRef<'a>> = Vec::new();
+        let mut option_lines: Vec<LineRef<'a>> = Vec::new();
+        let mut in_options = false;
+        for l in &arg_lines {
+            if !in_options && field_marker(l.text).is_some() {
+                in_options = true;
+            }
+            if in_options {
+                option_lines.push(*l);
+            } else {
+                argument_lines.push(*l);
+            }
+        }
+
+        // Parse options.
+        let mut classes: Vec<String> = Vec::new();
+        let mut node_name: Option<String> = None;
+        let mut i = 0usize;
+        while i < option_lines.len() {
+            let l = option_lines[i];
+            let Some((opt_name, body_start)) = field_marker(l.text) else {
+                out.push(dir_error(self, "invalid option block"));
+                return;
+            };
+            // option value: rest of line + deeper-indented continuations
+            let mut value = l.text[body_start..].trim().to_string();
+            let mut j = i + 1;
+            while j < option_lines.len()
+                && option_lines[j].indent() > 0
+                && field_marker(option_lines[j].text).is_none()
+            {
+                if !value.is_empty() {
+                    value.push(' ');
+                }
+                value.push_str(option_lines[j].text.trim());
+                j += 1;
+            }
+            if j < option_lines.len()
+                && option_lines[j].indent() == 0
+                && field_marker(option_lines[j].text).is_none()
+            {
+                out.push(dir_error(self, "invalid option block"));
+                return;
+            }
+            match opt_name.to_lowercase().as_str() {
+                "class" if spec.allow_class => {
+                    if value.is_empty() {
+                        out.push(dir_error(
+                            self,
+                            &format!(
+                                "invalid option value: (option: \"class\"; value: None)\nargument required but none supplied"
+                            ),
+                        ));
+                        return;
+                    }
+                    for word in value.split_whitespace() {
+                        classes.push(ids::make_id(word));
+                    }
+                }
+                "name" if spec.allow_class => {
+                    node_name = Some(value.clone());
+                }
+                other => {
+                    out.push(dir_error(
+                        self,
+                        &format!("unknown option: \"{other}\""),
+                    ));
+                    return;
+                }
+            }
+            i = j;
+        }
+
+        // Arguments / leftover argument lines become content for
+        // zero-argument directives (probe X6).
+        let mut effective_content = content;
+        match spec.kind {
+            DirectiveKind::Admonition(kind) => {
+                if !argument_lines.is_empty() {
+                    let mut pre = argument_lines.clone();
+                    if !effective_content.is_empty() {
+                        pre.push(LineRef::new(
+                            "",
+                            lineno,
+                            lines[start].src_start,
+                            lines[start].src_end,
+                        ));
+                    }
+                    pre.extend(effective_content.iter().copied());
+                    effective_content = pre;
+                }
+                if effective_content.iter().all(|l| l.is_blank()) {
+                    out.push(messages::with_literal(
+                        self.msg(
+                            messages::ERROR,
+                            &format!(
+                                "Content block expected for the \"{lower}\" directive; none found."
+                            ),
+                            lineno,
+                        ),
+                        &rawsource,
+                    ));
+                    return;
+                }
+                let mut node = Node::elem(kind, span);
+                node.attrs.classes = classes;
+                if let Some(n) = node_name {
+                    node.attrs.names.push(ids::fully_normalize_name(&n));
+                    let msg = self.registry.set_id_explicit(
+                        &mut node,
+                        lineno,
+                        self.source_path,
+                        true,
+                        None,
+                    );
+                    if let Some(m) = msg {
+                        out.push(m);
+                    }
+                }
+                self.line_bias += 1;
+                node.children.extend(self.parse_elements(&effective_content));
+                self.line_bias -= 1;
+                out.push(node);
+            }
+            DirectiveKind::GenericAdmonition => {
+                if argument_lines.is_empty() {
+                    out.push(dir_error(self, "1 argument(s) required, 0 supplied"));
+                    return;
+                }
+                let title_text = argument_lines
+                    .iter()
+                    .map(|l| l.text.trim())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                if effective_content.iter().all(|l| l.is_blank()) {
+                    out.push(messages::with_literal(
+                        self.msg(
+                            messages::ERROR,
+                            &format!(
+                                "Content block expected for the \"{lower}\" directive; none found."
+                            ),
+                            lineno,
+                        ),
+                        &rawsource,
+                    ));
+                    return;
+                }
+                let mut node = Node::elem("admonition", span);
+                if classes.is_empty() {
+                    node.attrs
+                        .classes
+                        .push(format!("admonition-{}", ids::make_id(&title_text)));
+                } else {
+                    node.attrs.classes = classes;
+                }
+                if let Some(n) = node_name {
+                    node.attrs.names.push(ids::fully_normalize_name(&n));
+                    let msg = self.registry.set_id_explicit(
+                        &mut node,
+                        lineno,
+                        self.source_path,
+                        true,
+                        None,
+                    );
+                    if let Some(m) = msg {
+                        out.push(m);
+                    }
+                }
+                let inline = super::inline::parse_inline(
+                    &title_text,
+                    span,
+                    lineno,
+                    &mut self.registry,
+                    self.source_path,
+                );
+                let mut title = Node::elem(kinds::TITLE, span);
+                title.children = inline.nodes;
+                node.children.push(title);
+                for m in inline.messages {
+                    node.children.push(m);
+                }
+                self.line_bias += 1;
+                node.children.extend(self.parse_elements(&effective_content));
+                self.line_bias -= 1;
+                out.push(node);
+            }
+        }
+    }
+
     fn parse_anonymous_shortcut(
         &mut self,
         lines: &[LineRef<'a>],
@@ -2800,6 +3085,73 @@ fn trace_cell(
         }
     }
     None
+}
+
+/// Directive marker on the text after `.. `: `name[ ]?::` then space+rest
+/// or EOL (probe-verified: at most ONE space before `::`; dangling
+/// separators or `:` alone fall through to comment).
+fn directive_marker(rest: &str) -> Option<(String, &str)> {
+    let chars: Vec<char> = rest.chars().collect();
+    let name_len = match_simplename_chars(&chars, 0)?;
+    let mut j = name_len;
+    if chars.get(j) == Some(&' ') {
+        j += 1;
+    }
+    if chars.get(j) != Some(&':') || chars.get(j + 1) != Some(&':') {
+        return None;
+    }
+    let after = j + 2;
+    match chars.get(after) {
+        None => {}
+        Some(' ') => {}
+        _ => return None,
+    }
+    let name: String = chars[..name_len].iter().collect();
+    // byte offset of the remainder after ":: "
+    let byte_after: usize = rest
+        .char_indices()
+        .nth(after + 1)
+        .map(|(b, _)| b)
+        .unwrap_or(rest.len());
+    Some((name, &rest[byte_after..]))
+}
+
+enum DirectiveKind {
+    /// note/warning/... : content-only, node kind = tagname.
+    Admonition(&'static str),
+    /// `.. admonition:: Title` with required title argument.
+    GenericAdmonition,
+}
+
+struct DirectiveSpec {
+    kind: DirectiveKind,
+    /// :class:/:name: options accepted (all wave-3 task-3 directives).
+    allow_class: bool,
+}
+
+fn directive_spec(lower: &str) -> Option<DirectiveSpec> {
+    let adm = |k: &'static str| {
+        Some(DirectiveSpec {
+            kind: DirectiveKind::Admonition(k),
+            allow_class: true,
+        })
+    };
+    match lower {
+        "note" => adm("note"),
+        "warning" => adm("warning"),
+        "tip" => adm("tip"),
+        "hint" => adm("hint"),
+        "important" => adm("important"),
+        "caution" => adm("caution"),
+        "danger" => adm("danger"),
+        "error" => adm("error"),
+        "attention" => adm("attention"),
+        "admonition" => Some(DirectiveSpec {
+            kind: DirectiveKind::GenericAdmonition,
+            allow_class: true,
+        }),
+        _ => None,
+    }
 }
 
 /// docutils `simplename` over a char slice (see rst::inline for the

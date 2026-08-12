@@ -2251,6 +2251,156 @@
       "rst": ".. [1] See :pep:`8` for style.\n"
     },
     {
+      "family": "dir_core",
+      "name": "dir_core.unknown_directive",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            No directive entry for \"bogusdirective\" in module \"docutils.parsers.rst.languages.en\".\n            Trying \"bogusdirective\" as canonical directive name.\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown directive type \"bogusdirective\".\n        <literal_block xml:space=\"preserve\">\n            .. bogusdirective::\n            \n               content\n",
+      "rst": ".. bogusdirective::\n\n   content\n"
+    },
+    {
+      "family": "dir_core",
+      "name": "dir_core.unknown_dotted_name",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            No directive entry for \"foo.bar\" in module \"docutils.parsers.rst.languages.en\".\n            Trying \"foo.bar\" as canonical directive name.\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown directive type \"foo.bar\".\n        <literal_block xml:space=\"preserve\">\n            .. foo.bar::\n            \n               content\n",
+      "rst": ".. foo.bar::\n\n   content\n"
+    },
+    {
+      "family": "dir_core",
+      "name": "dir_core.unknown_domain_name",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            No directive entry for \"py:function\" in module \"docutils.parsers.rst.languages.en\".\n            Trying \"py:function\" as canonical directive name.\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown directive type \"py:function\".\n        <literal_block xml:space=\"preserve\">\n            .. py:function:: foo(x)\n            \n               content\n",
+      "rst": ".. py:function:: foo(x)\n\n   content\n"
+    },
+    {
+      "family": "dir_core",
+      "name": "dir_core.dangling_separator_comment",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n        note-::\n        \n        content\n",
+      "rst": ".. note-::\n\n   content\n"
+    },
+    {
+      "family": "dir_core",
+      "name": "dir_core.no_space_paragraph",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        ..note:\n    <literal_block xml:space=\"preserve\">\n        Body text.\n",
+      "rst": "..note::\n\n   Body text.\n"
+    },
+    {
+      "family": "dir_core",
+      "name": "dir_core.single_colon_comment",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n        note:\n        \n        Body text.\n",
+      "rst": ".. note:\n\n   Body text.\n"
+    },
+    {
+      "family": "dir_core",
+      "name": "dir_core.two_spaces_comment",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n        note  ::\n        \n        Body text.\n",
+      "rst": ".. note  ::\n\n   Body text.\n"
+    },
+    {
+      "family": "dir_core",
+      "name": "dir_core.one_space_before_colons_ok",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <paragraph>\n            Body text.\n",
+      "rst": ".. note ::\n\n   Body text.\n"
+    },
+    {
+      "family": "dir_core",
+      "name": "dir_core.case_insensitive",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <paragraph>\n            Body text.\n",
+      "rst": ".. NOTE::\n\n   Body text.\n"
+    },
+    {
+      "family": "dir_core",
+      "name": "dir_core.leading_underscore_target",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n        _note::\n        \n        content\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            malformed hyperlink target.\n",
+      "rst": ".. _note::\n\n   content\n"
+    },
+    {
+      "family": "dir_admonitions",
+      "name": "dir_admonitions.note_indented_body",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <paragraph>\n            Body text.\n",
+      "rst": ".. note::\n\n   Body text.\n"
+    },
+    {
+      "family": "dir_admonitions",
+      "name": "dir_admonitions.note_inline_content",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <paragraph>\n            inline text\n",
+      "rst": ".. note:: inline text\n"
+    },
+    {
+      "family": "dir_admonitions",
+      "name": "dir_admonitions.note_inline_plus_body",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <paragraph>\n            inline text\n        <paragraph>\n            Body.\n",
+      "rst": ".. note:: inline text\n\n   Body.\n"
+    },
+    {
+      "family": "dir_admonitions",
+      "name": "dir_admonitions.note_class_option",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note classes=\"foo\">\n        <paragraph>\n            inline text\n        <paragraph>\n            Body.\n",
+      "rst": ".. note:: inline text\n   :class: foo\n\n   Body.\n"
+    },
+    {
+      "family": "dir_admonitions",
+      "name": "dir_admonitions.note_invalid_option_block",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"note\" directive:\n            invalid option block.\n        <literal_block xml:space=\"preserve\">\n            .. note:: inline text\n               :class: foo\n               more inline text same para as option???\n            \n               Body.\n",
+      "rst": ".. note:: inline text\n   :class: foo\n   more inline text same para as option???\n\n   Body.\n"
+    },
+    {
+      "family": "dir_admonitions",
+      "name": "dir_admonitions.note_unknown_option",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"note\" directive:\n            unknown option: \"bogus\".\n        <literal_block xml:space=\"preserve\">\n            .. note::\n               :bogus: x\n            \n               Body.\n",
+      "rst": ".. note::\n   :bogus: x\n\n   Body.\n"
+    },
+    {
+      "family": "dir_admonitions",
+      "name": "dir_admonitions.empty_note_error",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"note\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. note::\n",
+      "rst": ".. note::\n"
+    },
+    {
+      "family": "dir_admonitions",
+      "name": "dir_admonitions.all_admonition_kinds",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <warning>\n        <paragraph>\n            w\n    <tip>\n        <paragraph>\n            t\n    <danger>\n        <paragraph>\n            d\n    <attention>\n        <paragraph>\n            a\n",
+      "rst": ".. warning:: w\n\n.. tip:: t\n\n.. danger:: d\n\n.. attention:: a\n"
+    },
+    {
+      "family": "dir_admonitions",
+      "name": "dir_admonitions.generic_admonition",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <admonition classes=\"admonition-custom-title\">\n        <title>\n            Custom Title\n        <paragraph>\n            Body text.\n",
+      "rst": ".. admonition:: Custom Title\n\n   Body text.\n"
+    },
+    {
+      "family": "dir_admonitions",
+      "name": "dir_admonitions.generic_admonition_class",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <admonition classes=\"special\">\n        <title>\n            T\n        <paragraph>\n            Body.\n",
+      "rst": ".. admonition:: T\n   :class: special\n\n   Body.\n"
+    },
+    {
+      "family": "dir_admonitions",
+      "name": "dir_admonitions.generic_missing_arg",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"admonition\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. admonition::\n            \n               Body.\n",
+      "rst": ".. admonition::\n\n   Body.\n"
+    },
+    {
+      "family": "dir_admonitions",
+      "name": "dir_admonitions.note_nested_list",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <bullet_list bullet=\"-\">\n            <list_item>\n                <paragraph>\n                    a\n            <list_item>\n                <paragraph>\n                    b\n",
+      "rst": ".. note::\n\n   - a\n   - b\n"
+    },
+    {
+      "family": "dir_admonitions",
+      "name": "dir_admonitions.note_named",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note ids=\"my-note\" names=\"my-note\">\n        <paragraph>\n            Body.\n",
+      "rst": ".. note::\n   :name: my-note\n\n   Body.\n"
+    },
+    {
+      "family": "dir_admonitions",
+      "name": "dir_admonitions.nested_admonition",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <warning>\n            <paragraph>\n                inner\n",
+      "rst": ".. note::\n\n   .. warning::\n\n      inner\n"
+    },
+    {
+      "family": "dir_admonitions",
+      "name": "dir_admonitions.directive_no_blank_after",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <paragraph>\n            content\n    <system_message level=\"2\" line=\"2\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Explicit markup ends without a blank line; unexpected unindent.\n    <paragraph>\n        adjacent para\n",
+      "rst": ".. note:: content\nadjacent para\n"
+    },
+    {
       "family": "review2",
       "name": "review2.multi_segment_role",
       "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            :py:func:`target`\n         end.\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            No role entry for \"py:func\" in module \"docutils.parsers.rst.languages.en\".\n            Trying \"py:func\" as canonical role name.\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown interpreted text role \"py:func\".\n",

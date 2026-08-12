@@ -93,6 +93,17 @@ SUPPORTED_KINDS = {
     "tbody",
     "row",
     "entry",
+    # wave 3: admonitions
+    "note",
+    "warning",
+    "tip",
+    "hint",
+    "important",
+    "caution",
+    "danger",
+    "error",
+    "attention",
+    "admonition",
 }
 
 # (family, name, rst) — names unique, families floor-checked below.
@@ -494,6 +505,32 @@ CASES = [
     ("w2_hardening", "problematic_in_deep_nesting", "- item\n\n  - inner *oops\n"),
     ("w2_hardening", "literal_role_vs_literal_block", ":literal:`x`::\n\n    block\n"),
     ("w2_hardening", "pep_in_footnote", ".. [1] See :pep:`8` for style.\n"),
+    # ----- wave 3: directive core + admonitions (probe-verified) -----
+    ("dir_core", "unknown_directive", ".. bogusdirective::\n\n   content\n"),
+    ("dir_core", "unknown_dotted_name", ".. foo.bar::\n\n   content\n"),
+    ("dir_core", "unknown_domain_name", ".. py:function:: foo(x)\n\n   content\n"),
+    ("dir_core", "dangling_separator_comment", ".. note-::\n\n   content\n"),
+    ("dir_core", "no_space_paragraph", "..note::\n\n   Body text.\n"),
+    ("dir_core", "single_colon_comment", ".. note:\n\n   Body text.\n"),
+    ("dir_core", "two_spaces_comment", ".. note  ::\n\n   Body text.\n"),
+    ("dir_core", "one_space_before_colons_ok", ".. note ::\n\n   Body text.\n"),
+    ("dir_core", "case_insensitive", ".. NOTE::\n\n   Body text.\n"),
+    ("dir_core", "leading_underscore_target", ".. _note::\n\n   content\n"),
+    ("dir_admonitions", "note_indented_body", ".. note::\n\n   Body text.\n"),
+    ("dir_admonitions", "note_inline_content", ".. note:: inline text\n"),
+    ("dir_admonitions", "note_inline_plus_body", ".. note:: inline text\n\n   Body.\n"),
+    ("dir_admonitions", "note_class_option", ".. note:: inline text\n   :class: foo\n\n   Body.\n"),
+    ("dir_admonitions", "note_invalid_option_block", ".. note:: inline text\n   :class: foo\n   more inline text same para as option???\n\n   Body.\n"),
+    ("dir_admonitions", "note_unknown_option", ".. note::\n   :bogus: x\n\n   Body.\n"),
+    ("dir_admonitions", "empty_note_error", ".. note::\n"),
+    ("dir_admonitions", "all_admonition_kinds", ".. warning:: w\n\n.. tip:: t\n\n.. danger:: d\n\n.. attention:: a\n"),
+    ("dir_admonitions", "generic_admonition", ".. admonition:: Custom Title\n\n   Body text.\n"),
+    ("dir_admonitions", "generic_admonition_class", ".. admonition:: T\n   :class: special\n\n   Body.\n"),
+    ("dir_admonitions", "generic_missing_arg", ".. admonition::\n\n   Body.\n"),
+    ("dir_admonitions", "note_nested_list", ".. note::\n\n   - a\n   - b\n"),
+    ("dir_admonitions", "note_named", ".. note::\n   :name: my-note\n\n   Body.\n"),
+    ("dir_admonitions", "nested_admonition", ".. note::\n\n   .. warning::\n\n      inner\n"),
+    ("dir_admonitions", "directive_no_blank_after", ".. note:: content\nadjacent para\n"),
     # ----- wave 2 review round (Sonnet adversarial review, 2026-08-07) -----
     ("review2", "multi_segment_role", ":py:func:`target` end.\n"),
     ("review2", "multi_segment_role_three", ":a:b:c:`text` end.\n"),
@@ -604,7 +641,7 @@ def main() -> int:
         "paragraphs": 4, "sections": 8, "transition": 4, "lists_bullet": 8,
         "lists_enum": 8, "deflist": 8, "quote": 8, "literal": 8,
         "comment_target": 8, "lineblock": 4, "doctest": 4, "errors": 12,
-        "hardening": 20, "mixtures": 8, "review": 45, "inline_basics": 25, "inline_carriers": 10, "inline_refs": 40, "inline_roles": 20, "footnotes": 14, "fields": 15, "options": 10, "tables_grid": 18, "tables_simple": 12, "w2_hardening": 15, "review2": 12,
+        "hardening": 20, "mixtures": 8, "review": 45, "inline_basics": 25, "inline_carriers": 10, "inline_refs": 40, "inline_roles": 20, "footnotes": 14, "fields": 15, "options": 10, "tables_grid": 18, "tables_simple": 12, "w2_hardening": 15, "review2": 12, "dir_core": 10, "dir_admonitions": 14,
     }
     counts: dict = {}
     for family, _, _ in CASES:
@@ -627,10 +664,14 @@ def main() -> int:
         # nodes are all "supported". Two guards: output text, and directive
         # syntax in the SOURCE (catches quietly-succeeding directives like
         # `.. highlights::` whose output nodes are all supported kinds).
-        if "Unknown directive type" in pseudo or "No directive entry" in pseudo:
+        if family not in ("dir_core", "dir_admonitions") and (
+            "Unknown directive type" in pseudo or "No directive entry" in pseudo
+        ):
             bad.append(f"{name}: snippet reaches directive machinery")
             continue
-        if re.search(r"^\s*\.\. +(?!_)[\w][\w.+:-]* *::", rst, re.M):
+        if family not in ("dir_core", "dir_admonitions") and re.search(
+            r"^\s*\.\. +(?!_)[\w][\w.+:-]* *::", rst, re.M
+        ):
             bad.append(f"{name}: directive-shaped syntax in source")
             continue
         out_cases.append({
