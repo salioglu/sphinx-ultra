@@ -123,6 +123,7 @@ SUPPORTED_KINDS = {
 # Families whose snippets intentionally exercise the directive machinery.
 DIRECTIVE_FAMILIES = (
     "dir_core", "dir_admonitions", "dir_options", "dir_image", "dir_body", "dir_media",
+    "dir_tables",
 )
 
 # (family, name, rst) — names unique, families floor-checked below.
@@ -672,6 +673,41 @@ CASES = [
     ("dir_media", "class_slugify", ".. class:: 123bad!!class\n\nPara.\n"),
     ("dir_media", "class_bad_value", ".. class:: !!!\n\nPara.\n"),
     ("dir_media", "class_missing_arg", ".. class::\n\n   Body.\n"),
+    # ----- wave 3: table directives -----
+    ("dir_tables", "table_title_widths_align", ".. table:: Table Title\n   :widths: 30 70\n   :align: center\n\n   =====  =====\n   A      B\n   =====  =====\n   1      2\n   =====  =====\n"),
+    ("dir_tables", "table_plain", ".. table::\n\n   =====  =====\n   A      B\n   =====  =====\n   1      2\n   =====  =====\n"),
+    ("dir_tables", "table_widths_auto", ".. table::\n   :widths: auto\n\n   =====  =====\n   A      B\n   =====  =====\n   1      2\n   =====  =====\n"),
+    ("dir_tables", "table_widths_grid", ".. table::\n   :widths: grid\n\n   =====  =====\n   A      B\n   =====  =====\n   1      2\n   =====  =====\n"),
+    ("dir_tables", "table_widths_mismatch", ".. table::\n   :widths: 10 20 30\n\n   =====  =====\n   A      B\n   =====  =====\n   1      2\n   =====  =====\n"),
+    ("dir_tables", "table_widths_and_class", ".. table::\n   :widths: 30 70\n   :class: mytable\n\n   =====  =====\n   A      B\n   =====  =====\n   1      2\n   =====  =====\n"),
+    ("dir_tables", "table_no_content", ".. table:: Title\n"),
+    ("dir_tables", "table_not_exactly_one", ".. table::\n\n   just a paragraph\n"),
+    ("dir_tables", "table_named", ".. table::\n   :name: tbl one\n\n   =====  =====\n   A      B\n   =====  =====\n   1      2\n   =====  =====\n"),
+    ("dir_tables", "csv_header_widths_title", ".. csv-table:: CSV Table Title\n   :header: A, B\n   :widths: 10, 20\n\n   1, 2\n   3, 4\n"),
+    ("dir_tables", "csv_bare", ".. csv-table::\n\n   1, 2\n   3, 4\n"),
+    ("dir_tables", "csv_header_rows", ".. csv-table::\n   :header-rows: 1\n\n   A, B\n   1, 2\n"),
+    ("dir_tables", "csv_widths_auto", ".. csv-table::\n   :widths: auto\n\n   1, 2\n"),
+    ("dir_tables", "csv_quoted_comma", ".. csv-table::\n\n   \"value, with comma\", plain\n"),
+    ("dir_tables", "csv_stub_align_class", ".. csv-table:: T\n   :stub-columns: 1\n   :align: right\n   :class: mytable\n\n   a, b\n   c, d\n"),
+    ("dir_tables", "csv_class_plus_widths", ".. csv-table::\n   :widths: 40, 60\n   :class: mine\n\n   1, 2\n"),
+    ("dir_tables", "csv_header_rows_exceed", ".. csv-table::\n   :header-rows: 3\n\n   1, 2\n"),
+    ("dir_tables", "csv_all_header_no_body", ".. csv-table::\n   :header-rows: 1\n\n   only, row\n"),
+    ("dir_tables", "csv_empty_warning", ".. csv-table::\n"),
+    ("dir_tables", "csv_file_and_content", ".. csv-table::\n   :file: data.csv\n\n   1, 2\n"),
+    ("dir_tables", "csv_missing_file", ".. csv-table::\n   :file: nonexistent-table-data.csv\n"),
+    ("dir_tables", "csv_delim_option", ".. csv-table::\n   :delim: ;\n\n   1; 2\n"),
+    ("dir_tables", "csv_short_rows", ".. csv-table::\n\n   1, 2, 3\n   4\n"),
+    ("dir_tables", "csv_multiline_quoted_cell", ".. csv-table::\n\n   \"line one\n   line two\", second\n"),
+    ("dir_tables", "csv_keepspace", ".. csv-table::\n   :keepspace:\n\n   1,  spaced\n"),
+    ("dir_tables", "list_basic_header", ".. list-table:: List Table Title\n   :header-rows: 1\n   :widths: 10 20\n\n   * - A\n     - B\n   * - 1\n     - 2\n"),
+    ("dir_tables", "list_bare", ".. list-table::\n\n   * - a\n     - b\n"),
+    ("dir_tables", "list_row_mismatch", ".. list-table::\n\n   * - a\n     - b\n   * - only one\n"),
+    ("dir_tables", "list_not_bullet", ".. list-table::\n\n   just a paragraph\n"),
+    ("dir_tables", "list_no_second_level", ".. list-table::\n\n   * flat item\n"),
+    ("dir_tables", "list_empty_error", ".. list-table::\n"),
+    ("dir_tables", "list_stub_columns", ".. list-table::\n   :stub-columns: 1\n\n   * - a\n     - b\n"),
+    ("dir_tables", "list_widths_mismatch", ".. list-table::\n   :widths: 5 10 15\n\n   * - a\n     - b\n"),
+    ("dir_tables", "list_multi_block_cell", ".. list-table::\n\n   * - para one\n\n       para two\n     - b\n"),
     # ----- wave 2 review round (Sonnet adversarial review, 2026-08-07) -----
     ("review2", "multi_segment_role", ":py:func:`target` end.\n"),
     ("review2", "multi_segment_role_three", ":a:b:c:`text` end.\n"),
@@ -782,7 +818,7 @@ def main() -> int:
         "paragraphs": 4, "sections": 8, "transition": 4, "lists_bullet": 8,
         "lists_enum": 8, "deflist": 8, "quote": 8, "literal": 8,
         "comment_target": 8, "lineblock": 4, "doctest": 4, "errors": 12,
-        "hardening": 20, "mixtures": 8, "review": 45, "inline_basics": 25, "inline_carriers": 10, "inline_refs": 40, "inline_roles": 20, "footnotes": 14, "fields": 15, "options": 10, "tables_grid": 18, "tables_simple": 12, "w2_hardening": 15, "review2": 12, "dir_core": 10, "dir_admonitions": 14, "dir_options": 20, "dir_image": 18, "dir_body": 30, "dir_media": 38,
+        "hardening": 20, "mixtures": 8, "review": 45, "inline_basics": 25, "inline_carriers": 10, "inline_refs": 40, "inline_roles": 20, "footnotes": 14, "fields": 15, "options": 10, "tables_grid": 18, "tables_simple": 12, "w2_hardening": 15, "review2": 12, "dir_core": 10, "dir_admonitions": 14, "dir_options": 20, "dir_image": 18, "dir_body": 30, "dir_media": 38, "dir_tables": 30,
     }
     counts: dict = {}
     for family, _, _ in CASES:

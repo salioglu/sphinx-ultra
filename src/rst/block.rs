@@ -168,6 +168,26 @@ impl<'a> BlockParser<'a> {
         nodes
     }
 
+    /// Nested parse over OWNED text (csv-table cells and, later,
+    /// rst_prolog/include): a sub-parser over a locally built `Lines`,
+    /// sharing this parser's id registry, with linenos offset so absolute
+    /// line numbers keep working.
+    fn parse_detached(&mut self, text: &str, first_lineno: u32, kind: &'static str) -> Vec<Node> {
+        let lines = Lines::new(text);
+        let mut sub = BlockParser::new(&lines, self.source_path, text.len());
+        for l in &mut sub.top {
+            l.lineno += first_lineno.saturating_sub(1);
+        }
+        sub.registry = std::mem::replace(&mut self.registry, IdRegistry::new());
+        sub.nested_node_kind = Some(kind);
+        sub.line_bias = self.line_bias;
+        sub.depth = self.depth;
+        let top = std::mem::take(&mut sub.top);
+        let nodes = sub.parse_elements(&top);
+        self.registry = sub.registry;
+        nodes
+    }
+
     fn span_of(&self, lines: &[LineRef<'_>], first: usize, last: usize) -> Span {
         let start = lines.get(first).map(|l| l.src_start).unwrap_or(0);
         let end = lines
@@ -2652,7 +2672,555 @@ impl<'a> BlockParser<'a> {
             DirectiveKind::Raw => self.run_raw(input, out),
             DirectiveKind::LineBlockDir => self.run_line_block(input, out),
             DirectiveKind::ClassDir => self.run_class(input, out),
+            DirectiveKind::RstTable => self.run_rst_table(input, out),
+            DirectiveKind::CsvTable => self.run_csv_table(input, out),
+            DirectiveKind::ListTable => self.run_list_table(input, out),
         }
+    }
+
+    /// Table.make_title (tables.py:46-57).
+    fn table_make_title(&mut self, input: &DirectiveInput<'a, '_>) -> (Option<Node>, Vec<Node>) {
+        match input.arguments.first() {
+            Some(text) => {
+                let inline = super::inline::parse_inline(
+                    text,
+                    input.span,
+                    input.lineno,
+                    &mut self.registry,
+                    self.source_path,
+                );
+                let mut title = Node::elem(kinds::TITLE, input.span);
+                title.children = inline.nodes;
+                (Some(title), inline.messages)
+            }
+            None => (None, Vec::new()),
+        }
+    }
+
+    /// Shared tail of the three table directives: user classes, width,
+    /// align, the colwidths marker class, :name:, then the title at
+    /// index 0 (tables.py:141-171).
+    #[allow(clippy::too_many_arguments)]
+    fn finish_table(
+        &mut self,
+        mut table: Node,
+        input: &DirectiveInput<'a, '_>,
+        title: Option<Node>,
+        title_messages: Vec<Node>,
+        out: &mut Vec<Node>,
+    ) {
+        if let Some(OptVal::Str(w)) = opt_get(&input.options, "width") {
+            table.set("width", AttrValue::Str(w.clone()));
+        }
+        if let Some(OptVal::Str(a)) = opt_get(&input.options, "align") {
+            table.set("align", AttrValue::Str(a.clone()));
+        }
+        self.directive_add_name(&mut table, &input.options, input.lineno, out);
+        if let Some(t) = title {
+            table.children.insert(0, t);
+        }
+        out.push(table);
+        out.extend(title_messages);
+    }
+
+    /// table (tables.py RSTTable:127-172).
+    fn run_rst_table(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        if input.content.is_empty() {
+            // RSTTable's missing-content diagnostic is a WARNING, unlike
+            // the assert_has_content ERROR family (tables.py:135-139).
+            out.push(self.directive_run_message(
+                messages::WARNING,
+                &format!(
+                    "Content block expected for the \"{}\" directive; none found.",
+                    input.name
+                ),
+                input.lineno,
+                input.rawsource,
+            ));
+            return;
+        }
+        let (title, title_messages) = self.table_make_title(&input);
+        let children = self.parse_nested(&input.content, "element");
+        if children.len() != 1 || children[0].kind != kinds::TABLE {
+            out.push(self.directive_run_error(
+                &format!(
+                    "Error parsing content block for the \"{}\" directive: exactly one table expected.",
+                    input.name
+                ),
+                input.lineno,
+                input.rawsource,
+            ));
+            return;
+        }
+        let mut table = children.into_iter().next().expect("length checked");
+        // User classes precede the colwidths marker class here (RSTTable
+        // run order); csv/list get theirs appended AFTER the build-time
+        // marker instead — both orders fixture-pinned.
+        if let Some(OptVal::StrList(cls)) = opt_get(&input.options, "class") {
+            table.attrs.classes.extend(cls.iter().cloned());
+        }
+        match opt_get(&input.options, "widths") {
+            Some(OptVal::Str(kw)) if kw == "auto" => {
+                table.attrs.classes.push("colwidths-auto".to_string());
+            }
+            Some(OptVal::Str(_)) => {
+                // 'grid': keep the syntax-derived colwidths.
+                table.attrs.classes.push("colwidths-given".to_string());
+            }
+            Some(OptVal::IntList(list)) => {
+                let n_cols = table
+                    .children
+                    .first()
+                    .map(|tg| {
+                        tg.children
+                            .iter()
+                            .filter(|c| c.kind == kinds::COLSPEC)
+                            .count()
+                    })
+                    .unwrap_or(0);
+                if list.len() != n_cols {
+                    out.push(self.directive_run_error(
+                        &format!(
+                            "\"{}\" widths do not match the number of columns in table ({}).",
+                            input.name, n_cols
+                        ),
+                        input.lineno,
+                        input.rawsource,
+                    ));
+                    return;
+                }
+                if let Some(tg) = table.children.first_mut() {
+                    let mut i = 0usize;
+                    for c in &mut tg.children {
+                        if c.kind == kinds::COLSPEC {
+                            c.set("colwidth", AttrValue::Int(list[i]));
+                            i += 1;
+                        }
+                    }
+                }
+                table.attrs.classes.push("colwidths-given".to_string());
+            }
+            _ => {}
+        }
+        self.finish_table(table, &input, title, title_messages, out);
+    }
+
+    /// csv-table (tables.py CSVTable:175-403).
+    fn run_csv_table(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        let has_file = opt_get(&input.options, "file").is_some();
+        let has_url = opt_get(&input.options, "url").is_some();
+        // get_csv_data (tables.py:321-388).
+        let csv_text: String;
+        if !input.content.is_empty() {
+            if has_file || has_url {
+                out.push(self.directive_run_error(
+                    &format!(
+                        "\"{}\" directive may not both specify an external file and have content.",
+                        input.name
+                    ),
+                    input.lineno,
+                    input.rawsource,
+                ));
+                return;
+            }
+            csv_text = input
+                .content
+                .iter()
+                .map(|l| l.text)
+                .collect::<Vec<_>>()
+                .join("\n");
+        } else if has_file {
+            if has_url {
+                out.push(self.directive_run_error(
+                    &format!(
+                        "The \"file\" and \"url\" options may not be simultaneously specified for the \"{}\" directive.",
+                        input.name
+                    ),
+                    input.lineno,
+                    input.rawsource,
+                ));
+                return;
+            }
+            let Some(OptVal::Str(path)) = opt_get(&input.options, "file") else {
+                unreachable!("file option is Path-converted");
+            };
+            let base = std::path::Path::new(self.source_path)
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_default();
+            match std::fs::read_to_string(base.join(path)) {
+                Ok(t) => csv_text = t,
+                Err(_) => {
+                    // Unlike raw's io.error_string (InputError: prefix),
+                    // the csv path formats the bare OSError.
+                    out.push(self.directive_run_message(
+                        messages::SEVERE,
+                        &format!(
+                            "Problems with \"{}\" directive path:\n[Errno 2] No such file or directory: {}.",
+                            input.name,
+                            py_repr(Some(path))
+                        ),
+                        input.lineno,
+                        input.rawsource,
+                    ));
+                    return;
+                }
+            }
+        } else {
+            out.push(self.directive_run_message(
+                messages::WARNING,
+                &format!(
+                    "The \"{}\" directive requires content; none supplied.",
+                    input.name
+                ),
+                input.lineno,
+                input.rawsource,
+            ));
+            return;
+        }
+        let (title, title_messages) = self.table_make_title(&input);
+        // Dialect (tables.py DocutilsDialect:198-220).
+        let delim = match opt_get(&input.options, "delim") {
+            Some(OptVal::Str(s)) => s.chars().next().unwrap_or(','),
+            _ => ',',
+        };
+        let quote = match opt_get(&input.options, "quote") {
+            Some(OptVal::Str(s)) => s.chars().next().unwrap_or('"'),
+            _ => '"',
+        };
+        let escape = match opt_get(&input.options, "escape") {
+            Some(OptVal::Str(s)) => s.chars().next(),
+            _ => None,
+        };
+        let skipinitialspace = opt_get(&input.options, "keepspace").is_none();
+        let doublequote = escape.is_none();
+        let header_rows = match opt_get(&input.options, "header-rows") {
+            Some(OptVal::Int(n)) => *n as usize,
+            _ => 0,
+        };
+        let stub_columns = match opt_get(&input.options, "stub-columns") {
+            Some(OptVal::Int(n)) => *n as usize,
+            _ => 0,
+        };
+        let header_option_rows: Vec<Vec<String>> = match opt_get(&input.options, "header") {
+            Some(OptVal::Str(h)) => {
+                parse_csv_text(h, delim, quote, escape, doublequote, skipinitialspace)
+            }
+            _ => Vec::new(),
+        };
+        let rows = parse_csv_text(
+            &csv_text,
+            delim,
+            quote,
+            escape,
+            doublequote,
+            skipinitialspace,
+        );
+        let max_header_cols = header_option_rows.iter().map(Vec::len).max().unwrap_or(0);
+        let max_cols = rows
+            .iter()
+            .map(Vec::len)
+            .max()
+            .unwrap_or(0)
+            .max(max_header_cols);
+        let row_lens: Vec<usize> = rows.iter().map(Vec::len).collect();
+        if let Err(msg) = Self::check_table_dimensions(
+            input.name,
+            rows.len(),
+            &row_lens,
+            header_rows,
+            stub_columns,
+        ) {
+            out.push(self.directive_run_error(&msg, input.lineno, input.rawsource));
+            return;
+        }
+        // Column widths (tables.py:101-118).
+        let widths_opt = opt_get(&input.options, "widths").cloned();
+        let col_widths: Vec<i64> = match &widths_opt {
+            Some(OptVal::IntList(list)) => {
+                if list.len() != max_cols {
+                    out.push(self.directive_run_error(
+                        &format!(
+                            "\"{}\" widths do not match the number of columns in table ({}).",
+                            input.name, max_cols
+                        ),
+                        input.lineno,
+                        input.rawsource,
+                    ));
+                    return;
+                }
+                list.clone()
+            }
+            _ => {
+                if max_cols == 0 {
+                    out.push(self.directive_run_error(
+                        "No table data detected in CSV file.",
+                        input.lineno,
+                        input.rawsource,
+                    ));
+                    return;
+                }
+                vec![(100 / max_cols) as i64; max_cols]
+            }
+        };
+        // Cells -> entry nodes; short rows extend with empty cells.
+        let mut make_row = |cells: &[String]| -> Vec<Node> {
+            let mut entries = Vec::with_capacity(max_cols);
+            for i in 0..max_cols {
+                let mut entry = Node::elem(kinds::ENTRY, input.span);
+                if let Some(cell) = cells.get(i) {
+                    if !cell.is_empty() {
+                        entry.children = self.parse_detached(cell, input.lineno, "entry");
+                    }
+                }
+                entries.push(entry);
+            }
+            entries
+        };
+        let mut head: Vec<Vec<Node>> = Vec::new();
+        let mut body: Vec<Vec<Node>> = Vec::new();
+        for cells in &header_option_rows {
+            head.push(make_row(cells));
+        }
+        for (i, cells) in rows.iter().enumerate() {
+            if i < header_rows {
+                head.push(make_row(cells));
+            } else {
+                body.push(make_row(cells));
+            }
+        }
+        let mut table = Self::build_directive_table(
+            &col_widths,
+            stub_columns,
+            widths_opt.as_ref(),
+            head,
+            body,
+            input.span,
+        );
+        if let Some(OptVal::StrList(cls)) = opt_get(&input.options, "class") {
+            table.attrs.classes.extend(cls.iter().cloned());
+        }
+        self.finish_table(table, &input, title, title_messages, out);
+    }
+
+    /// list-table (tables.py ListTable:406-523).
+    fn run_list_table(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        if input.content.is_empty() {
+            out.push(self.directive_run_error(
+                &format!(
+                    "The \"{}\" directive is empty; content required.",
+                    input.name
+                ),
+                input.lineno,
+                input.rawsource,
+            ));
+            return;
+        }
+        let (title, title_messages) = self.table_make_title(&input);
+        let children = self.parse_nested(&input.content, "element");
+        let content_error = |me: &Self, detail: &str| -> Node {
+            me.directive_run_error(
+                &format!(
+                    "Error parsing content block for the \"{}\" directive: {detail}",
+                    input.name
+                ),
+                input.lineno,
+                input.rawsource,
+            )
+        };
+        if children.len() != 1 || children[0].kind != kinds::BULLET_LIST {
+            out.push(content_error(self, "exactly one bullet list expected."));
+            return;
+        }
+        let outer = children.into_iter().next().expect("length checked");
+        let mut table_data: Vec<Vec<Vec<Node>>> = Vec::new();
+        let mut first_len: Option<usize> = None;
+        for (i, item) in outer.children.into_iter().enumerate() {
+            let one_inner_list =
+                item.children.len() == 1 && item.children[0].kind == kinds::BULLET_LIST;
+            if !one_inner_list {
+                out.push(content_error(
+                    self,
+                    &format!(
+                        "two-level bullet list expected, but row {} does not contain a second-level bullet list.",
+                        i + 1
+                    ),
+                ));
+                return;
+            }
+            let inner = item.children.into_iter().next().expect("length checked");
+            let row: Vec<Vec<Node>> = inner.children.into_iter().map(|it| it.children).collect();
+            if let Some(f) = first_len {
+                if row.len() != f {
+                    out.push(content_error(
+                        self,
+                        &format!(
+                            "uniform two-level bullet list expected, but row {} does not contain the same number of items as row 1 ({} vs {}).",
+                            i + 1,
+                            row.len(),
+                            f
+                        ),
+                    ));
+                    return;
+                }
+            } else {
+                first_len = Some(row.len());
+            }
+            table_data.push(row);
+        }
+        let header_rows = match opt_get(&input.options, "header-rows") {
+            Some(OptVal::Int(n)) => *n as usize,
+            _ => 0,
+        };
+        let stub_columns = match opt_get(&input.options, "stub-columns") {
+            Some(OptVal::Int(n)) => *n as usize,
+            _ => 0,
+        };
+        let row_lens: Vec<usize> = table_data.iter().map(Vec::len).collect();
+        if let Err(msg) = Self::check_table_dimensions(
+            input.name,
+            table_data.len(),
+            &row_lens,
+            header_rows,
+            stub_columns,
+        ) {
+            out.push(self.directive_run_error(&msg, input.lineno, input.rawsource));
+            return;
+        }
+        let n_cols = first_len.unwrap_or(0);
+        let widths_opt = opt_get(&input.options, "widths").cloned();
+        let col_widths: Vec<i64> = match &widths_opt {
+            Some(OptVal::IntList(list)) => {
+                if list.len() != n_cols {
+                    out.push(self.directive_run_error(
+                        &format!(
+                            "\"{}\" widths do not match the number of columns in table ({}).",
+                            input.name, n_cols
+                        ),
+                        input.lineno,
+                        input.rawsource,
+                    ));
+                    return;
+                }
+                list.clone()
+            }
+            _ => {
+                if n_cols == 0 {
+                    out.push(content_error(self, "exactly one bullet list expected."));
+                    return;
+                }
+                vec![(100 / n_cols) as i64; n_cols]
+            }
+        };
+        let mut all_rows: Vec<Vec<Node>> = Vec::new();
+        for row in table_data {
+            let entries: Vec<Node> = row
+                .into_iter()
+                .map(|cell_children| {
+                    let mut entry = Node::elem(kinds::ENTRY, input.span);
+                    entry.children = cell_children;
+                    entry
+                })
+                .collect();
+            all_rows.push(entries);
+        }
+        let body = all_rows.split_off(header_rows.min(all_rows.len()));
+        let head = all_rows;
+        let mut table = Self::build_directive_table(
+            &col_widths,
+            stub_columns,
+            widths_opt.as_ref(),
+            head,
+            body,
+            input.span,
+        );
+        if let Some(OptVal::StrList(cls)) = opt_get(&input.options, "class") {
+            table.attrs.classes.extend(cls.iter().cloned());
+        }
+        self.finish_table(table, &input, title, title_messages, out);
+    }
+
+    /// check_table_dimensions (tables.py:59-91). Err = the message text.
+    fn check_table_dimensions(
+        name: &str,
+        rows: usize,
+        row_lens: &[usize],
+        header_rows: usize,
+        stub_columns: usize,
+    ) -> Result<(), String> {
+        if rows < header_rows {
+            return Err(format!(
+                "{header_rows} header row(s) specified but only {rows} row(s) of data supplied (\"{name}\" directive)."
+            ));
+        }
+        if rows == header_rows && header_rows > 0 {
+            return Err(format!(
+                "Insufficient data supplied ({rows} row(s)); no data remaining for table body, required by \"{name}\" directive."
+            ));
+        }
+        for len in row_lens {
+            if *len < stub_columns {
+                return Err(format!(
+                    "{stub_columns} stub column(s) specified but only {len} columns(s) of data supplied (\"{name}\" directive)."
+                ));
+            }
+            if *len == stub_columns && stub_columns > 0 {
+                return Err(format!(
+                    "Insufficient data supplied ({len} columns(s)); no data remaining for table body, required by \"{name}\" directive."
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// build_table (states.py:1911-1953) for the csv/list table paths.
+    fn build_directive_table(
+        col_widths: &[i64],
+        stub_columns: usize,
+        widths_opt: Option<&OptVal>,
+        head: Vec<Vec<Node>>,
+        body: Vec<Vec<Node>>,
+        span: Span,
+    ) -> Node {
+        let mut table = Node::elem(kinds::TABLE, span);
+        match widths_opt {
+            Some(OptVal::Str(kw)) if kw == "auto" => {
+                table.attrs.classes.push("colwidths-auto".to_string());
+            }
+            Some(OptVal::IntList(_)) => {
+                table.attrs.classes.push("colwidths-given".to_string());
+            }
+            _ => {}
+        }
+        let mut tgroup = Node::elem(kinds::TGROUP, span);
+        tgroup.set("cols", AttrValue::Int(col_widths.len() as i64));
+        for (i, w) in col_widths.iter().enumerate() {
+            let mut colspec = Node::elem(kinds::COLSPEC, span);
+            colspec.set("colwidth", AttrValue::Int(*w));
+            if i < stub_columns {
+                colspec.set("stub", AttrValue::Int(1));
+            }
+            tgroup.children.push(colspec);
+        }
+        let build_rows = |rows: Vec<Vec<Node>>| -> Vec<Node> {
+            rows.into_iter()
+                .map(|entries| {
+                    let mut row = Node::elem(kinds::ROW, span);
+                    row.children = entries;
+                    row
+                })
+                .collect()
+        };
+        if !head.is_empty() {
+            let mut thead = Node::elem(kinds::THEAD, span);
+            thead.children = build_rows(head);
+            tgroup.children.push(thead);
+        }
+        let mut tbody = Node::elem(kinds::TBODY, span);
+        tbody.children = build_rows(body);
+        tgroup.children.push(tbody);
+        table.children.push(tgroup);
+        table
     }
 
     /// topic + sidebar (body.py BasePseudoSection:21-96).
@@ -3825,6 +4393,112 @@ enum DirectiveKind {
     Raw,
     LineBlockDir,
     ClassDir,
+    RstTable,
+    CsvTable,
+    ListTable,
+}
+
+const TABLE_OPTS: &[(&str, Conv)] = &[
+    ("align", Conv::Choice(H_ALIGN_VALUES)),
+    ("class", Conv::ClassOption),
+    ("name", Conv::Unchanged),
+    ("width", Conv::LengthOrPercentageOrUnitless("")),
+    ("widths", Conv::WidthsAutoGrid),
+];
+
+const CSV_TABLE_OPTS: &[(&str, Conv)] = &[
+    ("header-rows", Conv::NonnegativeInt),
+    ("stub-columns", Conv::NonnegativeInt),
+    ("header", Conv::Unchanged),
+    ("width", Conv::LengthOrPercentageOrUnitless("")),
+    ("widths", Conv::WidthsAuto),
+    ("file", Conv::Path),
+    ("url", Conv::Uri),
+    ("encoding", Conv::Encoding),
+    ("class", Conv::ClassOption),
+    ("name", Conv::Unchanged),
+    ("align", Conv::Choice(H_ALIGN_VALUES)),
+    ("delim", Conv::SingleCharOrWhitespaceOrUnicode),
+    ("keepspace", Conv::Flag),
+    ("quote", Conv::SingleCharOrUnicode),
+    ("escape", Conv::SingleCharOrUnicode),
+];
+
+const LIST_TABLE_OPTS: &[(&str, Conv)] = &[
+    ("header-rows", Conv::NonnegativeInt),
+    ("stub-columns", Conv::NonnegativeInt),
+    ("width", Conv::LengthOrPercentageOrUnitless("")),
+    ("widths", Conv::WidthsAuto),
+    ("class", Conv::ClassOption),
+    ("name", Conv::Unchanged),
+    ("align", Conv::Choice(H_ALIGN_VALUES)),
+];
+
+/// Python csv.reader over the option-configured dialect
+/// (tables.py DocutilsDialect): doublequote unless an escapechar is set,
+/// skipinitialspace unless :keepspace:, quoted cells may span lines.
+fn parse_csv_text(
+    text: &str,
+    delim: char,
+    quote: char,
+    escape: Option<char>,
+    doublequote: bool,
+    skipinitialspace: bool,
+) -> Vec<Vec<String>> {
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    let mut row: Vec<String> = Vec::new();
+    let mut cell = String::new();
+    let mut in_quotes = false;
+    let mut cell_started = false;
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if in_quotes {
+            if Some(c) == escape {
+                if let Some(n) = chars.next() {
+                    cell.push(n);
+                }
+            } else if c == quote {
+                if doublequote && chars.peek() == Some(&quote) {
+                    chars.next();
+                    cell.push(quote);
+                } else {
+                    in_quotes = false;
+                }
+            } else {
+                cell.push(c);
+            }
+            continue;
+        }
+        match c {
+            c if c == quote && !cell_started => {
+                in_quotes = true;
+                cell_started = true;
+            }
+            c if c == delim => {
+                row.push(std::mem::take(&mut cell));
+                cell_started = false;
+                if skipinitialspace {
+                    while chars.peek() == Some(&' ') {
+                        chars.next();
+                    }
+                }
+            }
+            '\n' => {
+                row.push(std::mem::take(&mut cell));
+                rows.push(std::mem::take(&mut row));
+                cell_started = false;
+            }
+            c => {
+                cell.push(c);
+                cell_started = true;
+            }
+        }
+    }
+    if !cell.is_empty() || !row.is_empty() {
+        row.push(cell);
+        rows.push(row);
+    }
+    rows
 }
 
 /// The docutils Directive class contract (rst/__init__.py:305-318).
@@ -3842,8 +4516,10 @@ struct DirectiveSpec {
 /// docutils conversion function, including its exact error text.
 #[derive(Clone, Copy)]
 enum Conv {
+    Flag,
     Unchanged,
     UnchangedRequired,
+    NonnegativeInt,
     Percentage,
     LengthOrUnitless,
     /// The &str is the docutils `default` unit suffix appended to unitless
@@ -3858,13 +4534,24 @@ enum Conv {
     Encoding,
     /// figure :figwidth:: the literal 'image' keyword or a length.
     Figwidth,
+    SingleCharOrUnicode,
+    SingleCharOrWhitespaceOrUnicode,
+    /// value_or(('auto', 'grid'), positive_int_list) — the table :widths:.
+    WidthsAutoGrid,
+    /// value_or(('auto',), positive_int_list) — csv/list-table :widths:.
+    WidthsAuto,
+    /// positive_int as used by the widths list elements.
+    PositiveIntForList,
 }
 
 /// Converted option values (Python-typed in docutils: None/str/int/list).
 #[derive(Clone, Debug, PartialEq)]
 enum OptVal {
+    /// flag options convert to Python None.
+    Null,
     Str(String),
     Int(i64),
+    IntList(Vec<i64>),
     StrList(Vec<String>),
 }
 
@@ -4073,6 +4760,30 @@ fn directive_spec(lower: &str) -> Option<DirectiveSpec> {
             option_spec: &[],
             kind: DirectiveKind::ClassDir,
         }),
+        "table" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 1,
+            final_argument_whitespace: true,
+            has_content: true,
+            option_spec: TABLE_OPTS,
+            kind: DirectiveKind::RstTable,
+        }),
+        "csv-table" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 1,
+            final_argument_whitespace: true,
+            has_content: true,
+            option_spec: CSV_TABLE_OPTS,
+            kind: DirectiveKind::CsvTable,
+        }),
+        "list-table" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 1,
+            final_argument_whitespace: true,
+            has_content: true,
+            option_spec: LIST_TABLE_OPTS,
+            kind: DirectiveKind::ListTable,
+        }),
         _ => None,
     }
 }
@@ -4218,6 +4929,81 @@ fn parse_extension_options(
 
 fn convert_option(conv: Conv, value: Option<&str>) -> Result<OptVal, String> {
     match conv {
+        Conv::Flag => match value {
+            Some(v) if !v.trim().is_empty() => {
+                Err(format!("no argument is allowed; \"{v}\" supplied"))
+            }
+            _ => Ok(OptVal::Null),
+        },
+        Conv::NonnegativeInt => {
+            let Some(v) = value else {
+                return Err(
+                    "int() argument must be a string, a bytes-like object or a real number, not 'NoneType'"
+                        .to_string(),
+                );
+            };
+            nonnegative_int(v)
+        }
+        Conv::SingleCharOrUnicode | Conv::SingleCharOrWhitespaceOrUnicode => {
+            let Some(v) = value else {
+                return Err("argument required but none supplied".to_string());
+            };
+            if matches!(conv, Conv::SingleCharOrWhitespaceOrUnicode) {
+                if v == "tab" {
+                    return Ok(OptVal::Str("\t".to_string()));
+                }
+                if v == "space" {
+                    return Ok(OptVal::Str(" ".to_string()));
+                }
+            }
+            let decoded = unicode_code(v)?;
+            if decoded.chars().count() != 1 {
+                return Err(format!(
+                    "{} invalid; must be a single character or a Unicode code",
+                    py_repr(Some(&decoded))
+                ));
+            }
+            Ok(OptVal::Str(decoded))
+        }
+        Conv::WidthsAutoGrid | Conv::WidthsAuto => {
+            let Some(v) = value else {
+                return Err("argument required but none supplied".to_string());
+            };
+            let keywords: &[&str] = if matches!(conv, Conv::WidthsAutoGrid) {
+                &["auto", "grid"]
+            } else {
+                &["auto"]
+            };
+            if keywords.contains(&v) {
+                return Ok(OptVal::Str(v.to_string()));
+            }
+            let parts: Vec<&str> = if v.contains(',') {
+                v.split(',').collect()
+            } else {
+                v.split_whitespace().collect()
+            };
+            let mut list = Vec::new();
+            for p in parts {
+                match convert_option(Conv::PositiveIntForList, Some(p.trim()))? {
+                    OptVal::Int(n) => list.push(n),
+                    _ => unreachable!(),
+                }
+            }
+            Ok(OptVal::IntList(list))
+        }
+        Conv::PositiveIntForList => {
+            let Some(v) = value else {
+                return Err("argument required but none supplied".to_string());
+            };
+            match py_int(v) {
+                Some(n) if n >= 1 => Ok(OptVal::Int(n)),
+                Some(_) => Err("negative or zero value; must be positive".to_string()),
+                None => Err(format!(
+                    "invalid literal for int() with base 10: {}",
+                    py_repr(Some(v))
+                )),
+            }
+        }
         Conv::Unchanged => Ok(OptVal::Str(value.unwrap_or("").to_string())),
         Conv::UnchangedRequired => match value {
             None => Err("argument required but none supplied".to_string()),
@@ -4327,6 +5113,41 @@ fn format_choice_values(values: &[&str]) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!("{}, or \"{}\"", init, values[values.len() - 1])
+}
+
+/// unicode_code (directives/__init__.py:330-352): decimal, hex forms
+/// (0x/x/\x/U+/\u/&#x...;), or the text itself when neither matches.
+fn unicode_code(code: &str) -> Result<String, String> {
+    if !code.is_empty() && code.bytes().all(|b| b.is_ascii_digit()) {
+        let n: u32 = code
+            .parse()
+            .map_err(|_| format!("code too large ({code})"))?;
+        return char::from_u32(n)
+            .map(|c| c.to_string())
+            .ok_or_else(|| "chr() arg not in range(0x110000)".to_string());
+    }
+    let lower = code.to_lowercase();
+    let hex = ["0x", "x", "\\x", "u+", "u", "\\u"]
+        .iter()
+        .find_map(|p| lower.strip_prefix(p))
+        .filter(|h| !h.is_empty() && h.bytes().all(|b| b.is_ascii_hexdigit()))
+        .map(|h| h.to_string())
+        .or_else(|| {
+            lower
+                .strip_prefix("&#x")
+                .and_then(|h| h.strip_suffix(';'))
+                .filter(|h| !h.is_empty() && h.bytes().all(|b| b.is_ascii_hexdigit()))
+                .map(|h| h.to_string())
+        });
+    match hex {
+        Some(h) => {
+            let n = u32::from_str_radix(&h, 16).map_err(|_| format!("code too large ({h})"))?;
+            char::from_u32(n)
+                .map(|c| c.to_string())
+                .ok_or_else(|| "chr() arg not in range(0x110000)".to_string())
+        }
+        None => Ok(code.to_string()),
+    }
 }
 
 /// nonnegative_int (directives/__init__.py:224-231), with Python's own

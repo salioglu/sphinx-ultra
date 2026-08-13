@@ -3109,6 +3109,210 @@
       "rst": ".. class::\n\n   Body.\n"
     },
     {
+      "family": "dir_tables",
+      "name": "dir_tables.table_title_widths_align",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table align=\"center\" classes=\"colwidths-given\">\n        <title>\n            Table Title\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"30\">\n            <colspec colwidth=\"70\">\n            <thead>\n                <row>\n                    <entry>\n                        <paragraph>\n                            A\n                    <entry>\n                        <paragraph>\n                            B\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            1\n                    <entry>\n                        <paragraph>\n                            2\n",
+      "rst": ".. table:: Table Title\n   :widths: 30 70\n   :align: center\n\n   =====  =====\n   A      B\n   =====  =====\n   1      2\n   =====  =====\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.table_plain",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"5\">\n            <colspec colwidth=\"5\">\n            <thead>\n                <row>\n                    <entry>\n                        <paragraph>\n                            A\n                    <entry>\n                        <paragraph>\n                            B\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            1\n                    <entry>\n                        <paragraph>\n                            2\n",
+      "rst": ".. table::\n\n   =====  =====\n   A      B\n   =====  =====\n   1      2\n   =====  =====\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.table_widths_auto",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table classes=\"colwidths-auto\">\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"5\">\n            <colspec colwidth=\"5\">\n            <thead>\n                <row>\n                    <entry>\n                        <paragraph>\n                            A\n                    <entry>\n                        <paragraph>\n                            B\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            1\n                    <entry>\n                        <paragraph>\n                            2\n",
+      "rst": ".. table::\n   :widths: auto\n\n   =====  =====\n   A      B\n   =====  =====\n   1      2\n   =====  =====\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.table_widths_grid",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table classes=\"colwidths-given\">\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"5\">\n            <colspec colwidth=\"5\">\n            <thead>\n                <row>\n                    <entry>\n                        <paragraph>\n                            A\n                    <entry>\n                        <paragraph>\n                            B\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            1\n                    <entry>\n                        <paragraph>\n                            2\n",
+      "rst": ".. table::\n   :widths: grid\n\n   =====  =====\n   A      B\n   =====  =====\n   1      2\n   =====  =====\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.table_widths_mismatch",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            \"table\" widths do not match the number of columns in table (2).\n        <literal_block xml:space=\"preserve\">\n            .. table::\n               :widths: 10 20 30\n            \n               =====  =====\n               A      B\n               =====  =====\n               1      2\n               =====  =====\n",
+      "rst": ".. table::\n   :widths: 10 20 30\n\n   =====  =====\n   A      B\n   =====  =====\n   1      2\n   =====  =====\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.table_widths_and_class",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table classes=\"mytable colwidths-given\">\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"30\">\n            <colspec colwidth=\"70\">\n            <thead>\n                <row>\n                    <entry>\n                        <paragraph>\n                            A\n                    <entry>\n                        <paragraph>\n                            B\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            1\n                    <entry>\n                        <paragraph>\n                            2\n",
+      "rst": ".. table::\n   :widths: 30 70\n   :class: mytable\n\n   =====  =====\n   A      B\n   =====  =====\n   1      2\n   =====  =====\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.table_no_content",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Content block expected for the \"table\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. table:: Title\n",
+      "rst": ".. table:: Title\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.table_not_exactly_one",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error parsing content block for the \"table\" directive: exactly one table expected.\n        <literal_block xml:space=\"preserve\">\n            .. table::\n            \n               just a paragraph\n",
+      "rst": ".. table::\n\n   just a paragraph\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.table_named",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table ids=\"tbl-one\" names=\"tbl\\ one\">\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"5\">\n            <colspec colwidth=\"5\">\n            <thead>\n                <row>\n                    <entry>\n                        <paragraph>\n                            A\n                    <entry>\n                        <paragraph>\n                            B\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            1\n                    <entry>\n                        <paragraph>\n                            2\n",
+      "rst": ".. table::\n   :name: tbl one\n\n   =====  =====\n   A      B\n   =====  =====\n   1      2\n   =====  =====\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.csv_header_widths_title",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table classes=\"colwidths-given\">\n        <title>\n            CSV Table Title\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"10\">\n            <colspec colwidth=\"20\">\n            <thead>\n                <row>\n                    <entry>\n                        <paragraph>\n                            A\n                    <entry>\n                        <paragraph>\n                            B\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            1\n                    <entry>\n                        <paragraph>\n                            2\n                <row>\n                    <entry>\n                        <paragraph>\n                            3\n                    <entry>\n                        <paragraph>\n                            4\n",
+      "rst": ".. csv-table:: CSV Table Title\n   :header: A, B\n   :widths: 10, 20\n\n   1, 2\n   3, 4\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.csv_bare",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"50\">\n            <colspec colwidth=\"50\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            1\n                    <entry>\n                        <paragraph>\n                            2\n                <row>\n                    <entry>\n                        <paragraph>\n                            3\n                    <entry>\n                        <paragraph>\n                            4\n",
+      "rst": ".. csv-table::\n\n   1, 2\n   3, 4\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.csv_header_rows",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"50\">\n            <colspec colwidth=\"50\">\n            <thead>\n                <row>\n                    <entry>\n                        <paragraph>\n                            A\n                    <entry>\n                        <paragraph>\n                            B\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            1\n                    <entry>\n                        <paragraph>\n                            2\n",
+      "rst": ".. csv-table::\n   :header-rows: 1\n\n   A, B\n   1, 2\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.csv_widths_auto",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table classes=\"colwidths-auto\">\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"50\">\n            <colspec colwidth=\"50\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            1\n                    <entry>\n                        <paragraph>\n                            2\n",
+      "rst": ".. csv-table::\n   :widths: auto\n\n   1, 2\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.csv_quoted_comma",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"50\">\n            <colspec colwidth=\"50\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            value, with comma\n                    <entry>\n                        <paragraph>\n                            plain\n",
+      "rst": ".. csv-table::\n\n   \"value, with comma\", plain\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.csv_stub_align_class",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table align=\"right\" classes=\"mytable\">\n        <title>\n            T\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"50\" stub=\"1\">\n            <colspec colwidth=\"50\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            a\n                    <entry>\n                        <paragraph>\n                            b\n                <row>\n                    <entry>\n                        <paragraph>\n                            c\n                    <entry>\n                        <paragraph>\n                            d\n",
+      "rst": ".. csv-table:: T\n   :stub-columns: 1\n   :align: right\n   :class: mytable\n\n   a, b\n   c, d\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.csv_class_plus_widths",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table classes=\"colwidths-given mine\">\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"40\">\n            <colspec colwidth=\"60\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            1\n                    <entry>\n                        <paragraph>\n                            2\n",
+      "rst": ".. csv-table::\n   :widths: 40, 60\n   :class: mine\n\n   1, 2\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.csv_header_rows_exceed",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            3 header row(s) specified but only 1 row(s) of data supplied (\"csv-table\" directive).\n        <literal_block xml:space=\"preserve\">\n            .. csv-table::\n               :header-rows: 3\n            \n               1, 2\n",
+      "rst": ".. csv-table::\n   :header-rows: 3\n\n   1, 2\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.csv_all_header_no_body",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Insufficient data supplied (1 row(s)); no data remaining for table body, required by \"csv-table\" directive.\n        <literal_block xml:space=\"preserve\">\n            .. csv-table::\n               :header-rows: 1\n            \n               only, row\n",
+      "rst": ".. csv-table::\n   :header-rows: 1\n\n   only, row\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.csv_empty_warning",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            The \"csv-table\" directive requires content; none supplied.\n        <literal_block xml:space=\"preserve\">\n            .. csv-table::\n",
+      "rst": ".. csv-table::\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.csv_file_and_content",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            \"csv-table\" directive may not both specify an external file and have content.\n        <literal_block xml:space=\"preserve\">\n            .. csv-table::\n               :file: data.csv\n            \n               1, 2\n",
+      "rst": ".. csv-table::\n   :file: data.csv\n\n   1, 2\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.csv_missing_file",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"4\" line=\"1\" source=\"<snippet>\" type=\"SEVERE\">\n        <paragraph>\n            Problems with \"csv-table\" directive path:\n            [Errno 2] No such file or directory: 'nonexistent-table-data.csv'.\n        <literal_block xml:space=\"preserve\">\n            .. csv-table::\n               :file: nonexistent-table-data.csv\n",
+      "rst": ".. csv-table::\n   :file: nonexistent-table-data.csv\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.csv_delim_option",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"50\">\n            <colspec colwidth=\"50\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            1\n                    <entry>\n                        <paragraph>\n                            2\n",
+      "rst": ".. csv-table::\n   :delim: ;\n\n   1; 2\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.csv_short_rows",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"3\">\n            <colspec colwidth=\"33\">\n            <colspec colwidth=\"33\">\n            <colspec colwidth=\"33\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            1\n                    <entry>\n                        <paragraph>\n                            2\n                    <entry>\n                        <paragraph>\n                            3\n                <row>\n                    <entry>\n                        <paragraph>\n                            4\n                    <entry>\n                    <entry>\n",
+      "rst": ".. csv-table::\n\n   1, 2, 3\n   4\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.csv_multiline_quoted_cell",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"50\">\n            <colspec colwidth=\"50\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            line one\n                            line two\n                    <entry>\n                        <paragraph>\n                            second\n",
+      "rst": ".. csv-table::\n\n   \"line one\n   line two\", second\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.csv_keepspace",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"50\">\n            <colspec colwidth=\"50\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            1\n                    <entry>\n                        <block_quote>\n                            <paragraph>\n                                spaced\n",
+      "rst": ".. csv-table::\n   :keepspace:\n\n   1,  spaced\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.list_basic_header",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table classes=\"colwidths-given\">\n        <title>\n            List Table Title\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"10\">\n            <colspec colwidth=\"20\">\n            <thead>\n                <row>\n                    <entry>\n                        <paragraph>\n                            A\n                    <entry>\n                        <paragraph>\n                            B\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            1\n                    <entry>\n                        <paragraph>\n                            2\n",
+      "rst": ".. list-table:: List Table Title\n   :header-rows: 1\n   :widths: 10 20\n\n   * - A\n     - B\n   * - 1\n     - 2\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.list_bare",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"50\">\n            <colspec colwidth=\"50\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            a\n                    <entry>\n                        <paragraph>\n                            b\n",
+      "rst": ".. list-table::\n\n   * - a\n     - b\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.list_row_mismatch",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error parsing content block for the \"list-table\" directive: uniform two-level bullet list expected, but row 2 does not contain the same number of items as row 1 (1 vs 2).\n        <literal_block xml:space=\"preserve\">\n            .. list-table::\n            \n               * - a\n                 - b\n               * - only one\n",
+      "rst": ".. list-table::\n\n   * - a\n     - b\n   * - only one\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.list_not_bullet",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error parsing content block for the \"list-table\" directive: exactly one bullet list expected.\n        <literal_block xml:space=\"preserve\">\n            .. list-table::\n            \n               just a paragraph\n",
+      "rst": ".. list-table::\n\n   just a paragraph\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.list_no_second_level",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error parsing content block for the \"list-table\" directive: two-level bullet list expected, but row 1 does not contain a second-level bullet list.\n        <literal_block xml:space=\"preserve\">\n            .. list-table::\n            \n               * flat item\n",
+      "rst": ".. list-table::\n\n   * flat item\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.list_empty_error",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            The \"list-table\" directive is empty; content required.\n        <literal_block xml:space=\"preserve\">\n            .. list-table::\n",
+      "rst": ".. list-table::\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.list_stub_columns",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"50\" stub=\"1\">\n            <colspec colwidth=\"50\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            a\n                    <entry>\n                        <paragraph>\n                            b\n",
+      "rst": ".. list-table::\n   :stub-columns: 1\n\n   * - a\n     - b\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.list_widths_mismatch",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            \"list-table\" widths do not match the number of columns in table (2).\n        <literal_block xml:space=\"preserve\">\n            .. list-table::\n               :widths: 5 10 15\n            \n               * - a\n                 - b\n",
+      "rst": ".. list-table::\n   :widths: 5 10 15\n\n   * - a\n     - b\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.list_multi_block_cell",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"50\">\n            <colspec colwidth=\"50\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            para one\n                        <paragraph>\n                            para two\n                    <entry>\n                        <paragraph>\n                            b\n",
+      "rst": ".. list-table::\n\n   * - para one\n\n       para two\n     - b\n"
+    },
+    {
       "family": "review2",
       "name": "review2.multi_segment_role",
       "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            :py:func:`target`\n         end.\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            No role entry for \"py:func\" in module \"docutils.parsers.rst.languages.en\".\n            Trying \"py:func\" as canonical role name.\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown interpreted text role \"py:func\".\n",
