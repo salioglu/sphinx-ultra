@@ -640,26 +640,55 @@ impl SphinxBuilder {
     /// real project in noise.
     fn validate_directives_and_roles(&self, processed_docs: &[Document]) {
         use crate::directives::validation::{
-            DirectiveRoleParser, DirectiveValidationResult, DirectiveValidationSystem,
-            RoleValidationResult,
+            DirectiveValidationResult, DirectiveValidationSystem, ParsedDirective, ParsedRole,
+            RoleValidationResult, SourceLocation,
         };
         use crate::document::DocumentContent;
 
         let results: Vec<(Vec<BuildWarning>, usize)> = processed_docs
             .par_iter()
             .filter_map(|doc| {
-                let raw = match &doc.content {
-                    DocumentContent::RestructuredText(rst) => &rst.raw,
-                    _ => return None,
-                };
+                if !matches!(&doc.content, DocumentContent::RestructuredText(_)) {
+                    return None;
+                }
 
                 let mut warnings = Vec::new();
                 let mut unknown = 0usize;
                 // Statistics make validate_* take &mut self, so each document
                 // gets its own (cheap) system instance for the parallel pass.
                 let mut system = DirectiveValidationSystem::new();
-                let parser = DirectiveRoleParser::new(doc.source_path.display().to_string());
-                let (directives, roles) = parser.parse_content(raw);
+                // Since wave 3 the feed comes from the parse-time records
+                // (M1-scanner-compatible tuples), not a raw re-scan.
+                let file = doc.source_path.display().to_string();
+                let directives: Vec<ParsedDirective> = doc
+                    .directive_records
+                    .iter()
+                    .map(|r| ParsedDirective {
+                        name: r.name.clone(),
+                        arguments: r.arguments.clone(),
+                        options: r.options.iter().cloned().collect(),
+                        content: r.content.clone(),
+                        location: SourceLocation {
+                            file: file.clone(),
+                            line: r.line as usize,
+                            column: 0,
+                        },
+                    })
+                    .collect();
+                let roles: Vec<ParsedRole> = doc
+                    .role_records
+                    .iter()
+                    .map(|r| ParsedRole {
+                        name: r.name.clone(),
+                        target: r.target.clone(),
+                        display_text: r.display.clone(),
+                        location: SourceLocation {
+                            file: file.clone(),
+                            line: r.line as usize,
+                            column: 0,
+                        },
+                    })
+                    .collect();
 
                 for directive in &directives {
                     match system.validate_directive(directive) {
@@ -718,14 +747,11 @@ impl SphinxBuilder {
     /// reporting them broken would false-positive on every third-party ref.
     fn validate_cross_references(&self, processed_docs: &[Document]) -> Result<()> {
         use crate::document::DocumentContent;
-        use crate::domains::parser::ReferenceParser;
         use crate::domains::rst::RstDomain;
         use crate::domains::{DomainRegistry, ReferenceType};
 
         // docutils label matching is case-insensitive: normalize both sides.
         let normalize_label = |label: &str| label.trim().to_lowercase();
-        // `.. _label:` and `.. _label: target` both define `label`.
-        let label_regex = regex::Regex::new(r"^\.\.\s+_([^:]+):").expect("static regex");
 
         let mut rst_domain = RstDomain::new();
         for doc in processed_docs {
@@ -738,23 +764,20 @@ impl SphinxBuilder {
             };
             rst_domain.register_document(docname.clone(), doc.title.clone(), location.clone())?;
 
-            // Explicit `.. _label:` targets from the raw source (the prototype
-            // parser has no target nodes until M2).
-            if let DocumentContent::RestructuredText(rst) = &doc.content {
-                for (idx, line) in rst.raw.lines().enumerate() {
-                    if let Some(cap) = label_regex.captures(line) {
-                        let label = normalize_label(&cap[1]);
-                        rst_domain.register_label(
-                            label,
-                            "section".to_string(),
-                            None,
-                            docname.clone(),
-                            crate::domains::ReferenceLocation {
-                                lineno: Some(idx + 1),
-                                ..location.clone()
-                            },
-                        )?;
-                    }
+            // Explicit targets from the doctree (docutils-normalized names,
+            // which are already lowercase).
+            if matches!(&doc.content, DocumentContent::RestructuredText(_)) {
+                for label in &doc.labels {
+                    rst_domain.register_label(
+                        normalize_label(&label.name),
+                        "section".to_string(),
+                        None,
+                        docname.clone(),
+                        crate::domains::ReferenceLocation {
+                            lineno: Some(label.line),
+                            ..location.clone()
+                        },
+                    )?;
                 }
             }
 
@@ -778,43 +801,80 @@ impl SphinxBuilder {
         let mut registry = DomainRegistry::new();
         registry.register_domain(Box::new(rst_domain))?;
 
-        let reference_parser = ReferenceParser::new();
         let mut python_refs = 0usize;
         for doc in processed_docs {
-            let raw = match &doc.content {
-                DocumentContent::RestructuredText(rst) => &rst.raw,
-                _ => continue,
-            };
+            if !matches!(&doc.content, DocumentContent::RestructuredText(_)) {
+                continue;
+            }
             let docname = self.docname_of(doc);
-            let refs = reference_parser.parse_content(
-                raw,
-                &docname,
-                Some(doc.source_path.display().to_string()),
-            );
-            for mut reference in refs {
-                if reference.is_external {
+            // Since wave 3: role occurrences come from the parse-time
+            // records (all roles; unmapped ones are dropped exactly like
+            // the M1 scanner's Custom type).
+            for record in &doc.role_records {
+                let ref_type = match record.name.as_str() {
+                    "doc" => ReferenceType::Document,
+                    "ref" => ReferenceType::Section,
+                    "func" => ReferenceType::Function,
+                    "class" => ReferenceType::Class,
+                    "mod" => ReferenceType::Module,
+                    "meth" => ReferenceType::Method,
+                    "attr" => ReferenceType::Attribute,
+                    "data" => ReferenceType::Data,
+                    "exc" => ReferenceType::Exception,
+                    _ => continue,
+                };
+                // External-reference heuristics (M1 parity): URL-ish doc
+                // targets and known-stdlib python targets are skipped.
+                let external = match &ref_type {
+                    ReferenceType::Document => {
+                        record.target.starts_with("http://")
+                            || record.target.starts_with("https://")
+                            || record.target.starts_with("file://")
+                    }
+                    ReferenceType::Function | ReferenceType::Class | ReferenceType::Module => [
+                        "builtins.",
+                        "typing.",
+                        "collections.",
+                        "pathlib.",
+                        "os.",
+                        "sys.",
+                        "json.",
+                        "re.",
+                        "datetime.",
+                        "urllib.",
+                        "http.",
+                    ]
+                    .iter()
+                    .any(|p| record.target.starts_with(p)),
+                    _ => false,
+                };
+                if external {
                     continue;
                 }
-                match reference.ref_type {
-                    ReferenceType::Document => {
-                        // :doc: targets resolve like toctree entries: leading
-                        // `/` is source-root-relative, else current-doc-relative.
-                        reference.target = resolve_docname(&reference.target, &docname);
-                        registry.add_cross_reference(reference);
+                match ref_type {
+                    ReferenceType::Document | ReferenceType::Section => {
+                        let target = if matches!(ref_type, ReferenceType::Document) {
+                            // :doc: targets resolve like toctree entries:
+                            // leading `/` is source-root-relative, else
+                            // current-doc-relative.
+                            resolve_docname(&record.target, &docname)
+                        } else {
+                            normalize_label(&record.target)
+                        };
+                        registry.add_cross_reference(crate::domains::CrossReference {
+                            ref_type,
+                            target,
+                            display_text: record.display.clone(),
+                            source_location: crate::domains::ReferenceLocation {
+                                docname: docname.clone(),
+                                lineno: Some(record.line as usize),
+                                column: None,
+                                source_path: Some(doc.source_path.display().to_string()),
+                            },
+                            is_external: false,
+                        });
                     }
-                    ReferenceType::Section => {
-                        reference.target = normalize_label(&reference.target);
-                        registry.add_cross_reference(reference);
-                    }
-                    ReferenceType::Function
-                    | ReferenceType::Class
-                    | ReferenceType::Module
-                    | ReferenceType::Method
-                    | ReferenceType::Attribute
-                    | ReferenceType::Data
-                    | ReferenceType::Exception => python_refs += 1,
-                    // numref/envvar/option and friends: no resolver yet.
-                    ReferenceType::Custom(_) => {}
+                    _ => python_refs += 1,
                 }
             }
         }
@@ -858,69 +918,27 @@ impl SphinxBuilder {
         Ok(())
     }
 
-    /// Extract toctree entries with their real line numbers by re-scanning the
-    /// raw source from each toctree directive's position (the parsed directive
-    /// content has lost its line offsets).
+    /// Toctree entries from the parse-time records (wave 3: authored
+    /// entries with their real per-entry line numbers; no raw re-scan).
     fn extract_toctree_references(&self, doc: &Document) -> Vec<ToctreeEntry> {
-        use crate::document::DocumentContent;
-
         let mut entries = Vec::new();
-
-        let rst_content = match &doc.content {
-            DocumentContent::RestructuredText(rst) => rst,
-            _ => return entries,
-        };
-
-        let raw_lines: Vec<&str> = rst_content.raw.lines().collect();
-
-        for node in &rst_content.ast {
-            let (options, directive_line) = match node {
-                crate::document::RstNode::Directive {
-                    name,
-                    options,
-                    line,
-                    ..
-                } if name == "toctree" => (options, *line),
-                _ => continue,
-            };
-            let glob_enabled = options.contains_key("glob");
-
-            // Scan the block following the `.. toctree::` marker line.
-            for (idx, raw_line) in raw_lines.iter().enumerate().skip(directive_line) {
-                let trimmed = raw_line.trim();
-                if trimmed.is_empty() {
-                    continue;
-                }
-                if !raw_line.starts_with(' ') && !raw_line.starts_with('\t') {
-                    break; // dedent ends the directive block
-                }
-                if trimmed.starts_with(':') {
-                    continue; // option line (docnames cannot start with ':')
-                }
-
-                // `Title <target>` form: the angle brackets carry the target.
-                let target = match (trimmed.rfind('<'), trimmed.ends_with('>')) {
-                    (Some(pos), true) => trimmed[pos + 1..trimmed.len() - 1].trim(),
-                    _ => trimmed,
-                };
-
-                // External URLs and the `self` keyword are valid entries that
-                // do not reference source documents.
-                if target.starts_with("http://")
-                    || target.starts_with("https://")
-                    || target == "self"
+        for toctree in &doc.toctrees {
+            for entry in &toctree.entries {
+                // External URLs and the `self` keyword are valid entries
+                // that do not reference source documents.
+                if entry.target.starts_with("http://")
+                    || entry.target.starts_with("https://")
+                    || entry.target == "self"
                 {
                     continue;
                 }
-
                 entries.push(ToctreeEntry {
-                    target: target.to_string(),
-                    line: idx + 1,
-                    is_glob: glob_enabled && target.contains(['*', '?', '[']),
+                    target: entry.target.clone(),
+                    line: entry.line as usize,
+                    is_glob: toctree.glob && entry.target.contains(['*', '?', '[']),
                 });
             }
         }
-
         entries
     }
 

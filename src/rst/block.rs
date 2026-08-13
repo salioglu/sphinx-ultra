@@ -138,6 +138,12 @@ pub(crate) struct BlockParser<'a> {
     /// `state_machine.node`); None at document/section level. Directives
     /// like topic/sidebar validate their direct parent against this.
     nested_node_kind: Option<&'static str>,
+    /// Sphinx mode (see [`super::ParseOptions::sphinx`]).
+    pub(crate) sphinx: bool,
+    /// Validation-feed records collected during the parse.
+    directive_records: Vec<super::DirectiveRecord>,
+    role_records: Vec<super::RoleRecord>,
+    toctree_records: Vec<super::ToctreeRecord>,
     /// Set while running a substitution-embedded directive (docutils
     /// SubstitutionDef state): replace/unicode/date require it, image
     /// flips its align validation, unicode's trim flags land here.
@@ -172,10 +178,108 @@ impl<'a> BlockParser<'a> {
             depth: 0,
             line_bias: 0,
             nested_node_kind: None,
+            sphinx: false,
+            directive_records: Vec::new(),
+            role_records: Vec::new(),
+            toctree_records: Vec::new(),
             substitution_ctx: None,
             substitution_names_seen: Vec::new(),
             substitution_dupnames: Vec::new(),
         }
+    }
+
+    /// parse_document plus the flat build-pipeline records.
+    pub(crate) fn parse_document_full(mut self) -> super::ParseOutput {
+        let root = self.parse_document_impl();
+        super::ParseOutput {
+            doctree: crate::doctree::Doctree { root },
+            directive_records: std::mem::take(&mut self.directive_records),
+            role_records: std::mem::take(&mut self.role_records),
+            toctrees: std::mem::take(&mut self.toctree_records),
+        }
+    }
+
+    /// Validation-feed record with the M1 validation-scanner's semantics
+    /// (spec-INdependent, so registered and unknown directives record the
+    /// same way): whitespace-split args, marker-line text routed to
+    /// content for the admonition name set, raw string options.
+    fn capture_directive_record(
+        &mut self,
+        name: &str,
+        first_line: &LineRef<'a>,
+        block: &[LineRef<'a>],
+        lineno: u32,
+    ) {
+        const INLINE_ADMONITIONS: &[&str] = &[
+            "note",
+            "warning",
+            "tip",
+            "hint",
+            "important",
+            "caution",
+            "danger",
+            "error",
+            "attention",
+            "seealso",
+        ];
+        let mut options: Vec<(String, String)> = Vec::new();
+        let mut content_lines: Vec<String> = Vec::new();
+        let marker_text = first_line.text.trim();
+        let lower = name.to_lowercase();
+        let is_admonition = INLINE_ADMONITIONS.contains(&lower.as_str());
+        if is_admonition && !marker_text.is_empty() {
+            content_lines.push(marker_text.to_string());
+        }
+        // Leading option lines; everything after is content.
+        let mut in_options = true;
+        for l in block {
+            if l.is_blank() {
+                if !in_options {
+                    content_lines.push(String::new());
+                }
+                continue;
+            }
+            if in_options {
+                if let Some((oname, body_start)) = field_marker(l.text.trim_start()) {
+                    let base = l.text.len() - l.text.trim_start().len();
+                    let val = l.text[base + body_start..].trim().to_string();
+                    options.push((oname, val));
+                    continue;
+                }
+                in_options = false;
+            }
+            content_lines.push(l.text.to_string());
+        }
+        while content_lines.last().map(|l| l.is_empty()).unwrap_or(false) {
+            content_lines.pop();
+        }
+        let arguments: Vec<String> = if is_admonition {
+            Vec::new()
+        } else {
+            marker_text.split_whitespace().map(str::to_string).collect()
+        };
+        self.directive_records.push(super::DirectiveRecord {
+            name: name.to_string(),
+            arguments,
+            options,
+            content: content_lines.join("\n"),
+            line: lineno,
+        });
+    }
+
+    /// Inline parse through the parser's own registry/mode; collects role
+    /// records emitted by the inliner.
+    fn inline(&mut self, text: &str, span: Span, lineno: u32) -> super::inline::InlineResult {
+        let mut result = super::inline::parse_inline_ext(
+            text,
+            span,
+            lineno,
+            &mut self.registry,
+            self.source_path,
+            self.sphinx,
+        );
+        self.role_records.append(&mut result.roles);
+        result
     }
 
     /// parse_elements with the containing node kind recorded (docutils
@@ -250,7 +354,7 @@ impl<'a> BlockParser<'a> {
     // document level (the only level where titles match)
     // ------------------------------------------------------------------
 
-    pub(crate) fn parse_document(mut self) -> Node {
+    fn parse_document_impl(&mut self) -> Node {
         let mut root = Node::elem(
             kinds::DOCUMENT,
             Span {
@@ -354,13 +458,7 @@ impl<'a> BlockParser<'a> {
             Self::close_section(root, stack);
         }
 
-        let inline = super::inline::parse_inline(
-            &start.title,
-            start.span,
-            start.title_lineno,
-            &mut self.registry,
-            self.source_path,
-        );
+        let inline = self.inline(&start.title, start.span, start.title_lineno);
         let mut title = Node::elem(kinds::TITLE, start.span);
         title.children = inline.nodes;
         // Section name from the title's TEXT content (markup stripped).
@@ -753,13 +851,7 @@ impl<'a> BlockParser<'a> {
         let (text, expect_literal) = strip_literal_colons(&joined);
         let span = self.span_of(lines, start, end.saturating_sub(1));
         if !text.is_empty() {
-            let result = super::inline::parse_inline(
-                &text,
-                span,
-                lines[start].lineno,
-                &mut self.registry,
-                self.source_path,
-            );
+            let result = self.inline(&text, span, lines[start].lineno);
             let mut para = Node::elem(kinds::PARAGRAPH, span);
             para.children = result.nodes;
             out.push(para);
@@ -1141,25 +1233,13 @@ impl<'a> BlockParser<'a> {
             let mut parts = split_classifiers(term_line.text).into_iter();
             let term_text = parts.next().unwrap_or_default();
             let mut term_msgs = Vec::new();
-            let inline = super::inline::parse_inline(
-                &term_text,
-                term_span,
-                term_line.lineno,
-                &mut self.registry,
-                self.source_path,
-            );
+            let inline = self.inline(&term_text, term_span, term_line.lineno);
             let mut term = Node::elem(kinds::TERM, term_span);
             term.children = inline.nodes;
             term_msgs.extend(inline.messages);
             item.children.push(term);
             for classifier in parts {
-                let inline = super::inline::parse_inline(
-                    &classifier,
-                    term_span,
-                    term_line.lineno,
-                    &mut self.registry,
-                    self.source_path,
-                );
+                let inline = self.inline(&classifier, term_span, term_line.lineno);
                 let mut c = Node::elem(kinds::CLASSIFIER, term_span);
                 c.children = inline.nodes;
                 term_msgs.extend(inline.messages);
@@ -1286,13 +1366,7 @@ impl<'a> BlockParser<'a> {
             let mut attr_messages = Vec::new();
             if let Some((raw_attr, lineno)) = attribution {
                 let raw = raw_attr.astext();
-                let inline = super::inline::parse_inline(
-                    &raw,
-                    raw_attr.span,
-                    lineno,
-                    &mut self.registry,
-                    self.source_path,
-                );
+                let inline = self.inline(&raw, raw_attr.span, lineno);
                 let mut a = Node::elem(kinds::ATTRIBUTION, raw_attr.span);
                 a.children = inline.nodes;
                 attr_messages = inline.messages;
@@ -1374,13 +1448,7 @@ impl<'a> BlockParser<'a> {
             if text.is_empty() {
                 resolved.push((d, Vec::new()));
             } else {
-                let inline = super::inline::parse_inline(
-                    &text,
-                    span,
-                    first_lineno,
-                    &mut self.registry,
-                    self.source_path,
-                );
+                let inline = self.inline(&text, span, first_lineno);
                 lb_messages.extend(inline.messages);
                 resolved.push((d, inline.nodes));
             }
@@ -1716,13 +1784,7 @@ impl<'a> BlockParser<'a> {
             body_lines.extend(block.iter().copied());
             *pos += 1 + consumed;
 
-            let name_inline = super::inline::parse_inline(
-                &name_raw,
-                field_span,
-                lineno,
-                &mut self.registry,
-                self.source_path,
-            );
+            let name_inline = self.inline(&name_raw, field_span, lineno);
             let mut field = Node::elem(kinds::FIELD, field_span);
             let mut fname = Node::elem(kinds::FIELD_NAME, field_span);
             fname.children = name_inline.nodes;
@@ -2583,8 +2645,9 @@ impl<'a> BlockParser<'a> {
         presets: Vec<(String, OptVal)>,
         out: &mut Vec<Node>,
     ) {
+        self.capture_directive_record(name, &first_line, block, lineno);
         let lower = name.to_lowercase();
-        let Some(spec) = directive_spec(&lower) else {
+        let Some(spec) = directive_spec_mode(&lower, self.sphinx) else {
             // Unknown: INFO (language-resolution narrative) + ERROR.
             out.push(self.msg(
                 messages::INFO,
@@ -2750,7 +2813,52 @@ impl<'a> BlockParser<'a> {
             DirectiveKind::Replace => self.run_replace(input, out),
             DirectiveKind::UnicodeDir => self.run_unicode(input, out),
             DirectiveKind::DateDir => self.run_date(input, out),
+            DirectiveKind::Toctree => self.run_toctree(input, out),
         }
+    }
+
+    /// sphinx toctree: entries recorded (as authored, with per-entry
+    /// lines) for the build pipeline; the node is a best-effort
+    /// `compound.toctree-wrapper > toctree` (probe shape; exact attr
+    /// parity lands with the sphinx-fixture toctree cases).
+    fn run_toctree(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        let glob = matches!(opt_get(&input.options, "glob"), Some(OptVal::Null));
+        let mut entries: Vec<super::ToctreeEntryRecord> = Vec::new();
+        for l in &input.content {
+            if l.is_blank() {
+                continue;
+            }
+            let t = l.text.trim();
+            // sphinx explicit_title_re: `Title <target>`.
+            let (title, target) = match (t.rfind('<'), t.ends_with('>')) {
+                (Some(lt), true) if lt + 1 < t.len() - 1 || lt + 1 == t.len() - 1 => (
+                    Some(t[..lt].trim_end().to_string()),
+                    t[lt + 1..t.len() - 1].to_string(),
+                ),
+                _ => (None, t.to_string()),
+            };
+            entries.push(super::ToctreeEntryRecord {
+                title,
+                target,
+                line: l.lineno,
+            });
+        }
+        self.toctree_records.push(super::ToctreeRecord {
+            glob,
+            entries: entries.clone(),
+            line: input.lineno,
+        });
+        let mut toctree = Node::elem("toctree", input.span);
+        if glob {
+            toctree.set("glob", AttrValue::Int(1));
+        }
+        if let Some(OptVal::Int(d)) = opt_get(&input.options, "maxdepth") {
+            toctree.set("maxdepth", AttrValue::Int(*d));
+        }
+        let mut compound = Node::elem("compound", input.span);
+        compound.attrs.classes.push("toctree-wrapper".to_string());
+        compound.children.push(toctree);
+        out.push(compound);
     }
 
     fn substitution_context_error(
@@ -2864,13 +2972,7 @@ impl<'a> BlockParser<'a> {
     fn table_make_title(&mut self, input: &DirectiveInput<'a, '_>) -> (Option<Node>, Vec<Node>) {
         match input.arguments.first() {
             Some(text) => {
-                let inline = super::inline::parse_inline(
-                    text,
-                    input.span,
-                    input.lineno,
-                    &mut self.registry,
-                    self.source_path,
-                );
+                let inline = self.inline(text, input.span, input.lineno);
                 let mut title = Node::elem(kinds::TITLE, input.span);
                 title.children = inline.nodes;
                 (Some(title), inline.messages)
@@ -3460,25 +3562,13 @@ impl<'a> BlockParser<'a> {
         }
         let mut title_messages: Vec<Node> = Vec::new();
         if let Some(title_text) = input.arguments.first() {
-            let inline = super::inline::parse_inline(
-                title_text,
-                input.span,
-                input.lineno,
-                &mut self.registry,
-                self.source_path,
-            );
+            let inline = self.inline(title_text, input.span, input.lineno);
             let mut title = Node::elem(kinds::TITLE, input.span);
             title.children = inline.nodes;
             node.children.push(title);
             title_messages.extend(inline.messages);
             if let Some(OptVal::Str(subtitle_text)) = opt_get(&input.options, "subtitle") {
-                let sub_inline = super::inline::parse_inline(
-                    subtitle_text,
-                    input.span,
-                    input.lineno,
-                    &mut self.registry,
-                    self.source_path,
-                );
+                let sub_inline = self.inline(subtitle_text, input.span, input.lineno);
                 let mut subtitle = Node::elem(kinds::SUBTITLE, input.span);
                 subtitle.children = sub_inline.nodes;
                 node.children.push(subtitle);
@@ -3495,13 +3585,7 @@ impl<'a> BlockParser<'a> {
     /// rubric (body.py:240-254): inline children, no paragraph wrapper,
     /// inline messages as siblings after the node.
     fn run_rubric(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
-        let inline = super::inline::parse_inline(
-            &input.arguments[0],
-            input.span,
-            input.lineno,
-            &mut self.registry,
-            self.source_path,
-        );
+        let inline = self.inline(&input.arguments[0], input.span, input.lineno);
         let mut node = Node::elem("rubric", input.span);
         node.children = inline.nodes;
         if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
@@ -3593,13 +3677,7 @@ impl<'a> BlockParser<'a> {
             .map(|l| l.text)
             .collect::<Vec<_>>()
             .join("\n");
-        let inline = super::inline::parse_inline(
-            &text,
-            input.span,
-            input.lineno,
-            &mut self.registry,
-            self.source_path,
-        );
+        let inline = self.inline(&text, input.span, input.lineno);
         let mut node = Node::elem(kinds::LITERAL_BLOCK, input.span);
         node.set("xml:space", AttrValue::Str("preserve".to_string()));
         node.children = inline.nodes;
@@ -3691,13 +3769,7 @@ impl<'a> BlockParser<'a> {
             }
         }
         self.directive_add_name(&mut node, &input.options, input.lineno, out);
-        let inline = super::inline::parse_inline(
-            &title_text,
-            input.span,
-            input.lineno,
-            &mut self.registry,
-            self.source_path,
-        );
+        let inline = self.inline(&title_text, input.span, input.lineno);
         let mut title = Node::elem(kinds::TITLE, input.span);
         title.children = inline.nodes;
         node.children.push(title);
@@ -4096,13 +4168,7 @@ impl<'a> BlockParser<'a> {
             }
             let depth = l.indent();
             prev_depth = depth;
-            let inline = super::inline::parse_inline(
-                l.text.trim(),
-                input.span,
-                input.lineno,
-                &mut self.registry,
-                self.source_path,
-            );
+            let inline = self.inline(l.text.trim(), input.span, input.lineno);
             lb_messages.extend(inline.messages);
             resolved.push((depth, inline.nodes));
         }
@@ -4825,6 +4891,45 @@ enum DirectiveKind {
     Replace,
     UnicodeDir,
     DateDir,
+    /// sphinx toctree (sphinx/directives/other.py TocTree).
+    Toctree,
+}
+
+/// Sphinx-mode registry: overlays/extends the docutils-native table.
+fn directive_spec_mode(lower: &str, sphinx: bool) -> Option<DirectiveSpec> {
+    if sphinx {
+        if let Some(s) = sphinx_directive_spec(lower) {
+            return Some(s);
+        }
+    }
+    directive_spec(lower)
+}
+
+const TOCTREE_OPTS: &[(&str, Conv)] = &[
+    ("maxdepth", Conv::PyIntAny),
+    ("name", Conv::Unchanged),
+    ("class", Conv::ClassOption),
+    ("caption", Conv::UnchangedRequired),
+    ("glob", Conv::Flag),
+    ("hidden", Conv::Flag),
+    ("includehidden", Conv::Flag),
+    ("numbered", Conv::Unchanged),
+    ("titlesonly", Conv::Flag),
+    ("reversed", Conv::Flag),
+];
+
+fn sphinx_directive_spec(lower: &str) -> Option<DirectiveSpec> {
+    match lower {
+        "toctree" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 0,
+            final_argument_whitespace: false,
+            has_content: true,
+            option_spec: TOCTREE_OPTS,
+            kind: DirectiveKind::Toctree,
+        }),
+        _ => None,
+    }
 }
 
 const UNICODE_OPTS: &[(&str, Conv)] = &[
@@ -5029,6 +5134,8 @@ enum Conv {
     Encoding,
     /// figure :figwidth:: the literal 'image' keyword or a length.
     Figwidth,
+    /// Plain Python int() — negatives allowed (sphinx maxdepth).
+    PyIntAny,
     SingleCharOrUnicode,
     SingleCharOrWhitespaceOrUnicode,
     /// value_or(('auto', 'grid'), positive_int_list) — the table :widths:.
@@ -5454,6 +5561,21 @@ fn convert_option(conv: Conv, value: Option<&str>) -> Result<OptVal, String> {
             }
             _ => Ok(OptVal::Null),
         },
+        Conv::PyIntAny => {
+            let Some(v) = value else {
+                return Err(
+                    "int() argument must be a string, a bytes-like object or a real number, not 'NoneType'"
+                        .to_string(),
+                );
+            };
+            match py_int(v) {
+                Some(n) => Ok(OptVal::Int(n)),
+                None => Err(format!(
+                    "invalid literal for int() with base 10: {}",
+                    py_repr(Some(v))
+                )),
+            }
+        }
         Conv::NonnegativeInt => {
             let Some(v) = value else {
                 return Err(
@@ -6510,6 +6632,7 @@ mod tests {
             src,
             &ParseOptions {
                 source_path: "<snippet>".into(),
+                sphinx: false,
             },
         )
         .root
@@ -6555,6 +6678,7 @@ mod tests {
             src,
             &ParseOptions {
                 source_path: "<snippet>".into(),
+                sphinx: false,
             },
         );
         let second = &tree.root.children[1];

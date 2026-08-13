@@ -65,6 +65,8 @@ pub fn unescape(text: &str, restore_backslashes: bool) -> String {
 pub struct InlineResult {
     pub nodes: Vec<Node>,
     pub messages: Vec<Node>,
+    /// Role occurrences (sphinx mode only) for the build pipeline.
+    pub roles: Vec<super::RoleRecord>,
 }
 
 fn is_start_prefix_ok(prev: Option<char>) -> bool {
@@ -208,6 +210,10 @@ struct Inliner<'a> {
     lineno: u32,
     source_path: &'a str,
     registry: &'a mut IdRegistry,
+    /// Sphinx mode: unknown-in-docutils roles become pending_xref nodes
+    /// (no messages) and every role occurrence is recorded.
+    sphinx: bool,
+    roles: Vec<super::RoleRecord>,
     nodes: Vec<Node>,
     messages: Vec<Node>,
     /// Text accumulated since the last emitted inline node.
@@ -709,6 +715,26 @@ impl<'a> Inliner<'a> {
     /// Apply a built-in role by (raw, unlowercased) name.
     fn apply_role(&mut self, given_name: &str, raw: &str, rawsource: &str) {
         let lower = given_name.to_lowercase();
+        if self.sphinx {
+            // Record EVERY role occurrence for the build pipeline
+            // (validation + nitpicky), M1-scanner display-split semantics.
+            let text = unescape(raw, false);
+            let (target, display) = match (text.rfind('<'), text.ends_with('>')) {
+                (Some(lt), true) => (
+                    text[lt + 1..text.len() - 1].trim().to_string(),
+                    Some(text[..lt].trim().to_string()),
+                ),
+                _ => (text.clone(), None),
+            };
+            let last_segment = lower.rsplit(':').next().unwrap_or(&lower).to_string();
+            self.roles.push(super::RoleRecord {
+                name: last_segment,
+                full_name: given_name.to_string(),
+                target,
+                display,
+                line: self.lineno,
+            });
+        }
         // en language aliases -> canonical names
         let canonical = match lower.as_str() {
             "abbreviation" | "ab" => "abbreviation",
@@ -732,6 +758,29 @@ impl<'a> Inliner<'a> {
             "substitution-reference" => "substitution-reference",
             "target" => "target",
             "uri-reference" | "uri" | "url" => "uri-reference",
+            _ if self.sphinx => {
+                // Sphinx mode: non-docutils roles resolve through the
+                // domain registries; at parse layer they become
+                // pending_xref nodes and NEVER message. (Genuinely unknown
+                // roles would error in real Sphinx — hardening note.)
+                let text = unescape(raw, false);
+                let mut node = Node::elem("pending_xref", self.span);
+                let (domain, reftype) = match lower.rsplit_once(':') {
+                    Some((d, t)) => (d.to_string(), t.to_string()),
+                    None => (String::new(), lower.clone()),
+                };
+                if !domain.is_empty() {
+                    node.set("refdomain", AttrValue::Str(domain));
+                }
+                node.set("reftarget", AttrValue::Str(text.clone()));
+                node.set("reftype", AttrValue::Str(reftype));
+                let mut lit = Node::elem(kinds::LITERAL, self.span);
+                lit.children.push(Node::text_node(text, self.span));
+                node.children.push(lit);
+                self.flush_text();
+                self.nodes.push(node);
+                return;
+            }
             _ => {
                 // Not in the language module: INFO + canonical lookup, which
                 // also fails for anything we do not know -> ERROR.
@@ -1230,6 +1279,17 @@ pub fn parse_inline(
     registry: &mut IdRegistry,
     source_path: &str,
 ) -> InlineResult {
+    parse_inline_ext(text, span, lineno, registry, source_path, false)
+}
+
+pub fn parse_inline_ext(
+    text: &str,
+    span: Span,
+    lineno: u32,
+    registry: &mut IdRegistry,
+    source_path: &str,
+    sphinx: bool,
+) -> InlineResult {
     let escaped = escape2null(text);
     let mut inliner = Inliner {
         chars: escaped.chars().collect(),
@@ -1237,6 +1297,8 @@ pub fn parse_inline(
         lineno,
         source_path,
         registry,
+        sphinx,
+        roles: Vec::new(),
         nodes: Vec::new(),
         messages: Vec::new(),
         pending: String::new(),
@@ -1246,6 +1308,7 @@ pub fn parse_inline(
     InlineResult {
         nodes: inliner.nodes,
         messages: inliner.messages,
+        roles: inliner.roles,
     }
 }
 

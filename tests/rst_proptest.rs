@@ -8,6 +8,7 @@ use sphinx_ultra::rst::{parse_rst, ParseOptions};
 fn opts() -> ParseOptions {
     ParseOptions {
         source_path: "<p>".into(),
+        sphinx: true,
     }
 }
 

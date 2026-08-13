@@ -52,6 +52,7 @@ fn matches_sphinx_oracle_pformat() {
                 &rst,
                 &ParseOptions {
                     source_path: "<snippet>".into(),
+                    sphinx: true,
                 },
             )
             .root
