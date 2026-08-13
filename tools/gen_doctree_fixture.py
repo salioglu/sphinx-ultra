@@ -600,6 +600,15 @@ CASES = [
     ("dir_image", "missing_arg", ".. image::\n"),
     ("dir_image", "content_not_permitted", ".. image:: pic.png\n\n   caption text\n"),
     ("dir_image", "second_uri_line_no_blank", ".. image:: pic.png\n   second line of uri\n"),
+    # wave-3 review round: Python int() emulation fidelity
+    ("dir_image", "scale_bigint", ".. image:: x.png\n   :scale: 99999999999999999999\n"),
+    ("dir_image", "width_bigint_px", ".. image:: x.png\n   :width: 99999999999999999999px\n"),
+    ("dir_image", "scale_arabic_digits", ".. image:: x.png\n   :scale: ٥٠\n"),
+    ("dir_image", "scale_underscore_literal", ".. image:: x.png\n   :scale: 1_0\n"),
+    ("dir_image", "width_leading_zeros", ".. image:: x.png\n   :width: 007px\n"),
+    ("dir_tables", "csv_delim_superscript_two", ".. csv-table::\n   :delim: ²\n\n   a,b\n"),
+    ("dir_tables", "csv_delim_arabic_two", ".. csv-table::\n   :delim: ٢\n\n   a٢b\n"),
+    ("substitutions", "unicode_arabic_decimal", ".. |c5| unicode:: ٥٠\n"),
     # ----- wave 3: simple body directives -----
     ("dir_body", "topic_basic", ".. topic:: Topic Title\n\n   Topic body paragraph.\n"),
     ("dir_body", "topic_no_body", ".. topic:: Topic Title\n"),

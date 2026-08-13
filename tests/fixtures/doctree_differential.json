@@ -2677,6 +2677,54 @@
       "rst": ".. image:: pic.png\n   second line of uri\n"
     },
     {
+      "family": "dir_image",
+      "name": "dir_image.scale_bigint",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <image scale=\"99999999999999999999\" uri=\"x.png\">\n",
+      "rst": ".. image:: x.png\n   :scale: 99999999999999999999\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.width_bigint_px",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <image uri=\"x.png\" width=\"99999999999999999999px\">\n",
+      "rst": ".. image:: x.png\n   :width: 99999999999999999999px\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.scale_arabic_digits",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <image scale=\"50\" uri=\"x.png\">\n",
+      "rst": ".. image:: x.png\n   :scale: ٥٠\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.scale_underscore_literal",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <image scale=\"10\" uri=\"x.png\">\n",
+      "rst": ".. image:: x.png\n   :scale: 1_0\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.width_leading_zeros",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <image uri=\"x.png\" width=\"7px\">\n",
+      "rst": ".. image:: x.png\n   :width: 007px\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.csv_delim_superscript_two",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"csv-table\" directive:\n            invalid option value: (option: \"delim\"; value: '²')\n            invalid literal for int() with base 10: '²'.\n        <literal_block xml:space=\"preserve\">\n            .. csv-table::\n               :delim: ²\n            \n               a,b\n",
+      "rst": ".. csv-table::\n   :delim: ²\n\n   a,b\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.csv_delim_arabic_two",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"1\">\n            <colspec colwidth=\"100\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            a٢b\n",
+      "rst": ".. csv-table::\n   :delim: ٢\n\n   a٢b\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.unicode_arabic_decimal",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition names=\"c5\">\n        2\n",
+      "rst": ".. |c5| unicode:: ٥٠\n"
+    },
+    {
       "family": "dir_body",
       "name": "dir_body.topic_basic",
       "pseudo_xml": "<document source=\"<snippet>\">\n    <topic>\n        <title>\n            Topic Title\n        <paragraph>\n            Topic body paragraph.\n",

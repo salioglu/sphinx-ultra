@@ -320,9 +320,18 @@ impl<'a> BlockParser<'a> {
         sub.nested_node_kind = Some(kind);
         sub.line_bias = self.line_bias;
         sub.depth = self.depth;
+        // Mode + records must flow through the detached parse (review
+        // finding: csv cells previously parsed in docutils mode and their
+        // directive/role records were dropped).
+        sub.sphinx = self.sphinx;
+        sub.docname = self.docname.clone();
+        sub.highlight_language = self.highlight_language.clone();
         let top = std::mem::take(&mut sub.top);
         let nodes = sub.parse_elements(&top);
         self.registry = sub.registry;
+        self.directive_records.append(&mut sub.directive_records);
+        self.role_records.append(&mut sub.role_records);
+        self.toctree_records.append(&mut sub.toctree_records);
         nodes
     }
 
@@ -4328,6 +4337,8 @@ impl<'a> BlockParser<'a> {
                 ("align", OptVal::Str(v)) => image.set("align", AttrValue::Str(v.clone())),
                 ("loading", OptVal::Str(v)) => image.set("loading", AttrValue::Str(v.clone())),
                 ("scale", OptVal::Int(v)) => image.set("scale", AttrValue::Int(*v)),
+                // Arbitrary-precision values carry the exact digit string.
+                ("scale", OptVal::Str(v)) => image.set("scale", AttrValue::Str(v.clone())),
                 ("class", OptVal::StrList(v)) => {
                     image.attrs.classes.extend(v.iter().cloned());
                 }
@@ -6230,8 +6241,8 @@ fn convert_option(conv: Conv, value: Option<&str>) -> Result<OptVal, String> {
                         .to_string(),
                 );
             };
-            match py_int(v) {
-                Some(n) => Ok(OptVal::Int(n)),
+            match py_int_canonical(v) {
+                Some((neg, digits)) => Ok(int_optval(neg, &digits)),
                 None => Err(format!(
                     "invalid literal for int() with base 10: {}",
                     py_repr(Some(v))
@@ -6421,8 +6432,16 @@ fn format_choice_values(values: &[&str]) -> String {
 /// unicode_code (directives/__init__.py:330-352): decimal, hex forms
 /// (0x/x/\x/U+/\u/&#x...;), or the text itself when neither matches.
 fn unicode_code(code: &str) -> Result<String, String> {
-    if !code.is_empty() && code.bytes().all(|b| b.is_ascii_digit()) {
-        let n: u32 = code
+    // Python gates on str.isdigit() (Nd digits AND digit-typed No chars
+    // like '²'), then int() — which only accepts the Nd ones.
+    if !code.is_empty() && code.chars().all(super::digits::is_python_digit) {
+        let Some((false, digits)) = py_int_canonical(code) else {
+            return Err(format!(
+                "invalid literal for int() with base 10: {}",
+                py_repr(Some(code))
+            ));
+        };
+        let n: u32 = digits
             .parse()
             .map_err(|_| format!("code too large ({code})"))?;
         return char::from_u32(n)
@@ -6453,12 +6472,23 @@ fn unicode_code(code: &str) -> Result<String, String> {
     }
 }
 
+/// The converted int as an OptVal: i64 when it fits, else the canonical
+/// decimal string (Python ints are arbitrary precision; pformat renders
+/// both identically).
+fn int_optval(neg: bool, digits: &str) -> OptVal {
+    let display = py_int_display(neg, digits);
+    match display.parse::<i64>() {
+        Ok(n) => OptVal::Int(n),
+        Err(_) => OptVal::Str(display),
+    }
+}
+
 /// nonnegative_int (directives/__init__.py:224-231), with Python's own
 /// int() error text for bad literals.
 fn nonnegative_int(s: &str) -> Result<OptVal, String> {
-    match py_int(s) {
-        Some(n) if n >= 0 => Ok(OptVal::Int(n)),
-        Some(_) => Err("negative value; must be positive or zero".to_string()),
+    match py_int_canonical(s) {
+        Some((true, _)) => Err("negative value; must be positive or zero".to_string()),
+        Some((false, digits)) => Ok(int_optval(false, &digits)),
         None => Err(format!(
             "invalid literal for int() with base 10: {}",
             py_repr(Some(s))
@@ -6466,15 +6496,57 @@ fn nonnegative_int(s: &str) -> Result<OptVal, String> {
     }
 }
 
-/// Python int(str): optional sign + decimal digits, surrounding whitespace
-/// ignored.
-fn py_int(s: &str) -> Option<i64> {
+/// Python int(str), canonicalized: arbitrary precision (the value is the
+/// canonical ASCII decimal string), Unicode Nd digits accepted with their
+/// decimal values, single underscores allowed BETWEEN digits, surrounding
+/// whitespace ignored. Returns (negative, digits-without-sign, canonical
+/// leading-zero-stripped ASCII string WITH sign).
+fn py_int_canonical(s: &str) -> Option<(bool, String)> {
     let t = s.trim();
-    let body = t.strip_prefix(['+', '-']).unwrap_or(t);
-    if body.is_empty() || !body.bytes().all(|b| b.is_ascii_digit()) {
+    let (neg, body) = match t.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, t.strip_prefix('+').unwrap_or(t)),
+    };
+    if body.is_empty() {
         return None;
     }
-    t.parse::<i64>().ok()
+    let mut digits = String::with_capacity(body.len());
+    let mut prev_underscore = true; // leading underscore rejected
+    for c in body.chars() {
+        if c == '_' {
+            if prev_underscore {
+                return None;
+            }
+            prev_underscore = true;
+            continue;
+        }
+        let d = super::digits::decimal_digit_value(c)?;
+        digits.push(char::from(b'0' + d as u8));
+        prev_underscore = false;
+    }
+    if prev_underscore {
+        // trailing underscore (or all-underscores)
+        return None;
+    }
+    let stripped = digits.trim_start_matches('0');
+    let canonical = if stripped.is_empty() { "0" } else { stripped };
+    Some((neg && canonical != "0", canonical.to_string()))
+}
+
+fn py_int_display(neg: bool, digits: &str) -> String {
+    if neg {
+        format!("-{digits}")
+    } else {
+        digits.to_string()
+    }
+}
+
+/// Python int(str) for numeric consumers; None when invalid OR outside
+/// i64 (attr-facing paths must use [`py_int_canonical`] to keep exact
+/// digits for values Python would carry at arbitrary precision).
+fn py_int(s: &str) -> Option<i64> {
+    let (neg, digits) = py_int_canonical(s)?;
+    py_int_display(neg, &digits).parse::<i64>().ok()
 }
 
 /// Python repr() for option-value error messages (strings and None).
@@ -6538,10 +6610,10 @@ fn get_measure(argument: &str, units: &[&str]) -> Result<String, String> {
     if !unit_ok {
         return Err(no_valid());
     }
-    // Python: int() first, float() second; negative or unlisted unit is
-    // the units-list error.
-    let (negative, norm) = if let Some(n) = py_int(number) {
-        (n < 0, n.to_string())
+    // Python: int() first (arbitrary precision — exact digits preserved),
+    // float() second; negative or unlisted unit is the units-list error.
+    let (negative, norm) = if let Some((neg, digits)) = py_int_canonical(number) {
+        (neg, py_int_display(neg, &digits))
     } else if let Ok(f) = number.parse::<f64>() {
         (f < 0.0, py_float_str(f))
     } else {
