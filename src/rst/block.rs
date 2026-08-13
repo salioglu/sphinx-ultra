@@ -138,6 +138,22 @@ pub(crate) struct BlockParser<'a> {
     /// `state_machine.node`); None at document/section level. Directives
     /// like topic/sidebar validate their direct parent against this.
     nested_node_kind: Option<&'static str>,
+    /// Set while running a substitution-embedded directive (docutils
+    /// SubstitutionDef state): replace/unicode/date require it, image
+    /// flips its align validation, unicode's trim flags land here.
+    substitution_ctx: Option<SubstCtx>,
+    /// Substitution names seen (whitespace-normalized, case-preserving) —
+    /// docutils document.substitution_defs.
+    substitution_names_seen: Vec<String>,
+    /// Names defined more than once: earlier nodes get names -> dupnames
+    /// in a post-parse walk (docutils mutates the old node in place).
+    substitution_dupnames: Vec<String>,
+}
+
+#[derive(Debug, Default)]
+struct SubstCtx {
+    ltrim: bool,
+    rtrim: bool,
 }
 
 impl<'a> BlockParser<'a> {
@@ -156,6 +172,9 @@ impl<'a> BlockParser<'a> {
             depth: 0,
             line_bias: 0,
             nested_node_kind: None,
+            substitution_ctx: None,
+            substitution_names_seen: Vec::new(),
+            substitution_dupnames: Vec::new(),
         }
     }
 
@@ -266,6 +285,16 @@ impl<'a> BlockParser<'a> {
 
         let fixups = self.registry.take_fixups();
         ids::apply_dupname_fixups(&mut root, &fixups);
+        // Duplicate substitution definitions: docutils dupname()s the OLD
+        // node in place; we re-walk since the tree is owned (all but the
+        // LAST same-name definition lose the name).
+        for name in std::mem::take(&mut self.substitution_dupnames) {
+            let total = count_subst_defs(&root, &name);
+            if total > 1 {
+                let mut remaining = total - 1;
+                dupname_subst_defs(&mut root, &name, &mut remaining);
+            }
+        }
         root
     }
 
@@ -1476,6 +1505,15 @@ impl<'a> BlockParser<'a> {
             }
         }
 
+        // Substitution definitions dispatch BEFORE directives
+        // (states.py:2441-2483 construct order).
+        if construct_error.is_none()
+            && rest.starts_with('|')
+            && self.parse_substitution_def(lines, pos, rest, out, &mut construct_error)
+        {
+            return;
+        }
+
         if construct_error.is_none() {
             if let Some((name, first_rest)) = directive_marker(rest) {
                 self.parse_directive(lines, pos, &name, first_rest, out);
@@ -2509,6 +2547,42 @@ impl<'a> BlockParser<'a> {
         }
         let rawsource = raw_lines.join("\n");
 
+        let first_line = {
+            let t = first_rest.trim_start_matches(' ');
+            let offset = lines[start].text.len() - t.len();
+            LineRef::new(
+                &lines[start].text[offset..],
+                lineno,
+                lines[start].src_start,
+                lines[start].src_end,
+            )
+        };
+        self.run_directive_core(
+            name,
+            first_line,
+            &block,
+            &rawsource,
+            lineno,
+            span,
+            Vec::new(),
+            out,
+        );
+    }
+
+    /// The name-lookup + parse_directive_block + run dispatch shared by
+    /// body-level directives and substitution-embedded ones.
+    #[allow(clippy::too_many_arguments)]
+    fn run_directive_core(
+        &mut self,
+        name: &str,
+        first_line: LineRef<'a>,
+        block: &[LineRef<'a>],
+        rawsource: &str,
+        lineno: u32,
+        span: Span,
+        presets: Vec<(String, OptVal)>,
+        out: &mut Vec<Node>,
+    ) {
         let lower = name.to_lowercase();
         let Some(spec) = directive_spec(&lower) else {
             // Unknown: INFO (language-resolution narrative) + ERROR.
@@ -2525,7 +2599,7 @@ impl<'a> BlockParser<'a> {
                     &format!("Unknown directive type \"{name}\"."),
                     lineno,
                 ),
-                &rawsource,
+                rawsource,
             ));
             return;
         };
@@ -2539,7 +2613,7 @@ impl<'a> BlockParser<'a> {
                     &format!("Error in \"{name}\" directive:\n{detail}."),
                     lineno,
                 ),
-                &rawsource,
+                rawsource,
             )
         };
 
@@ -2547,17 +2621,7 @@ impl<'a> BlockParser<'a> {
         // `indented` mirrors get_first_known_indented(match.end(),
         // strip_top=0): the marker-line remainder after `::` and ALL
         // following spaces, then the (already dedented) indented block.
-        let mut indented: Vec<LineRef<'a>> = Vec::new();
-        {
-            let first_line = first_rest.trim_start_matches(' ');
-            let offset = lines[start].text.len() - first_line.len();
-            indented.push(LineRef::new(
-                &lines[start].text[offset..],
-                lineno,
-                lines[start].src_start,
-                lines[start].src_end,
-            ));
-        }
+        let mut indented: Vec<LineRef<'a>> = vec![first_line];
         indented.extend(block.iter().copied());
         // Exactly ONE leading blank line is trimmed, then all trailing.
         if indented.first().map(|l| l.is_blank()).unwrap_or(false) {
@@ -2593,8 +2657,9 @@ impl<'a> BlockParser<'a> {
 
         // Options before arguments (parse_directive_options,
         // states.py:2347-2363): the arg block splits at the FIRST
-        // field-marker line.
-        let mut options: Vec<(String, OptVal)> = Vec::new();
+        // field-marker line. Presets (the substitution alt=) seed the
+        // dict and are overridden by parsed options.
+        let mut options: Vec<(String, OptVal)> = presets;
         if !spec.option_spec.is_empty() {
             if let Some(k) = arg_block
                 .iter()
@@ -2602,7 +2667,14 @@ impl<'a> BlockParser<'a> {
             {
                 let opt_block = arg_block.split_off(k);
                 match parse_extension_options(&opt_block, spec.option_spec) {
-                    Ok(opts) => options = opts,
+                    Ok(opts) => {
+                        for (k2, v) in opts {
+                            match options.iter_mut().find(|(n, _)| *n == k2) {
+                                Some(slot) => slot.1 = v,
+                                None => options.push((k2, v)),
+                            }
+                        }
+                    }
                     Err(detail) => {
                         out.push(dir_error(self, &detail));
                         return;
@@ -2654,7 +2726,7 @@ impl<'a> BlockParser<'a> {
             content,
             span,
             lineno,
-            rawsource: &rawsource,
+            rawsource,
         };
         match spec.kind {
             DirectiveKind::Admonition(kind) => self.run_admonition(kind, input, out),
@@ -2675,7 +2747,117 @@ impl<'a> BlockParser<'a> {
             DirectiveKind::RstTable => self.run_rst_table(input, out),
             DirectiveKind::CsvTable => self.run_csv_table(input, out),
             DirectiveKind::ListTable => self.run_list_table(input, out),
+            DirectiveKind::Replace => self.run_replace(input, out),
+            DirectiveKind::UnicodeDir => self.run_unicode(input, out),
+            DirectiveKind::DateDir => self.run_date(input, out),
         }
+    }
+
+    fn substitution_context_error(
+        &self,
+        input: &DirectiveInput<'a, '_>,
+        out: &mut Vec<Node>,
+    ) -> bool {
+        if self.substitution_ctx.is_some() {
+            return false;
+        }
+        out.push(self.directive_run_error(
+            &format!(
+                "Invalid context: the \"{}\" directive can only be used within a substitution definition.",
+                input.name
+            ),
+            input.lineno,
+            input.rawsource,
+        ));
+        true
+    }
+
+    /// replace (misc.py:357-387).
+    fn run_replace(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        if self.substitution_context_error(&input, out) {
+            return;
+        }
+        if input.content.is_empty() {
+            out.push(self.directive_content_error(input.name, input.lineno, input.rawsource));
+            return;
+        }
+        let children = self.parse_nested(&input.content, "substitution_definition");
+        let mut msgs: Vec<Node> = Vec::new();
+        let mut paragraphs: Vec<Node> = Vec::new();
+        let mut others = false;
+        for c in children {
+            if c.kind == kinds::SYSTEM_MESSAGE {
+                let mut m = c;
+                m.attrs.backrefs.clear();
+                msgs.push(m);
+            } else if c.kind == kinds::PARAGRAPH {
+                paragraphs.push(c);
+            } else {
+                others = true;
+            }
+        }
+        if paragraphs.len() == 1 && !others {
+            out.extend(msgs);
+            out.extend(paragraphs.remove(0).children);
+        } else {
+            // reporter.error without a literal child (misc.py:378-383).
+            out.push(self.msg(
+                messages::ERROR,
+                &format!(
+                    "Error in \"{}\" directive: may contain a single paragraph only.",
+                    input.name
+                ),
+                input.lineno,
+            ));
+        }
+    }
+
+    /// unicode (misc.py:390-431).
+    fn run_unicode(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        if self.substitution_context_error(&input, out) {
+            return;
+        }
+        let trim = opt_get(&input.options, "trim").is_some();
+        let ltrim = opt_get(&input.options, "ltrim").is_some();
+        let rtrim = opt_get(&input.options, "rtrim").is_some();
+        if let Some(ctx) = self.substitution_ctx.as_mut() {
+            ctx.ltrim |= trim || ltrim;
+            ctx.rtrim |= trim || rtrim;
+        }
+        let arg = &input.arguments[0];
+        let codes_text = &arg[..unicode_comment_cut(arg)];
+        for code in codes_text.split_whitespace() {
+            match unicode_code(code) {
+                Ok(s) => out.push(Node::text_node(s, input.span)),
+                Err(detail) => {
+                    out.push(self.directive_run_error(
+                        &format!("Invalid character code: {code}\nValueError: {detail}"),
+                        input.lineno,
+                        input.rawsource,
+                    ));
+                    return;
+                }
+            }
+        }
+    }
+
+    /// date (misc.py:639-666): strftime at PARSE time (deliberately
+    /// non-deterministic output; the fixture corpus avoids success cases).
+    fn run_date(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        if self.substitution_context_error(&input, out) {
+            return;
+        }
+        let format = if input.content.is_empty() {
+            "%Y-%m-%d".to_string()
+        } else {
+            input
+                .content
+                .iter()
+                .map(|l| l.text)
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        out.push(Node::text_node(strftime_now(&format), input.span));
     }
 
     /// Table.make_title (tables.py:46-57).
@@ -3543,15 +3725,30 @@ impl<'a> BlockParser<'a> {
     ) -> Result<Node, Box<Node>> {
         // Two-stage :align: validation (images.py:53-63): the converter
         // accepted all six values; at body level only horizontal ones are
-        // legal. This is a DirectiveError whose text CONTAINS its own
-        // 'Error in …' lead — the machinery adds no prefix. Two spaces
-        // before 'Valid' are docutils-verbatim.
+        // legal, inside a substitution definition only vertical ones. The
+        // DirectiveError text CONTAINS its own 'Error in …' lead — the
+        // machinery adds no prefix. Two spaces before 'Valid' are
+        // docutils-verbatim.
         if let Some(OptVal::Str(align)) = opt_get(&input.options, "align") {
-            if matches!(align.as_str(), "top" | "middle" | "bottom") {
+            let in_subst = self.substitution_ctx.is_some();
+            let bad = if in_subst {
+                matches!(align.as_str(), "left" | "center" | "right")
+            } else {
+                matches!(align.as_str(), "top" | "middle" | "bottom")
+            };
+            if bad {
+                let (ctx_txt, valid) = if in_subst {
+                    (
+                        " within a substitution definition",
+                        "\"top\", \"middle\", \"bottom\"",
+                    )
+                } else {
+                    ("", "\"left\", \"center\", \"right\"")
+                };
                 return Err(Box::new(self.directive_run_error(
                     &format!(
-                        "Error in \"{}\" directive: \"{}\" is not a valid value for the \"align\" option.  Valid values for \"align\" are: \"left\", \"center\", \"right\".",
-                        input.name, align
+                        "Error in \"{}\" directive: \"{}\" is not a valid value for the \"align\" option{}.  Valid values for \"align\" are: {}.",
+                        input.name, align, ctx_txt, valid
                     ),
                     input.lineno,
                     input.rawsource,
@@ -3956,6 +4153,235 @@ impl<'a> BlockParser<'a> {
             pending.children.push(Node::text_node(details, input.span));
             out.push(pending);
         }
+    }
+
+    /// `.. |name| directive::` substitution definitions
+    /// (states.py:2140-2217 + the SubstitutionDef state 2806-2829).
+    /// Returns true when consumed; false = malformed marker — the caller
+    /// falls through to the comment path with `construct_error` set.
+    fn parse_substitution_def(
+        &mut self,
+        lines: &[LineRef<'a>],
+        pos: &mut usize,
+        rest: &'a str,
+        out: &mut Vec<Node>,
+        construct_error: &mut Option<Node>,
+    ) -> bool {
+        let start = *pos;
+        let lineno = lines[start].lineno;
+        let (block, consumed, _indent, _term) = indented_block(lines, start + 1);
+        let span = self.span_of(lines, start, start + consumed);
+        // blocktext for message literals: the raw marker line + raw block
+        // (trailing blanks already trimmed by indented_block).
+        let mut bt: Vec<&str> = vec![lines[start].text];
+        for l in &lines[start + 1..start + 1 + consumed] {
+            bt.push(l.text);
+        }
+        let blocktext = bt.join("\n");
+
+        // Marker scan: `|name|` possibly joined across adjacent block lines
+        // (states.py:2151-2160). Failure at end-of-block = MarkupError.
+        let mut acc: String = rest.to_string();
+        let mut used = 0usize;
+        let marker = loop {
+            if let Some(m) = match_substitution_marker(&acc) {
+                break m;
+            }
+            if used >= block.len() || block[used].is_blank() {
+                *construct_error = Some(self.msg(
+                    messages::WARNING,
+                    "malformed substitution definition.",
+                    lineno,
+                ));
+                return false;
+            }
+            acc.push(' ');
+            acc.push_str(block[used].text.trim());
+            used += 1;
+        };
+        *pos = start + 1 + consumed;
+        // Remainder after the marker lives on ONE physical line: `rest`
+        // when the marker was single-line, else the last joined block line.
+        let (rem_slice, rem_lineno): (&'a str, u32) = if used == 0 {
+            (&rest[marker.remainder_start..], lineno)
+        } else {
+            let last = block[used - 1];
+            let trimmed = last.text.trim();
+            let seg_start = acc.len() - trimmed.len();
+            let within = marker.remainder_start.saturating_sub(seg_start);
+            let base = last.text.len() - last.text.trim_start().len();
+            (&last.text[base + within..], last.lineno)
+        };
+        let mut content_block: Vec<LineRef<'a>> = block[used..].to_vec();
+
+        let subname_ws = ids::whitespace_normalize_name(&marker.name);
+        // Missing contents (states.py:2168-2176).
+        if rem_slice.trim().is_empty() && content_block.iter().all(|l| l.is_blank()) {
+            out.push(messages::with_literal(
+                self.msg(
+                    messages::WARNING,
+                    &format!(
+                        "Substitution definition \"{}\" missing contents.",
+                        marker.name
+                    ),
+                    lineno,
+                ),
+                &blocktext,
+            ));
+            self.warn_explicit_markup_end(lines, *pos, out);
+            return true;
+        }
+
+        let mut subst = Node::elem("substitution_definition", span);
+        subst.attrs.names.push(subname_ws.clone());
+
+        // Locate the embedded-directive line: the marker remainder, else
+        // the first non-blank content line (hanging-indent form).
+        // raw_content_from tracks the BLOCK index where the directive's
+        // continuation lines begin, for rawsource reconstruction with
+        // original indentation (docutils strip_indent=False).
+        let mut raw_content_from = used;
+        let (dline, dlineno) = if !rem_slice.trim().is_empty() {
+            (
+                LineRef::new(
+                    rem_slice.trim_start_matches(' '),
+                    rem_lineno,
+                    lines[start].src_start,
+                    lines[start].src_end,
+                ),
+                rem_lineno,
+            )
+        } else {
+            while content_block.first().map(|l| l.is_blank()).unwrap_or(false) {
+                content_block.remove(0);
+                raw_content_from += 1;
+            }
+            let first = content_block.remove(0);
+            raw_content_from += 1;
+            let dedent = first.indent();
+            (first.dedented(dedent), first.lineno)
+        };
+        // Embedded directive marker: simplename + `::` + (space|EOL) — NO
+        // optional space before `::` (SubstitutionDef state pattern).
+        let mut produced: Vec<Node> = Vec::new();
+        if let Some((dname, dfirst_rest)) = match_embedded_directive(dline.text) {
+            let dblock = dedent_by_min(&content_block);
+            // rawsource with ORIGINAL indentation (the nested state
+            // machine's lines are strip_indent=False; fixture-verified).
+            let embedded_raw = {
+                let mut v: Vec<&str> = vec![dline.text];
+                for l in &lines[start + 1 + raw_content_from..start + 1 + consumed] {
+                    v.push(l.text);
+                }
+                v.join("\n")
+            };
+            let dfirst = {
+                let t = dfirst_rest.trim_start_matches(' ');
+                let offset = dline.text.len() - t.len();
+                LineRef::new(
+                    &dline.text[offset..],
+                    dlineno,
+                    dline.src_start,
+                    dline.src_end,
+                )
+            };
+            self.substitution_ctx = Some(SubstCtx::default());
+            let saved_kind = self.nested_node_kind.replace("substitution_definition");
+            self.run_directive_core(
+                &dname,
+                dfirst,
+                &dblock,
+                &embedded_raw,
+                dlineno,
+                span,
+                vec![("alt".to_string(), OptVal::Str(subname_ws.clone()))],
+                &mut produced,
+            );
+            self.nested_node_kind = saved_kind;
+            let ctx = self.substitution_ctx.take().unwrap_or_default();
+            if ctx.ltrim {
+                subst.set("ltrim", AttrValue::Int(1));
+            }
+            if ctx.rtrim {
+                subst.set("rtrim", AttrValue::Int(1));
+            }
+        }
+        // Hoist non-inline children to the parent, in document order
+        // (states.py:2184-2191); inline/Text stay in the definition.
+        for n in produced {
+            if n.kind == kinds::TEXT || is_inline_kind(n.kind) {
+                subst.children.push(n);
+            } else {
+                out.push(n);
+            }
+        }
+        // Problematic content check (states.py:2194-2201).
+        if tree_any(&subst, &|n| n.kind == kinds::PROBLEMATIC) {
+            let mut msg = self.msg(
+                messages::ERROR,
+                "Problematic content in substitution definition",
+                lineno,
+            );
+            let mut lb = Node::elem(kinds::LITERAL_BLOCK, Span::ZERO);
+            lb.set("xml:space", AttrValue::Str("preserve".to_string()));
+            lb.children.push(Node::text_node(&blocktext, Span::ZERO));
+            msg.children.push(lb);
+            let mut bq = Node::elem(kinds::BLOCK_QUOTE, Span::ZERO);
+            let mut para = Node::elem(kinds::PARAGRAPH, Span::ZERO);
+            para.children = std::mem::take(&mut subst.children);
+            bq.children.push(para);
+            msg.children.push(bq);
+            out.push(msg);
+            self.warn_explicit_markup_end(lines, *pos, out);
+            return true;
+        }
+        // Disallowed content (states.py:2219-2227).
+        if let Some(phrase) = find_disallowed_in_substitution(&subst) {
+            out.push(messages::with_literal(
+                self.msg(
+                    messages::ERROR,
+                    &format!("{phrase} are not supported in a substitution definition."),
+                    lineno,
+                ),
+                &blocktext,
+            ));
+            self.warn_explicit_markup_end(lines, *pos, out);
+            return true;
+        }
+        // Empty or invalid (states.py:2203-2210).
+        if subst.children.is_empty() {
+            out.push(messages::with_literal(
+                self.msg(
+                    messages::WARNING,
+                    &format!(
+                        "Substitution definition \"{}\" empty or invalid.",
+                        marker.name
+                    ),
+                    lineno,
+                ),
+                &blocktext,
+            ));
+            self.warn_explicit_markup_end(lines, *pos, out);
+            return true;
+        }
+        // note_substitution_def (nodes.py:2056-2073): duplicate names are
+        // case-sensitively compared; the error precedes the new node and
+        // the OLD node loses its name (post-parse walk).
+        if self.substitution_names_seen.contains(&subname_ws) {
+            out.push(self.msg(
+                messages::ERROR,
+                &format!("Duplicate substitution definition name: \"{subname_ws}\"."),
+                lineno,
+            ));
+            if !self.substitution_dupnames.contains(&subname_ws) {
+                self.substitution_dupnames.push(subname_ws.clone());
+            }
+        } else {
+            self.substitution_names_seen.push(subname_ws);
+        }
+        out.push(subst);
+        self.warn_explicit_markup_end(lines, *pos, out);
+        true
     }
 
     fn parse_anonymous_shortcut(
@@ -4396,6 +4822,75 @@ enum DirectiveKind {
     RstTable,
     CsvTable,
     ListTable,
+    Replace,
+    UnicodeDir,
+    DateDir,
+}
+
+const UNICODE_OPTS: &[(&str, Conv)] = &[
+    ("trim", Conv::Flag),
+    ("ltrim", Conv::Flag),
+    ("rtrim", Conv::Flag),
+];
+
+/// `( |\n|^)\.\. ` comment split for the unicode directive (misc.py:399):
+/// returns the byte index where the argument text is cut.
+fn unicode_comment_cut(text: &str) -> usize {
+    if text.starts_with(".. ") {
+        return 0;
+    }
+    let bytes = text.as_bytes();
+    for i in 0..text.len() {
+        if (bytes[i] == b' ' || bytes[i] == b'\n') && text[i + 1..].starts_with(".. ") {
+            return i;
+        }
+    }
+    text.len()
+}
+
+/// Minimal strftime over the current LOCAL-approximated (UTC) time:
+/// %Y/%m/%d/%H/%M/%S/%% expand, other bytes pass through.
+fn strftime_now(format: &str) -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let days = (secs / 86400) as i64;
+    let (h, mi, s) = ((secs % 86400) / 3600, (secs % 3600) / 60, secs % 60);
+    // Howard Hinnant's civil_from_days.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if m <= 2 { y + 1 } else { y };
+    let mut out = String::new();
+    let mut chars = format.chars();
+    while let Some(c) = chars.next() {
+        if c != '%' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('Y') => out.push_str(&year.to_string()),
+            Some('m') => out.push_str(&format!("{m:02}")),
+            Some('d') => out.push_str(&format!("{d:02}")),
+            Some('H') => out.push_str(&format!("{h:02}")),
+            Some('M') => out.push_str(&format!("{mi:02}")),
+            Some('S') => out.push_str(&format!("{s:02}")),
+            Some('%') => out.push('%'),
+            Some(other) => {
+                out.push('%');
+                out.push(other);
+            }
+            None => out.push('%'),
+        }
+    }
+    out
 }
 
 const TABLE_OPTS: &[(&str, Conv)] = &[
@@ -4783,6 +5278,30 @@ fn directive_spec(lower: &str) -> Option<DirectiveSpec> {
             has_content: true,
             option_spec: LIST_TABLE_OPTS,
             kind: DirectiveKind::ListTable,
+        }),
+        "replace" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 0,
+            final_argument_whitespace: false,
+            has_content: true,
+            option_spec: &[],
+            kind: DirectiveKind::Replace,
+        }),
+        "unicode" => Some(DirectiveSpec {
+            required_arguments: 1,
+            optional_arguments: 0,
+            final_argument_whitespace: true,
+            has_content: false,
+            option_spec: UNICODE_OPTS,
+            kind: DirectiveKind::UnicodeDir,
+        }),
+        "date" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 0,
+            final_argument_whitespace: false,
+            has_content: true,
+            option_spec: &[],
+            kind: DirectiveKind::DateDir,
         }),
         _ => None,
     }
@@ -5312,6 +5831,163 @@ fn parse_image_target(target: &str) -> ImageTarget {
         }
     }
     ImageTarget::Refuri(target.split_whitespace().collect::<String>())
+}
+
+/// `|name|` marker in a (possibly line-joined) substitution-def head:
+/// `\|(?![ ])(?P<name>.+?)(?<![\s\x00])\|([ ]+|$)` (states.py:1992-2001).
+struct SubstMarker {
+    name: String,
+    /// Byte index where the remainder after the marker + separator spaces
+    /// begins (== input length when the marker ends the line).
+    remainder_start: usize,
+}
+
+fn match_substitution_marker(acc: &str) -> Option<SubstMarker> {
+    let cs: Vec<(usize, char)> = acc.char_indices().collect();
+    if cs.len() < 3 || cs[0].1 != '|' || cs[1].1 == ' ' {
+        return None;
+    }
+    for k in 2..cs.len() {
+        if cs[k].1 != '|' || cs[k - 1].1.is_whitespace() {
+            continue;
+        }
+        let name = acc[cs[1].0..cs[k].0].to_string();
+        let after = &acc[cs[k].0 + 1..];
+        if after.is_empty() {
+            return Some(SubstMarker {
+                name,
+                remainder_start: acc.len(),
+            });
+        }
+        if after.starts_with(' ') {
+            let spaces = after.len() - after.trim_start_matches(' ').len();
+            return Some(SubstMarker {
+                name,
+                remainder_start: cs[k].0 + 1 + spaces,
+            });
+        }
+        // Closing pipe not followed by space/EOL: the non-greedy regex
+        // tries a later close.
+    }
+    None
+}
+
+/// SubstitutionDef embedded-directive marker: `(simplename)::( +|$)` —
+/// unlike the body-level form, NO space is allowed before `::`.
+fn match_embedded_directive(text: &str) -> Option<(String, &str)> {
+    let chars: Vec<char> = text.chars().collect();
+    let name_len = match_simplename_chars(&chars, 0)?;
+    if chars.get(name_len) != Some(&':') || chars.get(name_len + 1) != Some(&':') {
+        return None;
+    }
+    let after = name_len + 2;
+    match chars.get(after) {
+        None => {}
+        Some(' ') => {}
+        _ => return None,
+    }
+    let name: String = chars[..name_len].iter().collect();
+    let byte_after = text
+        .char_indices()
+        .nth(after + 1)
+        .map(|(b, _)| b)
+        .unwrap_or(text.len());
+    Some((name, &text[byte_after..]))
+}
+
+fn dedent_by_min<'a>(block: &[LineRef<'a>]) -> Vec<LineRef<'a>> {
+    let min = block
+        .iter()
+        .filter(|l| !l.is_blank())
+        .map(|l| l.indent())
+        .min()
+        .unwrap_or(0);
+    block.iter().map(|l| l.dedented(min)).collect()
+}
+
+/// docutils nodes.Inline membership for the kinds this parser emits
+/// (image/target/raw are genuinely Inline in docutils' class hierarchy).
+fn is_inline_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "emphasis"
+            | "strong"
+            | "literal"
+            | "reference"
+            | "title_reference"
+            | "abbreviation"
+            | "acronym"
+            | "subscript"
+            | "superscript"
+            | "math"
+            | "image"
+            | "problematic"
+            | "inline"
+            | "substitution_reference"
+            | "footnote_reference"
+            | "citation_reference"
+            | "target"
+            | "raw"
+    )
+}
+
+fn tree_any(node: &Node, pred: &dyn Fn(&Node) -> bool) -> bool {
+    node.children.iter().any(|c| pred(c) || tree_any(c, pred))
+}
+
+fn has_extra_attr(node: &Node, key: &str) -> bool {
+    node.attrs.extra.iter().any(|(k, _)| *k == key)
+}
+
+/// disallowed_inside_substitution_definitions (states.py:2219-2227),
+/// first hit in document order wins.
+fn find_disallowed_in_substitution(node: &Node) -> Option<&'static str> {
+    for c in &node.children {
+        let hit = if c.kind == kinds::REFERENCE && has_extra_attr(c, "anonymous") {
+            Some("Anonymous references")
+        } else if c.kind == kinds::FOOTNOTE_REFERENCE && has_extra_attr(c, "auto") {
+            Some("References to auto-numbered and auto-symbol footnotes")
+        } else if !c.attrs.names.is_empty() || !c.attrs.ids.is_empty() {
+            Some("Targets (names and identifiers)")
+        } else {
+            None
+        };
+        if hit.is_some() {
+            return hit;
+        }
+        if let Some(h) = find_disallowed_in_substitution(c) {
+            return Some(h);
+        }
+    }
+    None
+}
+
+fn count_subst_defs(node: &Node, name: &str) -> usize {
+    let mut c = usize::from(
+        node.kind == "substitution_definition" && node.attrs.names.iter().any(|n| n == name),
+    );
+    for ch in &node.children {
+        c += count_subst_defs(ch, name);
+    }
+    c
+}
+
+fn dupname_subst_defs(node: &mut Node, name: &str, remaining: &mut usize) {
+    if *remaining == 0 {
+        return;
+    }
+    if node.kind == "substitution_definition" && node.attrs.names.iter().any(|n| n == name) {
+        node.attrs.names.retain(|n| n != name);
+        node.attrs.dupnames.push(name.to_string());
+        *remaining -= 1;
+        return;
+    }
+    for ch in &mut node.children {
+        dupname_subst_defs(ch, name, remaining);
+        if *remaining == 0 {
+            return;
+        }
+    }
 }
 
 /// Like [`reference_name_from_link`] but returns the reference TEXT

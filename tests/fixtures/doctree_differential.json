@@ -3313,6 +3313,222 @@
       "rst": ".. list-table::\n\n   * - para one\n\n       para two\n     - b\n"
     },
     {
+      "family": "substitutions",
+      "name": "substitutions.replace_basic",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition names=\"sub\">\n        replacement text\n    <paragraph>\n        Use \n        <substitution_reference refname=\"sub\">\n            sub\n         here.\n",
+      "rst": ".. |sub| replace:: replacement text\n\nUse |sub| here.\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.replace_inline_markup",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition names=\"b\">\n        <strong>\n            bold\n         and \n        <emphasis>\n            emph\n",
+      "rst": ".. |b| replace:: **bold** and *emph*\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.replace_multiline",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition names=\"m\">\n        line one\n        line two\n",
+      "rst": ".. |m| replace:: line one\n   line two\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.replace_multi_paragraph_error",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"replace\" directive: may contain a single paragraph only.\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"p\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |p| replace:: para one\n            \n               para two\n",
+      "rst": ".. |p| replace:: para one\n\n   para two\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.replace_no_content",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"replace\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            replace::\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"e\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |e| replace::\n",
+      "rst": ".. |e| replace::\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.replace_named_ref_allowed",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition names=\"r\">\n        see \n        <reference name=\"docs\" refname=\"docs\">\n            docs\n",
+      "rst": ".. |r| replace:: see `docs`_\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.replace_anonymous_ref_error",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Anonymous references are not supported in a substitution definition.\n        <literal_block xml:space=\"preserve\">\n            .. |a| replace:: see `docs`__\n",
+      "rst": ".. |a| replace:: see `docs`__\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.replace_auto_footnote_error",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            References to auto-numbered and auto-symbol footnotes are not supported in a substitution definition.\n        <literal_block xml:space=\"preserve\">\n            .. |f| replace:: note [#]_\n",
+      "rst": ".. |f| replace:: note [#]_\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.replace_problematic",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message ids=\"id1\" level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Inline emphasis start-string without end-string.\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Problematic content in substitution definition\n        <literal_block xml:space=\"preserve\">\n            .. |bad| replace:: *unclosed\n        <block_quote>\n            <paragraph>\n                <problematic ids=\"id2\" refid=\"id1\">\n                    *\n                unclosed\n",
+      "rst": ".. |bad| replace:: *unclosed\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.replace_at_body_level",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Invalid context: the \"replace\" directive can only be used within a substitution definition.\n        <literal_block xml:space=\"preserve\">\n            .. replace:: not in a substitution\n",
+      "rst": ".. replace:: not in a substitution\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.unicode_hex_forms",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition names=\"c\">\n        ©\n",
+      "rst": ".. |c| unicode:: 0xA9\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.unicode_entity_form",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition names=\"c2\">\n        ©\n",
+      "rst": ".. |c2| unicode:: &#xA9;\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.unicode_decimal",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition names=\"c3\">\n        ©\n",
+      "rst": ".. |c3| unicode:: 169\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.unicode_multi_codes",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition names=\"arrow\">\n        →\n        →\n",
+      "rst": ".. |arrow| unicode:: 0x2192 0x2192\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.unicode_comment_stripped",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition names=\"c4\">\n        ©\n",
+      "rst": ".. |c4| unicode:: 0xA9 .. copyright sign\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.unicode_passthrough_token",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition names=\"t\">\n        abc\n",
+      "rst": ".. |t| unicode:: abc\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.unicode_out_of_range",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Invalid character code: 0x110000\n            ValueError: chr() arg not in range(0x110000)\n        <literal_block xml:space=\"preserve\">\n            unicode:: 0x110000\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"x\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |x| unicode:: 0x110000\n",
+      "rst": ".. |x| unicode:: 0x110000\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.unicode_trim",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition ltrim=\"1\" names=\"tm\" rtrim=\"1\">\n        ©\n",
+      "rst": ".. |tm| unicode:: 0xA9\n   :trim:\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.unicode_ltrim_only",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition ltrim=\"1\" names=\"lt\">\n        ©\n",
+      "rst": ".. |lt| unicode:: 0xA9\n   :ltrim:\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.unicode_missing_arg",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"unicode\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            unicode::\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"u\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |u| unicode::\n",
+      "rst": ".. |u| unicode::\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.unicode_at_body_level",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Invalid context: the \"unicode\" directive can only be used within a substitution definition.\n        <literal_block xml:space=\"preserve\">\n            .. unicode:: 0xA9\n",
+      "rst": ".. unicode:: 0xA9\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.date_at_body_level",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Invalid context: the \"date\" directive can only be used within a substitution definition.\n        <literal_block xml:space=\"preserve\">\n            .. date::\n",
+      "rst": ".. date::\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.image_substitution_auto_alt",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition names=\"pic\">\n        <image alt=\"pic\" uri=\"picture.png\">\n",
+      "rst": ".. |pic| image:: picture.png\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.image_substitution_explicit_alt",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition names=\"pic2\">\n        <image alt=\"custom\" uri=\"picture.png\">\n",
+      "rst": ".. |pic2| image:: picture.png\n   :alt: custom\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.image_substitution_align_horizontal_error",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"image\" directive: \"left\" is not a valid value for the \"align\" option within a substitution definition.  Valid values for \"align\" are: \"top\", \"middle\", \"bottom\".\n        <literal_block xml:space=\"preserve\">\n            image:: p.png\n               :align: left\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"pic3\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |pic3| image:: p.png\n               :align: left\n",
+      "rst": ".. |pic3| image:: p.png\n   :align: left\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.image_substitution_align_vertical_ok",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition names=\"pic4\">\n        <image align=\"top\" alt=\"pic4\" uri=\"p.png\">\n",
+      "rst": ".. |pic4| image:: p.png\n   :align: top\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.unknown_directive_inside",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            No directive entry for \"bogusdir\" in module \"docutils.parsers.rst.languages.en\".\n            Trying \"bogusdir\" as canonical directive name.\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown directive type \"bogusdir\".\n        <literal_block xml:space=\"preserve\">\n            bogusdir:: x\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"z\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |z| bogusdir:: x\n",
+      "rst": ".. |z| bogusdir:: x\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.no_directive_marker",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"s\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |s| just plain text\n",
+      "rst": ".. |s| just plain text\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.missing_contents",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"empty\" missing contents.\n        <literal_block xml:space=\"preserve\">\n            .. |empty|\n",
+      "rst": ".. |empty|\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.hanging_indent_form",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition names=\"h\">\n        hanging\n",
+      "rst": ".. |h|\n   replace:: hanging\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.duplicate_definition",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition dupnames=\"d\">\n        first\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Duplicate substitution definition name: \"d\".\n    <substitution_definition names=\"d\">\n        second\n",
+      "rst": ".. |d| replace:: first\n\n.. |d| replace:: second\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.duplicate_case_sensitive_ok",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition names=\"D\">\n        upper\n    <substitution_definition names=\"d\">\n        lower\n",
+      "rst": ".. |D| replace:: upper\n\n.. |d| replace:: lower\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.malformed_no_closing_pipe",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n        |broken replace:: text\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            malformed substitution definition.\n",
+      "rst": ".. |broken replace:: text\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.marker_multiline",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition names=\"long\\ name\">\n        joined\n",
+      "rst": ".. |long\n   name| replace:: joined\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.non_inline_promoted_out",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            The \"topic\" directive may not be used within topics or body elements.\n        <literal_block xml:space=\"preserve\">\n            topic:: T\n            \n               body\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"topic\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |topic| topic:: T\n            \n               body\n",
+      "rst": ".. |topic| topic:: T\n\n   body\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.substitution_ref_trailing_underscore",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition names=\"s2\">\n        text\n    <paragraph>\n        <reference refname=\"s2\">\n            <substitution_reference refname=\"s2\">\n                s2\n         and \n        <reference anonymous=\"1\">\n            <substitution_reference refname=\"s2\">\n                s2\n         refs.\n",
+      "rst": ".. |s2| replace:: text\n\n|s2|_ and |s2|__ refs.\n"
+    },
+    {
       "family": "review2",
       "name": "review2.multi_segment_role",
       "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            :py:func:`target`\n         end.\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            No role entry for \"py:func\" in module \"docutils.parsers.rst.languages.en\".\n            Trying \"py:func\" as canonical role name.\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown interpreted text role \"py:func\".\n",

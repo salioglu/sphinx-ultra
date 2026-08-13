@@ -118,12 +118,13 @@ SUPPORTED_KINDS = {
     "raw",
     "pending",
     "inline",
+    "substitution_definition",
 }
 
 # Families whose snippets intentionally exercise the directive machinery.
 DIRECTIVE_FAMILIES = (
     "dir_core", "dir_admonitions", "dir_options", "dir_image", "dir_body", "dir_media",
-    "dir_tables",
+    "dir_tables", "substitutions",
 )
 
 # (family, name, rst) — names unique, families floor-checked below.
@@ -708,6 +709,43 @@ CASES = [
     ("dir_tables", "list_stub_columns", ".. list-table::\n   :stub-columns: 1\n\n   * - a\n     - b\n"),
     ("dir_tables", "list_widths_mismatch", ".. list-table::\n   :widths: 5 10 15\n\n   * - a\n     - b\n"),
     ("dir_tables", "list_multi_block_cell", ".. list-table::\n\n   * - para one\n\n       para two\n     - b\n"),
+    # ----- wave 3: substitution definitions -----
+    ("substitutions", "replace_basic", ".. |sub| replace:: replacement text\n\nUse |sub| here.\n"),
+    ("substitutions", "replace_inline_markup", ".. |b| replace:: **bold** and *emph*\n"),
+    ("substitutions", "replace_multiline", ".. |m| replace:: line one\n   line two\n"),
+    ("substitutions", "replace_multi_paragraph_error", ".. |p| replace:: para one\n\n   para two\n"),
+    ("substitutions", "replace_no_content", ".. |e| replace::\n"),
+    ("substitutions", "replace_named_ref_allowed", ".. |r| replace:: see `docs`_\n"),
+    ("substitutions", "replace_anonymous_ref_error", ".. |a| replace:: see `docs`__\n"),
+    ("substitutions", "replace_auto_footnote_error", ".. |f| replace:: note [#]_\n"),
+    ("substitutions", "replace_problematic", ".. |bad| replace:: *unclosed\n"),
+    ("substitutions", "replace_at_body_level", ".. replace:: not in a substitution\n"),
+    ("substitutions", "unicode_hex_forms", ".. |c| unicode:: 0xA9\n"),
+    ("substitutions", "unicode_entity_form", ".. |c2| unicode:: &#xA9;\n"),
+    ("substitutions", "unicode_decimal", ".. |c3| unicode:: 169\n"),
+    ("substitutions", "unicode_multi_codes", ".. |arrow| unicode:: 0x2192 0x2192\n"),
+    ("substitutions", "unicode_comment_stripped", ".. |c4| unicode:: 0xA9 .. copyright sign\n"),
+    ("substitutions", "unicode_passthrough_token", ".. |t| unicode:: abc\n"),
+    ("substitutions", "unicode_out_of_range", ".. |x| unicode:: 0x110000\n"),
+    ("substitutions", "unicode_trim", ".. |tm| unicode:: 0xA9\n   :trim:\n"),
+    ("substitutions", "unicode_ltrim_only", ".. |lt| unicode:: 0xA9\n   :ltrim:\n"),
+    ("substitutions", "unicode_missing_arg", ".. |u| unicode::\n"),
+    ("substitutions", "unicode_at_body_level", ".. unicode:: 0xA9\n"),
+    ("substitutions", "date_at_body_level", ".. date::\n"),
+    ("substitutions", "image_substitution_auto_alt", ".. |pic| image:: picture.png\n"),
+    ("substitutions", "image_substitution_explicit_alt", ".. |pic2| image:: picture.png\n   :alt: custom\n"),
+    ("substitutions", "image_substitution_align_horizontal_error", ".. |pic3| image:: p.png\n   :align: left\n"),
+    ("substitutions", "image_substitution_align_vertical_ok", ".. |pic4| image:: p.png\n   :align: top\n"),
+    ("substitutions", "unknown_directive_inside", ".. |z| bogusdir:: x\n"),
+    ("substitutions", "no_directive_marker", ".. |s| just plain text\n"),
+    ("substitutions", "missing_contents", ".. |empty|\n"),
+    ("substitutions", "hanging_indent_form", ".. |h|\n   replace:: hanging\n"),
+    ("substitutions", "duplicate_definition", ".. |d| replace:: first\n\n.. |d| replace:: second\n"),
+    ("substitutions", "duplicate_case_sensitive_ok", ".. |D| replace:: upper\n\n.. |d| replace:: lower\n"),
+    ("substitutions", "malformed_no_closing_pipe", ".. |broken replace:: text\n"),
+    ("substitutions", "marker_multiline", ".. |long\n   name| replace:: joined\n"),
+    ("substitutions", "non_inline_promoted_out", ".. |topic| topic:: T\n\n   body\n"),
+    ("substitutions", "substitution_ref_trailing_underscore", ".. |s2| replace:: text\n\n|s2|_ and |s2|__ refs.\n"),
     # ----- wave 2 review round (Sonnet adversarial review, 2026-08-07) -----
     ("review2", "multi_segment_role", ":py:func:`target` end.\n"),
     ("review2", "multi_segment_role_three", ":a:b:c:`text` end.\n"),
@@ -818,7 +856,7 @@ def main() -> int:
         "paragraphs": 4, "sections": 8, "transition": 4, "lists_bullet": 8,
         "lists_enum": 8, "deflist": 8, "quote": 8, "literal": 8,
         "comment_target": 8, "lineblock": 4, "doctest": 4, "errors": 12,
-        "hardening": 20, "mixtures": 8, "review": 45, "inline_basics": 25, "inline_carriers": 10, "inline_refs": 40, "inline_roles": 20, "footnotes": 14, "fields": 15, "options": 10, "tables_grid": 18, "tables_simple": 12, "w2_hardening": 15, "review2": 12, "dir_core": 10, "dir_admonitions": 14, "dir_options": 20, "dir_image": 18, "dir_body": 30, "dir_media": 38, "dir_tables": 30,
+        "hardening": 20, "mixtures": 8, "review": 45, "inline_basics": 25, "inline_carriers": 10, "inline_refs": 40, "inline_roles": 20, "footnotes": 14, "fields": 15, "options": 10, "tables_grid": 18, "tables_simple": 12, "w2_hardening": 15, "review2": 12, "dir_core": 10, "dir_admonitions": 14, "dir_options": 20, "dir_image": 18, "dir_body": 30, "dir_media": 38, "dir_tables": 30, "substitutions": 30,
     }
     counts: dict = {}
     for family, _, _ in CASES:
