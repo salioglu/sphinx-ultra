@@ -504,6 +504,10 @@ CASES = [
     ('sx_roles', 'rfc_role_section', 'See :rfc:`2324#section-5.1` here.\n'),
     ('sx_roles', 'cve_role', 'See :cve:`2020-10735` here.\n'),
     ('sx_roles', 'cwe_role', 'See :cwe:`787` here.\n'),
+    ('sx_directives', 'code_block_emphasize_invalid', '.. code-block:: python\n   :emphasize-lines: 5-3\n\n   x = 1\n'),
+    ('sx_directives', 'code_block_emphasize_open_range', '.. code-block:: python\n   :emphasize-lines: 2-\n\n   a\n   b\n   c\n'),
+    ('sx_directives', 'code_block_emphasize_out_of_range', '.. code-block:: python\n   :emphasize-lines: 1,99\n\n   a\n   b\n'),
+    ('sx_directives', 'toctree_bare_angle_entry', '.. toctree::\n\n   <foo>\n'),
 ]
 
 

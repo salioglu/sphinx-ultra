@@ -1622,9 +1622,12 @@ impl<'a> BlockParser<'a> {
         }
 
         // Substitution definitions dispatch BEFORE directives
-        // (states.py:2441-2483 construct order).
+        // (states.py:2441-2483 construct order). The construct pattern
+        // requires a non-space char after `|` (`(?![ ])`) — `.. | x` is a
+        // plain comment, not a malformed substitution (review finding 19).
         if construct_error.is_none()
             && rest.starts_with('|')
+            && !matches!(rest[1..].chars().next(), None | Some(' '))
             && self.parse_substitution_def(lines, pos, rest, out, &mut construct_error)
         {
             return;
@@ -3095,6 +3098,9 @@ impl<'a> BlockParser<'a> {
     ) {
         let (type_name, label, lead_fmt) = *info;
         let version = &input.arguments[0];
+        // Inline messages from the explanation must anchor on the text's
+        // own line, not the directive marker (review finding 41).
+        let mut text_lineno = input.lineno;
         let text: Option<String> = input
             .arguments
             .get(1)
@@ -3103,6 +3109,7 @@ impl<'a> BlockParser<'a> {
                 if input.content.is_empty() {
                     None
                 } else {
+                    text_lineno = input.content[0].lineno;
                     Some(
                         input
                             .content
@@ -3133,7 +3140,7 @@ impl<'a> BlockParser<'a> {
         para.children.push(inner);
         let mut messages = Vec::new();
         if let Some(t) = text {
-            let inline = self.inline(&t, input.span, input.lineno);
+            let inline = self.inline(&t, input.span, text_lineno);
             para.children.extend(inline.nodes);
             messages = inline.messages;
         }
@@ -3170,16 +3177,17 @@ impl<'a> BlockParser<'a> {
             .cloned()
             .or_else(|| self.highlight_language.clone())
             .unwrap_or_else(|| "default".to_string());
+        // sphinx util.parselinenos + CodeBlock.run: an invalid spec
+        // REPLACES the whole block with a WARNING system_message;
+        // out-of-range lines are filtered (review findings 31/43/45/46).
+        let nlines = input.content.len() as i64;
         let mut hl_lines: Vec<i64> = Vec::new();
         if let Some(OptVal::Str(spec)) = opt_get(&input.options, "emphasize-lines") {
-            for part in spec.split(',') {
-                let part = part.trim();
-                if let Some((a, b)) = part.split_once('-') {
-                    if let (Some(a), Some(b)) = (py_int(a.trim()), py_int(b.trim())) {
-                        hl_lines.extend(a..=b);
-                    }
-                } else if let Some(n) = py_int(part) {
-                    hl_lines.push(n);
+            match parse_linenos(spec, nlines) {
+                Ok(lines_list) => hl_lines = lines_list,
+                Err(msg) => {
+                    out.push(self.msg(messages::WARNING, &msg, input.lineno));
+                    return;
                 }
             }
         }
@@ -3281,9 +3289,11 @@ impl<'a> BlockParser<'a> {
                 continue;
             }
             let t = l.text.trim();
-            // sphinx explicit_title_re: `Title <target>`.
+            // sphinx explicit_title_re `^(.+?)\s*<(.*?)>$`: the TITLE part
+            // must be nonempty — a bare `<foo>` entry is a literal target
+            // named '<foo>' (review finding 40).
             let (title, target) = match (t.rfind('<'), t.ends_with('>')) {
-                (Some(lt), true) if lt + 1 < t.len() - 1 || lt + 1 == t.len() - 1 => (
+                (Some(lt), true) if lt > 0 => (
                     Some(t[..lt].trim_end().to_string()),
                     t[lt + 1..t.len() - 1].to_string(),
                 ),
@@ -3374,7 +3384,12 @@ impl<'a> BlockParser<'a> {
             out.push(self.directive_content_error(input.name, input.lineno, input.rawsource));
             return;
         }
+        // The nested parse runs OUTSIDE the SubstitutionDef state: an
+        // embedded `.. date::` inside replace content must context-error
+        // exactly like at body level (review finding 22).
+        let saved_ctx = self.substitution_ctx.take();
         let children = self.parse_nested(&input.content, "substitution_definition");
+        self.substitution_ctx = saved_ctx;
         let mut msgs: Vec<Node> = Vec::new();
         let mut paragraphs: Vec<Node> = Vec::new();
         let mut others = false;
@@ -4481,10 +4496,10 @@ impl<'a> BlockParser<'a> {
             Some(start) => {
                 // NumberLines (docutils/utils/code_analyzer.py): a padded
                 // 'ln' inline before every line.
-                let endline = start + input.content.len() as i64;
+                let endline = start.saturating_add(input.content.len() as i64);
                 let width = endline.to_string().len();
                 for (i, line) in code_lines.iter().enumerate() {
-                    let lineno = start + i as i64;
+                    let lineno = start.saturating_add(i as i64);
                     let mut ln = Node::elem("inline", input.span);
                     ln.attrs.classes.push("ln".to_string());
                     ln.children
@@ -4655,7 +4670,7 @@ impl<'a> BlockParser<'a> {
             }
             let depth = l.indent();
             prev_depth = depth;
-            let inline = self.inline(l.text.trim(), input.span, input.lineno);
+            let inline = self.inline(l.text.trim(), input.span, l.lineno);
             lb_messages.extend(inline.messages);
             resolved.push((depth, inline.nodes));
         }
@@ -5439,6 +5454,48 @@ const CODE_BLOCK_OPTS: &[(&str, Conv)] = &[
 
 const HIGHLIGHT_OPTS: &[(&str, Conv)] =
     &[("linenothreshold", Conv::PyIntAny), ("force", Conv::Flag)];
+
+/// sphinx.util.parselinenos: 1-based spec ('1,3-5', open ends '-4'/'4-')
+/// against `nlines` total lines; invalid or reversed specs raise. Range
+/// materialization is clamped to nlines so a huge upper bound cannot
+/// blow memory (values past nlines are filtered anyway).
+fn parse_linenos(spec: &str, nlines: i64) -> Result<Vec<i64>, String> {
+    let invalid = || format!("invalid line number spec: {}", py_repr(Some(spec)));
+    let mut out = Vec::new();
+    for part in spec.split(',') {
+        let part = part.trim();
+        if let Some((a, b)) = part.split_once('-') {
+            let (a, b) = (a.trim(), b.trim());
+            let start = if a.is_empty() {
+                1
+            } else {
+                py_int(a).ok_or_else(invalid)?
+            };
+            let end = if b.is_empty() {
+                nlines
+            } else {
+                py_int(b).ok_or_else(invalid)?
+            };
+            if start > end {
+                return Err(invalid());
+            }
+            let clamped_end = end.min(nlines);
+            let mut n = start.max(1);
+            while n <= clamped_end {
+                out.push(n);
+                n += 1;
+            }
+        } else if !part.is_empty() {
+            let n = py_int(part).ok_or_else(invalid)?;
+            if n >= 1 && n <= nlines {
+                out.push(n);
+            }
+        } else {
+            return Err(invalid());
+        }
+    }
+    Ok(out)
+}
 
 fn sphinx_directive_spec(lower: &str) -> Option<DirectiveSpec> {
     let version_change = |info: &'static (&'static str, &'static str, &'static str)| {

@@ -2725,6 +2725,18 @@
       "rst": ".. |c5| unicode:: ٥٠\n"
     },
     {
+      "family": "substitutions",
+      "name": "substitutions.pipe_space_comment",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n        | not a substitution\n",
+      "rst": ".. | not a substitution\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.bare_pipe_comment",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n        |\n",
+      "rst": ".. |\n"
+    },
+    {
       "family": "dir_body",
       "name": "dir_body.topic_basic",
       "pseudo_xml": "<document source=\"<snippet>\">\n    <topic>\n        <title>\n            Topic Title\n        <paragraph>\n            Topic body paragraph.\n",

@@ -1661,6 +1661,30 @@
       "name": "sx_roles.cwe_role",
       "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <index entries=\"('single',\\ 'Common\\ Weakness\\ Enumeration;\\ CWE\\ 787',\\ 'index-0',\\ '',\\ None)\">\n        <target ids=\"index-0\">\n        <reference classes=\"cwe\" internal=\"0\" refuri=\"https://cwe.mitre.org/data/definitions/787.html\">\n            <strong>\n                CWE 787\n         here.\n",
       "rst": "See :cwe:`787` here.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.code_block_emphasize_invalid",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            invalid line number spec: '5-3'\n",
+      "rst": ".. code-block:: python\n   :emphasize-lines: 5-3\n\n   x = 1\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.code_block_emphasize_open_range",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <literal_block force=\"0\" highlight_args=\"{'hl_lines': [2, 3]}\" language=\"python\" xml:space=\"preserve\">\n        a\n        b\n        c\n",
+      "rst": ".. code-block:: python\n   :emphasize-lines: 2-\n\n   a\n   b\n   c\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.code_block_emphasize_out_of_range",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <literal_block force=\"0\" highlight_args=\"{'hl_lines': [1]}\" language=\"python\" xml:space=\"preserve\">\n        a\n        b\n",
+      "rst": ".. code-block:: python\n   :emphasize-lines: 1,99\n\n   a\n   b\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.toctree_bare_angle_entry",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <compound classes=\"toctree-wrapper\">\n        <toctree caption=\"True\" entries=\"\" glob=\"0\" hidden=\"0\" includefiles=\"\" includehidden=\"0\" maxdepth=\"-1\" numbered=\"0\" parent=\"index\" rawentries=\"\" titlesonly=\"0\">\n",
+      "rst": ".. toctree::\n\n   <foo>\n"
     }
   ],
   "docutils_version": "0.22.4",

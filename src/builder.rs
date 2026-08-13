@@ -750,8 +750,18 @@ impl SphinxBuilder {
         use crate::domains::rst::RstDomain;
         use crate::domains::{DomainRegistry, ReferenceType};
 
-        // docutils label matching is case-insensitive: normalize both sides.
-        let normalize_label = |label: &str| label.trim().to_lowercase();
+        // docutils label matching is case-insensitive AND whitespace-
+        // collapsing (fully_normalize_name); the doctree labels arrive
+        // already collapsed, so role targets must collapse too or
+        // multi-space :ref: text false-positives (review finding 38/42).
+        let normalize_label = |label: &str| {
+            label
+                .trim()
+                .to_lowercase()
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
 
         let mut rst_domain = RstDomain::new();
         for doc in processed_docs {
