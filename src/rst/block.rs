@@ -2646,6 +2646,12 @@ impl<'a> BlockParser<'a> {
             DirectiveKind::Compound => self.run_compound(input, out),
             DirectiveKind::Container => self.run_container(input, out),
             DirectiveKind::ParsedLiteral => self.run_parsed_literal(input, out),
+            DirectiveKind::Figure => self.run_figure(input, out),
+            DirectiveKind::Code => self.run_code(input, out),
+            DirectiveKind::MathBlock => self.run_math(input, out),
+            DirectiveKind::Raw => self.run_raw(input, out),
+            DirectiveKind::LineBlockDir => self.run_line_block(input, out),
+            DirectiveKind::ClassDir => self.run_class(input, out),
         }
     }
 
@@ -2855,11 +2861,15 @@ impl<'a> BlockParser<'a> {
         out.extend(inline.messages);
     }
 
-    /// DirectiveError-style error (raised by a directive's own run()):
+    /// DirectiveError-style message (raised by a directive's own run()):
     /// message text VERBATIM — no 'Error in "X" directive:' prefix — plus
     /// the raw block as a literal_block child (states.py:2287-2291).
+    fn directive_run_message(&self, level: u8, text: &str, lineno: u32, rawsource: &str) -> Node {
+        messages::with_literal(self.msg(level, text, lineno), rawsource)
+    }
+
     fn directive_run_error(&self, text: &str, lineno: u32, rawsource: &str) -> Node {
-        messages::with_literal(self.msg(messages::ERROR, text, lineno), rawsource)
+        self.directive_run_message(messages::ERROR, text, lineno, rawsource)
     }
 
     /// assert_has_content() (rst/__init__.py:370-377).
@@ -2950,6 +2960,19 @@ impl<'a> BlockParser<'a> {
     }
 
     fn run_image(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        match self.build_image(&input, out) {
+            Ok(node) => out.push(node),
+            Err(msg) => out.push(*msg),
+        }
+    }
+
+    /// images.py Image.run(): builds the image node (possibly wrapped in a
+    /// reference); Err carries the system_message. Shared with figure.
+    fn build_image(
+        &mut self,
+        input: &DirectiveInput<'a, '_>,
+        out: &mut Vec<Node>,
+    ) -> Result<Node, Box<Node>> {
         // Two-stage :align: validation (images.py:53-63): the converter
         // accepted all six values; at body level only horizontal ones are
         // legal. This is a DirectiveError whose text CONTAINS its own
@@ -2957,15 +2980,14 @@ impl<'a> BlockParser<'a> {
         // before 'Valid' are docutils-verbatim.
         if let Some(OptVal::Str(align)) = opt_get(&input.options, "align") {
             if matches!(align.as_str(), "top" | "middle" | "bottom") {
-                out.push(self.directive_run_error(
+                return Err(Box::new(self.directive_run_error(
                     &format!(
                         "Error in \"{}\" directive: \"{}\" is not a valid value for the \"align\" option.  Valid values for \"align\" are: \"left\", \"center\", \"right\".",
                         input.name, align
                     ),
                     input.lineno,
                     input.rawsource,
-                ));
-                return;
+                )));
             }
         }
         let uri = uri_from_argument(&input.arguments[0]);
@@ -3003,12 +3025,368 @@ impl<'a> BlockParser<'a> {
         }
         image.set("uri", AttrValue::Str(uri));
         self.directive_add_name(&mut image, &input.options, input.lineno, out);
-        match reference {
+        Ok(match reference {
             Some(mut r) => {
                 r.children.push(image);
-                out.push(r);
+                r
             }
-            None => out.push(image),
+            None => image,
+        })
+    }
+
+    /// figure (images.py:110-186).
+    fn run_figure(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        let image_input = DirectiveInput {
+            name: input.name,
+            arguments: input.arguments.clone(),
+            options: input
+                .options
+                .iter()
+                .filter(|(n, _)| !matches!(n.as_str(), "figwidth" | "figclass" | "align"))
+                .cloned()
+                .collect(),
+            content: Vec::new(),
+            span: input.span,
+            lineno: input.lineno,
+            rawsource: input.rawsource,
+        };
+        let image_node = match self.build_image(&image_input, out) {
+            Ok(n) => n,
+            Err(msg) => {
+                // Inner image error short-circuits: no <figure> at all.
+                out.push(*msg);
+                return;
+            }
+        };
+        let mut figure = Node::elem("figure", input.span);
+        match opt_get(&input.options, "figwidth") {
+            // ':figwidth: image' needs PIL, which the oracle environment
+            // lacks: silent no-op (images.py:150-159).
+            Some(OptVal::Str(w)) if w == "image" => {}
+            Some(OptVal::Str(w)) => figure.set("width", AttrValue::Str(w.clone())),
+            _ => {}
+        }
+        if let Some(OptVal::StrList(cls)) = opt_get(&input.options, "figclass") {
+            figure.attrs.classes.extend(cls.iter().cloned());
+        }
+        if let Some(OptVal::Str(a)) = opt_get(&input.options, "align") {
+            figure.set("align", AttrValue::Str(a.clone()));
+        }
+        figure.children.push(image_node);
+        if !input.content.is_empty() {
+            let children = self.parse_nested(&input.content, "figure");
+            let mut caption_done = false;
+            let mut legend_children: Vec<Node> = Vec::new();
+            for child in children {
+                if caption_done {
+                    legend_children.push(child);
+                    continue;
+                }
+                if child.kind == kinds::TARGET {
+                    figure.children.push(child);
+                } else if child.kind == kinds::PARAGRAPH {
+                    let mut caption = Node::elem("caption", input.span);
+                    caption.children = child.children;
+                    figure.children.push(caption);
+                    caption_done = true;
+                } else if child.kind == kinds::COMMENT && child.children.is_empty() {
+                    caption_done = true;
+                } else {
+                    // Unlike other directives, the figure node is emitted
+                    // BEFORE the error (images.py:176-181).
+                    out.push(figure);
+                    out.push(self.directive_run_error(
+                        "Figure caption must be a paragraph or empty comment.",
+                        input.lineno,
+                        input.rawsource,
+                    ));
+                    return;
+                }
+            }
+            if !legend_children.is_empty() {
+                let mut legend = Node::elem("legend", input.span);
+                legend.children = legend_children;
+                figure.children.push(legend);
+            }
+        }
+        out.push(figure);
+    }
+
+    /// code (body.py:149-211). The parity oracle runs docutils WITHOUT
+    /// Pygments: a language argument fails the whole directive with a
+    /// WARNING; language-less code emits a plain classes="code" literal.
+    fn run_code(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        if input.content.is_empty() {
+            out.push(self.directive_content_error(input.name, input.lineno, input.rawsource));
+            return;
+        }
+        if !input.arguments.is_empty() {
+            out.push(self.directive_run_message(
+                messages::WARNING,
+                "Cannot analyze code. Pygments package not found.",
+                input.lineno,
+                input.rawsource,
+            ));
+            return;
+        }
+        let number_lines = match opt_get(&input.options, "number-lines") {
+            Some(OptVal::Str(v)) => {
+                let raw = if v.is_empty() { "1" } else { v.as_str() };
+                match py_int(raw) {
+                    Some(n) => Some(n),
+                    None => {
+                        out.push(self.directive_run_error(
+                            ":number-lines: with non-integer start value",
+                            input.lineno,
+                            input.rawsource,
+                        ));
+                        return;
+                    }
+                }
+            }
+            _ => None,
+        };
+        let code_lines: Vec<&str> = input.content.iter().map(|l| l.text).collect();
+        let mut node = Node::elem(kinds::LITERAL_BLOCK, input.span);
+        node.attrs.classes.push("code".to_string());
+        if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
+            node.attrs.classes.extend(classes.iter().cloned());
+        }
+        node.set("xml:space", AttrValue::Str("preserve".to_string()));
+        match number_lines {
+            Some(start) => {
+                // NumberLines (docutils/utils/code_analyzer.py): a padded
+                // 'ln' inline before every line.
+                let endline = start + input.content.len() as i64;
+                let width = endline.to_string().len();
+                for (i, line) in code_lines.iter().enumerate() {
+                    let lineno = start + i as i64;
+                    let mut ln = Node::elem("inline", input.span);
+                    ln.attrs.classes.push("ln".to_string());
+                    ln.children
+                        .push(Node::text_node(format!("{lineno:>width$} "), input.span));
+                    node.children.push(ln);
+                    let text = if i + 1 == code_lines.len() {
+                        (*line).to_string()
+                    } else {
+                        format!("{line}\n")
+                    };
+                    node.children.push(Node::text_node(text, input.span));
+                }
+            }
+            None => {
+                node.children
+                    .push(Node::text_node(code_lines.join("\n"), input.span));
+            }
+        }
+        self.directive_add_name(&mut node, &input.options, input.lineno, out);
+        out.push(node);
+    }
+
+    /// math (body.py:214-237): blank-line-separated blocks become sibling
+    /// math_block nodes; :name: only lands on the first (options.pop).
+    fn run_math(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        if input.content.is_empty() {
+            out.push(self.directive_content_error(input.name, input.lineno, input.rawsource));
+            return;
+        }
+        let joined = input
+            .content
+            .iter()
+            .map(|l| l.text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut named = false;
+        for block in joined.split("\n\n") {
+            if block.is_empty() {
+                continue;
+            }
+            let mut node = Node::elem("math_block", input.span);
+            node.set("xml:space", AttrValue::Str("preserve".to_string()));
+            if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
+                node.attrs.classes.extend(classes.iter().cloned());
+            }
+            node.children.push(Node::text_node(block, input.span));
+            if !named {
+                self.directive_add_name(&mut node, &input.options, input.lineno, out);
+                named = true;
+            }
+            out.push(node);
+        }
+    }
+
+    /// raw (misc.py:270-354).
+    fn run_raw(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        let has_file = opt_get(&input.options, "file").is_some();
+        let has_url = opt_get(&input.options, "url").is_some();
+        let text: String;
+        let mut source_attr: Option<String> = None;
+        if !input.content.is_empty() {
+            if has_file || has_url {
+                out.push(self.directive_run_error(
+                    &format!(
+                        "\"{}\" directive may not both specify an external file and have content.",
+                        input.name
+                    ),
+                    input.lineno,
+                    input.rawsource,
+                ));
+                return;
+            }
+            text = input
+                .content
+                .iter()
+                .map(|l| l.text)
+                .collect::<Vec<_>>()
+                .join("\n");
+        } else if has_file {
+            if has_url {
+                out.push(self.directive_run_error(
+                    &format!(
+                        "The \"file\" and \"url\" options may not be simultaneously specified for the \"{}\" directive.",
+                        input.name
+                    ),
+                    input.lineno,
+                    input.rawsource,
+                ));
+                return;
+            }
+            let Some(OptVal::Str(path)) = opt_get(&input.options, "file") else {
+                unreachable!("file option is Path-converted");
+            };
+            let base = std::path::Path::new(self.source_path)
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_default();
+            let full = base.join(path);
+            match std::fs::read_to_string(&full) {
+                Ok(t) => {
+                    // docutils strips ONE trailing newline via rstrip
+                    // hazard; keep verbatim minus trailing newline.
+                    text = t.trim_end_matches('\n').to_string();
+                    source_attr = Some(path.clone());
+                }
+                Err(_) => {
+                    out.push(self.directive_run_message(
+                        messages::SEVERE,
+                        &format!(
+                            "Problems with \"{}\" directive path:\nInputError: [Errno 2] No such file or directory: {}.",
+                            input.name,
+                            py_repr(Some(path))
+                        ),
+                        input.lineno,
+                        input.rawsource,
+                    ));
+                    return;
+                }
+            }
+        } else if has_url {
+            // URL fetching is out of parse-layer scope; the corpus only
+            // pins the mutual-exclusivity errors above.
+            out.push(self.directive_run_message(
+                messages::SEVERE,
+                &format!(
+                    "Problems with \"{}\" directive URL: fetching is not supported.",
+                    input.name
+                ),
+                input.lineno,
+                input.rawsource,
+            ));
+            return;
+        } else {
+            out.push(self.directive_content_error(input.name, input.lineno, input.rawsource));
+            return;
+        }
+        let format = input.arguments[0]
+            .to_lowercase()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mut node = Node::elem("raw", input.span);
+        node.set("format", AttrValue::Str(format));
+        node.set("xml:space", AttrValue::Str("preserve".to_string()));
+        if let Some(src) = source_attr {
+            node.set("source", AttrValue::Str(src));
+        }
+        if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
+            node.attrs.classes.extend(classes.iter().cloned());
+        }
+        node.children.push(Node::text_node(text, input.span));
+        out.push(node);
+    }
+
+    /// line-block directive (body.py:99-129): same tree as `|` syntax.
+    fn run_line_block(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        if input.content.is_empty() {
+            out.push(self.directive_content_error(input.name, input.lineno, input.rawsource));
+            return;
+        }
+        let mut resolved: Vec<(usize, Vec<Node>)> = Vec::with_capacity(input.content.len());
+        let mut lb_messages: Vec<Node> = Vec::new();
+        let mut prev_depth = 0usize;
+        for l in &input.content {
+            if l.is_blank() {
+                resolved.push((prev_depth, Vec::new()));
+                continue;
+            }
+            let depth = l.indent();
+            prev_depth = depth;
+            let inline = super::inline::parse_inline(
+                l.text.trim(),
+                input.span,
+                input.lineno,
+                &mut self.registry,
+                self.source_path,
+            );
+            lb_messages.extend(inline.messages);
+            resolved.push((depth, inline.nodes));
+        }
+        let mut block = build_line_block(&mut resolved, input.span, 0);
+        if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
+            block.attrs.classes.extend(classes.iter().cloned());
+        }
+        self.directive_add_name(&mut block, &input.options, input.lineno, out);
+        out.push(block);
+        out.append(&mut lb_messages);
+    }
+
+    /// class (misc.py:434-469): with content, classes apply directly to
+    /// every top-level child; without, a pending node is emitted for the
+    /// ClassAttribute transform.
+    fn run_class(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        let class_values = match convert_option(Conv::ClassOption, Some(&input.arguments[0])) {
+            Ok(OptVal::StrList(list)) => list,
+            _ => {
+                out.push(self.directive_run_error(
+                    &format!(
+                        "Invalid class attribute value for \"{}\" directive: \"{}\".",
+                        input.name, input.arguments[0]
+                    ),
+                    input.lineno,
+                    input.rawsource,
+                ));
+                return;
+            }
+        };
+        if !input.content.is_empty() {
+            let mut children = self.parse_nested(&input.content, "element");
+            for child in &mut children {
+                child.attrs.classes.extend(class_values.iter().cloned());
+            }
+            out.extend(children);
+        } else {
+            let mut pending = Node::elem("pending", input.span);
+            let details = format!(
+                ".. internal attributes:\n     .transform: docutils.transforms.misc.ClassAttribute\n     .details:\n       class: [{}]\n       directive: {}",
+                class_values
+                    .iter()
+                    .map(|c| py_repr(Some(c)))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                py_repr(Some(input.name)),
+            );
+            pending.children.push(Node::text_node(details, input.span));
+            out.push(pending);
         }
     }
 
@@ -3441,6 +3819,12 @@ enum DirectiveKind {
     Compound,
     Container,
     ParsedLiteral,
+    Figure,
+    Code,
+    MathBlock,
+    Raw,
+    LineBlockDir,
+    ClassDir,
 }
 
 /// The docutils Directive class contract (rst/__init__.py:305-318).
@@ -3462,9 +3846,18 @@ enum Conv {
     UnchangedRequired,
     Percentage,
     LengthOrUnitless,
-    LengthOrPercentageOrUnitless,
+    /// The &str is the docutils `default` unit suffix appended to unitless
+    /// values ("" for image width, "px" for figwidth).
+    LengthOrPercentageOrUnitless(&'static str),
     ClassOption,
     Choice(&'static [&'static str]),
+    Path,
+    Uri,
+    /// codecs.lookup validation is approximated as accept-any (hardening
+    /// note: exotic names docutils rejects are accepted here).
+    Encoding,
+    /// figure :figwidth:: the literal 'image' keyword or a length.
+    Figwidth,
 }
 
 /// Converted option values (Python-typed in docutils: None/str/int/list).
@@ -3507,13 +3900,41 @@ const IMAGE_LOADING_VALUES: &[&str] = &["embed", "link", "lazy"];
 const IMAGE_OPTS: &[(&str, Conv)] = &[
     ("alt", Conv::Unchanged),
     ("height", Conv::LengthOrUnitless),
-    ("width", Conv::LengthOrPercentageOrUnitless),
+    ("width", Conv::LengthOrPercentageOrUnitless("")),
     ("scale", Conv::Percentage),
     ("align", Conv::Choice(IMAGE_ALIGN_VALUES)),
     ("target", Conv::UnchangedRequired),
     ("loading", Conv::Choice(IMAGE_LOADING_VALUES)),
     ("class", Conv::ClassOption),
     ("name", Conv::Unchanged),
+];
+
+const H_ALIGN_VALUES: &[&str] = &["left", "center", "right"];
+const FIGURE_OPTS: &[(&str, Conv)] = &[
+    ("alt", Conv::Unchanged),
+    ("height", Conv::LengthOrUnitless),
+    ("width", Conv::LengthOrPercentageOrUnitless("")),
+    ("scale", Conv::Percentage),
+    ("align", Conv::Choice(H_ALIGN_VALUES)),
+    ("target", Conv::UnchangedRequired),
+    ("loading", Conv::Choice(IMAGE_LOADING_VALUES)),
+    ("class", Conv::ClassOption),
+    ("name", Conv::Unchanged),
+    ("figwidth", Conv::Figwidth),
+    ("figclass", Conv::ClassOption),
+];
+
+const CODE_OPTS: &[(&str, Conv)] = &[
+    ("class", Conv::ClassOption),
+    ("name", Conv::Unchanged),
+    ("number-lines", Conv::Unchanged),
+];
+
+const RAW_OPTS: &[(&str, Conv)] = &[
+    ("file", Conv::Path),
+    ("url", Conv::Uri),
+    ("encoding", Conv::Encoding),
+    ("class", Conv::ClassOption),
 ];
 
 fn directive_spec(lower: &str) -> Option<DirectiveSpec> {
@@ -3603,6 +4024,54 @@ fn directive_spec(lower: &str) -> Option<DirectiveSpec> {
             has_content: true,
             option_spec: ADMONITION_OPTS,
             kind: DirectiveKind::ParsedLiteral,
+        }),
+        "figure" => Some(DirectiveSpec {
+            required_arguments: 1,
+            optional_arguments: 0,
+            final_argument_whitespace: true,
+            has_content: true,
+            option_spec: FIGURE_OPTS,
+            kind: DirectiveKind::Figure,
+        }),
+        "code" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 1,
+            final_argument_whitespace: false,
+            has_content: true,
+            option_spec: CODE_OPTS,
+            kind: DirectiveKind::Code,
+        }),
+        "math" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 0,
+            final_argument_whitespace: false,
+            has_content: true,
+            option_spec: ADMONITION_OPTS,
+            kind: DirectiveKind::MathBlock,
+        }),
+        "raw" => Some(DirectiveSpec {
+            required_arguments: 1,
+            optional_arguments: 0,
+            final_argument_whitespace: true,
+            has_content: true,
+            option_spec: RAW_OPTS,
+            kind: DirectiveKind::Raw,
+        }),
+        "line-block" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 0,
+            final_argument_whitespace: false,
+            has_content: true,
+            option_spec: ADMONITION_OPTS,
+            kind: DirectiveKind::LineBlockDir,
+        }),
+        "class" => Some(DirectiveSpec {
+            required_arguments: 1,
+            optional_arguments: 0,
+            final_argument_whitespace: true,
+            has_content: true,
+            option_spec: &[],
+            kind: DirectiveKind::ClassDir,
         }),
         _ => None,
     }
@@ -3773,7 +4242,7 @@ fn convert_option(conv: Conv, value: Option<&str>) -> Result<OptVal, String> {
             units.push("");
             get_measure(v, &units).map(OptVal::Str)
         }
-        Conv::LengthOrPercentageOrUnitless => {
+        Conv::LengthOrPercentageOrUnitless(default) => {
             let Some(v) = value else {
                 return Err("expected string or bytes-like object, got 'NoneType'".to_string());
             };
@@ -3782,10 +4251,39 @@ fn convert_option(conv: Conv, value: Option<&str>) -> Result<OptVal, String> {
             match get_measure(v, &units) {
                 Ok(m) => Ok(OptVal::Str(m)),
                 Err(first_error) => match get_measure(v, &[""]) {
-                    Ok(m) => Ok(OptVal::Str(m)),
+                    Ok(m) => Ok(OptVal::Str(format!("{m}{default}"))),
                     Err(_) => Err(first_error),
                 },
             }
+        }
+        Conv::Path => {
+            let Some(v) = value else {
+                return Err("argument required but none supplied".to_string());
+            };
+            Ok(OptVal::Str(
+                v.lines().map(str::trim).collect::<Vec<_>>().join(""),
+            ))
+        }
+        Conv::Uri => {
+            let Some(v) = value else {
+                return Err("argument required but none supplied".to_string());
+            };
+            Ok(OptVal::Str(uri_from_argument(v)))
+        }
+        Conv::Encoding => {
+            let Some(v) = value else {
+                return Err("argument required but none supplied".to_string());
+            };
+            Ok(OptVal::Str(v.to_string()))
+        }
+        Conv::Figwidth => {
+            let Some(v) = value else {
+                return Err("expected string or bytes-like object, got 'NoneType'".to_string());
+            };
+            if v.eq_ignore_ascii_case("image") {
+                return Ok(OptVal::Str("image".to_string()));
+            }
+            convert_option(Conv::LengthOrPercentageOrUnitless("px"), Some(v))
         }
         Conv::ClassOption => {
             let Some(v) = value else {

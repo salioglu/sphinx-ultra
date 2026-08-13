@@ -2869,6 +2869,246 @@
       "rst": ".. parsed-literal::\n   :class: code-ish\n   :name: pl1\n\n   plain \\*escaped\\* text\n"
     },
     {
+      "family": "dir_media",
+      "name": "dir_media.figure_caption_legend",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <figure>\n        <image uri=\"pic.png\">\n        <caption>\n            This is the caption.\n        <legend>\n            <paragraph>\n                This is a legend paragraph.\n            <paragraph>\n                Second legend paragraph.\n",
+      "rst": ".. figure:: pic.png\n\n   This is the caption.\n\n   This is a legend paragraph.\n\n   Second legend paragraph.\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.figure_caption_only",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <figure>\n        <image uri=\"pic.png\">\n        <caption>\n            Caption text.\n",
+      "rst": ".. figure:: pic.png\n\n   Caption text.\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.figure_no_caption_comment",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <figure>\n        <image uri=\"pic.png\">\n        <legend>\n            <paragraph>\n                Legend after empty comment.\n",
+      "rst": ".. figure:: pic.png\n\n   ..\n\n   Legend after empty comment.\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.figure_no_content",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <figure>\n        <image uri=\"pic.png\">\n",
+      "rst": ".. figure:: pic.png\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.figure_options",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <figure align=\"right\" classes=\"myfigclass\" width=\"300px\">\n        <image uri=\"pic.png\">\n        <caption>\n            Caption text.\n",
+      "rst": ".. figure:: pic.png\n   :figwidth: 300\n   :figclass: myfigclass\n   :align: right\n\n   Caption text.\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.figure_figwidth_image",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <figure>\n        <image uri=\"pic.png\" width=\"300px\">\n        <caption>\n            Caption.\n",
+      "rst": ".. figure:: pic.png\n   :figwidth: image\n   :width: 300px\n\n   Caption.\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.figure_bad_scale",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"figure\" directive:\n            invalid option value: (option: \"scale\"; value: 'abc')\n            invalid literal for int() with base 10: 'abc'.\n        <literal_block xml:space=\"preserve\">\n            .. figure:: pic.png\n               :scale: abc\n            \n               Caption.\n",
+      "rst": ".. figure:: pic.png\n   :scale: abc\n\n   Caption.\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.figure_bad_first_child",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <figure>\n        <image uri=\"pic.png\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Figure caption must be a paragraph or empty comment.\n        <literal_block xml:space=\"preserve\">\n            .. figure:: pic.png\n            \n               - bullet\n               - list\n",
+      "rst": ".. figure:: pic.png\n\n   - bullet\n   - list\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.figure_name_option",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <figure>\n        <image ids=\"fig-one\" names=\"fig\\ one\" uri=\"pic.png\">\n        <caption>\n            Caption.\n",
+      "rst": ".. figure:: pic.png\n   :name: fig one\n\n   Caption.\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.figure_align_vertical_rejected",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"figure\" directive:\n            invalid option value: (option: \"align\"; value: 'top')\n            \"top\" unknown; choose from \"left\", \"center\", or \"right\".\n        <literal_block xml:space=\"preserve\">\n            .. figure:: pic.png\n               :align: top\n            \n               Caption.\n",
+      "rst": ".. figure:: pic.png\n   :align: top\n\n   Caption.\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.code_plain",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <literal_block classes=\"code\" xml:space=\"preserve\">\n        x = 1\n        y = 2\n",
+      "rst": ".. code::\n\n   x = 1\n   y = 2\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.code_class_name",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <literal_block classes=\"code extra\" ids=\"snippet-one\" names=\"snippet\\ one\" xml:space=\"preserve\">\n        pass\n",
+      "rst": ".. code::\n   :class: extra\n   :name: snippet one\n\n   pass\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.code_language_warning",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Cannot analyze code. Pygments package not found.\n        <literal_block xml:space=\"preserve\">\n            .. code:: python\n            \n               x = 1\n",
+      "rst": ".. code:: python\n\n   x = 1\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.code_number_lines",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <literal_block classes=\"code\" xml:space=\"preserve\">\n        <inline classes=\"ln\">\n            1 \n        one\n        <inline classes=\"ln\">\n            2 \n        two\n",
+      "rst": ".. code::\n   :number-lines:\n\n   one\n   two\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.code_number_lines_start",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <literal_block classes=\"code\" xml:space=\"preserve\">\n        <inline classes=\"ln\">\n             9 \n        one\n        <inline classes=\"ln\">\n            10 \n        two\n",
+      "rst": ".. code::\n   :number-lines: 9\n\n   one\n   two\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.code_number_lines_bad",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            :number-lines: with non-integer start value\n        <literal_block xml:space=\"preserve\">\n            .. code::\n               :number-lines: xyz\n            \n               one\n",
+      "rst": ".. code::\n   :number-lines: xyz\n\n   one\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.code_empty_error",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"code\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. code::\n",
+      "rst": ".. code::\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.math_single",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <math_block xml:space=\"preserve\">\n        E = mc^2\n",
+      "rst": ".. math::\n\n   E = mc^2\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.math_two_blocks",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <math_block xml:space=\"preserve\">\n        a = 1\n    <math_block xml:space=\"preserve\">\n        b = 2\n",
+      "rst": ".. math::\n\n   a = 1\n\n   b = 2\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.math_marker_line",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <math_block xml:space=\"preserve\">\n        E = mc^2\n",
+      "rst": ".. math:: E = mc^2\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.math_options",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <math_block classes=\"eq\" ids=\"my-eq\" names=\"my\\ eq\" xml:space=\"preserve\">\n        x^2\n",
+      "rst": ".. math::\n   :class: eq\n   :name: my eq\n\n   x^2\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.math_label_unknown",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"math\" directive:\n            unknown option: \"label\".\n        <literal_block xml:space=\"preserve\">\n            .. math::\n               :label: eq1\n            \n               x\n",
+      "rst": ".. math::\n   :label: eq1\n\n   x\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.math_empty_error",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"math\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. math::\n",
+      "rst": ".. math::\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.raw_html",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <raw format=\"html\" xml:space=\"preserve\">\n        <hr>\n",
+      "rst": ".. raw:: html\n\n   <hr>\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.raw_multi_format",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <raw format=\"html latex\" xml:space=\"preserve\">\n        text\n",
+      "rst": ".. raw:: html latex\n\n   text\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.raw_missing_arg",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"raw\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. raw::\n            \n               text\n",
+      "rst": ".. raw::\n\n   text\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.raw_file_and_content",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            \"raw\" directive may not both specify an external file and have content.\n        <literal_block xml:space=\"preserve\">\n            .. raw:: html\n               :file: x.html\n            \n               inline too\n",
+      "rst": ".. raw:: html\n   :file: x.html\n\n   inline too\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.raw_missing_file",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"4\" line=\"1\" source=\"<snippet>\" type=\"SEVERE\">\n        <paragraph>\n            Problems with \"raw\" directive path:\n            InputError: [Errno 2] No such file or directory: 'nonexistent-raw-input.html'.\n        <literal_block xml:space=\"preserve\">\n            .. raw:: html\n               :file: nonexistent-raw-input.html\n",
+      "rst": ".. raw:: html\n   :file: nonexistent-raw-input.html\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.raw_name_unknown_option",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"raw\" directive:\n            unknown option: \"name\".\n        <literal_block xml:space=\"preserve\">\n            .. raw:: html\n               :name: r1\n            \n               text\n",
+      "rst": ".. raw:: html\n   :name: r1\n\n   text\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.raw_empty",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"raw\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. raw:: html\n",
+      "rst": ".. raw:: html\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.lineblock_dir_basic",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <line_block>\n        <line>\n            Line one\n        <line>\n            Line two\n",
+      "rst": ".. line-block::\n\n   Line one\n   Line two\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.lineblock_dir_nested",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <line_block>\n        <line>\n            Line one\n        <line>\n            Line two\n        <line_block>\n            <line>\n                Indented line three\n",
+      "rst": ".. line-block::\n\n   Line one\n   Line two\n      Indented line three\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.lineblock_dir_class",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <line_block classes=\"verse\">\n        <line>\n            a\n        <line>\n            b\n",
+      "rst": ".. line-block::\n   :class: verse\n\n   a\n   b\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.lineblock_dir_empty_error",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"line-block\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. line-block::\n",
+      "rst": ".. line-block::\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.class_pending",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <pending>\n        .. internal attributes:\n             .transform: docutils.transforms.misc.ClassAttribute\n             .details:\n               class: ['myclass']\n               directive: 'class'\n    <paragraph>\n        Some paragraph following.\n",
+      "rst": ".. class:: myclass\n\nSome paragraph following.\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.class_with_content",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph classes=\"myclass\">\n        First paragraph.\n    <paragraph classes=\"myclass\">\n        Second paragraph.\n",
+      "rst": ".. class:: myclass\n\n   First paragraph.\n\n   Second paragraph.\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.class_two_values",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <pending>\n        .. internal attributes:\n             .transform: docutils.transforms.misc.ClassAttribute\n             .details:\n               class: ['class-one', 'class-two']\n               directive: 'class'\n    <paragraph>\n        Para.\n",
+      "rst": ".. class:: class-one class-two\n\nPara.\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.class_slugify",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <pending>\n        .. internal attributes:\n             .transform: docutils.transforms.misc.ClassAttribute\n             .details:\n               class: ['bad-class']\n               directive: 'class'\n    <paragraph>\n        Para.\n",
+      "rst": ".. class:: 123bad!!class\n\nPara.\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.class_bad_value",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Invalid class attribute value for \"class\" directive: \"!!!\".\n        <literal_block xml:space=\"preserve\">\n            .. class:: !!!\n    <paragraph>\n        Para.\n",
+      "rst": ".. class:: !!!\n\nPara.\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.class_missing_arg",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"class\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. class::\n            \n               Body.\n",
+      "rst": ".. class::\n\n   Body.\n"
+    },
+    {
       "family": "review2",
       "name": "review2.multi_segment_role",
       "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            :py:func:`target`\n         end.\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            No role entry for \"py:func\" in module \"docutils.parsers.rst.languages.en\".\n            Trying \"py:func\" as canonical role name.\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown interpreted text role \"py:func\".\n",

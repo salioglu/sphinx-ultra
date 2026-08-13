@@ -111,10 +111,19 @@ SUPPORTED_KINDS = {
     "rubric",
     "compound",
     "container",
+    "figure",
+    "caption",
+    "legend",
+    "math_block",
+    "raw",
+    "pending",
+    "inline",
 }
 
 # Families whose snippets intentionally exercise the directive machinery.
-DIRECTIVE_FAMILIES = ("dir_core", "dir_admonitions", "dir_options", "dir_image", "dir_body")
+DIRECTIVE_FAMILIES = (
+    "dir_core", "dir_admonitions", "dir_options", "dir_image", "dir_body", "dir_media",
+)
 
 # (family, name, rst) — names unique, families floor-checked below.
 CASES = [
@@ -622,6 +631,47 @@ CASES = [
     ("dir_body", "container_named", ".. container:: cls\n   :name: cont\n\n   Body.\n"),
     ("dir_body", "parsed_literal_inline", ".. parsed-literal::\n\n   Text with *emphasis* and **strong** and a\n   `link <http://example.com>`_.\n"),
     ("dir_body", "parsed_literal_class", ".. parsed-literal::\n   :class: code-ish\n   :name: pl1\n\n   plain \\*escaped\\* text\n"),
+    # ----- wave 3: figure/code/math/raw/line-block/class -----
+    ("dir_media", "figure_caption_legend", ".. figure:: pic.png\n\n   This is the caption.\n\n   This is a legend paragraph.\n\n   Second legend paragraph.\n"),
+    ("dir_media", "figure_caption_only", ".. figure:: pic.png\n\n   Caption text.\n"),
+    ("dir_media", "figure_no_caption_comment", ".. figure:: pic.png\n\n   ..\n\n   Legend after empty comment.\n"),
+    ("dir_media", "figure_no_content", ".. figure:: pic.png\n"),
+    ("dir_media", "figure_options", ".. figure:: pic.png\n   :figwidth: 300\n   :figclass: myfigclass\n   :align: right\n\n   Caption text.\n"),
+    ("dir_media", "figure_figwidth_image", ".. figure:: pic.png\n   :figwidth: image\n   :width: 300px\n\n   Caption.\n"),
+    ("dir_media", "figure_bad_scale", ".. figure:: pic.png\n   :scale: abc\n\n   Caption.\n"),
+    ("dir_media", "figure_bad_first_child", ".. figure:: pic.png\n\n   - bullet\n   - list\n"),
+    ("dir_media", "figure_name_option", ".. figure:: pic.png\n   :name: fig one\n\n   Caption.\n"),
+    ("dir_media", "figure_align_vertical_rejected", ".. figure:: pic.png\n   :align: top\n\n   Caption.\n"),
+    ("dir_media", "code_plain", ".. code::\n\n   x = 1\n   y = 2\n"),
+    ("dir_media", "code_class_name", ".. code::\n   :class: extra\n   :name: snippet one\n\n   pass\n"),
+    ("dir_media", "code_language_warning", ".. code:: python\n\n   x = 1\n"),
+    ("dir_media", "code_number_lines", ".. code::\n   :number-lines:\n\n   one\n   two\n"),
+    ("dir_media", "code_number_lines_start", ".. code::\n   :number-lines: 9\n\n   one\n   two\n"),
+    ("dir_media", "code_number_lines_bad", ".. code::\n   :number-lines: xyz\n\n   one\n"),
+    ("dir_media", "code_empty_error", ".. code::\n"),
+    ("dir_media", "math_single", ".. math::\n\n   E = mc^2\n"),
+    ("dir_media", "math_two_blocks", ".. math::\n\n   a = 1\n\n   b = 2\n"),
+    ("dir_media", "math_marker_line", ".. math:: E = mc^2\n"),
+    ("dir_media", "math_options", ".. math::\n   :class: eq\n   :name: my eq\n\n   x^2\n"),
+    ("dir_media", "math_label_unknown", ".. math::\n   :label: eq1\n\n   x\n"),
+    ("dir_media", "math_empty_error", ".. math::\n"),
+    ("dir_media", "raw_html", ".. raw:: html\n\n   <hr>\n"),
+    ("dir_media", "raw_multi_format", ".. raw:: html latex\n\n   text\n"),
+    ("dir_media", "raw_missing_arg", ".. raw::\n\n   text\n"),
+    ("dir_media", "raw_file_and_content", ".. raw:: html\n   :file: x.html\n\n   inline too\n"),
+    ("dir_media", "raw_missing_file", ".. raw:: html\n   :file: nonexistent-raw-input.html\n"),
+    ("dir_media", "raw_name_unknown_option", ".. raw:: html\n   :name: r1\n\n   text\n"),
+    ("dir_media", "raw_empty", ".. raw:: html\n"),
+    ("dir_media", "lineblock_dir_basic", ".. line-block::\n\n   Line one\n   Line two\n"),
+    ("dir_media", "lineblock_dir_nested", ".. line-block::\n\n   Line one\n   Line two\n      Indented line three\n"),
+    ("dir_media", "lineblock_dir_class", ".. line-block::\n   :class: verse\n\n   a\n   b\n"),
+    ("dir_media", "lineblock_dir_empty_error", ".. line-block::\n"),
+    ("dir_media", "class_pending", ".. class:: myclass\n\nSome paragraph following.\n"),
+    ("dir_media", "class_with_content", ".. class:: myclass\n\n   First paragraph.\n\n   Second paragraph.\n"),
+    ("dir_media", "class_two_values", ".. class:: class-one class-two\n\nPara.\n"),
+    ("dir_media", "class_slugify", ".. class:: 123bad!!class\n\nPara.\n"),
+    ("dir_media", "class_bad_value", ".. class:: !!!\n\nPara.\n"),
+    ("dir_media", "class_missing_arg", ".. class::\n\n   Body.\n"),
     # ----- wave 2 review round (Sonnet adversarial review, 2026-08-07) -----
     ("review2", "multi_segment_role", ":py:func:`target` end.\n"),
     ("review2", "multi_segment_role_three", ":a:b:c:`text` end.\n"),
@@ -732,7 +782,7 @@ def main() -> int:
         "paragraphs": 4, "sections": 8, "transition": 4, "lists_bullet": 8,
         "lists_enum": 8, "deflist": 8, "quote": 8, "literal": 8,
         "comment_target": 8, "lineblock": 4, "doctest": 4, "errors": 12,
-        "hardening": 20, "mixtures": 8, "review": 45, "inline_basics": 25, "inline_carriers": 10, "inline_refs": 40, "inline_roles": 20, "footnotes": 14, "fields": 15, "options": 10, "tables_grid": 18, "tables_simple": 12, "w2_hardening": 15, "review2": 12, "dir_core": 10, "dir_admonitions": 14, "dir_options": 20, "dir_image": 18, "dir_body": 30,
+        "hardening": 20, "mixtures": 8, "review": 45, "inline_basics": 25, "inline_carriers": 10, "inline_refs": 40, "inline_roles": 20, "footnotes": 14, "fields": 15, "options": 10, "tables_grid": 18, "tables_simple": 12, "w2_hardening": 15, "review2": 12, "dir_core": 10, "dir_admonitions": 14, "dir_options": 20, "dir_image": 18, "dir_body": 30, "dir_media": 38,
     }
     counts: dict = {}
     for family, _, _ in CASES:
