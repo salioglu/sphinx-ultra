@@ -204,6 +204,16 @@ SUPPORTED_KINDS = {
     "rubric",
     "compound",
     "container",
+    # wave-3 task 7: sphinx directives + xref roles
+    "subtitle",
+    "caption",
+    "versionmodified",
+    "inline",
+    "seealso",
+    "pending_xref",
+    "highlightlang",
+    "only",
+    "toctree",
 }
 
 CASES = [
@@ -443,6 +453,32 @@ CASES = [
     ('sx_image', 'dir_image_width_banana', '.. image:: pic.png\n   :width: banana\n'),
     ('sx_image', 'dir_image_height_bad_unit', '.. image:: pic.png\n   :height: 10banana\n'),
     ('sx_image', 'dir_image_target_empty', '.. image:: pic.png\n   :target:\n'),
+    # ----- wave-3 task 7: Sphinx directives + xref roles -----
+    ('sx_directives', 'versionadded_bare', '.. versionadded:: 1.2\n'),
+    ('sx_directives', 'versionadded_content', '.. versionadded:: 1.2\n\n   Some explanation text.\n'),
+    ('sx_directives', 'versionadded_single_line', '.. versionadded:: 1.2 Available since this release.\n'),
+    ('sx_directives', 'versionchanged', '.. versionchanged:: 2.0\n\n   Something changed.\n'),
+    ('sx_directives', 'deprecated', '.. deprecated:: 3.0\n\n   Use something else.\n'),
+    ('sx_directives', 'versionremoved', '.. versionremoved:: 4.0\n\n   Gone now.\n'),
+    ('sx_directives', 'versionadded_markup', '.. versionadded:: 1.2\n\n   Text with *emphasis*.\n'),
+    ('sx_directives', 'seealso_block', '.. seealso::\n\n   Some related thing.\n   Second line same paragraph.\n\n   A second paragraph.\n'),
+    ('sx_directives', 'seealso_role', '.. seealso:: :doc:`somepage`, Chapter 3\n'),
+    ('sx_directives', 'code_block_lang', '.. code-block:: python\n\n   x = 1\n   y = 2\n'),
+    ('sx_directives', 'code_block_no_lang', '.. code-block::\n\n   plain text block\n   (no language argument at all)\n'),
+    ('sx_directives', 'highlight_then_code_block', '.. highlight:: c\n   :linenothreshold: 5\n\n.. code-block::\n\n   int x = 1;\n'),
+    ('sx_directives', 'highlight_bare', '.. highlight:: python\n'),
+    ('sx_directives', 'code_block_full_options', '.. code-block:: python\n   :linenos:\n   :emphasize-lines: 2,4-5\n   :caption: example.py\n   :name: mycode\n\n   x = 1\n   y = 2\n   z = 3\n   w = 4\n   v = 5\n'),
+    ('sx_directives', 'code_block_name_only', '.. code-block:: python\n   :name: mycode2\n\n   x = 1\n'),
+    ('sx_directives', 'only_simple', '.. only:: html\n\n   HTML only content.\n'),
+    ('sx_directives', 'only_expr', '.. only:: html and not epub\n\n   Complex expr content.\n'),
+    ('sx_directives', 'rst_class', 'Title\n=====\n\n.. rst-class:: myclass otherclass\n\nParagraph after.\n'),
+    ('sx_directives', 'toctree_bare_entries', '.. toctree::\n   :maxdepth: 2\n\n   installation\n   Linked Title <other>\n'),
+    ('sx_roles', 'doc_role', 'See :doc:`somepage` here.\n'),
+    ('sx_roles', 'doc_role_explicit_title', 'See :doc:`The Guide <somepage>` here.\n'),
+    ('sx_roles', 'ref_role', 'See :ref:`Some Label` here.\n'),
+    ('sx_roles', 'func_role', 'Call :func:`mymod.myfunc` now.\n'),
+    ('sx_roles', 'func_role_tilde', 'Call :func:`~mymod.myfunc` now.\n'),
+    ('sx_roles', 'domain_qualified_role', 'Call :py:meth:`obj.method` now.\n'),
 ]
 
 
@@ -538,7 +574,14 @@ def main() -> int:
     assert len(names) == len(set(names)), "family-qualified case names must be unique"
     assert len(CASES) >= 40, f"corpus degenerated: {len(CASES)} cases"
 
-    floors = {"sx_plain": 15, "sx_admonitions": 10, "sx_body": 30, "sx_image": 6}
+    floors = {
+        "sx_plain": 15,
+        "sx_admonitions": 10,
+        "sx_body": 30,
+        "sx_image": 6,
+        "sx_directives": 18,
+        "sx_roles": 6,
+    }
     counts: dict = {}
     for family, _, _ in CASES:
         counts[family] = counts.get(family, 0) + 1

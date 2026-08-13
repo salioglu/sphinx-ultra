@@ -24,6 +24,8 @@ pub struct ParseOptions {
     /// docutils-native ones (toctree, xref roles, ...). The binary build
     /// path runs with this on; the docutils differential fixture off.
     pub sphinx: bool,
+    /// The docname recorded on pending_xref nodes (sphinx `refdoc`).
+    pub docname: String,
 }
 
 impl Default for ParseOptions {
@@ -31,6 +33,7 @@ impl Default for ParseOptions {
         ParseOptions {
             source_path: "<string>".to_string(),
             sphinx: false,
+            docname: "index".to_string(),
         }
     }
 }
@@ -96,5 +99,6 @@ pub fn parse_rst_full(source: &str, opts: &ParseOptions) -> ParseOutput {
     let lines = lines::Lines::new(source);
     let mut parser = block::BlockParser::new(&lines, &opts.source_path, source.len());
     parser.sphinx = opts.sphinx;
+    parser.docname = opts.docname.clone();
     parser.parse_document_full()
 }

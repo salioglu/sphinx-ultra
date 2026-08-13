@@ -46,6 +46,7 @@ fn matches_docutils_parser_pformat() {
                 &ParseOptions {
                     source_path: "<snippet>".into(),
                     sphinx: false,
+                    docname: "index".into(),
                 },
             )
             .root

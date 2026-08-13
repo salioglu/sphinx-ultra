@@ -1391,6 +1391,156 @@
       "name": "sx_image.dir_image_target_empty",
       "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"image\" directive:\n            invalid option value: (option: \"target\"; value: None)\n            argument required but none supplied.\n        <literal_block xml:space=\"preserve\">\n            .. image:: pic.png\n               :target:\n",
       "rst": ".. image:: pic.png\n   :target:\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.versionadded_bare",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <versionmodified type=\"versionadded\" version=\"1.2\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified added\">\n                Added in version 1.2.\n",
+      "rst": ".. versionadded:: 1.2\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.versionadded_content",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <versionmodified type=\"versionadded\" version=\"1.2\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified added\">\n                Added in version 1.2: \n            Some explanation text.\n",
+      "rst": ".. versionadded:: 1.2\n\n   Some explanation text.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.versionadded_single_line",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <versionmodified type=\"versionadded\" version=\"1.2\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified added\">\n                Added in version 1.2: \n            Available since this release.\n",
+      "rst": ".. versionadded:: 1.2 Available since this release.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.versionchanged",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <versionmodified type=\"versionchanged\" version=\"2.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified changed\">\n                Changed in version 2.0: \n            Something changed.\n",
+      "rst": ".. versionchanged:: 2.0\n\n   Something changed.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.deprecated",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <versionmodified type=\"deprecated\" version=\"3.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified deprecated\">\n                Deprecated since version 3.0: \n            Use something else.\n",
+      "rst": ".. deprecated:: 3.0\n\n   Use something else.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.versionremoved",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <versionmodified type=\"versionremoved\" version=\"4.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified removed\">\n                Removed in version 4.0: \n            Gone now.\n",
+      "rst": ".. versionremoved:: 4.0\n\n   Gone now.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.versionadded_markup",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <versionmodified type=\"versionadded\" version=\"1.2\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified added\">\n                Added in version 1.2: \n            Text with \n            <emphasis>\n                emphasis\n            .\n",
+      "rst": ".. versionadded:: 1.2\n\n   Text with *emphasis*.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.seealso_block",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <seealso>\n        <paragraph>\n            Some related thing.\n            Second line same paragraph.\n        <paragraph>\n            A second paragraph.\n",
+      "rst": ".. seealso::\n\n   Some related thing.\n   Second line same paragraph.\n\n   A second paragraph.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.seealso_role",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <seealso>\n        <paragraph>\n            <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"0\" reftarget=\"somepage\" reftype=\"doc\" refwarn=\"1\">\n                <inline classes=\"xref std std-doc\">\n                    somepage\n            , Chapter 3\n",
+      "rst": ".. seealso:: :doc:`somepage`, Chapter 3\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.code_block_lang",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <literal_block force=\"0\" highlight_args=\"{}\" language=\"python\" xml:space=\"preserve\">\n        x = 1\n        y = 2\n",
+      "rst": ".. code-block:: python\n\n   x = 1\n   y = 2\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.code_block_no_lang",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <literal_block force=\"0\" highlight_args=\"{}\" language=\"default\" xml:space=\"preserve\">\n        plain text block\n        (no language argument at all)\n",
+      "rst": ".. code-block::\n\n   plain text block\n   (no language argument at all)\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.highlight_then_code_block",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <highlightlang force=\"0\" lang=\"c\" linenothreshold=\"5\">\n    <literal_block force=\"0\" highlight_args=\"{}\" language=\"c\" xml:space=\"preserve\">\n        int x = 1;\n",
+      "rst": ".. highlight:: c\n   :linenothreshold: 5\n\n.. code-block::\n\n   int x = 1;\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.highlight_bare",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <highlightlang force=\"0\" lang=\"python\" linenothreshold=\"9223372036854775807\">\n",
+      "rst": ".. highlight:: python\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.code_block_full_options",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <container classes=\"literal-block-wrapper\" ids=\"mycode\" literal_block=\"1\" names=\"mycode\">\n        <caption>\n            example.py\n        <literal_block force=\"0\" highlight_args=\"{'hl_lines': [2, 4, 5]}\" language=\"python\" linenos=\"1\" xml:space=\"preserve\">\n            x = 1\n            y = 2\n            z = 3\n            w = 4\n            v = 5\n",
+      "rst": ".. code-block:: python\n   :linenos:\n   :emphasize-lines: 2,4-5\n   :caption: example.py\n   :name: mycode\n\n   x = 1\n   y = 2\n   z = 3\n   w = 4\n   v = 5\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.code_block_name_only",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <literal_block force=\"0\" highlight_args=\"{}\" ids=\"mycode2\" language=\"python\" names=\"mycode2\" xml:space=\"preserve\">\n        x = 1\n",
+      "rst": ".. code-block:: python\n   :name: mycode2\n\n   x = 1\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.only_simple",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <only expr=\"html\">\n        <paragraph>\n            HTML only content.\n",
+      "rst": ".. only:: html\n\n   HTML only content.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.only_expr",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <only expr=\"html and not epub\">\n        <paragraph>\n            Complex expr content.\n",
+      "rst": ".. only:: html and not epub\n\n   Complex expr content.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.rst_class",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph classes=\"myclass otherclass\">\n            Paragraph after.\n",
+      "rst": "Title\n=====\n\n.. rst-class:: myclass otherclass\n\nParagraph after.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.toctree_bare_entries",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <compound classes=\"toctree-wrapper\">\n        <toctree caption=\"True\" entries=\"\" glob=\"0\" hidden=\"0\" includefiles=\"\" includehidden=\"0\" maxdepth=\"2\" numbered=\"0\" parent=\"index\" rawentries=\"\" titlesonly=\"0\">\n",
+      "rst": ".. toctree::\n   :maxdepth: 2\n\n   installation\n   Linked Title <other>\n"
+    },
+    {
+      "family": "sx_roles",
+      "name": "sx_roles.doc_role",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"0\" reftarget=\"somepage\" reftype=\"doc\" refwarn=\"1\">\n            <inline classes=\"xref std std-doc\">\n                somepage\n         here.\n",
+      "rst": "See :doc:`somepage` here.\n"
+    },
+    {
+      "family": "sx_roles",
+      "name": "sx_roles.doc_role_explicit_title",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"1\" reftarget=\"somepage\" reftype=\"doc\" refwarn=\"1\">\n            <inline classes=\"xref std std-doc\">\n                The Guide\n         here.\n",
+      "rst": "See :doc:`The Guide <somepage>` here.\n"
+    },
+    {
+      "family": "sx_roles",
+      "name": "sx_roles.ref_role",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"0\" reftarget=\"some label\" reftype=\"ref\" refwarn=\"1\">\n            <inline classes=\"xref std std-ref\">\n                Some Label\n         here.\n",
+      "rst": "See :ref:`Some Label` here.\n"
+    },
+    {
+      "family": "sx_roles",
+      "name": "sx_roles.func_role",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Call \n        <pending_xref py:class=\"True\" py:module=\"True\" refdoc=\"index\" refdomain=\"py\" refexplicit=\"0\" reftarget=\"mymod.myfunc\" reftype=\"func\" refwarn=\"0\">\n            <literal classes=\"xref py py-func\">\n                mymod.myfunc()\n         now.\n",
+      "rst": "Call :func:`mymod.myfunc` now.\n"
+    },
+    {
+      "family": "sx_roles",
+      "name": "sx_roles.func_role_tilde",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Call \n        <pending_xref py:class=\"True\" py:module=\"True\" refdoc=\"index\" refdomain=\"py\" refexplicit=\"0\" reftarget=\"mymod.myfunc\" reftype=\"func\" refwarn=\"0\">\n            <literal classes=\"xref py py-func\">\n                myfunc()\n         now.\n",
+      "rst": "Call :func:`~mymod.myfunc` now.\n"
+    },
+    {
+      "family": "sx_roles",
+      "name": "sx_roles.domain_qualified_role",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Call \n        <pending_xref py:class=\"True\" py:module=\"True\" refdoc=\"index\" refdomain=\"py\" refexplicit=\"0\" reftarget=\"obj.method\" reftype=\"meth\" refwarn=\"0\">\n            <literal classes=\"xref py py-meth\">\n                obj.method()\n         now.\n",
+      "rst": "Call :py:meth:`obj.method` now.\n"
     }
   ],
   "docutils_version": "0.22.4",

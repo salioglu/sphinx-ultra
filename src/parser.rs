@@ -70,6 +70,11 @@ impl Parser {
             &rst::ParseOptions {
                 source_path: file_path.display().to_string(),
                 sphinx: true,
+                docname: file_path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("index")
+                    .to_string(),
             },
         );
         let line_starts = line_start_offsets(content);

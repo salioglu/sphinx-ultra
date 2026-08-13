@@ -140,6 +140,14 @@ pub(crate) struct BlockParser<'a> {
     nested_node_kind: Option<&'static str>,
     /// Sphinx mode (see [`super::ParseOptions::sphinx`]).
     pub(crate) sphinx: bool,
+    /// The docname stamped on pending_xref nodes (sphinx `refdoc`).
+    pub(crate) docname: String,
+    /// `.. highlight::` state consumed by later code-blocks in the same
+    /// document (sphinx env.temp_data\['highlight_language'\]).
+    highlight_language: Option<String>,
+    /// Sphinx-mode class/rst-class pending classes (the ClassAttribute
+    /// transform effect applied inline).
+    pending_classes: Option<Vec<String>>,
     /// Validation-feed records collected during the parse.
     directive_records: Vec<super::DirectiveRecord>,
     role_records: Vec<super::RoleRecord>,
@@ -179,6 +187,9 @@ impl<'a> BlockParser<'a> {
             line_bias: 0,
             nested_node_kind: None,
             sphinx: false,
+            docname: "index".to_string(),
+            highlight_language: None,
+            pending_classes: None,
             directive_records: Vec::new(),
             role_records: Vec::new(),
             toctree_records: Vec::new(),
@@ -277,6 +288,7 @@ impl<'a> BlockParser<'a> {
             &mut self.registry,
             self.source_path,
             self.sphinx,
+            &self.docname,
         );
         self.role_records.append(&mut result.roles);
         result
@@ -376,6 +388,7 @@ impl<'a> BlockParser<'a> {
             }
             let mut out = Vec::new();
             let section = self.parse_element(&lines, &mut pos, true, &mut out);
+            self.apply_pending_classes(&mut out, 0);
             for node in out {
                 Self::container(&mut root, &mut stack).children.push(node);
             }
@@ -511,10 +524,33 @@ impl<'a> BlockParser<'a> {
                 pos += 1;
                 continue;
             }
+            let before = out.len();
             let section = self.parse_element(lines, &mut pos, false, &mut out);
             debug_assert!(section.is_none(), "titles never match in nested contexts");
+            self.apply_pending_classes(&mut out, before);
         }
         out
+    }
+
+    /// Sphinx mode runs the ClassAttribute transform effect inline: a
+    /// class/rst-class directive without content stamps the next
+    /// non-invisible sibling element (the pending node itself vanishes).
+    fn apply_pending_classes(&mut self, out: &mut [Node], from: usize) {
+        if self.pending_classes.is_none() {
+            return;
+        }
+        for node in out[from..].iter_mut() {
+            if matches!(
+                node.kind,
+                kinds::COMMENT | kinds::TARGET | kinds::SYSTEM_MESSAGE | "substitution_definition"
+            ) {
+                continue;
+            }
+            if let Some(classes) = self.pending_classes.take() {
+                node.attrs.classes.extend(classes);
+            }
+            break;
+        }
     }
 
     /// Parse one element starting at `lines[*pos]` (non-blank). Returns a
@@ -2814,7 +2850,198 @@ impl<'a> BlockParser<'a> {
             DirectiveKind::UnicodeDir => self.run_unicode(input, out),
             DirectiveKind::DateDir => self.run_date(input, out),
             DirectiveKind::Toctree => self.run_toctree(input, out),
+            DirectiveKind::VersionChange(info) => self.run_version_change(info, input, out),
+            DirectiveKind::SeeAlso => self.run_seealso(input, out),
+            DirectiveKind::SphinxCodeBlock => self.run_sphinx_code_block(input, out),
+            DirectiveKind::Highlight => self.run_highlight(input, out),
+            DirectiveKind::Only => self.run_only(input, out),
         }
+    }
+
+    /// versionadded family (sphinx/domains/changeset.py VersionChange):
+    /// a versionmodified node holding ONE translatable="0" paragraph whose
+    /// lead-in inline ends with '.' (no text) or ': ' (text follows as
+    /// siblings in the same paragraph).
+    fn run_version_change(
+        &mut self,
+        info: &'static (&'static str, &'static str, &'static str),
+        input: DirectiveInput<'a, '_>,
+        out: &mut Vec<Node>,
+    ) {
+        let (type_name, label, lead_fmt) = *info;
+        let version = &input.arguments[0];
+        let text: Option<String> = input
+            .arguments
+            .get(1)
+            .cloned()
+            .or_else(|| {
+                if input.content.is_empty() {
+                    None
+                } else {
+                    Some(
+                        input
+                            .content
+                            .iter()
+                            .map(|l| l.text)
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                    )
+                }
+            })
+            .filter(|t| !t.is_empty());
+        let mut node = Node::elem("versionmodified", input.span);
+        node.set("type", AttrValue::Str(type_name.to_string()));
+        node.set("version", AttrValue::Str(version.clone()));
+        let lead_base = lead_fmt.replace("{}", version);
+        let lead = match &text {
+            Some(_) => format!("{lead_base}: "),
+            None => format!("{lead_base}."),
+        };
+        let mut para = Node::elem(kinds::PARAGRAPH, input.span);
+        para.set("translatable", AttrValue::Int(0));
+        let mut inner = Node::elem("inline", input.span);
+        inner
+            .attrs
+            .classes
+            .extend(["versionmodified".to_string(), label.to_string()]);
+        inner.children.push(Node::text_node(lead, input.span));
+        para.children.push(inner);
+        let mut messages = Vec::new();
+        if let Some(t) = text {
+            let inline = self.inline(&t, input.span, input.lineno);
+            para.children.extend(inline.nodes);
+            messages = inline.messages;
+        }
+        node.children.push(para);
+        out.push(node);
+        out.extend(messages);
+    }
+
+    /// seealso (sphinx/directives/other.py): admonition-shaped custom
+    /// node with no attributes.
+    fn run_seealso(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        if input.content.is_empty() {
+            out.push(self.directive_content_error(input.name, input.lineno, input.rawsource));
+            return;
+        }
+        let mut node = Node::elem("seealso", input.span);
+        if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
+            node.attrs.classes.extend(classes.iter().cloned());
+        }
+        self.directive_add_name(&mut node, &input.options, input.lineno, out);
+        let content = self.parse_nested(&input.content, "seealso");
+        node.children.extend(content);
+        out.push(node);
+    }
+
+    /// sphinx code-block (sphinx/directives/code.py CodeBlock): language
+    /// falls back to the `.. highlight::` state then the 'default'
+    /// sentinel; :caption: wraps in a literal-block-wrapper container
+    /// that takes the ids/names.
+    fn run_sphinx_code_block(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        let language = input
+            .arguments
+            .first()
+            .cloned()
+            .or_else(|| self.highlight_language.clone())
+            .unwrap_or_else(|| "default".to_string());
+        let mut hl_lines: Vec<i64> = Vec::new();
+        if let Some(OptVal::Str(spec)) = opt_get(&input.options, "emphasize-lines") {
+            for part in spec.split(',') {
+                let part = part.trim();
+                if let Some((a, b)) = part.split_once('-') {
+                    if let (Some(a), Some(b)) = (py_int(a.trim()), py_int(b.trim())) {
+                        hl_lines.extend(a..=b);
+                    }
+                } else if let Some(n) = py_int(part) {
+                    hl_lines.push(n);
+                }
+            }
+        }
+        let highlight_args = if hl_lines.is_empty() {
+            "{}".to_string()
+        } else {
+            format!(
+                "{{'hl_lines': [{}]}}",
+                hl_lines
+                    .iter()
+                    .map(|n| n.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
+        let mut lb = Node::elem(kinds::LITERAL_BLOCK, input.span);
+        lb.set(
+            "force",
+            AttrValue::Int(i64::from(opt_get(&input.options, "force").is_some())),
+        );
+        lb.set("highlight_args", AttrValue::Str(highlight_args));
+        lb.set("language", AttrValue::Str(language));
+        if opt_get(&input.options, "linenos").is_some() {
+            lb.set("linenos", AttrValue::Int(1));
+        }
+        lb.set("xml:space", AttrValue::Str("preserve".to_string()));
+        if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
+            lb.attrs.classes.extend(classes.iter().cloned());
+        }
+        let code = input
+            .content
+            .iter()
+            .map(|l| l.text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        lb.children.push(Node::text_node(code, input.span));
+        match opt_get(&input.options, "caption") {
+            Some(OptVal::Str(caption_text)) => {
+                let mut container = Node::elem("container", input.span);
+                container
+                    .attrs
+                    .classes
+                    .push("literal-block-wrapper".to_string());
+                container.set("literal_block", AttrValue::Int(1));
+                self.directive_add_name(&mut container, &input.options, input.lineno, out);
+                let inline = self.inline(&caption_text.clone(), input.span, input.lineno);
+                let mut caption = Node::elem("caption", input.span);
+                caption.children = inline.nodes;
+                container.children.push(caption);
+                container.children.push(lb);
+                out.push(container);
+                out.extend(inline.messages);
+            }
+            _ => {
+                self.directive_add_name(&mut lb, &input.options, input.lineno, out);
+                out.push(lb);
+            }
+        }
+    }
+
+    /// sphinx highlight: emits a highlightlang node AND sets the state
+    /// later code-blocks read (env.temp_data parity).
+    fn run_highlight(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        let lang = input.arguments[0].clone();
+        self.highlight_language = Some(lang.clone());
+        let mut node = Node::elem("highlightlang", input.span);
+        node.set(
+            "force",
+            AttrValue::Int(i64::from(opt_get(&input.options, "force").is_some())),
+        );
+        node.set("lang", AttrValue::Str(lang));
+        let threshold = match opt_get(&input.options, "linenothreshold") {
+            Some(OptVal::Int(n)) => *n,
+            _ => i64::MAX,
+        };
+        node.set("linenothreshold", AttrValue::Int(threshold));
+        out.push(node);
+    }
+
+    /// sphinx only: expr stored verbatim; evaluation is a later build
+    /// phase.
+    fn run_only(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        let mut node = Node::elem("only", input.span);
+        node.set("expr", AttrValue::Str(input.arguments[0].clone()));
+        let content = self.parse_nested(&input.content, "only");
+        node.children.extend(content);
+        out.push(node);
     }
 
     /// sphinx toctree: entries recorded (as authored, with per-entry
@@ -2848,13 +3075,46 @@ impl<'a> BlockParser<'a> {
             entries: entries.clone(),
             line: input.lineno,
         });
+        // Full sphinx attr set (oracle-pinned). entries/includefiles are
+        // env-resolved (nonexistent docnames drop; the oracle srcdir has
+        // none) — the build pipeline uses the records instead; wave 4
+        // populates these from the environment.
         let mut toctree = Node::elem("toctree", input.span);
-        if glob {
-            toctree.set("glob", AttrValue::Int(1));
+        match opt_get(&input.options, "caption") {
+            // pformat renders a Python None attr value as "True".
+            Some(OptVal::Str(c)) => toctree.set("caption", AttrValue::Str(c.clone())),
+            _ => toctree.set("caption", AttrValue::Str("True".to_string())),
         }
-        if let Some(OptVal::Int(d)) = opt_get(&input.options, "maxdepth") {
-            toctree.set("maxdepth", AttrValue::Int(*d));
-        }
+        toctree.set("entries", AttrValue::Str(String::new()));
+        toctree.set("glob", AttrValue::Int(i64::from(glob)));
+        toctree.set(
+            "hidden",
+            AttrValue::Int(i64::from(opt_get(&input.options, "hidden").is_some())),
+        );
+        toctree.set("includefiles", AttrValue::Str(String::new()));
+        toctree.set(
+            "includehidden",
+            AttrValue::Int(i64::from(
+                opt_get(&input.options, "includehidden").is_some(),
+            )),
+        );
+        let maxdepth = match opt_get(&input.options, "maxdepth") {
+            Some(OptVal::Int(d)) => *d,
+            _ => -1,
+        };
+        toctree.set("maxdepth", AttrValue::Int(maxdepth));
+        let numbered = match opt_get(&input.options, "numbered") {
+            Some(OptVal::Str(s)) if s.is_empty() => 999_999,
+            Some(OptVal::Str(s)) => py_int(s).unwrap_or(0),
+            _ => 0,
+        };
+        toctree.set("numbered", AttrValue::Int(numbered));
+        toctree.set("parent", AttrValue::Str(self.docname.clone()));
+        toctree.set("rawentries", AttrValue::Str(String::new()));
+        toctree.set(
+            "titlesonly",
+            AttrValue::Int(i64::from(opt_get(&input.options, "titlesonly").is_some())),
+        );
         let mut compound = Node::elem("compound", input.span);
         compound.attrs.classes.push("toctree-wrapper".to_string());
         compound.children.push(toctree);
@@ -4205,6 +4465,10 @@ impl<'a> BlockParser<'a> {
                 child.attrs.classes.extend(class_values.iter().cloned());
             }
             out.extend(children);
+        } else if self.sphinx {
+            // Sphinx's read phase runs ClassAttribute; the pending node
+            // never survives into the doctree — stamp the next sibling.
+            self.pending_classes = Some(class_values);
         } else {
             let mut pending = Node::elem("pending", input.span);
             let details = format!(
@@ -4893,6 +5157,14 @@ enum DirectiveKind {
     DateDir,
     /// sphinx toctree (sphinx/directives/other.py TocTree).
     Toctree,
+    /// versionadded/versionchanged/deprecated/versionremoved:
+    /// (type name, label class, lead-in format).
+    VersionChange(&'static (&'static str, &'static str, &'static str)),
+    SeeAlso,
+    /// sphinx code-block/sourcecode (sphinx/directives/code.py).
+    SphinxCodeBlock,
+    Highlight,
+    Only,
 }
 
 /// Sphinx-mode registry: overlays/extends the docutils-native table.
@@ -4918,7 +5190,36 @@ const TOCTREE_OPTS: &[(&str, Conv)] = &[
     ("reversed", Conv::Flag),
 ];
 
+const VERSIONADDED: (&str, &str, &str) = ("versionadded", "added", "Added in version {}");
+const VERSIONCHANGED: (&str, &str, &str) = ("versionchanged", "changed", "Changed in version {}");
+const DEPRECATED: (&str, &str, &str) = ("deprecated", "deprecated", "Deprecated since version {}");
+const VERSIONREMOVED: (&str, &str, &str) = ("versionremoved", "removed", "Removed in version {}");
+
+const CODE_BLOCK_OPTS: &[(&str, Conv)] = &[
+    ("force", Conv::Flag),
+    ("linenos", Conv::Flag),
+    ("dedent", Conv::PyIntAny),
+    ("lineno-start", Conv::PyIntAny),
+    ("emphasize-lines", Conv::UnchangedRequired),
+    ("caption", Conv::UnchangedRequired),
+    ("class", Conv::ClassOption),
+    ("name", Conv::Unchanged),
+];
+
+const HIGHLIGHT_OPTS: &[(&str, Conv)] =
+    &[("linenothreshold", Conv::PyIntAny), ("force", Conv::Flag)];
+
 fn sphinx_directive_spec(lower: &str) -> Option<DirectiveSpec> {
+    let version_change = |info: &'static (&'static str, &'static str, &'static str)| {
+        Some(DirectiveSpec {
+            required_arguments: 1,
+            optional_arguments: 1,
+            final_argument_whitespace: true,
+            has_content: true,
+            option_spec: &[],
+            kind: DirectiveKind::VersionChange(info),
+        })
+    };
     match lower {
         "toctree" => Some(DirectiveSpec {
             required_arguments: 0,
@@ -4927,6 +5228,42 @@ fn sphinx_directive_spec(lower: &str) -> Option<DirectiveSpec> {
             has_content: true,
             option_spec: TOCTREE_OPTS,
             kind: DirectiveKind::Toctree,
+        }),
+        "versionadded" => version_change(&VERSIONADDED),
+        "versionchanged" => version_change(&VERSIONCHANGED),
+        "deprecated" => version_change(&DEPRECATED),
+        "versionremoved" => version_change(&VERSIONREMOVED),
+        "seealso" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 0,
+            final_argument_whitespace: true,
+            has_content: true,
+            option_spec: ADMONITION_OPTS,
+            kind: DirectiveKind::SeeAlso,
+        }),
+        "code-block" | "sourcecode" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 1,
+            final_argument_whitespace: false,
+            has_content: true,
+            option_spec: CODE_BLOCK_OPTS,
+            kind: DirectiveKind::SphinxCodeBlock,
+        }),
+        "highlight" => Some(DirectiveSpec {
+            required_arguments: 1,
+            optional_arguments: 0,
+            final_argument_whitespace: false,
+            has_content: false,
+            option_spec: HIGHLIGHT_OPTS,
+            kind: DirectiveKind::Highlight,
+        }),
+        "only" => Some(DirectiveSpec {
+            required_arguments: 1,
+            optional_arguments: 0,
+            final_argument_whitespace: true,
+            has_content: true,
+            option_spec: &[],
+            kind: DirectiveKind::Only,
         }),
         _ => None,
     }
@@ -5322,7 +5659,7 @@ fn directive_spec(lower: &str) -> Option<DirectiveSpec> {
             option_spec: FIGURE_OPTS,
             kind: DirectiveKind::Figure,
         }),
-        "code" => Some(DirectiveSpec {
+        "code" | "code-block" | "sourcecode" => Some(DirectiveSpec {
             required_arguments: 0,
             optional_arguments: 1,
             final_argument_whitespace: false,
@@ -5354,7 +5691,10 @@ fn directive_spec(lower: &str) -> Option<DirectiveSpec> {
             option_spec: ADMONITION_OPTS,
             kind: DirectiveKind::LineBlockDir,
         }),
-        "class" => Some(DirectiveSpec {
+        // en-alias table entries whose canonical directive is implemented
+        // (languages/en.py: code-block/sourcecode -> code, rst-class ->
+        // class, section-numbering -> sectnum [unimplemented]).
+        "class" | "rst-class" => Some(DirectiveSpec {
             required_arguments: 1,
             optional_arguments: 0,
             final_argument_whitespace: true,
@@ -6633,6 +6973,7 @@ mod tests {
             &ParseOptions {
                 source_path: "<snippet>".into(),
                 sphinx: false,
+                docname: "index".into(),
             },
         )
         .root
@@ -6679,6 +7020,7 @@ mod tests {
             &ParseOptions {
                 source_path: "<snippet>".into(),
                 sphinx: false,
+                docname: "index".into(),
             },
         );
         let second = &tree.root.children[1];

@@ -213,6 +213,7 @@ struct Inliner<'a> {
     /// Sphinx mode: unknown-in-docutils roles become pending_xref nodes
     /// (no messages) and every role occurrence is recorded.
     sphinx: bool,
+    docname: &'a str,
     roles: Vec<super::RoleRecord>,
     nodes: Vec<Node>,
     messages: Vec<Node>,
@@ -712,6 +713,82 @@ impl<'a> Inliner<'a> {
         self.messages.push(msg);
     }
 
+    /// sphinx.roles.XRefRole anatomy (probe-verified via :doc: in the
+    /// wave-3 probes): pending_xref with refdoc/refdomain/refexplicit/
+    /// reftarget/reftype/refwarn attrs and an `inline classes="xref
+    /// {domain} {domain}-{type}"` child. Role→domain mapping covers the
+    /// std and py domains; explicit `domain:role` names pass through.
+    fn emit_sphinx_xref(&mut self, lower: &str, raw: &str) {
+        let text = unescape(raw, false);
+        let (domain, reftype) = match lower.rsplit_once(':') {
+            Some((d, t)) => (d.to_string(), t.to_string()),
+            None => {
+                let d = match lower {
+                    "doc" | "ref" | "term" | "option" | "envvar" | "numref" | "keyword"
+                    | "token" | "program" | "confval" => "std",
+                    "func" | "class" | "meth" | "mod" | "attr" | "data" | "exc" | "obj"
+                    | "const" | "deco" => "py",
+                    _ => "std",
+                };
+                (d.to_string(), lower.to_string())
+            }
+        };
+        // `Title <target>` explicit form.
+        let (target, display, explicit) = match (text.rfind('<'), text.ends_with('>')) {
+            (Some(lt), true) => (
+                text[lt + 1..text.len() - 1].trim().to_string(),
+                text[..lt].trim_end().to_string(),
+                true,
+            ),
+            _ => (text.clone(), text.clone(), false),
+        };
+        // std :ref: targets are whitespace-normalized + lowercased
+        // (std domain process_link); py targets drop a leading `~` from
+        // the target while the title keeps only the last dotted segment.
+        let (target, display) = match (domain.as_str(), reftype.as_str()) {
+            ("std", "ref") if !explicit => {
+                (crate::doctree::ids::fully_normalize_name(&target), display)
+            }
+            ("std", "ref") => (crate::doctree::ids::fully_normalize_name(&target), display),
+            ("py", _) if target.starts_with('~') && !explicit => {
+                let full = target[1..].to_string();
+                let short = full.rsplit('.').next().unwrap_or(&full).to_string();
+                (full, short)
+            }
+            _ => (target, display),
+        };
+        let mut node = Node::elem("pending_xref", self.span);
+        let py = domain == "py";
+        if py {
+            // Context attrs (current class/module) are None outside a py
+            // scope; pformat renders None as "True".
+            node.set("py:class", AttrValue::Str("True".to_string()));
+            node.set("py:module", AttrValue::Str("True".to_string()));
+        }
+        node.set("refdoc", AttrValue::Str(self.docname.to_string()));
+        node.set("refdomain", AttrValue::Str(domain.clone()));
+        node.set("refexplicit", AttrValue::Int(i64::from(explicit)));
+        node.set("reftarget", AttrValue::Str(target));
+        node.set("reftype", AttrValue::Str(reftype.clone()));
+        node.set("refwarn", AttrValue::Int(i64::from(!py)));
+        // py xrefs wrap in a literal (code-styled); callables display
+        // with parens.
+        let mut display = display;
+        if py && matches!(reftype.as_str(), "func" | "meth") && !explicit {
+            display.push_str("()");
+        }
+        let mut inner = Node::elem(if py { kinds::LITERAL } else { "inline" }, self.span);
+        inner.attrs.classes = vec![
+            "xref".to_string(),
+            domain.clone(),
+            format!("{domain}-{reftype}"),
+        ];
+        inner.children.push(Node::text_node(display, self.span));
+        node.children.push(inner);
+        self.flush_text();
+        self.nodes.push(node);
+    }
+
     /// Apply a built-in role by (raw, unlowercased) name.
     fn apply_role(&mut self, given_name: &str, raw: &str, rawsource: &str) {
         let lower = given_name.to_lowercase();
@@ -763,22 +840,7 @@ impl<'a> Inliner<'a> {
                 // domain registries; at parse layer they become
                 // pending_xref nodes and NEVER message. (Genuinely unknown
                 // roles would error in real Sphinx — hardening note.)
-                let text = unescape(raw, false);
-                let mut node = Node::elem("pending_xref", self.span);
-                let (domain, reftype) = match lower.rsplit_once(':') {
-                    Some((d, t)) => (d.to_string(), t.to_string()),
-                    None => (String::new(), lower.clone()),
-                };
-                if !domain.is_empty() {
-                    node.set("refdomain", AttrValue::Str(domain));
-                }
-                node.set("reftarget", AttrValue::Str(text.clone()));
-                node.set("reftype", AttrValue::Str(reftype));
-                let mut lit = Node::elem(kinds::LITERAL, self.span);
-                lit.children.push(Node::text_node(text, self.span));
-                node.children.push(lit);
-                self.flush_text();
-                self.nodes.push(node);
+                self.emit_sphinx_xref(&lower, raw);
                 return;
             }
             _ => {
@@ -1279,9 +1341,10 @@ pub fn parse_inline(
     registry: &mut IdRegistry,
     source_path: &str,
 ) -> InlineResult {
-    parse_inline_ext(text, span, lineno, registry, source_path, false)
+    parse_inline_ext(text, span, lineno, registry, source_path, false, "index")
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn parse_inline_ext(
     text: &str,
     span: Span,
@@ -1289,6 +1352,7 @@ pub fn parse_inline_ext(
     registry: &mut IdRegistry,
     source_path: &str,
     sphinx: bool,
+    docname: &str,
 ) -> InlineResult {
     let escaped = escape2null(text);
     let mut inliner = Inliner {
@@ -1298,6 +1362,7 @@ pub fn parse_inline_ext(
         source_path,
         registry,
         sphinx,
+        docname,
         roles: Vec::new(),
         nodes: Vec::new(),
         messages: Vec::new(),
