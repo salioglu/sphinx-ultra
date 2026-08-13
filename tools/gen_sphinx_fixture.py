@@ -497,6 +497,13 @@ CASES = [
     ('sx_directives', 'glossary_basic', '.. glossary::\n\n   environment\n      A structure where information about all documents under the root is\n      saved.\n\n   source directory\n      The directory which holds all source files.\n'),
     ('sx_directives', 'glossary_multi_term', '.. glossary::\n\n   term a\n   term b\n      Shared definition.\n'),
     ('sx_directives', 'glossary_sorted_classifier', '.. glossary::\n   :sorted:\n\n   zeta : key\n      Z def.\n'),
+    ('sx_roles', 'pep_role', 'See :pep:`8` for style.\n'),
+    ('sx_roles', 'pep_role_anchor', 'See :pep:`8#imports` here.\n'),
+    ('sx_roles', 'pep_role_explicit', 'See :pep:`the style guide <8>` here.\n'),
+    ('sx_roles', 'rfc_role', 'See :rfc:`2324` for details.\n'),
+    ('sx_roles', 'rfc_role_section', 'See :rfc:`2324#section-5.1` here.\n'),
+    ('sx_roles', 'cve_role', 'See :cve:`2020-10735` here.\n'),
+    ('sx_roles', 'cwe_role', 'See :cwe:`787` here.\n'),
 ]
 
 

@@ -1619,6 +1619,48 @@
       "name": "sx_directives.glossary_sorted_classifier",
       "pseudo_xml": "<document source=\"<snippet>\">\n    <glossary sorted=\"1\">\n        <definition_list classes=\"glossary\">\n            <definition_list_item>\n                <term ids=\"term-zeta\">\n                    zeta\n                    <index entries=\"('single',\\ 'zeta',\\ 'term-zeta',\\ 'main',\\ 'key')\">\n                <definition>\n                    <paragraph>\n                        Z def.\n",
       "rst": ".. glossary::\n   :sorted:\n\n   zeta : key\n      Z def.\n"
+    },
+    {
+      "family": "sx_roles",
+      "name": "sx_roles.pep_role",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <index entries=\"('single',\\ 'Python\\ Enhancement\\ Proposals;\\ PEP\\ 8',\\ 'index-0',\\ '',\\ None)\">\n        <target ids=\"index-0\">\n        <reference classes=\"pep\" internal=\"0\" refuri=\"https://peps.python.org/pep-0008/\">\n            <strong>\n                PEP 8\n         for style.\n",
+      "rst": "See :pep:`8` for style.\n"
+    },
+    {
+      "family": "sx_roles",
+      "name": "sx_roles.pep_role_anchor",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <index entries=\"('single',\\ 'Python\\ Enhancement\\ Proposals;\\ PEP\\ 8#imports',\\ 'index-0',\\ '',\\ None)\">\n        <target ids=\"index-0\">\n        <reference classes=\"pep\" internal=\"0\" refuri=\"https://peps.python.org/pep-0008/#imports\">\n            <strong>\n                PEP 8#imports\n         here.\n",
+      "rst": "See :pep:`8#imports` here.\n"
+    },
+    {
+      "family": "sx_roles",
+      "name": "sx_roles.pep_role_explicit",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <index entries=\"('single',\\ 'Python\\ Enhancement\\ Proposals;\\ PEP\\ 8',\\ 'index-0',\\ '',\\ None)\">\n        <target ids=\"index-0\">\n        <reference classes=\"pep\" internal=\"0\" refuri=\"https://peps.python.org/pep-0008/\">\n            <strong>\n                the style guide\n         here.\n",
+      "rst": "See :pep:`the style guide <8>` here.\n"
+    },
+    {
+      "family": "sx_roles",
+      "name": "sx_roles.rfc_role",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <index entries=\"('single',\\ 'RFC;\\ RFC\\ 2324',\\ 'index-0',\\ '',\\ None)\">\n        <target ids=\"index-0\">\n        <reference classes=\"rfc\" internal=\"0\" refuri=\"https://datatracker.ietf.org/doc/html/rfc2324.html\">\n            <strong>\n                RFC 2324\n         for details.\n",
+      "rst": "See :rfc:`2324` for details.\n"
+    },
+    {
+      "family": "sx_roles",
+      "name": "sx_roles.rfc_role_section",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <index entries=\"('single',\\ 'RFC;\\ RFC\\ 2324\\ Section\\ 5.1',\\ 'index-0',\\ '',\\ None)\">\n        <target ids=\"index-0\">\n        <reference classes=\"rfc\" internal=\"0\" refuri=\"https://datatracker.ietf.org/doc/html/rfc2324.html#section-5.1\">\n            <strong>\n                RFC 2324 Section 5.1\n         here.\n",
+      "rst": "See :rfc:`2324#section-5.1` here.\n"
+    },
+    {
+      "family": "sx_roles",
+      "name": "sx_roles.cve_role",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <index entries=\"('single',\\ 'Common\\ Vulnerabilities\\ and\\ Exposures;\\ CVE\\ 2020-10735',\\ 'index-0',\\ '',\\ None)\">\n        <target ids=\"index-0\">\n        <reference classes=\"cve\" internal=\"0\" refuri=\"https://www.cve.org/CVERecord?id=CVE-2020-10735\">\n            <strong>\n                CVE 2020-10735\n         here.\n",
+      "rst": "See :cve:`2020-10735` here.\n"
+    },
+    {
+      "family": "sx_roles",
+      "name": "sx_roles.cwe_role",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <index entries=\"('single',\\ 'Common\\ Weakness\\ Enumeration;\\ CWE\\ 787',\\ 'index-0',\\ '',\\ None)\">\n        <target ids=\"index-0\">\n        <reference classes=\"cwe\" internal=\"0\" refuri=\"https://cwe.mitre.org/data/definitions/787.html\">\n            <strong>\n                CWE 787\n         here.\n",
+      "rst": "See :cwe:`787` here.\n"
     }
   ],
   "docutils_version": "0.22.4",

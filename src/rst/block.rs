@@ -148,8 +148,6 @@ pub(crate) struct BlockParser<'a> {
     /// Sphinx-mode class/rst-class pending classes (the ClassAttribute
     /// transform effect applied inline).
     pending_classes: Option<Vec<String>>,
-    /// Per-document serial for `index-N` target ids (env.new_serialno).
-    index_serial: u32,
     /// Per-document equation counter (math domain numbering).
     equation_serial: u32,
     /// Validation-feed records collected during the parse.
@@ -194,7 +192,6 @@ impl<'a> BlockParser<'a> {
             docname: "index".to_string(),
             highlight_language: None,
             pending_classes: None,
-            index_serial: 0,
             equation_serial: 0,
             directive_records: Vec::new(),
             role_records: Vec::new(),
@@ -2922,8 +2919,7 @@ impl<'a> BlockParser<'a> {
 
     /// sphinx index directive (sphinx/domains/index.py IndexDirective).
     fn run_index(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
-        let target_id = format!("index-{}", self.index_serial);
-        self.index_serial += 1;
+        let target_id = format!("index-{}", self.registry.new_index_serialno());
         let mut entries: Vec<String> = Vec::new();
         for line in input.arguments[0].split('\n') {
             let line = line.trim();
@@ -3047,8 +3043,7 @@ impl<'a> BlockParser<'a> {
                 term_messages.extend(inline.messages);
                 let base = ids::make_id(&format!("term-{term_text}"));
                 let node_id = if base == "term" || base.is_empty() {
-                    let id = format!("term-{}", self.index_serial);
-                    self.index_serial += 1;
+                    let id = format!("term-{}", self.registry.new_index_serialno());
                     id
                 } else {
                     base
@@ -5529,7 +5524,7 @@ fn sphinx_directive_spec(lower: &str) -> Option<DirectiveSpec> {
 /// One serialized 5-tuple for the index `entries` attr: docutils pformat
 /// renders list items via serial_escape (spaces backslash-escaped inside
 /// each item, items space-joined).
-fn index_entry_tuple(
+pub(crate) fn index_entry_tuple(
     entrytype: &str,
     value: &str,
     target_id: &str,

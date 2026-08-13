@@ -713,6 +713,156 @@ impl<'a> Inliner<'a> {
         self.messages.push(msg);
     }
 
+    /// sphinx PEP/RFC/CVE/CWE roles (sphinx/roles.py): an index entry +
+    /// anonymous index-N target + external reference wrapping a strong.
+    fn emit_sphinx_extlink(&mut self, kind: &str, raw: &str) {
+        let text = unescape(raw, false);
+        let (target, title, explicit) = match (text.rfind('<'), text.ends_with('>')) {
+            (Some(lt), true) => (
+                text[lt + 1..text.len() - 1].trim().to_string(),
+                text[..lt].trim_end().to_string(),
+                true,
+            ),
+            _ => (text.clone(), text.clone(), false),
+        };
+        let (numpart, anchor) = match target.split_once('#') {
+            Some((a, b)) => (a.to_string(), Some(b.to_string())),
+            None => (target.clone(), None),
+        };
+        let (kind_key, index_text, refuri, default_title) = match kind {
+            "pep" => {
+                let Ok(num) = numpart.parse::<u32>() else {
+                    self.role_problematic(
+                        raw,
+                        None,
+                        messages::ERROR,
+                        &format!("invalid PEP number {target}"),
+                    );
+                    return;
+                };
+                let mut uri = format!("https://peps.python.org/pep-{num:04}/");
+                if let Some(a) = &anchor {
+                    uri.push('#');
+                    uri.push_str(a);
+                }
+                (
+                    "pep",
+                    format!("Python Enhancement Proposals; PEP {target}"),
+                    uri,
+                    format!("PEP {title}"),
+                )
+            }
+            "rfc" => {
+                let Ok(num) = numpart.parse::<u32>() else {
+                    self.role_problematic(
+                        raw,
+                        None,
+                        messages::ERROR,
+                        &format!("invalid RFC number {target}"),
+                    );
+                    return;
+                };
+                let formatted = match &anchor {
+                    Some(a) => {
+                        let mut f = None;
+                        for prefix in ["appendix", "page", "section"] {
+                            let cap = {
+                                let mut c = prefix.chars();
+                                let f0 = c.next().expect("nonempty").to_uppercase();
+                                format!("{f0}{}", c.as_str())
+                            };
+                            if a == prefix {
+                                f = Some(format!("RFC {numpart} {cap}"));
+                                break;
+                            }
+                            if let Some(rest) = a.strip_prefix(&format!("{prefix}-")) {
+                                f = Some(format!("RFC {numpart} {cap} {rest}"));
+                                break;
+                            }
+                        }
+                        f.unwrap_or_else(|| format!("RFC {target}"))
+                    }
+                    None => format!("RFC {numpart}"),
+                };
+                let mut uri = format!("https://datatracker.ietf.org/doc/html/rfc{num}.html");
+                if let Some(a) = &anchor {
+                    uri.push('#');
+                    uri.push_str(a);
+                }
+                (
+                    "rfc",
+                    format!("RFC; {formatted}"),
+                    uri,
+                    if explicit { title.clone() } else { formatted },
+                )
+            }
+            "cve" => {
+                let mut uri = format!("https://www.cve.org/CVERecord?id=CVE-{numpart}");
+                if let Some(a) = &anchor {
+                    uri.push('#');
+                    uri.push_str(a);
+                }
+                (
+                    "cve",
+                    format!("Common Vulnerabilities and Exposures; CVE {target}"),
+                    uri,
+                    format!("CVE {title}"),
+                )
+            }
+            _ => {
+                let Ok(num) = numpart.parse::<u32>() else {
+                    self.role_problematic(
+                        raw,
+                        None,
+                        messages::ERROR,
+                        &format!("invalid CWE number {target}"),
+                    );
+                    return;
+                };
+                let mut uri = format!("https://cwe.mitre.org/data/definitions/{num}.html");
+                if let Some(a) = &anchor {
+                    uri.push('#');
+                    uri.push_str(a);
+                }
+                (
+                    "cwe",
+                    format!("Common Weakness Enumeration; CWE {target}"),
+                    uri,
+                    format!("CWE {title}"),
+                )
+            }
+        };
+        let serial = self.registry.new_index_serialno();
+        let target_id = format!("index-{serial}");
+        self.flush_text();
+        let mut index = Node::elem("index", self.span);
+        index.set(
+            "entries",
+            AttrValue::Str(super::block::index_entry_tuple(
+                "single",
+                &index_text,
+                &target_id,
+                "",
+                None,
+            )),
+        );
+        self.nodes.push(index);
+        let mut tnode = Node::elem(kinds::TARGET, self.span);
+        tnode.attrs.ids.push(target_id);
+        self.nodes.push(tnode);
+        let mut reference = Node::elem(kinds::REFERENCE, self.span);
+        reference.attrs.classes.push(kind_key.to_string());
+        reference.set("internal", AttrValue::Int(0));
+        reference.set("refuri", AttrValue::Str(refuri));
+        let mut strong = Node::elem(kinds::STRONG, self.span);
+        strong.children.push(Node::text_node(
+            if explicit { title } else { default_title },
+            self.span,
+        ));
+        reference.children.push(strong);
+        self.nodes.push(reference);
+    }
+
     /// sphinx.roles.XRefRole anatomy (probe-verified via :doc: in the
     /// wave-3 probes): pending_xref with refdoc/refdomain/refexplicit/
     /// reftarget/reftype/refwarn attrs and an `inline classes="xref
@@ -835,6 +985,10 @@ impl<'a> Inliner<'a> {
             "substitution-reference" => "substitution-reference",
             "target" => "target",
             "uri-reference" | "uri" | "url" => "uri-reference",
+            _ if self.sphinx && matches!(lower.as_str(), "cve" | "cwe") => {
+                self.emit_sphinx_extlink(&lower, raw);
+                return;
+            }
             _ if self.sphinx => {
                 // Sphinx mode: non-docutils roles resolve through the
                 // domain registries; at parse layer they become
@@ -886,6 +1040,11 @@ impl<'a> Inliner<'a> {
                 self.nodes.push(node);
             }
             "pep-reference" => {
+                if self.sphinx {
+                    // Sphinx overrides pep with an index-emitting external.
+                    self.emit_sphinx_extlink("pep", raw);
+                    return;
+                }
                 let text = unescape(raw, false);
                 match text.parse::<u32>().ok().filter(|n| *n <= 9999) {
                     Some(n) => {
@@ -910,6 +1069,10 @@ impl<'a> Inliner<'a> {
                 }
             }
             "rfc-reference" => {
+                if self.sphinx {
+                    self.emit_sphinx_extlink("rfc", raw);
+                    return;
+                }
                 let text = unescape(raw, false);
                 let (numpart, fragment) = match text.split_once('#') {
                     Some((a, b)) => (a.to_string(), Some(b.to_string())),
