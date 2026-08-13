@@ -58,6 +58,26 @@ pub struct Document {
 
     /// Table of contents
     pub toc: Vec<TocEntry>,
+
+    /// Toctree directives found in this document (wave 3: derived from
+    /// the doctree at parse time; the build resolves/warns).
+    pub toctrees: Vec<crate::rst::ToctreeRecord>,
+
+    /// Directive occurrences for the validation system.
+    pub directive_records: Vec<crate::rst::DirectiveRecord>,
+
+    /// Role occurrences for validation + nitpicky cross-ref checking.
+    pub role_records: Vec<crate::rst::RoleRecord>,
+
+    /// Explicit hyperlink-target labels (docutils-normalized names).
+    pub labels: Vec<LabelRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LabelRecord {
+    pub name: String,
+    /// 1-based source line of the target marker.
+    pub line: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -249,6 +269,10 @@ impl Document {
             build_time: Utc::now(),
             cross_refs: Vec::new(),
             toc: Vec::new(),
+            toctrees: Vec::new(),
+            directive_records: Vec::new(),
+            role_records: Vec::new(),
+            labels: Vec::new(),
         }
     }
 

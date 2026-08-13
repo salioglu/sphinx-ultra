@@ -149,11 +149,22 @@ pub struct IdRegistry {
     /// per-prefix auto-id counters (only "id" in wave 1).
     id_counter: HashMap<&'static str, u64>,
     fixups: Vec<DupnameFixup>,
+    /// sphinx env.new_serialno('index') — shared by the index directive
+    /// and the index-entry-emitting roles (pep/rfc/cve/cwe/:index:).
+    index_serial: u32,
 }
 
 impl IdRegistry {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// sphinx env.new_serialno('index'): returns the current value and
+    /// increments (serials start at 0 per document).
+    pub fn new_index_serialno(&mut self) -> u32 {
+        let n = self.index_serial;
+        self.index_serial += 1;
+        n
     }
 
     /// docutils `document.set_id` (id_prefix='', auto_id_prefix='id'):

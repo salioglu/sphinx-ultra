@@ -65,6 +65,8 @@ pub fn unescape(text: &str, restore_backslashes: bool) -> String {
 pub struct InlineResult {
     pub nodes: Vec<Node>,
     pub messages: Vec<Node>,
+    /// Role occurrences (sphinx mode only) for the build pipeline.
+    pub roles: Vec<super::RoleRecord>,
 }
 
 fn is_start_prefix_ok(prev: Option<char>) -> bool {
@@ -208,6 +210,11 @@ struct Inliner<'a> {
     lineno: u32,
     source_path: &'a str,
     registry: &'a mut IdRegistry,
+    /// Sphinx mode: unknown-in-docutils roles become pending_xref nodes
+    /// (no messages) and every role occurrence is recorded.
+    sphinx: bool,
+    docname: &'a str,
+    roles: Vec<super::RoleRecord>,
     nodes: Vec<Node>,
     messages: Vec<Node>,
     /// Text accumulated since the last emitted inline node.
@@ -706,9 +713,255 @@ impl<'a> Inliner<'a> {
         self.messages.push(msg);
     }
 
+    /// sphinx PEP/RFC/CVE/CWE roles (sphinx/roles.py): an index entry +
+    /// anonymous index-N target + external reference wrapping a strong.
+    fn emit_sphinx_extlink(&mut self, kind: &str, raw: &str) {
+        let text = unescape(raw, false);
+        let (target, title, explicit) = match (text.rfind('<'), text.ends_with('>')) {
+            (Some(lt), true) => (
+                text[lt + 1..text.len() - 1].trim().to_string(),
+                text[..lt].trim_end().to_string(),
+                true,
+            ),
+            _ => (text.clone(), text.clone(), false),
+        };
+        let (numpart, anchor) = match target.split_once('#') {
+            Some((a, b)) => (a.to_string(), Some(b.to_string())),
+            None => (target.clone(), None),
+        };
+        let (kind_key, index_text, refuri, default_title) = match kind {
+            "pep" => {
+                let Ok(num) = numpart.parse::<u32>() else {
+                    self.role_problematic(
+                        raw,
+                        None,
+                        messages::ERROR,
+                        &format!("invalid PEP number {target}"),
+                    );
+                    return;
+                };
+                let mut uri = format!("https://peps.python.org/pep-{num:04}/");
+                if let Some(a) = &anchor {
+                    uri.push('#');
+                    uri.push_str(a);
+                }
+                (
+                    "pep",
+                    format!("Python Enhancement Proposals; PEP {target}"),
+                    uri,
+                    format!("PEP {title}"),
+                )
+            }
+            "rfc" => {
+                let Ok(num) = numpart.parse::<u32>() else {
+                    self.role_problematic(
+                        raw,
+                        None,
+                        messages::ERROR,
+                        &format!("invalid RFC number {target}"),
+                    );
+                    return;
+                };
+                let formatted = match &anchor {
+                    Some(a) => {
+                        let mut f = None;
+                        for prefix in ["appendix", "page", "section"] {
+                            let cap = {
+                                let mut c = prefix.chars();
+                                let f0 = c.next().expect("nonempty").to_uppercase();
+                                format!("{f0}{}", c.as_str())
+                            };
+                            if a == prefix {
+                                f = Some(format!("RFC {numpart} {cap}"));
+                                break;
+                            }
+                            if let Some(rest) = a.strip_prefix(&format!("{prefix}-")) {
+                                f = Some(format!("RFC {numpart} {cap} {rest}"));
+                                break;
+                            }
+                        }
+                        f.unwrap_or_else(|| format!("RFC {target}"))
+                    }
+                    None => format!("RFC {numpart}"),
+                };
+                let mut uri = format!("https://datatracker.ietf.org/doc/html/rfc{num}.html");
+                if let Some(a) = &anchor {
+                    uri.push('#');
+                    uri.push_str(a);
+                }
+                (
+                    "rfc",
+                    format!("RFC; {formatted}"),
+                    uri,
+                    if explicit { title.clone() } else { formatted },
+                )
+            }
+            "cve" => {
+                let mut uri = format!("https://www.cve.org/CVERecord?id=CVE-{numpart}");
+                if let Some(a) = &anchor {
+                    uri.push('#');
+                    uri.push_str(a);
+                }
+                (
+                    "cve",
+                    format!("Common Vulnerabilities and Exposures; CVE {target}"),
+                    uri,
+                    format!("CVE {title}"),
+                )
+            }
+            _ => {
+                let Ok(num) = numpart.parse::<u32>() else {
+                    self.role_problematic(
+                        raw,
+                        None,
+                        messages::ERROR,
+                        &format!("invalid CWE number {target}"),
+                    );
+                    return;
+                };
+                let mut uri = format!("https://cwe.mitre.org/data/definitions/{num}.html");
+                if let Some(a) = &anchor {
+                    uri.push('#');
+                    uri.push_str(a);
+                }
+                (
+                    "cwe",
+                    format!("Common Weakness Enumeration; CWE {target}"),
+                    uri,
+                    format!("CWE {title}"),
+                )
+            }
+        };
+        let serial = self.registry.new_index_serialno();
+        let target_id = format!("index-{serial}");
+        self.flush_text();
+        let mut index = Node::elem("index", self.span);
+        index.set(
+            "entries",
+            AttrValue::Str(super::block::index_entry_tuple(
+                "single",
+                &index_text,
+                &target_id,
+                "",
+                None,
+            )),
+        );
+        self.nodes.push(index);
+        let mut tnode = Node::elem(kinds::TARGET, self.span);
+        tnode.attrs.ids.push(target_id);
+        self.nodes.push(tnode);
+        let mut reference = Node::elem(kinds::REFERENCE, self.span);
+        reference.attrs.classes.push(kind_key.to_string());
+        reference.set("internal", AttrValue::Int(0));
+        reference.set("refuri", AttrValue::Str(refuri));
+        let mut strong = Node::elem(kinds::STRONG, self.span);
+        strong.children.push(Node::text_node(
+            if explicit { title } else { default_title },
+            self.span,
+        ));
+        reference.children.push(strong);
+        self.nodes.push(reference);
+    }
+
+    /// sphinx.roles.XRefRole anatomy (probe-verified via :doc: in the
+    /// wave-3 probes): pending_xref with refdoc/refdomain/refexplicit/
+    /// reftarget/reftype/refwarn attrs and an `inline classes="xref
+    /// {domain} {domain}-{type}"` child. Role→domain mapping covers the
+    /// std and py domains; explicit `domain:role` names pass through.
+    fn emit_sphinx_xref(&mut self, lower: &str, raw: &str) {
+        let text = unescape(raw, false);
+        let (domain, reftype) = match lower.rsplit_once(':') {
+            Some((d, t)) => (d.to_string(), t.to_string()),
+            None => {
+                let d = match lower {
+                    "doc" | "ref" | "term" | "option" | "envvar" | "numref" | "keyword"
+                    | "token" | "program" | "confval" => "std",
+                    "func" | "class" | "meth" | "mod" | "attr" | "data" | "exc" | "obj"
+                    | "const" | "deco" => "py",
+                    _ => "std",
+                };
+                (d.to_string(), lower.to_string())
+            }
+        };
+        // `Title <target>` explicit form.
+        let (target, display, explicit) = match (text.rfind('<'), text.ends_with('>')) {
+            (Some(lt), true) => (
+                text[lt + 1..text.len() - 1].trim().to_string(),
+                text[..lt].trim_end().to_string(),
+                true,
+            ),
+            _ => (text.clone(), text.clone(), false),
+        };
+        // std :ref: targets are whitespace-normalized + lowercased
+        // (std domain process_link); py targets drop a leading `~` from
+        // the target while the title keeps only the last dotted segment.
+        let (target, display) = match (domain.as_str(), reftype.as_str()) {
+            ("std", "ref") if !explicit => {
+                (crate::doctree::ids::fully_normalize_name(&target), display)
+            }
+            ("std", "ref") => (crate::doctree::ids::fully_normalize_name(&target), display),
+            ("py", _) if target.starts_with('~') && !explicit => {
+                let full = target[1..].to_string();
+                let short = full.rsplit('.').next().unwrap_or(&full).to_string();
+                (full, short)
+            }
+            _ => (target, display),
+        };
+        let mut node = Node::elem("pending_xref", self.span);
+        let py = domain == "py";
+        if py {
+            // Context attrs (current class/module) are None outside a py
+            // scope; pformat renders None as "True".
+            node.set("py:class", AttrValue::Str("True".to_string()));
+            node.set("py:module", AttrValue::Str("True".to_string()));
+        }
+        node.set("refdoc", AttrValue::Str(self.docname.to_string()));
+        node.set("refdomain", AttrValue::Str(domain.clone()));
+        node.set("refexplicit", AttrValue::Int(i64::from(explicit)));
+        node.set("reftarget", AttrValue::Str(target));
+        node.set("reftype", AttrValue::Str(reftype.clone()));
+        node.set("refwarn", AttrValue::Int(i64::from(!py)));
+        // py xrefs wrap in a literal (code-styled); callables display
+        // with parens.
+        let mut display = display;
+        if py && matches!(reftype.as_str(), "func" | "meth") && !explicit {
+            display.push_str("()");
+        }
+        let mut inner = Node::elem(if py { kinds::LITERAL } else { "inline" }, self.span);
+        inner.attrs.classes = vec![
+            "xref".to_string(),
+            domain.clone(),
+            format!("{domain}-{reftype}"),
+        ];
+        inner.children.push(Node::text_node(display, self.span));
+        node.children.push(inner);
+        self.flush_text();
+        self.nodes.push(node);
+    }
+
     /// Apply a built-in role by (raw, unlowercased) name.
     fn apply_role(&mut self, given_name: &str, raw: &str, rawsource: &str) {
         let lower = given_name.to_lowercase();
+        if self.sphinx {
+            // Record EVERY role occurrence for the build pipeline
+            // (validation + nitpicky), M1-scanner display-split semantics.
+            let text = unescape(raw, false);
+            let (target, display) = match (text.rfind('<'), text.ends_with('>')) {
+                (Some(lt), true) => (
+                    text[lt + 1..text.len() - 1].trim().to_string(),
+                    Some(text[..lt].trim().to_string()),
+                ),
+                _ => (text.clone(), None),
+            };
+            let last_segment = lower.rsplit(':').next().unwrap_or(&lower).to_string();
+            self.roles.push(super::RoleRecord {
+                name: last_segment,
+                full_name: given_name.to_string(),
+                target,
+                display,
+                line: self.lineno,
+            });
+        }
         // en language aliases -> canonical names
         let canonical = match lower.as_str() {
             "abbreviation" | "ab" => "abbreviation",
@@ -732,6 +985,18 @@ impl<'a> Inliner<'a> {
             "substitution-reference" => "substitution-reference",
             "target" => "target",
             "uri-reference" | "uri" | "url" => "uri-reference",
+            _ if self.sphinx && matches!(lower.as_str(), "cve" | "cwe") => {
+                self.emit_sphinx_extlink(&lower, raw);
+                return;
+            }
+            _ if self.sphinx => {
+                // Sphinx mode: non-docutils roles resolve through the
+                // domain registries; at parse layer they become
+                // pending_xref nodes and NEVER message. (Genuinely unknown
+                // roles would error in real Sphinx — hardening note.)
+                self.emit_sphinx_xref(&lower, raw);
+                return;
+            }
             _ => {
                 // Not in the language module: INFO + canonical lookup, which
                 // also fails for anything we do not know -> ERROR.
@@ -775,6 +1040,11 @@ impl<'a> Inliner<'a> {
                 self.nodes.push(node);
             }
             "pep-reference" => {
+                if self.sphinx {
+                    // Sphinx overrides pep with an index-emitting external.
+                    self.emit_sphinx_extlink("pep", raw);
+                    return;
+                }
                 let text = unescape(raw, false);
                 match text.parse::<u32>().ok().filter(|n| *n <= 9999) {
                     Some(n) => {
@@ -799,6 +1069,10 @@ impl<'a> Inliner<'a> {
                 }
             }
             "rfc-reference" => {
+                if self.sphinx {
+                    self.emit_sphinx_extlink("rfc", raw);
+                    return;
+                }
                 let text = unescape(raw, false);
                 let (numpart, fragment) = match text.split_once('#') {
                     Some((a, b)) => (a.to_string(), Some(b.to_string())),
@@ -1230,6 +1504,19 @@ pub fn parse_inline(
     registry: &mut IdRegistry,
     source_path: &str,
 ) -> InlineResult {
+    parse_inline_ext(text, span, lineno, registry, source_path, false, "index")
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn parse_inline_ext(
+    text: &str,
+    span: Span,
+    lineno: u32,
+    registry: &mut IdRegistry,
+    source_path: &str,
+    sphinx: bool,
+    docname: &str,
+) -> InlineResult {
     let escaped = escape2null(text);
     let mut inliner = Inliner {
         chars: escaped.chars().collect(),
@@ -1237,6 +1524,9 @@ pub fn parse_inline(
         lineno,
         source_path,
         registry,
+        sphinx,
+        docname,
+        roles: Vec::new(),
         nodes: Vec::new(),
         messages: Vec::new(),
         pending: String::new(),
@@ -1246,6 +1536,7 @@ pub fn parse_inline(
     InlineResult {
         nodes: inliner.nodes,
         messages: inliner.messages,
+        roles: inliner.roles,
     }
 }
 

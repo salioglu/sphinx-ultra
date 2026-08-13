@@ -125,15 +125,51 @@ const MAX_NEST_DEPTH: usize = 200;
 
 pub(crate) struct BlockParser<'a> {
     top: Vec<LineRef<'a>>,
-    source_path: &'a str,
+    pub(crate) source_path: &'a str,
     source_len: usize,
-    registry: IdRegistry,
+    pub(crate) registry: IdRegistry,
     styles: Vec<(char, bool)>,
     depth: usize,
     /// +1 inside table-cell nested parses: docutils' state-machine-derived
     /// line numbers (the unindent/unexpected-indentation family) run one
     /// high there (probe-verified); content-anchored messages stay absolute.
     line_bias: u32,
+    /// Innermost container node kind during nested content parses (docutils
+    /// `state_machine.node`); None at document/section level. Directives
+    /// like topic/sidebar validate their direct parent against this.
+    nested_node_kind: Option<&'static str>,
+    /// Sphinx mode (see [`super::ParseOptions::sphinx`]).
+    pub(crate) sphinx: bool,
+    /// The docname stamped on pending_xref nodes (sphinx `refdoc`).
+    pub(crate) docname: String,
+    /// `.. highlight::` state consumed by later code-blocks in the same
+    /// document (sphinx env.temp_data\['highlight_language'\]).
+    highlight_language: Option<String>,
+    /// Sphinx-mode class/rst-class pending classes (the ClassAttribute
+    /// transform effect applied inline).
+    pending_classes: Option<Vec<String>>,
+    /// Per-document equation counter (math domain numbering).
+    equation_serial: u32,
+    /// Validation-feed records collected during the parse.
+    directive_records: Vec<super::DirectiveRecord>,
+    role_records: Vec<super::RoleRecord>,
+    toctree_records: Vec<super::ToctreeRecord>,
+    /// Set while running a substitution-embedded directive (docutils
+    /// SubstitutionDef state): replace/unicode/date require it, image
+    /// flips its align validation, unicode's trim flags land here.
+    substitution_ctx: Option<SubstCtx>,
+    /// Substitution names seen (whitespace-normalized, case-preserving) —
+    /// docutils document.substitution_defs.
+    substitution_names_seen: Vec<String>,
+    /// Names defined more than once: earlier nodes get names -> dupnames
+    /// in a post-parse walk (docutils mutates the old node in place).
+    substitution_dupnames: Vec<String>,
+}
+
+#[derive(Debug, Default)]
+struct SubstCtx {
+    ltrim: bool,
+    rtrim: bool,
 }
 
 impl<'a> BlockParser<'a> {
@@ -151,7 +187,152 @@ impl<'a> BlockParser<'a> {
             styles: Vec::new(),
             depth: 0,
             line_bias: 0,
+            nested_node_kind: None,
+            sphinx: false,
+            docname: "index".to_string(),
+            highlight_language: None,
+            pending_classes: None,
+            equation_serial: 0,
+            directive_records: Vec::new(),
+            role_records: Vec::new(),
+            toctree_records: Vec::new(),
+            substitution_ctx: None,
+            substitution_names_seen: Vec::new(),
+            substitution_dupnames: Vec::new(),
         }
+    }
+
+    /// parse_document plus the flat build-pipeline records.
+    pub(crate) fn parse_document_full(mut self) -> super::ParseOutput {
+        let root = self.parse_document_impl();
+        super::ParseOutput {
+            doctree: crate::doctree::Doctree { root },
+            directive_records: std::mem::take(&mut self.directive_records),
+            role_records: std::mem::take(&mut self.role_records),
+            toctrees: std::mem::take(&mut self.toctree_records),
+        }
+    }
+
+    /// Validation-feed record with the M1 validation-scanner's semantics
+    /// (spec-INdependent, so registered and unknown directives record the
+    /// same way): whitespace-split args, marker-line text routed to
+    /// content for the admonition name set, raw string options.
+    fn capture_directive_record(
+        &mut self,
+        name: &str,
+        first_line: &LineRef<'a>,
+        block: &[LineRef<'a>],
+        lineno: u32,
+    ) {
+        const INLINE_ADMONITIONS: &[&str] = &[
+            "note",
+            "warning",
+            "tip",
+            "hint",
+            "important",
+            "caution",
+            "danger",
+            "error",
+            "attention",
+            "seealso",
+        ];
+        let mut options: Vec<(String, String)> = Vec::new();
+        let mut content_lines: Vec<String> = Vec::new();
+        let marker_text = first_line.text.trim();
+        let lower = name.to_lowercase();
+        let is_admonition = INLINE_ADMONITIONS.contains(&lower.as_str());
+        if is_admonition && !marker_text.is_empty() {
+            content_lines.push(marker_text.to_string());
+        }
+        // Leading option lines; everything after is content.
+        let mut in_options = true;
+        for l in block {
+            if l.is_blank() {
+                if !in_options {
+                    content_lines.push(String::new());
+                }
+                continue;
+            }
+            if in_options {
+                if let Some((oname, body_start)) = field_marker(l.text.trim_start()) {
+                    let base = l.text.len() - l.text.trim_start().len();
+                    let val = l.text[base + body_start..].trim().to_string();
+                    options.push((oname, val));
+                    continue;
+                }
+                in_options = false;
+            }
+            content_lines.push(l.text.to_string());
+        }
+        while content_lines.last().map(|l| l.is_empty()).unwrap_or(false) {
+            content_lines.pop();
+        }
+        let arguments: Vec<String> = if is_admonition {
+            Vec::new()
+        } else {
+            marker_text.split_whitespace().map(str::to_string).collect()
+        };
+        self.directive_records.push(super::DirectiveRecord {
+            name: name.to_string(),
+            arguments,
+            options,
+            content: content_lines.join("\n"),
+            line: lineno,
+        });
+    }
+
+    /// Inline parse through the parser's own registry/mode; collects role
+    /// records emitted by the inliner.
+    fn inline(&mut self, text: &str, span: Span, lineno: u32) -> super::inline::InlineResult {
+        let mut result = super::inline::parse_inline_ext(
+            text,
+            span,
+            lineno,
+            &mut self.registry,
+            self.source_path,
+            self.sphinx,
+            &self.docname,
+        );
+        self.role_records.append(&mut result.roles);
+        result
+    }
+
+    /// parse_elements with the containing node kind recorded (docutils
+    /// nested_parse: `state_machine.node` = the container element).
+    fn parse_nested(&mut self, lines: &[LineRef<'a>], kind: &'static str) -> Vec<Node> {
+        let saved = self.nested_node_kind.replace(kind);
+        let nodes = self.parse_elements(lines);
+        self.nested_node_kind = saved;
+        nodes
+    }
+
+    /// Nested parse over OWNED text (csv-table cells and, later,
+    /// rst_prolog/include): a sub-parser over a locally built `Lines`,
+    /// sharing this parser's id registry, with linenos offset so absolute
+    /// line numbers keep working.
+    fn parse_detached(&mut self, text: &str, first_lineno: u32, kind: &'static str) -> Vec<Node> {
+        let lines = Lines::new(text);
+        let mut sub = BlockParser::new(&lines, self.source_path, text.len());
+        for l in &mut sub.top {
+            l.lineno += first_lineno.saturating_sub(1);
+        }
+        sub.registry = std::mem::replace(&mut self.registry, IdRegistry::new());
+        sub.nested_node_kind = Some(kind);
+        sub.line_bias = self.line_bias;
+        sub.depth = self.depth;
+        // Mode + records must flow through the detached parse (review
+        // finding: csv cells previously parsed in docutils mode and their
+        // directive/role records were dropped).
+        sub.sphinx = self.sphinx;
+        sub.docname = self.docname.clone();
+        sub.highlight_language = self.highlight_language.clone();
+        let top = std::mem::take(&mut sub.top);
+        let nodes = sub.parse_elements(&top);
+        self.registry = sub.registry;
+        self.directive_records.append(&mut sub.directive_records);
+        self.role_records.append(&mut sub.role_records);
+        self.toctree_records.append(&mut sub.toctree_records);
+        nodes
     }
 
     fn span_of(&self, lines: &[LineRef<'_>], first: usize, last: usize) -> Span {
@@ -197,7 +378,7 @@ impl<'a> BlockParser<'a> {
     // document level (the only level where titles match)
     // ------------------------------------------------------------------
 
-    pub(crate) fn parse_document(mut self) -> Node {
+    fn parse_document_impl(&mut self) -> Node {
         let mut root = Node::elem(
             kinds::DOCUMENT,
             Span {
@@ -219,6 +400,7 @@ impl<'a> BlockParser<'a> {
             }
             let mut out = Vec::new();
             let section = self.parse_element(&lines, &mut pos, true, &mut out);
+            self.apply_pending_classes(&mut out, 0);
             for node in out {
                 Self::container(&mut root, &mut stack).children.push(node);
             }
@@ -232,6 +414,16 @@ impl<'a> BlockParser<'a> {
 
         let fixups = self.registry.take_fixups();
         ids::apply_dupname_fixups(&mut root, &fixups);
+        // Duplicate substitution definitions: docutils dupname()s the OLD
+        // node in place; we re-walk since the tree is owned (all but the
+        // LAST same-name definition lose the name).
+        for name in std::mem::take(&mut self.substitution_dupnames) {
+            let total = count_subst_defs(&root, &name);
+            if total > 1 {
+                let mut remaining = total - 1;
+                dupname_subst_defs(&mut root, &name, &mut remaining);
+            }
+        }
         root
     }
 
@@ -291,13 +483,7 @@ impl<'a> BlockParser<'a> {
             Self::close_section(root, stack);
         }
 
-        let inline = super::inline::parse_inline(
-            &start.title,
-            start.span,
-            start.title_lineno,
-            &mut self.registry,
-            self.source_path,
-        );
+        let inline = self.inline(&start.title, start.span, start.title_lineno);
         let mut title = Node::elem(kinds::TITLE, start.span);
         title.children = inline.nodes;
         // Section name from the title's TEXT content (markup stripped).
@@ -350,10 +536,33 @@ impl<'a> BlockParser<'a> {
                 pos += 1;
                 continue;
             }
+            let before = out.len();
             let section = self.parse_element(lines, &mut pos, false, &mut out);
             debug_assert!(section.is_none(), "titles never match in nested contexts");
+            self.apply_pending_classes(&mut out, before);
         }
         out
+    }
+
+    /// Sphinx mode runs the ClassAttribute transform effect inline: a
+    /// class/rst-class directive without content stamps the next
+    /// non-invisible sibling element (the pending node itself vanishes).
+    fn apply_pending_classes(&mut self, out: &mut [Node], from: usize) {
+        if self.pending_classes.is_none() {
+            return;
+        }
+        for node in out[from..].iter_mut() {
+            if matches!(
+                node.kind,
+                kinds::COMMENT | kinds::TARGET | kinds::SYSTEM_MESSAGE | "substitution_definition"
+            ) {
+                continue;
+            }
+            if let Some(classes) = self.pending_classes.take() {
+                node.attrs.classes.extend(classes);
+            }
+            break;
+        }
     }
 
     /// Parse one element starting at `lines[*pos]` (non-blank). Returns a
@@ -690,13 +899,7 @@ impl<'a> BlockParser<'a> {
         let (text, expect_literal) = strip_literal_colons(&joined);
         let span = self.span_of(lines, start, end.saturating_sub(1));
         if !text.is_empty() {
-            let result = super::inline::parse_inline(
-                &text,
-                span,
-                lines[start].lineno,
-                &mut self.registry,
-                self.source_path,
-            );
+            let result = self.inline(&text, span, lines[start].lineno);
             let mut para = Node::elem(kinds::PARAGRAPH, span);
             para.children = result.nodes;
             out.push(para);
@@ -920,7 +1123,7 @@ impl<'a> BlockParser<'a> {
         }
         *pos = last_content + 1;
 
-        let children = self.parse_elements(&body);
+        let children = self.parse_nested(&body, "list_item");
         let mut item = Node::elem(kinds::LIST_ITEM, self.span_of(lines, start, last_content));
         item.children = children;
         item
@@ -1078,25 +1281,13 @@ impl<'a> BlockParser<'a> {
             let mut parts = split_classifiers(term_line.text).into_iter();
             let term_text = parts.next().unwrap_or_default();
             let mut term_msgs = Vec::new();
-            let inline = super::inline::parse_inline(
-                &term_text,
-                term_span,
-                term_line.lineno,
-                &mut self.registry,
-                self.source_path,
-            );
+            let inline = self.inline(&term_text, term_span, term_line.lineno);
             let mut term = Node::elem(kinds::TERM, term_span);
             term.children = inline.nodes;
             term_msgs.extend(inline.messages);
             item.children.push(term);
             for classifier in parts {
-                let inline = super::inline::parse_inline(
-                    &classifier,
-                    term_span,
-                    term_line.lineno,
-                    &mut self.registry,
-                    self.source_path,
-                );
+                let inline = self.inline(&classifier, term_span, term_line.lineno);
                 let mut c = Node::elem(kinds::CLASSIFIER, term_span);
                 c.children = inline.nodes;
                 term_msgs.extend(inline.messages);
@@ -1115,7 +1306,9 @@ impl<'a> BlockParser<'a> {
                     term_line.lineno + 1,
                 ));
             }
-            definition.children.extend(self.parse_elements(&block));
+            definition
+                .children
+                .extend(self.parse_nested(&block, "definition"));
             item.children.push(definition);
             dl.children.push(item);
             *pos += 1 + consumed;
@@ -1173,7 +1366,22 @@ impl<'a> BlockParser<'a> {
         let (block, consumed, _indent, terminator) = indented_block(lines, *pos);
         *pos = start + consumed;
         let span = self.span_of(lines, start, start + consumed - 1);
+        out.extend(self.block_quote_elements(&block, span));
+        if let Some(t) = terminator {
+            out.push(self.msg_sm(
+                messages::WARNING,
+                "Block quote ends without a blank line; unexpected unindent.",
+                t,
+            ));
+        }
+    }
 
+    /// docutils `Body.block_quote()`: build block_quote element(s) plus
+    /// interleaved attribution messages from an already-extracted block.
+    /// Shared by indented block quotes and the epigraph/highlights/
+    /// pull-quote directives.
+    fn block_quote_elements(&mut self, block: &[LineRef<'a>], span: Span) -> Vec<Node> {
+        let mut out: Vec<Node> = Vec::new();
         // Split into blank-separated chunks; attribution chunks close quotes.
         let mut quotes: Vec<QuoteSegment<'a>> = Vec::new();
         let mut acc: Vec<LineRef<'a>> = Vec::new();
@@ -1202,17 +1410,11 @@ impl<'a> BlockParser<'a> {
         }
         for (body, attribution) in quotes {
             let mut quote = Node::elem(kinds::BLOCK_QUOTE, span);
-            quote.children = self.parse_elements(&body);
+            quote.children = self.parse_nested(&body, "block_quote");
             let mut attr_messages = Vec::new();
             if let Some((raw_attr, lineno)) = attribution {
                 let raw = raw_attr.astext();
-                let inline = super::inline::parse_inline(
-                    &raw,
-                    raw_attr.span,
-                    lineno,
-                    &mut self.registry,
-                    self.source_path,
-                );
+                let inline = self.inline(&raw, raw_attr.span, lineno);
                 let mut a = Node::elem(kinds::ATTRIBUTION, raw_attr.span);
                 a.children = inline.nodes;
                 attr_messages = inline.messages;
@@ -1224,13 +1426,7 @@ impl<'a> BlockParser<'a> {
             out.push(quote);
             out.append(&mut attr_messages);
         }
-        if let Some(t) = terminator {
-            out.push(self.msg_sm(
-                messages::WARNING,
-                "Block quote ends without a blank line; unexpected unindent.",
-                t,
-            ));
-        }
+        out
     }
 
     // ------------------------------------------------------------------
@@ -1300,13 +1496,7 @@ impl<'a> BlockParser<'a> {
             if text.is_empty() {
                 resolved.push((d, Vec::new()));
             } else {
-                let inline = super::inline::parse_inline(
-                    &text,
-                    span,
-                    first_lineno,
-                    &mut self.registry,
-                    self.source_path,
-                );
+                let inline = self.inline(&text, span, first_lineno);
                 lb_messages.extend(inline.messages);
                 resolved.push((d, inline.nodes));
             }
@@ -1345,6 +1535,10 @@ impl<'a> BlockParser<'a> {
                 return;
             }
         }
+        // docutils explicit_construct(): a construct whose parse raises
+        // MarkupError queues a WARNING and falls through to the comment
+        // path, which re-absorbs the whole block (through internal blanks).
+        let mut construct_error: Option<Node> = None;
         if rest.starts_with('_') {
             // Target attempt: the marker (name + link) may span ADJACENT
             // indented continuation lines; parse the joined form.
@@ -1413,20 +1607,38 @@ impl<'a> BlockParser<'a> {
                     out.push(target);
                 }
                 None => {
-                    // Malformed target: comment + WARNING (fixture-verified).
-                    let mut text_lines: Vec<String> = vec![rest.to_string()];
-                    text_lines.extend(cont.iter().map(|s| s.to_string()));
-                    let mut comment = Node::elem(kinds::COMMENT, span);
-                    comment.set("xml:space", AttrValue::Str("preserve".to_string()));
-                    comment
-                        .children
-                        .push(Node::text_node(text_lines.join("\n"), span));
-                    out.push(comment);
-                    out.push(self.msg(messages::WARNING, "malformed hyperlink target.", lineno));
+                    // Malformed target: queue the WARNING and fall through
+                    // to the comment path below (fixture-verified: the
+                    // comment re-absorbs the block through blank lines).
+                    *pos = start;
+                    construct_error =
+                        Some(self.msg(messages::WARNING, "malformed hyperlink target.", lineno));
                 }
             }
-            self.warn_explicit_markup_end(lines, *pos, out);
+            if construct_error.is_none() {
+                self.warn_explicit_markup_end(lines, *pos, out);
+                return;
+            }
+        }
+
+        // Substitution definitions dispatch BEFORE directives
+        // (states.py:2441-2483 construct order). The construct pattern
+        // requires a non-space char after `|` (`(?![ ])`) — `.. | x` is a
+        // plain comment, not a malformed substitution (review finding 19).
+        if construct_error.is_none()
+            && rest.starts_with('|')
+            && !matches!(rest[1..].chars().next(), None | Some(' '))
+            && self.parse_substitution_def(lines, pos, rest, out, &mut construct_error)
+        {
             return;
+        }
+
+        if construct_error.is_none() {
+            if let Some((name, first_rest)) = directive_marker(rest) {
+                self.parse_directive(lines, pos, &name, first_rest, out);
+                self.warn_explicit_markup_end(lines, *pos, out);
+                return;
+            }
         }
 
         // Comment. Probe-verified continuation rules: a comment with first-
@@ -1469,6 +1681,9 @@ impl<'a> BlockParser<'a> {
                 .push(Node::text_node(text_lines.join("\n"), span));
         }
         out.push(comment);
+        if let Some(err) = construct_error {
+            out.push(err);
+        }
         self.warn_explicit_markup_end(lines, *pos, out);
     }
 
@@ -1578,7 +1793,7 @@ impl<'a> BlockParser<'a> {
         if let Some(m) = msg {
             node.children.push(m);
         }
-        let content = self.parse_elements(&body);
+        let content = self.parse_nested(&body, if is_citation { "citation" } else { "footnote" });
         if content.is_empty() {
             let text = if is_citation {
                 "Citation content expected."
@@ -1620,20 +1835,16 @@ impl<'a> BlockParser<'a> {
             body_lines.extend(block.iter().copied());
             *pos += 1 + consumed;
 
-            let name_inline = super::inline::parse_inline(
-                &name_raw,
-                field_span,
-                lineno,
-                &mut self.registry,
-                self.source_path,
-            );
+            let name_inline = self.inline(&name_raw, field_span, lineno);
             let mut field = Node::elem(kinds::FIELD, field_span);
             let mut fname = Node::elem(kinds::FIELD_NAME, field_span);
             fname.children = name_inline.nodes;
             field.children.push(fname);
             let mut fbody = Node::elem(kinds::FIELD_BODY, field_span);
             fbody.children.extend(name_inline.messages);
-            fbody.children.extend(self.parse_elements(&body_lines));
+            fbody
+                .children
+                .extend(self.parse_nested(&body_lines, "field_body"));
             field.children.push(fbody);
             fl.children.push(field);
 
@@ -1724,7 +1935,7 @@ impl<'a> BlockParser<'a> {
             }
             item.children.push(group);
             let mut description = Node::elem(kinds::DESCRIPTION, span);
-            description.children = self.parse_elements(&body_lines);
+            description.children = self.parse_nested(&body_lines, "description");
             item.children.push(description);
             ol.children.push(item);
 
@@ -2002,7 +2213,7 @@ impl<'a> BlockParser<'a> {
                 .collect();
             if dedented.iter().any(|l| !l.text.is_empty()) {
                 self.line_bias += 1;
-                entry.children = self.parse_elements(&dedented);
+                entry.children = self.parse_nested(&dedented, "entry");
                 self.line_bias -= 1;
             }
             entries[rn][cn] = Some(entry);
@@ -2362,7 +2573,7 @@ impl<'a> BlockParser<'a> {
                     .collect();
                 if dedented.iter().any(|l| !l.text.is_empty()) {
                     self.line_bias += 1;
-                    entry.children = self.parse_elements(&dedented);
+                    entry.children = self.parse_nested(&dedented, "entry");
                     self.line_bias -= 1;
                 }
                 r.children.push(entry);
@@ -2416,6 +2627,2333 @@ impl<'a> BlockParser<'a> {
                 ));
             }
         }
+    }
+
+    /// `.. name:: …` directives: the docutils machinery (probe-verified;
+    /// see 2026-08-13-m2-wave3-probes.md). Wave-3 registry: admonitions +
+    /// generic admonition; more directives arrive in later tasks.
+    fn parse_directive(
+        &mut self,
+        lines: &[LineRef<'a>],
+        pos: &mut usize,
+        name: &str,
+        first_rest: &str,
+        out: &mut Vec<Node>,
+    ) {
+        let start = *pos;
+        let lineno = lines[start].lineno;
+        let (block, consumed, _indent, _term) = indented_block(lines, start + 1);
+        *pos = start + 1 + consumed;
+        let span = self.span_of(lines, start, start + consumed);
+        // Full raw source (original indentation preserved) — reproduced in
+        // EVERY directive error literal. Fixture-verified: docutils'
+        // block_text spans the marker through ALL trailing blank lines
+        // (the final newline then disappears in line-splitting, so exactly
+        // one trailing blank renders in the literal).
+        let mut raw_end = start + 1 + consumed;
+        while lines.get(raw_end).map(|l| l.is_blank()).unwrap_or(false) {
+            raw_end += 1;
+        }
+        let mut raw_lines: Vec<&str> = vec![lines[start].text];
+        for l in &lines[start + 1..raw_end] {
+            raw_lines.push(l.text);
+        }
+        let rawsource = raw_lines.join("\n");
+
+        let first_line = {
+            let t = first_rest.trim_start_matches(' ');
+            let offset = lines[start].text.len() - t.len();
+            LineRef::new(
+                &lines[start].text[offset..],
+                lineno,
+                lines[start].src_start,
+                lines[start].src_end,
+            )
+        };
+        self.run_directive_core(
+            name,
+            first_line,
+            &block,
+            &rawsource,
+            lineno,
+            span,
+            Vec::new(),
+            out,
+        );
+    }
+
+    /// The name-lookup + parse_directive_block + run dispatch shared by
+    /// body-level directives and substitution-embedded ones.
+    #[allow(clippy::too_many_arguments)]
+    fn run_directive_core(
+        &mut self,
+        name: &str,
+        first_line: LineRef<'a>,
+        block: &[LineRef<'a>],
+        rawsource: &str,
+        lineno: u32,
+        span: Span,
+        presets: Vec<(String, OptVal)>,
+        out: &mut Vec<Node>,
+    ) {
+        self.capture_directive_record(name, &first_line, block, lineno);
+        let lower = name.to_lowercase();
+        let Some(spec) = directive_spec_mode(&lower, self.sphinx) else {
+            // Unknown: INFO (language-resolution narrative) + ERROR.
+            out.push(self.msg(
+                messages::INFO,
+                &format!(
+                    "No directive entry for \"{name}\" in module \"docutils.parsers.rst.languages.en\".\nTrying \"{name}\" as canonical directive name."
+                ),
+                lineno,
+            ));
+            out.push(messages::with_literal(
+                self.msg(
+                    messages::ERROR,
+                    &format!("Unknown directive type \"{name}\"."),
+                    lineno,
+                ),
+                rawsource,
+            ));
+            return;
+        };
+
+        // MarkupError wrapper (states.py:2274-2281): uses the directive
+        // name AS WRITTEN (`.. NOTE::` errors say "NOTE").
+        let dir_error = |me: &Self, detail: &str| -> Node {
+            messages::with_literal(
+                me.msg(
+                    messages::ERROR,
+                    &format!("Error in \"{name}\" directive:\n{detail}."),
+                    lineno,
+                ),
+                rawsource,
+            )
+        };
+
+        // ---- parse_directive_block (states.py:2301-2345), exact order ----
+        // `indented` mirrors get_first_known_indented(match.end(),
+        // strip_top=0): the marker-line remainder after `::` and ALL
+        // following spaces, then the (already dedented) indented block.
+        let mut indented: Vec<LineRef<'a>> = vec![first_line];
+        indented.extend(block.iter().copied());
+        // Exactly ONE leading blank line is trimmed, then all trailing.
+        if indented.first().map(|l| l.is_blank()).unwrap_or(false) {
+            indented.remove(0);
+        }
+        while indented.last().map(|l| l.is_blank()).unwrap_or(false) {
+            indented.pop();
+        }
+
+        // Split arg block vs content at the first blank line — only when
+        // the directive declares arguments or options.
+        let declares_specs = spec.required_arguments > 0
+            || spec.optional_arguments > 0
+            || !spec.option_spec.is_empty();
+        let mut arg_block: Vec<LineRef<'a>>;
+        let mut content: Vec<LineRef<'a>>;
+        let blank_idx;
+        if !indented.is_empty() && declares_specs {
+            blank_idx = indented
+                .iter()
+                .position(|l| l.is_blank())
+                .unwrap_or(indented.len());
+            arg_block = indented[..blank_idx].to_vec();
+            content = indented
+                .get(blank_idx + 1..)
+                .map(|s| s.to_vec())
+                .unwrap_or_default();
+        } else {
+            blank_idx = 0;
+            arg_block = Vec::new();
+            content = indented.clone();
+        }
+
+        // Options before arguments (parse_directive_options,
+        // states.py:2347-2363): the arg block splits at the FIRST
+        // field-marker line. Presets (the substitution alt=) seed the
+        // dict and are overridden by parsed options.
+        let mut options: Vec<(String, OptVal)> = presets;
+        if !spec.option_spec.is_empty() {
+            if let Some(k) = arg_block
+                .iter()
+                .position(|l| field_marker(l.text).is_some())
+            {
+                let opt_block = arg_block.split_off(k);
+                match parse_extension_options(&opt_block, spec.option_spec) {
+                    Ok(opts) => {
+                        for (k2, v) in opts {
+                            match options.iter_mut().find(|(n, _)| *n == k2) {
+                                Some(slot) => slot.1 = v,
+                                None => options.push((k2, v)),
+                            }
+                        }
+                    }
+                    Err(detail) => {
+                        out.push(dir_error(self, &detail));
+                        return;
+                    }
+                }
+            }
+        }
+
+        // Leftover argument lines become content for argument-less
+        // directives (probe X6), re-joined with the blank separator and
+        // everything after it (states.py:2330-2334).
+        if !arg_block.is_empty() && spec.required_arguments == 0 && spec.optional_arguments == 0 {
+            let mut rejoined = arg_block.clone();
+            rejoined.extend(indented[blank_idx.min(indented.len())..].iter().copied());
+            content = rejoined;
+            arg_block.clear();
+        }
+        while content.first().map(|l| l.is_blank()).unwrap_or(false) {
+            content.remove(0);
+        }
+
+        // Arguments (parse_directive_arguments, states.py:2365-2380).
+        let mut arguments: Vec<String> = Vec::new();
+        if spec.required_arguments + spec.optional_arguments > 0 {
+            let arg_text = arg_block
+                .iter()
+                .map(|l| l.text)
+                .collect::<Vec<_>>()
+                .join("\n");
+            match parse_directive_arguments(&arg_text, &spec) {
+                Ok(a) => arguments = a,
+                Err(detail) => {
+                    out.push(dir_error(self, &detail));
+                    return;
+                }
+            }
+        }
+
+        // The content-permission check runs LAST (states.py:2343-2344).
+        if !content.is_empty() && !spec.has_content {
+            out.push(dir_error(self, "no content permitted"));
+            return;
+        }
+
+        let input = DirectiveInput {
+            name,
+            arguments,
+            options,
+            content,
+            span,
+            lineno,
+            rawsource,
+        };
+        match spec.kind {
+            DirectiveKind::Admonition(kind) => self.run_admonition(kind, input, out),
+            DirectiveKind::GenericAdmonition => self.run_generic_admonition(input, out),
+            DirectiveKind::Image => self.run_image(input, out),
+            DirectiveKind::PseudoSection(kind) => self.run_pseudo_section(kind, input, out),
+            DirectiveKind::Rubric => self.run_rubric(input, out),
+            DirectiveKind::QuoteClass(class) => self.run_quote_class(class, input, out),
+            DirectiveKind::Compound => self.run_compound(input, out),
+            DirectiveKind::Container => self.run_container(input, out),
+            DirectiveKind::ParsedLiteral => self.run_parsed_literal(input, out),
+            DirectiveKind::Figure => self.run_figure(input, out),
+            DirectiveKind::Code => self.run_code(input, out),
+            DirectiveKind::MathBlock => self.run_math(input, out),
+            DirectiveKind::Raw => self.run_raw(input, out),
+            DirectiveKind::LineBlockDir => self.run_line_block(input, out),
+            DirectiveKind::ClassDir => self.run_class(input, out),
+            DirectiveKind::RstTable => self.run_rst_table(input, out),
+            DirectiveKind::CsvTable => self.run_csv_table(input, out),
+            DirectiveKind::ListTable => self.run_list_table(input, out),
+            DirectiveKind::Replace => self.run_replace(input, out),
+            DirectiveKind::UnicodeDir => self.run_unicode(input, out),
+            DirectiveKind::DateDir => self.run_date(input, out),
+            DirectiveKind::Toctree => self.run_toctree(input, out),
+            DirectiveKind::VersionChange(info) => self.run_version_change(info, input, out),
+            DirectiveKind::SeeAlso => self.run_seealso(input, out),
+            DirectiveKind::SphinxCodeBlock => self.run_sphinx_code_block(input, out),
+            DirectiveKind::Highlight => self.run_highlight(input, out),
+            DirectiveKind::Only => self.run_only(input, out),
+            DirectiveKind::SphinxMath => self.run_sphinx_math(input, out),
+            DirectiveKind::IndexDir => self.run_index(input, out),
+            DirectiveKind::HList => self.run_hlist(input, out),
+            DirectiveKind::Glossary => self.run_glossary(input, out),
+        }
+    }
+
+    /// sphinx math (patches.py MathDirective + math-domain numbering).
+    /// Absent label/number are Python None -> pformat "True".
+    fn run_sphinx_math(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        let mut latex = input
+            .content
+            .iter()
+            .map(|l| l.text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        if let Some(arg) = input.arguments.first() {
+            latex = if latex.is_empty() {
+                format!("{arg}\n\n")
+            } else {
+                format!("{arg}\n\n{latex}")
+            };
+        }
+        let label =
+            match opt_get(&input.options, "label").or_else(|| opt_get(&input.options, "name")) {
+                Some(OptVal::Str(s)) if !s.is_empty() => Some(s.clone()),
+                _ => None,
+            };
+        let nowrap = opt_get(&input.options, "nowrap").is_some()
+            || opt_get(&input.options, "no-wrap").is_some();
+        let mut node = Node::elem("math_block", input.span);
+        if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
+            node.attrs.classes.extend(classes.iter().cloned());
+        }
+        node.set("docname", AttrValue::Str(self.docname.clone()));
+        node.set("no-wrap", AttrValue::Int(i64::from(nowrap)));
+        node.set("nowrap", AttrValue::Int(i64::from(nowrap)));
+        node.set("xml:space", AttrValue::Str("preserve".to_string()));
+        node.children.push(Node::text_node(latex, input.span));
+        match label {
+            Some(label) => {
+                self.equation_serial += 1;
+                let id = ids::make_id(&format!("equation-{label}"));
+                node.attrs.ids.push(id.clone());
+                node.set("label", AttrValue::Str(label));
+                node.set("number", AttrValue::Int(i64::from(self.equation_serial)));
+                let mut target = Node::elem(kinds::TARGET, input.span);
+                target.set("refid", AttrValue::Str(id));
+                out.push(target);
+                out.push(node);
+            }
+            None => {
+                node.set("label", AttrValue::Str("True".to_string()));
+                node.set("number", AttrValue::Str("True".to_string()));
+                out.push(node);
+            }
+        }
+    }
+
+    /// sphinx index directive (sphinx/domains/index.py IndexDirective).
+    fn run_index(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        let target_id = format!("index-{}", self.registry.new_index_serialno());
+        let mut entries: Vec<String> = Vec::new();
+        for line in input.arguments[0].split('\n') {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            entries.extend(process_index_entry(line, &target_id));
+        }
+        let mut index = Node::elem("index", input.span);
+        index.set("entries", AttrValue::Str(entries.join(" ")));
+        index.set("inline", AttrValue::Int(0));
+        let mut target = Node::elem(kinds::TARGET, input.span);
+        match opt_get(&input.options, "name") {
+            Some(OptVal::Str(n)) => {
+                target.attrs.names.push(ids::fully_normalize_name(n));
+            }
+            _ => target.attrs.ids.push(target_id),
+        }
+        out.push(index);
+        out.push(target);
+    }
+
+    /// sphinx hlist (other.py HList): content must be exactly one bullet
+    /// list; distributed into ncolumns hlistcol children.
+    fn run_hlist(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        let ncolumns = match opt_get(&input.options, "columns") {
+            Some(OptVal::Int(n)) if *n > 0 => *n as usize,
+            _ => 2,
+        };
+        let children = self.parse_nested(&input.content, "element");
+        let one_list = children.len() == 1 && children[0].kind == kinds::BULLET_LIST;
+        if !one_list {
+            // logger.warning('.. hlist content is not a list') goes to the
+            // log stream, not the tree.
+            return;
+        }
+        let list = children.into_iter().next().expect("length checked");
+        let items = list.children;
+        let npercol = items.len() / ncolumns;
+        let nmore = items.len() % ncolumns;
+        let mut hlist = Node::elem("hlist", input.span);
+        hlist.set("ncolumns", AttrValue::Str(ncolumns.to_string()));
+        let mut it = items.into_iter();
+        for col in 0..ncolumns {
+            let take = npercol + usize::from(col < nmore);
+            let mut bl = Node::elem(kinds::BULLET_LIST, input.span);
+            for _ in 0..take {
+                match it.next() {
+                    Some(item) => bl.children.push(item),
+                    None => break,
+                }
+            }
+            let mut colnode = Node::elem("hlistcol", input.span);
+            colnode.children.push(bl);
+            hlist.children.push(colnode);
+        }
+        out.push(hlist);
+    }
+
+    /// sphinx glossary (std domain): term lines + indented definitions;
+    /// each term gets a term-<id> target and an embedded index entry.
+    fn run_glossary(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        let mut glossary = Node::elem("glossary", input.span);
+        glossary.set(
+            "sorted",
+            AttrValue::Int(i64::from(opt_get(&input.options, "sorted").is_some())),
+        );
+        let mut dl = Node::elem(kinds::DEFINITION_LIST, input.span);
+        dl.attrs.classes.push("glossary".to_string());
+        // Entry split: unindented term line(s) followed by an indented
+        // definition block (misformat warnings go to the log, not the
+        // tree; the corpus pins well-formed input).
+        let mut i = 0usize;
+        let content = &input.content;
+        while i < content.len() {
+            if content[i].is_blank() {
+                i += 1;
+                continue;
+            }
+            if content[i].indent() > 0 {
+                // Stray indented line without a term: log-warned, skipped.
+                i += 1;
+                continue;
+            }
+            let mut term_lines: Vec<LineRef<'a>> = Vec::new();
+            while i < content.len() && !content[i].is_blank() && content[i].indent() == 0 {
+                term_lines.push(content[i]);
+                i += 1;
+            }
+            let mut def_lines: Vec<LineRef<'a>> = Vec::new();
+            while i < content.len() && (content[i].is_blank() || content[i].indent() > 0) {
+                if content[i].is_blank()
+                    && content
+                        .get(i + 1)
+                        .map(|l| !l.is_blank() && l.indent() == 0)
+                        .unwrap_or(true)
+                {
+                    i += 1;
+                    break;
+                }
+                def_lines.push(content[i]);
+                i += 1;
+            }
+            while def_lines.last().map(|l| l.is_blank()).unwrap_or(false) {
+                def_lines.pop();
+            }
+            let mut item = Node::elem(kinds::DEFINITION_LIST_ITEM, input.span);
+            let mut term_messages: Vec<Node> = Vec::new();
+            for tl in &term_lines {
+                let raw_term = tl.text.trim();
+                // split_term_classifiers: ' +: +' — first classifier is
+                // the index key.
+                let mut parts = raw_term.splitn(2, " : ");
+                let term_text = parts.next().unwrap_or(raw_term).trim_end().to_string();
+                let index_key = parts
+                    .next()
+                    .map(|c| c.split(" : ").next().unwrap_or(c).trim().to_string());
+                let inline = self.inline(&term_text, input.span, tl.lineno);
+                let mut term = Node::elem(kinds::TERM, input.span);
+                term.children = inline.nodes;
+                term_messages.extend(inline.messages);
+                let base = ids::make_id(&format!("term-{term_text}"));
+                let node_id = if base == "term" || base.is_empty() {
+                    let id = format!("term-{}", self.registry.new_index_serialno());
+                    id
+                } else {
+                    base
+                };
+                term.attrs.ids.push(node_id.clone());
+                let mut index = Node::elem("index", input.span);
+                index.set(
+                    "entries",
+                    AttrValue::Str(index_entry_tuple(
+                        "single",
+                        &term_text,
+                        &node_id,
+                        "main",
+                        index_key.as_deref(),
+                    )),
+                );
+                term.children.push(index);
+                item.children.push(term);
+            }
+            item.children.extend(term_messages);
+            let dedented = dedent_by_min(&def_lines);
+            let mut definition = Node::elem(kinds::DEFINITION, input.span);
+            definition.children = self.parse_nested(&dedented, "definition");
+            item.children.push(definition);
+            dl.children.push(item);
+        }
+        glossary.children.push(dl);
+        out.push(glossary);
+    }
+
+    /// versionadded family (sphinx/domains/changeset.py VersionChange):
+    /// a versionmodified node holding ONE translatable="0" paragraph whose
+    /// lead-in inline ends with '.' (no text) or ': ' (text follows as
+    /// siblings in the same paragraph).
+    fn run_version_change(
+        &mut self,
+        info: &'static (&'static str, &'static str, &'static str),
+        input: DirectiveInput<'a, '_>,
+        out: &mut Vec<Node>,
+    ) {
+        let (type_name, label, lead_fmt) = *info;
+        let version = &input.arguments[0];
+        // Inline messages from the explanation must anchor on the text's
+        // own line, not the directive marker (review finding 41).
+        let mut text_lineno = input.lineno;
+        let text: Option<String> = input
+            .arguments
+            .get(1)
+            .cloned()
+            .or_else(|| {
+                if input.content.is_empty() {
+                    None
+                } else {
+                    text_lineno = input.content[0].lineno;
+                    Some(
+                        input
+                            .content
+                            .iter()
+                            .map(|l| l.text)
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                    )
+                }
+            })
+            .filter(|t| !t.is_empty());
+        let mut node = Node::elem("versionmodified", input.span);
+        node.set("type", AttrValue::Str(type_name.to_string()));
+        node.set("version", AttrValue::Str(version.clone()));
+        let lead_base = lead_fmt.replace("{}", version);
+        let lead = match &text {
+            Some(_) => format!("{lead_base}: "),
+            None => format!("{lead_base}."),
+        };
+        let mut para = Node::elem(kinds::PARAGRAPH, input.span);
+        para.set("translatable", AttrValue::Int(0));
+        let mut inner = Node::elem("inline", input.span);
+        inner
+            .attrs
+            .classes
+            .extend(["versionmodified".to_string(), label.to_string()]);
+        inner.children.push(Node::text_node(lead, input.span));
+        para.children.push(inner);
+        let mut messages = Vec::new();
+        if let Some(t) = text {
+            let inline = self.inline(&t, input.span, text_lineno);
+            para.children.extend(inline.nodes);
+            messages = inline.messages;
+        }
+        node.children.push(para);
+        out.push(node);
+        out.extend(messages);
+    }
+
+    /// seealso (sphinx/directives/other.py): admonition-shaped custom
+    /// node with no attributes.
+    fn run_seealso(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        if input.content.is_empty() {
+            out.push(self.directive_content_error(input.name, input.lineno, input.rawsource));
+            return;
+        }
+        let mut node = Node::elem("seealso", input.span);
+        if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
+            node.attrs.classes.extend(classes.iter().cloned());
+        }
+        self.directive_add_name(&mut node, &input.options, input.lineno, out);
+        let content = self.parse_nested(&input.content, "seealso");
+        node.children.extend(content);
+        out.push(node);
+    }
+
+    /// sphinx code-block (sphinx/directives/code.py CodeBlock): language
+    /// falls back to the `.. highlight::` state then the 'default'
+    /// sentinel; :caption: wraps in a literal-block-wrapper container
+    /// that takes the ids/names.
+    fn run_sphinx_code_block(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        let language = input
+            .arguments
+            .first()
+            .cloned()
+            .or_else(|| self.highlight_language.clone())
+            .unwrap_or_else(|| "default".to_string());
+        // sphinx util.parselinenos + CodeBlock.run: an invalid spec
+        // REPLACES the whole block with a WARNING system_message;
+        // out-of-range lines are filtered (review findings 31/43/45/46).
+        let nlines = input.content.len() as i64;
+        let mut hl_lines: Vec<i64> = Vec::new();
+        if let Some(OptVal::Str(spec)) = opt_get(&input.options, "emphasize-lines") {
+            match parse_linenos(spec, nlines) {
+                Ok(lines_list) => hl_lines = lines_list,
+                Err(msg) => {
+                    out.push(self.msg(messages::WARNING, &msg, input.lineno));
+                    return;
+                }
+            }
+        }
+        let highlight_args = if hl_lines.is_empty() {
+            "{}".to_string()
+        } else {
+            format!(
+                "{{'hl_lines': [{}]}}",
+                hl_lines
+                    .iter()
+                    .map(|n| n.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        };
+        let mut lb = Node::elem(kinds::LITERAL_BLOCK, input.span);
+        lb.set(
+            "force",
+            AttrValue::Int(i64::from(opt_get(&input.options, "force").is_some())),
+        );
+        lb.set("highlight_args", AttrValue::Str(highlight_args));
+        lb.set("language", AttrValue::Str(language));
+        if opt_get(&input.options, "linenos").is_some() {
+            lb.set("linenos", AttrValue::Int(1));
+        }
+        lb.set("xml:space", AttrValue::Str("preserve".to_string()));
+        if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
+            lb.attrs.classes.extend(classes.iter().cloned());
+        }
+        let code = input
+            .content
+            .iter()
+            .map(|l| l.text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        lb.children.push(Node::text_node(code, input.span));
+        match opt_get(&input.options, "caption") {
+            Some(OptVal::Str(caption_text)) => {
+                let mut container = Node::elem("container", input.span);
+                container
+                    .attrs
+                    .classes
+                    .push("literal-block-wrapper".to_string());
+                container.set("literal_block", AttrValue::Int(1));
+                self.directive_add_name(&mut container, &input.options, input.lineno, out);
+                let inline = self.inline(&caption_text.clone(), input.span, input.lineno);
+                let mut caption = Node::elem("caption", input.span);
+                caption.children = inline.nodes;
+                container.children.push(caption);
+                container.children.push(lb);
+                out.push(container);
+                out.extend(inline.messages);
+            }
+            _ => {
+                self.directive_add_name(&mut lb, &input.options, input.lineno, out);
+                out.push(lb);
+            }
+        }
+    }
+
+    /// sphinx highlight: emits a highlightlang node AND sets the state
+    /// later code-blocks read (env.temp_data parity).
+    fn run_highlight(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        let lang = input.arguments[0].clone();
+        self.highlight_language = Some(lang.clone());
+        let mut node = Node::elem("highlightlang", input.span);
+        node.set(
+            "force",
+            AttrValue::Int(i64::from(opt_get(&input.options, "force").is_some())),
+        );
+        node.set("lang", AttrValue::Str(lang));
+        let threshold = match opt_get(&input.options, "linenothreshold") {
+            Some(OptVal::Int(n)) => *n,
+            _ => i64::MAX,
+        };
+        node.set("linenothreshold", AttrValue::Int(threshold));
+        out.push(node);
+    }
+
+    /// sphinx only: expr stored verbatim; evaluation is a later build
+    /// phase.
+    fn run_only(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        let mut node = Node::elem("only", input.span);
+        node.set("expr", AttrValue::Str(input.arguments[0].clone()));
+        let content = self.parse_nested(&input.content, "only");
+        node.children.extend(content);
+        out.push(node);
+    }
+
+    /// sphinx toctree: entries recorded (as authored, with per-entry
+    /// lines) for the build pipeline; the node is a best-effort
+    /// `compound.toctree-wrapper > toctree` (probe shape; exact attr
+    /// parity lands with the sphinx-fixture toctree cases).
+    fn run_toctree(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        let glob = matches!(opt_get(&input.options, "glob"), Some(OptVal::Null));
+        let mut entries: Vec<super::ToctreeEntryRecord> = Vec::new();
+        for l in &input.content {
+            if l.is_blank() {
+                continue;
+            }
+            let t = l.text.trim();
+            // sphinx explicit_title_re `^(.+?)\s*<(.*?)>$`: the TITLE part
+            // must be nonempty — a bare `<foo>` entry is a literal target
+            // named '<foo>' (review finding 40).
+            let (title, target) = match (t.rfind('<'), t.ends_with('>')) {
+                (Some(lt), true) if lt > 0 => (
+                    Some(t[..lt].trim_end().to_string()),
+                    t[lt + 1..t.len() - 1].to_string(),
+                ),
+                _ => (None, t.to_string()),
+            };
+            entries.push(super::ToctreeEntryRecord {
+                title,
+                target,
+                line: l.lineno,
+            });
+        }
+        self.toctree_records.push(super::ToctreeRecord {
+            glob,
+            entries: entries.clone(),
+            line: input.lineno,
+        });
+        // Full sphinx attr set (oracle-pinned). entries/includefiles are
+        // env-resolved (nonexistent docnames drop; the oracle srcdir has
+        // none) — the build pipeline uses the records instead; wave 4
+        // populates these from the environment.
+        let mut toctree = Node::elem("toctree", input.span);
+        match opt_get(&input.options, "caption") {
+            // pformat renders a Python None attr value as "True".
+            Some(OptVal::Str(c)) => toctree.set("caption", AttrValue::Str(c.clone())),
+            _ => toctree.set("caption", AttrValue::Str("True".to_string())),
+        }
+        toctree.set("entries", AttrValue::Str(String::new()));
+        toctree.set("glob", AttrValue::Int(i64::from(glob)));
+        toctree.set(
+            "hidden",
+            AttrValue::Int(i64::from(opt_get(&input.options, "hidden").is_some())),
+        );
+        toctree.set("includefiles", AttrValue::Str(String::new()));
+        toctree.set(
+            "includehidden",
+            AttrValue::Int(i64::from(
+                opt_get(&input.options, "includehidden").is_some(),
+            )),
+        );
+        let maxdepth = match opt_get(&input.options, "maxdepth") {
+            Some(OptVal::Int(d)) => *d,
+            _ => -1,
+        };
+        toctree.set("maxdepth", AttrValue::Int(maxdepth));
+        let numbered = match opt_get(&input.options, "numbered") {
+            Some(OptVal::Str(s)) if s.is_empty() => 999_999,
+            Some(OptVal::Str(s)) => py_int(s).unwrap_or(0),
+            _ => 0,
+        };
+        toctree.set("numbered", AttrValue::Int(numbered));
+        toctree.set("parent", AttrValue::Str(self.docname.clone()));
+        toctree.set("rawentries", AttrValue::Str(String::new()));
+        toctree.set(
+            "titlesonly",
+            AttrValue::Int(i64::from(opt_get(&input.options, "titlesonly").is_some())),
+        );
+        let mut compound = Node::elem("compound", input.span);
+        compound.attrs.classes.push("toctree-wrapper".to_string());
+        compound.children.push(toctree);
+        out.push(compound);
+    }
+
+    fn substitution_context_error(
+        &self,
+        input: &DirectiveInput<'a, '_>,
+        out: &mut Vec<Node>,
+    ) -> bool {
+        if self.substitution_ctx.is_some() {
+            return false;
+        }
+        out.push(self.directive_run_error(
+            &format!(
+                "Invalid context: the \"{}\" directive can only be used within a substitution definition.",
+                input.name
+            ),
+            input.lineno,
+            input.rawsource,
+        ));
+        true
+    }
+
+    /// replace (misc.py:357-387).
+    fn run_replace(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        if self.substitution_context_error(&input, out) {
+            return;
+        }
+        if input.content.is_empty() {
+            out.push(self.directive_content_error(input.name, input.lineno, input.rawsource));
+            return;
+        }
+        // The nested parse runs OUTSIDE the SubstitutionDef state: an
+        // embedded `.. date::` inside replace content must context-error
+        // exactly like at body level (review finding 22).
+        let saved_ctx = self.substitution_ctx.take();
+        let children = self.parse_nested(&input.content, "substitution_definition");
+        self.substitution_ctx = saved_ctx;
+        let mut msgs: Vec<Node> = Vec::new();
+        let mut paragraphs: Vec<Node> = Vec::new();
+        let mut others = false;
+        for c in children {
+            if c.kind == kinds::SYSTEM_MESSAGE {
+                let mut m = c;
+                m.attrs.backrefs.clear();
+                msgs.push(m);
+            } else if c.kind == kinds::PARAGRAPH {
+                paragraphs.push(c);
+            } else {
+                others = true;
+            }
+        }
+        if paragraphs.len() == 1 && !others {
+            out.extend(msgs);
+            out.extend(paragraphs.remove(0).children);
+        } else {
+            // reporter.error without a literal child (misc.py:378-383).
+            out.push(self.msg(
+                messages::ERROR,
+                &format!(
+                    "Error in \"{}\" directive: may contain a single paragraph only.",
+                    input.name
+                ),
+                input.lineno,
+            ));
+        }
+    }
+
+    /// unicode (misc.py:390-431).
+    fn run_unicode(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        if self.substitution_context_error(&input, out) {
+            return;
+        }
+        let trim = opt_get(&input.options, "trim").is_some();
+        let ltrim = opt_get(&input.options, "ltrim").is_some();
+        let rtrim = opt_get(&input.options, "rtrim").is_some();
+        if let Some(ctx) = self.substitution_ctx.as_mut() {
+            ctx.ltrim |= trim || ltrim;
+            ctx.rtrim |= trim || rtrim;
+        }
+        let arg = &input.arguments[0];
+        let codes_text = &arg[..unicode_comment_cut(arg)];
+        for code in codes_text.split_whitespace() {
+            match unicode_code(code) {
+                Ok(s) => out.push(Node::text_node(s, input.span)),
+                Err(detail) => {
+                    out.push(self.directive_run_error(
+                        &format!("Invalid character code: {code}\nValueError: {detail}"),
+                        input.lineno,
+                        input.rawsource,
+                    ));
+                    return;
+                }
+            }
+        }
+    }
+
+    /// date (misc.py:639-666): strftime at PARSE time (deliberately
+    /// non-deterministic output; the fixture corpus avoids success cases).
+    fn run_date(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        if self.substitution_context_error(&input, out) {
+            return;
+        }
+        let format = if input.content.is_empty() {
+            "%Y-%m-%d".to_string()
+        } else {
+            input
+                .content
+                .iter()
+                .map(|l| l.text)
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        out.push(Node::text_node(strftime_now(&format), input.span));
+    }
+
+    /// Table.make_title (tables.py:46-57).
+    fn table_make_title(&mut self, input: &DirectiveInput<'a, '_>) -> (Option<Node>, Vec<Node>) {
+        match input.arguments.first() {
+            Some(text) => {
+                let inline = self.inline(text, input.span, input.lineno);
+                let mut title = Node::elem(kinds::TITLE, input.span);
+                title.children = inline.nodes;
+                (Some(title), inline.messages)
+            }
+            None => (None, Vec::new()),
+        }
+    }
+
+    /// Shared tail of the three table directives: user classes, width,
+    /// align, the colwidths marker class, :name:, then the title at
+    /// index 0 (tables.py:141-171).
+    #[allow(clippy::too_many_arguments)]
+    fn finish_table(
+        &mut self,
+        mut table: Node,
+        input: &DirectiveInput<'a, '_>,
+        title: Option<Node>,
+        title_messages: Vec<Node>,
+        out: &mut Vec<Node>,
+    ) {
+        if let Some(OptVal::Str(w)) = opt_get(&input.options, "width") {
+            table.set("width", AttrValue::Str(w.clone()));
+        }
+        if let Some(OptVal::Str(a)) = opt_get(&input.options, "align") {
+            table.set("align", AttrValue::Str(a.clone()));
+        }
+        self.directive_add_name(&mut table, &input.options, input.lineno, out);
+        if let Some(t) = title {
+            table.children.insert(0, t);
+        }
+        out.push(table);
+        out.extend(title_messages);
+    }
+
+    /// table (tables.py RSTTable:127-172).
+    fn run_rst_table(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        if input.content.is_empty() {
+            // RSTTable's missing-content diagnostic is a WARNING, unlike
+            // the assert_has_content ERROR family (tables.py:135-139).
+            out.push(self.directive_run_message(
+                messages::WARNING,
+                &format!(
+                    "Content block expected for the \"{}\" directive; none found.",
+                    input.name
+                ),
+                input.lineno,
+                input.rawsource,
+            ));
+            return;
+        }
+        let (title, title_messages) = self.table_make_title(&input);
+        let children = self.parse_nested(&input.content, "element");
+        if children.len() != 1 || children[0].kind != kinds::TABLE {
+            out.push(self.directive_run_error(
+                &format!(
+                    "Error parsing content block for the \"{}\" directive: exactly one table expected.",
+                    input.name
+                ),
+                input.lineno,
+                input.rawsource,
+            ));
+            return;
+        }
+        let mut table = children.into_iter().next().expect("length checked");
+        // User classes precede the colwidths marker class here (RSTTable
+        // run order); csv/list get theirs appended AFTER the build-time
+        // marker instead — both orders fixture-pinned.
+        if let Some(OptVal::StrList(cls)) = opt_get(&input.options, "class") {
+            table.attrs.classes.extend(cls.iter().cloned());
+        }
+        match opt_get(&input.options, "widths") {
+            Some(OptVal::Str(kw)) if kw == "auto" => {
+                table.attrs.classes.push("colwidths-auto".to_string());
+            }
+            Some(OptVal::Str(_)) => {
+                // 'grid': keep the syntax-derived colwidths.
+                table.attrs.classes.push("colwidths-given".to_string());
+            }
+            Some(OptVal::IntList(list)) => {
+                let n_cols = table
+                    .children
+                    .first()
+                    .map(|tg| {
+                        tg.children
+                            .iter()
+                            .filter(|c| c.kind == kinds::COLSPEC)
+                            .count()
+                    })
+                    .unwrap_or(0);
+                if list.len() != n_cols {
+                    out.push(self.directive_run_error(
+                        &format!(
+                            "\"{}\" widths do not match the number of columns in table ({}).",
+                            input.name, n_cols
+                        ),
+                        input.lineno,
+                        input.rawsource,
+                    ));
+                    return;
+                }
+                if let Some(tg) = table.children.first_mut() {
+                    let mut i = 0usize;
+                    for c in &mut tg.children {
+                        if c.kind == kinds::COLSPEC {
+                            c.set("colwidth", AttrValue::Int(list[i]));
+                            i += 1;
+                        }
+                    }
+                }
+                table.attrs.classes.push("colwidths-given".to_string());
+            }
+            _ => {}
+        }
+        self.finish_table(table, &input, title, title_messages, out);
+    }
+
+    /// csv-table (tables.py CSVTable:175-403).
+    fn run_csv_table(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        let has_file = opt_get(&input.options, "file").is_some();
+        let has_url = opt_get(&input.options, "url").is_some();
+        // get_csv_data (tables.py:321-388).
+        let csv_text: String;
+        if !input.content.is_empty() {
+            if has_file || has_url {
+                out.push(self.directive_run_error(
+                    &format!(
+                        "\"{}\" directive may not both specify an external file and have content.",
+                        input.name
+                    ),
+                    input.lineno,
+                    input.rawsource,
+                ));
+                return;
+            }
+            csv_text = input
+                .content
+                .iter()
+                .map(|l| l.text)
+                .collect::<Vec<_>>()
+                .join("\n");
+        } else if has_file {
+            if has_url {
+                out.push(self.directive_run_error(
+                    &format!(
+                        "The \"file\" and \"url\" options may not be simultaneously specified for the \"{}\" directive.",
+                        input.name
+                    ),
+                    input.lineno,
+                    input.rawsource,
+                ));
+                return;
+            }
+            let Some(OptVal::Str(path)) = opt_get(&input.options, "file") else {
+                unreachable!("file option is Path-converted");
+            };
+            let base = std::path::Path::new(self.source_path)
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_default();
+            match std::fs::read_to_string(base.join(path)) {
+                Ok(t) => csv_text = t,
+                Err(_) => {
+                    // Unlike raw's io.error_string (InputError: prefix),
+                    // the csv path formats the bare OSError.
+                    out.push(self.directive_run_message(
+                        messages::SEVERE,
+                        &format!(
+                            "Problems with \"{}\" directive path:\n[Errno 2] No such file or directory: {}.",
+                            input.name,
+                            py_repr(Some(path))
+                        ),
+                        input.lineno,
+                        input.rawsource,
+                    ));
+                    return;
+                }
+            }
+        } else {
+            out.push(self.directive_run_message(
+                messages::WARNING,
+                &format!(
+                    "The \"{}\" directive requires content; none supplied.",
+                    input.name
+                ),
+                input.lineno,
+                input.rawsource,
+            ));
+            return;
+        }
+        let (title, title_messages) = self.table_make_title(&input);
+        // Dialect (tables.py DocutilsDialect:198-220).
+        let delim = match opt_get(&input.options, "delim") {
+            Some(OptVal::Str(s)) => s.chars().next().unwrap_or(','),
+            _ => ',',
+        };
+        let quote = match opt_get(&input.options, "quote") {
+            Some(OptVal::Str(s)) => s.chars().next().unwrap_or('"'),
+            _ => '"',
+        };
+        let escape = match opt_get(&input.options, "escape") {
+            Some(OptVal::Str(s)) => s.chars().next(),
+            _ => None,
+        };
+        let skipinitialspace = opt_get(&input.options, "keepspace").is_none();
+        let doublequote = escape.is_none();
+        let header_rows = match opt_get(&input.options, "header-rows") {
+            Some(OptVal::Int(n)) => *n as usize,
+            _ => 0,
+        };
+        let stub_columns = match opt_get(&input.options, "stub-columns") {
+            Some(OptVal::Int(n)) => *n as usize,
+            _ => 0,
+        };
+        let header_option_rows: Vec<Vec<String>> = match opt_get(&input.options, "header") {
+            Some(OptVal::Str(h)) => {
+                parse_csv_text(h, delim, quote, escape, doublequote, skipinitialspace)
+            }
+            _ => Vec::new(),
+        };
+        let rows = parse_csv_text(
+            &csv_text,
+            delim,
+            quote,
+            escape,
+            doublequote,
+            skipinitialspace,
+        );
+        let max_header_cols = header_option_rows.iter().map(Vec::len).max().unwrap_or(0);
+        let max_cols = rows
+            .iter()
+            .map(Vec::len)
+            .max()
+            .unwrap_or(0)
+            .max(max_header_cols);
+        let row_lens: Vec<usize> = rows.iter().map(Vec::len).collect();
+        if let Err(msg) = Self::check_table_dimensions(
+            input.name,
+            rows.len(),
+            &row_lens,
+            header_rows,
+            stub_columns,
+        ) {
+            out.push(self.directive_run_error(&msg, input.lineno, input.rawsource));
+            return;
+        }
+        // Column widths (tables.py:101-118).
+        let widths_opt = opt_get(&input.options, "widths").cloned();
+        let col_widths: Vec<i64> = match &widths_opt {
+            Some(OptVal::IntList(list)) => {
+                if list.len() != max_cols {
+                    out.push(self.directive_run_error(
+                        &format!(
+                            "\"{}\" widths do not match the number of columns in table ({}).",
+                            input.name, max_cols
+                        ),
+                        input.lineno,
+                        input.rawsource,
+                    ));
+                    return;
+                }
+                list.clone()
+            }
+            _ => {
+                if max_cols == 0 {
+                    out.push(self.directive_run_error(
+                        "No table data detected in CSV file.",
+                        input.lineno,
+                        input.rawsource,
+                    ));
+                    return;
+                }
+                vec![(100 / max_cols) as i64; max_cols]
+            }
+        };
+        // Cells -> entry nodes; short rows extend with empty cells.
+        let mut make_row = |cells: &[String]| -> Vec<Node> {
+            let mut entries = Vec::with_capacity(max_cols);
+            for i in 0..max_cols {
+                let mut entry = Node::elem(kinds::ENTRY, input.span);
+                if let Some(cell) = cells.get(i) {
+                    if !cell.is_empty() {
+                        entry.children = self.parse_detached(cell, input.lineno, "entry");
+                    }
+                }
+                entries.push(entry);
+            }
+            entries
+        };
+        let mut head: Vec<Vec<Node>> = Vec::new();
+        let mut body: Vec<Vec<Node>> = Vec::new();
+        for cells in &header_option_rows {
+            head.push(make_row(cells));
+        }
+        for (i, cells) in rows.iter().enumerate() {
+            if i < header_rows {
+                head.push(make_row(cells));
+            } else {
+                body.push(make_row(cells));
+            }
+        }
+        let mut table = Self::build_directive_table(
+            &col_widths,
+            stub_columns,
+            widths_opt.as_ref(),
+            head,
+            body,
+            input.span,
+        );
+        if let Some(OptVal::StrList(cls)) = opt_get(&input.options, "class") {
+            table.attrs.classes.extend(cls.iter().cloned());
+        }
+        self.finish_table(table, &input, title, title_messages, out);
+    }
+
+    /// list-table (tables.py ListTable:406-523).
+    fn run_list_table(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        if input.content.is_empty() {
+            out.push(self.directive_run_error(
+                &format!(
+                    "The \"{}\" directive is empty; content required.",
+                    input.name
+                ),
+                input.lineno,
+                input.rawsource,
+            ));
+            return;
+        }
+        let (title, title_messages) = self.table_make_title(&input);
+        let children = self.parse_nested(&input.content, "element");
+        let content_error = |me: &Self, detail: &str| -> Node {
+            me.directive_run_error(
+                &format!(
+                    "Error parsing content block for the \"{}\" directive: {detail}",
+                    input.name
+                ),
+                input.lineno,
+                input.rawsource,
+            )
+        };
+        if children.len() != 1 || children[0].kind != kinds::BULLET_LIST {
+            out.push(content_error(self, "exactly one bullet list expected."));
+            return;
+        }
+        let outer = children.into_iter().next().expect("length checked");
+        let mut table_data: Vec<Vec<Vec<Node>>> = Vec::new();
+        let mut first_len: Option<usize> = None;
+        for (i, item) in outer.children.into_iter().enumerate() {
+            let one_inner_list =
+                item.children.len() == 1 && item.children[0].kind == kinds::BULLET_LIST;
+            if !one_inner_list {
+                out.push(content_error(
+                    self,
+                    &format!(
+                        "two-level bullet list expected, but row {} does not contain a second-level bullet list.",
+                        i + 1
+                    ),
+                ));
+                return;
+            }
+            let inner = item.children.into_iter().next().expect("length checked");
+            let row: Vec<Vec<Node>> = inner.children.into_iter().map(|it| it.children).collect();
+            if let Some(f) = first_len {
+                if row.len() != f {
+                    out.push(content_error(
+                        self,
+                        &format!(
+                            "uniform two-level bullet list expected, but row {} does not contain the same number of items as row 1 ({} vs {}).",
+                            i + 1,
+                            row.len(),
+                            f
+                        ),
+                    ));
+                    return;
+                }
+            } else {
+                first_len = Some(row.len());
+            }
+            table_data.push(row);
+        }
+        let header_rows = match opt_get(&input.options, "header-rows") {
+            Some(OptVal::Int(n)) => *n as usize,
+            _ => 0,
+        };
+        let stub_columns = match opt_get(&input.options, "stub-columns") {
+            Some(OptVal::Int(n)) => *n as usize,
+            _ => 0,
+        };
+        let row_lens: Vec<usize> = table_data.iter().map(Vec::len).collect();
+        if let Err(msg) = Self::check_table_dimensions(
+            input.name,
+            table_data.len(),
+            &row_lens,
+            header_rows,
+            stub_columns,
+        ) {
+            out.push(self.directive_run_error(&msg, input.lineno, input.rawsource));
+            return;
+        }
+        let n_cols = first_len.unwrap_or(0);
+        let widths_opt = opt_get(&input.options, "widths").cloned();
+        let col_widths: Vec<i64> = match &widths_opt {
+            Some(OptVal::IntList(list)) => {
+                if list.len() != n_cols {
+                    out.push(self.directive_run_error(
+                        &format!(
+                            "\"{}\" widths do not match the number of columns in table ({}).",
+                            input.name, n_cols
+                        ),
+                        input.lineno,
+                        input.rawsource,
+                    ));
+                    return;
+                }
+                list.clone()
+            }
+            _ => {
+                if n_cols == 0 {
+                    out.push(content_error(self, "exactly one bullet list expected."));
+                    return;
+                }
+                vec![(100 / n_cols) as i64; n_cols]
+            }
+        };
+        let mut all_rows: Vec<Vec<Node>> = Vec::new();
+        for row in table_data {
+            let entries: Vec<Node> = row
+                .into_iter()
+                .map(|cell_children| {
+                    let mut entry = Node::elem(kinds::ENTRY, input.span);
+                    entry.children = cell_children;
+                    entry
+                })
+                .collect();
+            all_rows.push(entries);
+        }
+        let body = all_rows.split_off(header_rows.min(all_rows.len()));
+        let head = all_rows;
+        let mut table = Self::build_directive_table(
+            &col_widths,
+            stub_columns,
+            widths_opt.as_ref(),
+            head,
+            body,
+            input.span,
+        );
+        if let Some(OptVal::StrList(cls)) = opt_get(&input.options, "class") {
+            table.attrs.classes.extend(cls.iter().cloned());
+        }
+        self.finish_table(table, &input, title, title_messages, out);
+    }
+
+    /// check_table_dimensions (tables.py:59-91). Err = the message text.
+    fn check_table_dimensions(
+        name: &str,
+        rows: usize,
+        row_lens: &[usize],
+        header_rows: usize,
+        stub_columns: usize,
+    ) -> Result<(), String> {
+        if rows < header_rows {
+            return Err(format!(
+                "{header_rows} header row(s) specified but only {rows} row(s) of data supplied (\"{name}\" directive)."
+            ));
+        }
+        if rows == header_rows && header_rows > 0 {
+            return Err(format!(
+                "Insufficient data supplied ({rows} row(s)); no data remaining for table body, required by \"{name}\" directive."
+            ));
+        }
+        for len in row_lens {
+            if *len < stub_columns {
+                return Err(format!(
+                    "{stub_columns} stub column(s) specified but only {len} columns(s) of data supplied (\"{name}\" directive)."
+                ));
+            }
+            if *len == stub_columns && stub_columns > 0 {
+                return Err(format!(
+                    "Insufficient data supplied ({len} columns(s)); no data remaining for table body, required by \"{name}\" directive."
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// build_table (states.py:1911-1953) for the csv/list table paths.
+    fn build_directive_table(
+        col_widths: &[i64],
+        stub_columns: usize,
+        widths_opt: Option<&OptVal>,
+        head: Vec<Vec<Node>>,
+        body: Vec<Vec<Node>>,
+        span: Span,
+    ) -> Node {
+        let mut table = Node::elem(kinds::TABLE, span);
+        match widths_opt {
+            Some(OptVal::Str(kw)) if kw == "auto" => {
+                table.attrs.classes.push("colwidths-auto".to_string());
+            }
+            Some(OptVal::IntList(_)) => {
+                table.attrs.classes.push("colwidths-given".to_string());
+            }
+            _ => {}
+        }
+        let mut tgroup = Node::elem(kinds::TGROUP, span);
+        tgroup.set("cols", AttrValue::Int(col_widths.len() as i64));
+        for (i, w) in col_widths.iter().enumerate() {
+            let mut colspec = Node::elem(kinds::COLSPEC, span);
+            colspec.set("colwidth", AttrValue::Int(*w));
+            if i < stub_columns {
+                colspec.set("stub", AttrValue::Int(1));
+            }
+            tgroup.children.push(colspec);
+        }
+        let build_rows = |rows: Vec<Vec<Node>>| -> Vec<Node> {
+            rows.into_iter()
+                .map(|entries| {
+                    let mut row = Node::elem(kinds::ROW, span);
+                    row.children = entries;
+                    row
+                })
+                .collect()
+        };
+        if !head.is_empty() {
+            let mut thead = Node::elem(kinds::THEAD, span);
+            thead.children = build_rows(head);
+            tgroup.children.push(thead);
+        }
+        let mut tbody = Node::elem(kinds::TBODY, span);
+        tbody.children = build_rows(body);
+        tgroup.children.push(tbody);
+        table.children.push(tgroup);
+        table
+    }
+
+    /// topic + sidebar (body.py BasePseudoSection:21-96).
+    fn run_pseudo_section(
+        &mut self,
+        kind: &'static str,
+        input: DirectiveInput<'a, '_>,
+        out: &mut Vec<Node>,
+    ) {
+        // Sidebar's own pre-checks run before the shared context check
+        // (body.py:88-96).
+        if kind == "sidebar" {
+            if self.nested_node_kind == Some("sidebar") {
+                out.push(self.directive_run_error(
+                    &format!(
+                        "The \"{}\" directive may not be used within a sidebar element.",
+                        input.name
+                    ),
+                    input.lineno,
+                    input.rawsource,
+                ));
+                return;
+            }
+            if opt_get(&input.options, "subtitle").is_some() && input.arguments.is_empty() {
+                out.push(self.directive_run_error(
+                    "The \"subtitle\" option may not be used without a title.",
+                    input.lineno,
+                    input.rawsource,
+                ));
+                return;
+            }
+        }
+        // BasePseudoSection context check: allowed parents are the document
+        // root, sections, and sidebars (body.py:33-40).
+        if let Some(parent) = self.nested_node_kind {
+            if parent != "sidebar" {
+                out.push(self.directive_run_error(
+                    &format!(
+                        "The \"{}\" directive may not be used within topics or body elements.",
+                        input.name
+                    ),
+                    input.lineno,
+                    input.rawsource,
+                ));
+                return;
+            }
+        }
+        if input.content.is_empty() {
+            out.push(self.directive_content_error(input.name, input.lineno, input.rawsource));
+            return;
+        }
+        let mut node = Node::elem(kind, input.span);
+        if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
+            node.attrs.classes.extend(classes.iter().cloned());
+        }
+        let mut title_messages: Vec<Node> = Vec::new();
+        if let Some(title_text) = input.arguments.first() {
+            let inline = self.inline(title_text, input.span, input.lineno);
+            let mut title = Node::elem(kinds::TITLE, input.span);
+            title.children = inline.nodes;
+            node.children.push(title);
+            title_messages.extend(inline.messages);
+            if let Some(OptVal::Str(subtitle_text)) = opt_get(&input.options, "subtitle") {
+                let sub_inline = self.inline(subtitle_text, input.span, input.lineno);
+                let mut subtitle = Node::elem(kinds::SUBTITLE, input.span);
+                subtitle.children = sub_inline.nodes;
+                node.children.push(subtitle);
+                title_messages.extend(sub_inline.messages);
+            }
+        }
+        node.children.append(&mut title_messages);
+        self.directive_add_name(&mut node, &input.options, input.lineno, out);
+        let content = self.parse_nested(&input.content, kind);
+        node.children.extend(content);
+        out.push(node);
+    }
+
+    /// rubric (body.py:240-254): inline children, no paragraph wrapper,
+    /// inline messages as siblings after the node.
+    fn run_rubric(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        let inline = self.inline(&input.arguments[0], input.span, input.lineno);
+        let mut node = Node::elem("rubric", input.span);
+        node.children = inline.nodes;
+        if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
+            node.attrs.classes.extend(classes.iter().cloned());
+        }
+        self.directive_add_name(&mut node, &input.options, input.lineno, out);
+        out.push(node);
+        out.extend(inline.messages);
+    }
+
+    /// epigraph / highlights / pull-quote (body.py:257-283): standard
+    /// block-quote elements, each block_quote stamped with the class.
+    fn run_quote_class(
+        &mut self,
+        class: &'static str,
+        input: DirectiveInput<'a, '_>,
+        out: &mut Vec<Node>,
+    ) {
+        if input.content.is_empty() {
+            out.push(self.directive_content_error(input.name, input.lineno, input.rawsource));
+            return;
+        }
+        let mut elements = self.block_quote_elements(&input.content, input.span);
+        for el in &mut elements {
+            if el.kind == kinds::BLOCK_QUOTE {
+                el.attrs.classes.push(class.to_string());
+            }
+        }
+        out.extend(elements);
+    }
+
+    /// compound (body.py:286-301).
+    fn run_compound(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        if input.content.is_empty() {
+            out.push(self.directive_content_error(input.name, input.lineno, input.rawsource));
+            return;
+        }
+        let mut node = Node::elem("compound", input.span);
+        if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
+            node.attrs.classes.extend(classes.iter().cloned());
+        }
+        self.directive_add_name(&mut node, &input.options, input.lineno, out);
+        let content = self.parse_nested(&input.content, "compound");
+        node.children.extend(content);
+        out.push(node);
+    }
+
+    /// container (body.py:304-329): classes come from the ARGUMENT.
+    fn run_container(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        if input.content.is_empty() {
+            out.push(self.directive_content_error(input.name, input.lineno, input.rawsource));
+            return;
+        }
+        let mut classes: Vec<String> = Vec::new();
+        if let Some(arg) = input.arguments.first() {
+            match convert_option(Conv::ClassOption, Some(arg)) {
+                Ok(OptVal::StrList(list)) => classes = list,
+                _ => {
+                    out.push(self.directive_run_error(
+                        &format!(
+                            "Invalid class attribute value for \"{}\" directive: \"{}\".",
+                            input.name, arg
+                        ),
+                        input.lineno,
+                        input.rawsource,
+                    ));
+                    return;
+                }
+            }
+        }
+        let mut node = Node::elem("container", input.span);
+        node.attrs.classes.extend(classes);
+        self.directive_add_name(&mut node, &input.options, input.lineno, out);
+        let content = self.parse_nested(&input.content, "container");
+        node.children.extend(content);
+        out.push(node);
+    }
+
+    /// parsed-literal (body.py:132-146): full inline parse inside a
+    /// whitespace-preserving literal_block; messages follow the node.
+    fn run_parsed_literal(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        if input.content.is_empty() {
+            out.push(self.directive_content_error(input.name, input.lineno, input.rawsource));
+            return;
+        }
+        let text = input
+            .content
+            .iter()
+            .map(|l| l.text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let inline = self.inline(&text, input.span, input.lineno);
+        let mut node = Node::elem(kinds::LITERAL_BLOCK, input.span);
+        node.set("xml:space", AttrValue::Str("preserve".to_string()));
+        node.children = inline.nodes;
+        if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
+            node.attrs.classes.extend(classes.iter().cloned());
+        }
+        self.directive_add_name(&mut node, &input.options, input.lineno, out);
+        out.push(node);
+        out.extend(inline.messages);
+    }
+
+    /// DirectiveError-style message (raised by a directive's own run()):
+    /// message text VERBATIM — no 'Error in "X" directive:' prefix — plus
+    /// the raw block as a literal_block child (states.py:2287-2291).
+    fn directive_run_message(&self, level: u8, text: &str, lineno: u32, rawsource: &str) -> Node {
+        messages::with_literal(self.msg(level, text, lineno), rawsource)
+    }
+
+    fn directive_run_error(&self, text: &str, lineno: u32, rawsource: &str) -> Node {
+        self.directive_run_message(messages::ERROR, text, lineno, rawsource)
+    }
+
+    /// assert_has_content() (rst/__init__.py:370-377).
+    fn directive_content_error(&self, name: &str, lineno: u32, rawsource: &str) -> Node {
+        self.directive_run_error(
+            &format!("Content block expected for the \"{name}\" directive; none found."),
+            lineno,
+            rawsource,
+        )
+    }
+
+    /// add_name() (rst/__init__.py:379-389): the :name: option registers an
+    /// explicit target on the node.
+    fn directive_add_name(
+        &mut self,
+        node: &mut Node,
+        options: &[(String, OptVal)],
+        lineno: u32,
+        out: &mut Vec<Node>,
+    ) {
+        if let Some(OptVal::Str(n)) = opt_get(options, "name") {
+            node.attrs.names.push(ids::fully_normalize_name(n));
+            let msg = self
+                .registry
+                .set_id_explicit(node, lineno, self.source_path, true, None);
+            if let Some(m) = msg {
+                out.push(m);
+            }
+        }
+    }
+
+    fn run_admonition(
+        &mut self,
+        kind: &'static str,
+        input: DirectiveInput<'a, '_>,
+        out: &mut Vec<Node>,
+    ) {
+        if input.content.is_empty() {
+            out.push(self.directive_content_error(input.name, input.lineno, input.rawsource));
+            return;
+        }
+        let mut node = Node::elem(kind, input.span);
+        if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
+            node.attrs.classes.extend(classes.iter().cloned());
+        }
+        self.directive_add_name(&mut node, &input.options, input.lineno, out);
+        let content = self.parse_nested(&input.content, kind);
+        node.children.extend(content);
+        out.push(node);
+    }
+
+    fn run_generic_admonition(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        if input.content.is_empty() {
+            out.push(self.directive_content_error(input.name, input.lineno, input.rawsource));
+            return;
+        }
+        let title_text = input.arguments[0].clone();
+        let mut node = Node::elem("admonition", input.span);
+        match opt_get(&input.options, "class") {
+            Some(OptVal::StrList(classes)) => {
+                node.attrs.classes.extend(classes.iter().cloned());
+            }
+            _ => {
+                // Auto class from the title, only without :class:
+                // (admonitions.py:44-46).
+                node.attrs
+                    .classes
+                    .push(format!("admonition-{}", ids::make_id(&title_text)));
+            }
+        }
+        self.directive_add_name(&mut node, &input.options, input.lineno, out);
+        let inline = self.inline(&title_text, input.span, input.lineno);
+        let mut title = Node::elem(kinds::TITLE, input.span);
+        title.children = inline.nodes;
+        node.children.push(title);
+        for m in inline.messages {
+            node.children.push(m);
+        }
+        let content = self.parse_nested(&input.content, "admonition");
+        node.children.extend(content);
+        out.push(node);
+    }
+
+    fn run_image(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        match self.build_image(&input, out) {
+            Ok(node) => out.push(node),
+            Err(msg) => out.push(*msg),
+        }
+    }
+
+    /// images.py Image.run(): builds the image node (possibly wrapped in a
+    /// reference); Err carries the system_message. Shared with figure.
+    fn build_image(
+        &mut self,
+        input: &DirectiveInput<'a, '_>,
+        out: &mut Vec<Node>,
+    ) -> Result<Node, Box<Node>> {
+        // Two-stage :align: validation (images.py:53-63): the converter
+        // accepted all six values; at body level only horizontal ones are
+        // legal, inside a substitution definition only vertical ones. The
+        // DirectiveError text CONTAINS its own 'Error in …' lead — the
+        // machinery adds no prefix. Two spaces before 'Valid' are
+        // docutils-verbatim.
+        if let Some(OptVal::Str(align)) = opt_get(&input.options, "align") {
+            let in_subst = self.substitution_ctx.is_some();
+            let bad = if in_subst {
+                matches!(align.as_str(), "left" | "center" | "right")
+            } else {
+                matches!(align.as_str(), "top" | "middle" | "bottom")
+            };
+            if bad {
+                let (ctx_txt, valid) = if in_subst {
+                    (
+                        " within a substitution definition",
+                        "\"top\", \"middle\", \"bottom\"",
+                    )
+                } else {
+                    ("", "\"left\", \"center\", \"right\"")
+                };
+                return Err(Box::new(self.directive_run_error(
+                    &format!(
+                        "Error in \"{}\" directive: \"{}\" is not a valid value for the \"align\" option{}.  Valid values for \"align\" are: {}.",
+                        input.name, align, ctx_txt, valid
+                    ),
+                    input.lineno,
+                    input.rawsource,
+                )));
+            }
+        }
+        let uri = uri_from_argument(&input.arguments[0]);
+        // :target: wraps the image in a reference (images.py:74-93).
+        let mut reference: Option<Node> = None;
+        if let Some(OptVal::Str(target)) = opt_get(&input.options, "target") {
+            let mut node = Node::elem(kinds::REFERENCE, input.span);
+            match parse_image_target(target) {
+                ImageTarget::Refname { name, refname } => {
+                    node.set("name", AttrValue::Str(name));
+                    node.set("refname", AttrValue::Str(refname));
+                }
+                ImageTarget::Refuri(refuri) => {
+                    node.set("refuri", AttrValue::Str(refuri));
+                }
+            }
+            reference = Some(node);
+        }
+        let mut image = Node::elem("image", input.span);
+        for (name, val) in &input.options {
+            match (name.as_str(), val) {
+                ("alt", OptVal::Str(v)) => image.set("alt", AttrValue::Str(v.clone())),
+                ("height", OptVal::Str(v)) => image.set("height", AttrValue::Str(v.clone())),
+                ("width", OptVal::Str(v)) => image.set("width", AttrValue::Str(v.clone())),
+                ("align", OptVal::Str(v)) => image.set("align", AttrValue::Str(v.clone())),
+                ("loading", OptVal::Str(v)) => image.set("loading", AttrValue::Str(v.clone())),
+                ("scale", OptVal::Int(v)) => image.set("scale", AttrValue::Int(*v)),
+                // Arbitrary-precision values carry the exact digit string.
+                ("scale", OptVal::Str(v)) => image.set("scale", AttrValue::Str(v.clone())),
+                ("class", OptVal::StrList(v)) => {
+                    image.attrs.classes.extend(v.iter().cloned());
+                }
+                // `name`/`target` are consumed by add_name / the
+                // reference wrapper.
+                _ => {}
+            }
+        }
+        image.set("uri", AttrValue::Str(uri));
+        self.directive_add_name(&mut image, &input.options, input.lineno, out);
+        Ok(match reference {
+            Some(mut r) => {
+                r.children.push(image);
+                r
+            }
+            None => image,
+        })
+    }
+
+    /// figure (images.py:110-186).
+    fn run_figure(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        let image_input = DirectiveInput {
+            name: input.name,
+            arguments: input.arguments.clone(),
+            options: input
+                .options
+                .iter()
+                .filter(|(n, _)| !matches!(n.as_str(), "figwidth" | "figclass" | "align"))
+                .cloned()
+                .collect(),
+            content: Vec::new(),
+            span: input.span,
+            lineno: input.lineno,
+            rawsource: input.rawsource,
+        };
+        let image_node = match self.build_image(&image_input, out) {
+            Ok(n) => n,
+            Err(msg) => {
+                // Inner image error short-circuits: no <figure> at all.
+                out.push(*msg);
+                return;
+            }
+        };
+        let mut figure = Node::elem("figure", input.span);
+        match opt_get(&input.options, "figwidth") {
+            // ':figwidth: image' needs PIL, which the oracle environment
+            // lacks: silent no-op (images.py:150-159).
+            Some(OptVal::Str(w)) if w == "image" => {}
+            Some(OptVal::Str(w)) => figure.set("width", AttrValue::Str(w.clone())),
+            _ => {}
+        }
+        if let Some(OptVal::StrList(cls)) = opt_get(&input.options, "figclass") {
+            figure.attrs.classes.extend(cls.iter().cloned());
+        }
+        if let Some(OptVal::Str(a)) = opt_get(&input.options, "align") {
+            figure.set("align", AttrValue::Str(a.clone()));
+        }
+        figure.children.push(image_node);
+        if !input.content.is_empty() {
+            let children = self.parse_nested(&input.content, "figure");
+            let mut caption_done = false;
+            let mut legend_children: Vec<Node> = Vec::new();
+            for child in children {
+                if caption_done {
+                    legend_children.push(child);
+                    continue;
+                }
+                if child.kind == kinds::TARGET {
+                    figure.children.push(child);
+                } else if child.kind == kinds::PARAGRAPH {
+                    let mut caption = Node::elem("caption", input.span);
+                    caption.children = child.children;
+                    figure.children.push(caption);
+                    caption_done = true;
+                } else if child.kind == kinds::COMMENT && child.children.is_empty() {
+                    caption_done = true;
+                } else {
+                    // Unlike other directives, the figure node is emitted
+                    // BEFORE the error (images.py:176-181).
+                    out.push(figure);
+                    out.push(self.directive_run_error(
+                        "Figure caption must be a paragraph or empty comment.",
+                        input.lineno,
+                        input.rawsource,
+                    ));
+                    return;
+                }
+            }
+            if !legend_children.is_empty() {
+                let mut legend = Node::elem("legend", input.span);
+                legend.children = legend_children;
+                figure.children.push(legend);
+            }
+        }
+        out.push(figure);
+    }
+
+    /// code (body.py:149-211). The parity oracle runs docutils WITHOUT
+    /// Pygments: a language argument fails the whole directive with a
+    /// WARNING; language-less code emits a plain classes="code" literal.
+    fn run_code(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        if input.content.is_empty() {
+            out.push(self.directive_content_error(input.name, input.lineno, input.rawsource));
+            return;
+        }
+        if !input.arguments.is_empty() {
+            out.push(self.directive_run_message(
+                messages::WARNING,
+                "Cannot analyze code. Pygments package not found.",
+                input.lineno,
+                input.rawsource,
+            ));
+            return;
+        }
+        let number_lines = match opt_get(&input.options, "number-lines") {
+            Some(OptVal::Str(v)) => {
+                let raw = if v.is_empty() { "1" } else { v.as_str() };
+                match py_int(raw) {
+                    Some(n) => Some(n),
+                    None => {
+                        out.push(self.directive_run_error(
+                            ":number-lines: with non-integer start value",
+                            input.lineno,
+                            input.rawsource,
+                        ));
+                        return;
+                    }
+                }
+            }
+            _ => None,
+        };
+        let code_lines: Vec<&str> = input.content.iter().map(|l| l.text).collect();
+        let mut node = Node::elem(kinds::LITERAL_BLOCK, input.span);
+        node.attrs.classes.push("code".to_string());
+        if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
+            node.attrs.classes.extend(classes.iter().cloned());
+        }
+        node.set("xml:space", AttrValue::Str("preserve".to_string()));
+        match number_lines {
+            Some(start) => {
+                // NumberLines (docutils/utils/code_analyzer.py): a padded
+                // 'ln' inline before every line.
+                let endline = start.saturating_add(input.content.len() as i64);
+                let width = endline.to_string().len();
+                for (i, line) in code_lines.iter().enumerate() {
+                    let lineno = start.saturating_add(i as i64);
+                    let mut ln = Node::elem("inline", input.span);
+                    ln.attrs.classes.push("ln".to_string());
+                    ln.children
+                        .push(Node::text_node(format!("{lineno:>width$} "), input.span));
+                    node.children.push(ln);
+                    let text = if i + 1 == code_lines.len() {
+                        (*line).to_string()
+                    } else {
+                        format!("{line}\n")
+                    };
+                    node.children.push(Node::text_node(text, input.span));
+                }
+            }
+            None => {
+                node.children
+                    .push(Node::text_node(code_lines.join("\n"), input.span));
+            }
+        }
+        self.directive_add_name(&mut node, &input.options, input.lineno, out);
+        out.push(node);
+    }
+
+    /// math (body.py:214-237): blank-line-separated blocks become sibling
+    /// math_block nodes; :name: only lands on the first (options.pop).
+    fn run_math(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        if input.content.is_empty() {
+            out.push(self.directive_content_error(input.name, input.lineno, input.rawsource));
+            return;
+        }
+        let joined = input
+            .content
+            .iter()
+            .map(|l| l.text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut named = false;
+        for block in joined.split("\n\n") {
+            if block.is_empty() {
+                continue;
+            }
+            let mut node = Node::elem("math_block", input.span);
+            node.set("xml:space", AttrValue::Str("preserve".to_string()));
+            if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
+                node.attrs.classes.extend(classes.iter().cloned());
+            }
+            node.children.push(Node::text_node(block, input.span));
+            if !named {
+                self.directive_add_name(&mut node, &input.options, input.lineno, out);
+                named = true;
+            }
+            out.push(node);
+        }
+    }
+
+    /// raw (misc.py:270-354).
+    fn run_raw(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        let has_file = opt_get(&input.options, "file").is_some();
+        let has_url = opt_get(&input.options, "url").is_some();
+        let text: String;
+        let mut source_attr: Option<String> = None;
+        if !input.content.is_empty() {
+            if has_file || has_url {
+                out.push(self.directive_run_error(
+                    &format!(
+                        "\"{}\" directive may not both specify an external file and have content.",
+                        input.name
+                    ),
+                    input.lineno,
+                    input.rawsource,
+                ));
+                return;
+            }
+            text = input
+                .content
+                .iter()
+                .map(|l| l.text)
+                .collect::<Vec<_>>()
+                .join("\n");
+        } else if has_file {
+            if has_url {
+                out.push(self.directive_run_error(
+                    &format!(
+                        "The \"file\" and \"url\" options may not be simultaneously specified for the \"{}\" directive.",
+                        input.name
+                    ),
+                    input.lineno,
+                    input.rawsource,
+                ));
+                return;
+            }
+            let Some(OptVal::Str(path)) = opt_get(&input.options, "file") else {
+                unreachable!("file option is Path-converted");
+            };
+            let base = std::path::Path::new(self.source_path)
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_default();
+            let full = base.join(path);
+            match std::fs::read_to_string(&full) {
+                Ok(t) => {
+                    // docutils strips ONE trailing newline via rstrip
+                    // hazard; keep verbatim minus trailing newline.
+                    text = t.trim_end_matches('\n').to_string();
+                    source_attr = Some(path.clone());
+                }
+                Err(_) => {
+                    out.push(self.directive_run_message(
+                        messages::SEVERE,
+                        &format!(
+                            "Problems with \"{}\" directive path:\nInputError: [Errno 2] No such file or directory: {}.",
+                            input.name,
+                            py_repr(Some(path))
+                        ),
+                        input.lineno,
+                        input.rawsource,
+                    ));
+                    return;
+                }
+            }
+        } else if has_url {
+            // URL fetching is out of parse-layer scope; the corpus only
+            // pins the mutual-exclusivity errors above.
+            out.push(self.directive_run_message(
+                messages::SEVERE,
+                &format!(
+                    "Problems with \"{}\" directive URL: fetching is not supported.",
+                    input.name
+                ),
+                input.lineno,
+                input.rawsource,
+            ));
+            return;
+        } else {
+            out.push(self.directive_content_error(input.name, input.lineno, input.rawsource));
+            return;
+        }
+        let format = input.arguments[0]
+            .to_lowercase()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        let mut node = Node::elem("raw", input.span);
+        node.set("format", AttrValue::Str(format));
+        node.set("xml:space", AttrValue::Str("preserve".to_string()));
+        if let Some(src) = source_attr {
+            node.set("source", AttrValue::Str(src));
+        }
+        if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
+            node.attrs.classes.extend(classes.iter().cloned());
+        }
+        node.children.push(Node::text_node(text, input.span));
+        out.push(node);
+    }
+
+    /// line-block directive (body.py:99-129): same tree as `|` syntax.
+    fn run_line_block(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        if input.content.is_empty() {
+            out.push(self.directive_content_error(input.name, input.lineno, input.rawsource));
+            return;
+        }
+        let mut resolved: Vec<(usize, Vec<Node>)> = Vec::with_capacity(input.content.len());
+        let mut lb_messages: Vec<Node> = Vec::new();
+        let mut prev_depth = 0usize;
+        for l in &input.content {
+            if l.is_blank() {
+                resolved.push((prev_depth, Vec::new()));
+                continue;
+            }
+            let depth = l.indent();
+            prev_depth = depth;
+            let inline = self.inline(l.text.trim(), input.span, l.lineno);
+            lb_messages.extend(inline.messages);
+            resolved.push((depth, inline.nodes));
+        }
+        let mut block = build_line_block(&mut resolved, input.span, 0);
+        if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
+            block.attrs.classes.extend(classes.iter().cloned());
+        }
+        self.directive_add_name(&mut block, &input.options, input.lineno, out);
+        out.push(block);
+        out.append(&mut lb_messages);
+    }
+
+    /// class (misc.py:434-469): with content, classes apply directly to
+    /// every top-level child; without, a pending node is emitted for the
+    /// ClassAttribute transform.
+    fn run_class(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        let class_values = match convert_option(Conv::ClassOption, Some(&input.arguments[0])) {
+            Ok(OptVal::StrList(list)) => list,
+            _ => {
+                out.push(self.directive_run_error(
+                    &format!(
+                        "Invalid class attribute value for \"{}\" directive: \"{}\".",
+                        input.name, input.arguments[0]
+                    ),
+                    input.lineno,
+                    input.rawsource,
+                ));
+                return;
+            }
+        };
+        if !input.content.is_empty() {
+            let mut children = self.parse_nested(&input.content, "element");
+            for child in &mut children {
+                child.attrs.classes.extend(class_values.iter().cloned());
+            }
+            out.extend(children);
+        } else if self.sphinx {
+            // Sphinx's read phase runs ClassAttribute; the pending node
+            // never survives into the doctree — stamp the next sibling.
+            self.pending_classes = Some(class_values);
+        } else {
+            let mut pending = Node::elem("pending", input.span);
+            let details = format!(
+                ".. internal attributes:\n     .transform: docutils.transforms.misc.ClassAttribute\n     .details:\n       class: [{}]\n       directive: {}",
+                class_values
+                    .iter()
+                    .map(|c| py_repr(Some(c)))
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                py_repr(Some(input.name)),
+            );
+            pending.children.push(Node::text_node(details, input.span));
+            out.push(pending);
+        }
+    }
+
+    /// `.. |name| directive::` substitution definitions
+    /// (states.py:2140-2217 + the SubstitutionDef state 2806-2829).
+    /// Returns true when consumed; false = malformed marker — the caller
+    /// falls through to the comment path with `construct_error` set.
+    fn parse_substitution_def(
+        &mut self,
+        lines: &[LineRef<'a>],
+        pos: &mut usize,
+        rest: &'a str,
+        out: &mut Vec<Node>,
+        construct_error: &mut Option<Node>,
+    ) -> bool {
+        let start = *pos;
+        let lineno = lines[start].lineno;
+        let (block, consumed, _indent, _term) = indented_block(lines, start + 1);
+        let span = self.span_of(lines, start, start + consumed);
+        // blocktext for message literals: the raw marker line + raw block
+        // (trailing blanks already trimmed by indented_block).
+        let mut bt: Vec<&str> = vec![lines[start].text];
+        for l in &lines[start + 1..start + 1 + consumed] {
+            bt.push(l.text);
+        }
+        let blocktext = bt.join("\n");
+
+        // Marker scan: `|name|` possibly joined across adjacent block lines
+        // (states.py:2151-2160). Failure at end-of-block = MarkupError.
+        let mut acc: String = rest.to_string();
+        let mut used = 0usize;
+        let marker = loop {
+            if let Some(m) = match_substitution_marker(&acc) {
+                break m;
+            }
+            if used >= block.len() || block[used].is_blank() {
+                *construct_error = Some(self.msg(
+                    messages::WARNING,
+                    "malformed substitution definition.",
+                    lineno,
+                ));
+                return false;
+            }
+            acc.push(' ');
+            acc.push_str(block[used].text.trim());
+            used += 1;
+        };
+        *pos = start + 1 + consumed;
+        // Remainder after the marker lives on ONE physical line: `rest`
+        // when the marker was single-line, else the last joined block line.
+        let (rem_slice, rem_lineno): (&'a str, u32) = if used == 0 {
+            (&rest[marker.remainder_start..], lineno)
+        } else {
+            let last = block[used - 1];
+            let trimmed = last.text.trim();
+            let seg_start = acc.len() - trimmed.len();
+            let within = marker.remainder_start.saturating_sub(seg_start);
+            let base = last.text.len() - last.text.trim_start().len();
+            (&last.text[base + within..], last.lineno)
+        };
+        let mut content_block: Vec<LineRef<'a>> = block[used..].to_vec();
+
+        let subname_ws = ids::whitespace_normalize_name(&marker.name);
+        // Missing contents (states.py:2168-2176).
+        if rem_slice.trim().is_empty() && content_block.iter().all(|l| l.is_blank()) {
+            out.push(messages::with_literal(
+                self.msg(
+                    messages::WARNING,
+                    &format!(
+                        "Substitution definition \"{}\" missing contents.",
+                        marker.name
+                    ),
+                    lineno,
+                ),
+                &blocktext,
+            ));
+            self.warn_explicit_markup_end(lines, *pos, out);
+            return true;
+        }
+
+        let mut subst = Node::elem("substitution_definition", span);
+        subst.attrs.names.push(subname_ws.clone());
+
+        // Locate the embedded-directive line: the marker remainder, else
+        // the first non-blank content line (hanging-indent form).
+        // raw_content_from tracks the BLOCK index where the directive's
+        // continuation lines begin, for rawsource reconstruction with
+        // original indentation (docutils strip_indent=False).
+        let mut raw_content_from = used;
+        let (dline, dlineno) = if !rem_slice.trim().is_empty() {
+            (
+                LineRef::new(
+                    rem_slice.trim_start_matches(' '),
+                    rem_lineno,
+                    lines[start].src_start,
+                    lines[start].src_end,
+                ),
+                rem_lineno,
+            )
+        } else {
+            while content_block.first().map(|l| l.is_blank()).unwrap_or(false) {
+                content_block.remove(0);
+                raw_content_from += 1;
+            }
+            let first = content_block.remove(0);
+            raw_content_from += 1;
+            let dedent = first.indent();
+            (first.dedented(dedent), first.lineno)
+        };
+        // Embedded directive marker: simplename + `::` + (space|EOL) — NO
+        // optional space before `::` (SubstitutionDef state pattern).
+        let mut produced: Vec<Node> = Vec::new();
+        if let Some((dname, dfirst_rest)) = match_embedded_directive(dline.text) {
+            let dblock = dedent_by_min(&content_block);
+            // rawsource with ORIGINAL indentation (the nested state
+            // machine's lines are strip_indent=False; fixture-verified).
+            let embedded_raw = {
+                let mut v: Vec<&str> = vec![dline.text];
+                for l in &lines[start + 1 + raw_content_from..start + 1 + consumed] {
+                    v.push(l.text);
+                }
+                v.join("\n")
+            };
+            let dfirst = {
+                let t = dfirst_rest.trim_start_matches(' ');
+                let offset = dline.text.len() - t.len();
+                LineRef::new(
+                    &dline.text[offset..],
+                    dlineno,
+                    dline.src_start,
+                    dline.src_end,
+                )
+            };
+            self.substitution_ctx = Some(SubstCtx::default());
+            let saved_kind = self.nested_node_kind.replace("substitution_definition");
+            self.run_directive_core(
+                &dname,
+                dfirst,
+                &dblock,
+                &embedded_raw,
+                dlineno,
+                span,
+                vec![("alt".to_string(), OptVal::Str(subname_ws.clone()))],
+                &mut produced,
+            );
+            self.nested_node_kind = saved_kind;
+            let ctx = self.substitution_ctx.take().unwrap_or_default();
+            if ctx.ltrim {
+                subst.set("ltrim", AttrValue::Int(1));
+            }
+            if ctx.rtrim {
+                subst.set("rtrim", AttrValue::Int(1));
+            }
+        }
+        // Hoist non-inline children to the parent, in document order
+        // (states.py:2184-2191); inline/Text stay in the definition.
+        for n in produced {
+            if n.kind == kinds::TEXT || is_inline_kind(n.kind) {
+                subst.children.push(n);
+            } else {
+                out.push(n);
+            }
+        }
+        // Problematic content check (states.py:2194-2201).
+        if tree_any(&subst, &|n| n.kind == kinds::PROBLEMATIC) {
+            let mut msg = self.msg(
+                messages::ERROR,
+                "Problematic content in substitution definition",
+                lineno,
+            );
+            let mut lb = Node::elem(kinds::LITERAL_BLOCK, Span::ZERO);
+            lb.set("xml:space", AttrValue::Str("preserve".to_string()));
+            lb.children.push(Node::text_node(&blocktext, Span::ZERO));
+            msg.children.push(lb);
+            let mut bq = Node::elem(kinds::BLOCK_QUOTE, Span::ZERO);
+            let mut para = Node::elem(kinds::PARAGRAPH, Span::ZERO);
+            para.children = std::mem::take(&mut subst.children);
+            bq.children.push(para);
+            msg.children.push(bq);
+            out.push(msg);
+            self.warn_explicit_markup_end(lines, *pos, out);
+            return true;
+        }
+        // Disallowed content (states.py:2219-2227).
+        if let Some(phrase) = find_disallowed_in_substitution(&subst) {
+            out.push(messages::with_literal(
+                self.msg(
+                    messages::ERROR,
+                    &format!("{phrase} are not supported in a substitution definition."),
+                    lineno,
+                ),
+                &blocktext,
+            ));
+            self.warn_explicit_markup_end(lines, *pos, out);
+            return true;
+        }
+        // Empty or invalid (states.py:2203-2210).
+        if subst.children.is_empty() {
+            out.push(messages::with_literal(
+                self.msg(
+                    messages::WARNING,
+                    &format!(
+                        "Substitution definition \"{}\" empty or invalid.",
+                        marker.name
+                    ),
+                    lineno,
+                ),
+                &blocktext,
+            ));
+            self.warn_explicit_markup_end(lines, *pos, out);
+            return true;
+        }
+        // note_substitution_def (nodes.py:2056-2073): duplicate names are
+        // case-sensitively compared; the error precedes the new node and
+        // the OLD node loses its name (post-parse walk).
+        if self.substitution_names_seen.contains(&subname_ws) {
+            out.push(self.msg(
+                messages::ERROR,
+                &format!("Duplicate substitution definition name: \"{subname_ws}\"."),
+                lineno,
+            ));
+            if !self.substitution_dupnames.contains(&subname_ws) {
+                self.substitution_dupnames.push(subname_ws.clone());
+            }
+        } else {
+            self.substitution_names_seen.push(subname_ws);
+        }
+        out.push(subst);
+        self.warn_explicit_markup_end(lines, *pos, out);
+        true
     }
 
     fn parse_anonymous_shortcut(
@@ -2798,6 +5336,1594 @@ fn trace_cell(
             }
             return Some((bottom, right, cseps, rseps));
         }
+    }
+    None
+}
+
+/// Directive marker on the text after `.. `: `name[ ]?::` then space+rest
+/// or EOL (probe-verified: at most ONE space before `::`; dangling
+/// separators or `:` alone fall through to comment).
+fn directive_marker(rest: &str) -> Option<(String, &str)> {
+    let chars: Vec<char> = rest.chars().collect();
+    let name_len = match_simplename_chars(&chars, 0)?;
+    let mut j = name_len;
+    if chars.get(j) == Some(&' ') {
+        j += 1;
+    }
+    if chars.get(j) != Some(&':') || chars.get(j + 1) != Some(&':') {
+        return None;
+    }
+    let after = j + 2;
+    match chars.get(after) {
+        None => {}
+        Some(' ') => {}
+        _ => return None,
+    }
+    let name: String = chars[..name_len].iter().collect();
+    // byte offset of the remainder after ":: "
+    let byte_after: usize = rest
+        .char_indices()
+        .nth(after + 1)
+        .map(|(b, _)| b)
+        .unwrap_or(rest.len());
+    Some((name, &rest[byte_after..]))
+}
+
+#[derive(Clone, Copy)]
+enum DirectiveKind {
+    /// note/warning/... : content-only, node kind = tagname.
+    Admonition(&'static str),
+    /// `.. admonition:: Title` with required title argument.
+    GenericAdmonition,
+    /// `.. image:: uri` (images.py Image).
+    Image,
+    /// topic / sidebar (body.py BasePseudoSection).
+    PseudoSection(&'static str),
+    Rubric,
+    /// epigraph / highlights / pull-quote: block_quote + class.
+    QuoteClass(&'static str),
+    Compound,
+    Container,
+    ParsedLiteral,
+    Figure,
+    Code,
+    MathBlock,
+    Raw,
+    LineBlockDir,
+    ClassDir,
+    RstTable,
+    CsvTable,
+    ListTable,
+    Replace,
+    UnicodeDir,
+    DateDir,
+    /// sphinx toctree (sphinx/directives/other.py TocTree).
+    Toctree,
+    /// versionadded/versionchanged/deprecated/versionremoved:
+    /// (type name, label class, lead-in format).
+    VersionChange(&'static (&'static str, &'static str, &'static str)),
+    SeeAlso,
+    /// sphinx code-block/sourcecode (sphinx/directives/code.py).
+    SphinxCodeBlock,
+    Highlight,
+    Only,
+    SphinxMath,
+    IndexDir,
+    HList,
+    Glossary,
+}
+
+/// Sphinx-mode registry: overlays/extends the docutils-native table.
+fn directive_spec_mode(lower: &str, sphinx: bool) -> Option<DirectiveSpec> {
+    if sphinx {
+        if let Some(s) = sphinx_directive_spec(lower) {
+            return Some(s);
+        }
+    }
+    directive_spec(lower)
+}
+
+const TOCTREE_OPTS: &[(&str, Conv)] = &[
+    ("maxdepth", Conv::PyIntAny),
+    ("name", Conv::Unchanged),
+    ("class", Conv::ClassOption),
+    ("caption", Conv::UnchangedRequired),
+    ("glob", Conv::Flag),
+    ("hidden", Conv::Flag),
+    ("includehidden", Conv::Flag),
+    ("numbered", Conv::Unchanged),
+    ("titlesonly", Conv::Flag),
+    ("reversed", Conv::Flag),
+];
+
+const VERSIONADDED: (&str, &str, &str) = ("versionadded", "added", "Added in version {}");
+const VERSIONCHANGED: (&str, &str, &str) = ("versionchanged", "changed", "Changed in version {}");
+const DEPRECATED: (&str, &str, &str) = ("deprecated", "deprecated", "Deprecated since version {}");
+const VERSIONREMOVED: (&str, &str, &str) = ("versionremoved", "removed", "Removed in version {}");
+
+const CODE_BLOCK_OPTS: &[(&str, Conv)] = &[
+    ("force", Conv::Flag),
+    ("linenos", Conv::Flag),
+    ("dedent", Conv::PyIntAny),
+    ("lineno-start", Conv::PyIntAny),
+    ("emphasize-lines", Conv::UnchangedRequired),
+    ("caption", Conv::UnchangedRequired),
+    ("class", Conv::ClassOption),
+    ("name", Conv::Unchanged),
+];
+
+const HIGHLIGHT_OPTS: &[(&str, Conv)] =
+    &[("linenothreshold", Conv::PyIntAny), ("force", Conv::Flag)];
+
+/// sphinx.util.parselinenos: 1-based spec ('1,3-5', open ends '-4'/'4-')
+/// against `nlines` total lines; invalid or reversed specs raise. Range
+/// materialization is clamped to nlines so a huge upper bound cannot
+/// blow memory (values past nlines are filtered anyway).
+fn parse_linenos(spec: &str, nlines: i64) -> Result<Vec<i64>, String> {
+    let invalid = || format!("invalid line number spec: {}", py_repr(Some(spec)));
+    let mut out = Vec::new();
+    for part in spec.split(',') {
+        let part = part.trim();
+        if let Some((a, b)) = part.split_once('-') {
+            let (a, b) = (a.trim(), b.trim());
+            let start = if a.is_empty() {
+                1
+            } else {
+                py_int(a).ok_or_else(invalid)?
+            };
+            let end = if b.is_empty() {
+                nlines
+            } else {
+                py_int(b).ok_or_else(invalid)?
+            };
+            if start > end {
+                return Err(invalid());
+            }
+            let clamped_end = end.min(nlines);
+            let mut n = start.max(1);
+            while n <= clamped_end {
+                out.push(n);
+                n += 1;
+            }
+        } else if !part.is_empty() {
+            let n = py_int(part).ok_or_else(invalid)?;
+            if n >= 1 && n <= nlines {
+                out.push(n);
+            }
+        } else {
+            return Err(invalid());
+        }
+    }
+    Ok(out)
+}
+
+fn sphinx_directive_spec(lower: &str) -> Option<DirectiveSpec> {
+    let version_change = |info: &'static (&'static str, &'static str, &'static str)| {
+        Some(DirectiveSpec {
+            required_arguments: 1,
+            optional_arguments: 1,
+            final_argument_whitespace: true,
+            has_content: true,
+            option_spec: &[],
+            kind: DirectiveKind::VersionChange(info),
+        })
+    };
+    match lower {
+        "toctree" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 0,
+            final_argument_whitespace: false,
+            has_content: true,
+            option_spec: TOCTREE_OPTS,
+            kind: DirectiveKind::Toctree,
+        }),
+        "versionadded" => version_change(&VERSIONADDED),
+        "versionchanged" => version_change(&VERSIONCHANGED),
+        "deprecated" => version_change(&DEPRECATED),
+        "versionremoved" => version_change(&VERSIONREMOVED),
+        "seealso" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 0,
+            final_argument_whitespace: true,
+            has_content: true,
+            option_spec: ADMONITION_OPTS,
+            kind: DirectiveKind::SeeAlso,
+        }),
+        "code-block" | "sourcecode" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 1,
+            final_argument_whitespace: false,
+            has_content: true,
+            option_spec: CODE_BLOCK_OPTS,
+            kind: DirectiveKind::SphinxCodeBlock,
+        }),
+        "highlight" => Some(DirectiveSpec {
+            required_arguments: 1,
+            optional_arguments: 0,
+            final_argument_whitespace: false,
+            has_content: false,
+            option_spec: HIGHLIGHT_OPTS,
+            kind: DirectiveKind::Highlight,
+        }),
+        "only" => Some(DirectiveSpec {
+            required_arguments: 1,
+            optional_arguments: 0,
+            final_argument_whitespace: true,
+            has_content: true,
+            option_spec: &[],
+            kind: DirectiveKind::Only,
+        }),
+        "math" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 1,
+            final_argument_whitespace: true,
+            has_content: true,
+            option_spec: SPHINX_MATH_OPTS,
+            kind: DirectiveKind::SphinxMath,
+        }),
+        "index" => Some(DirectiveSpec {
+            required_arguments: 1,
+            optional_arguments: 0,
+            final_argument_whitespace: true,
+            has_content: false,
+            option_spec: NAME_ONLY_OPTS,
+            kind: DirectiveKind::IndexDir,
+        }),
+        "hlist" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 0,
+            final_argument_whitespace: false,
+            has_content: true,
+            option_spec: HLIST_OPTS,
+            kind: DirectiveKind::HList,
+        }),
+        "glossary" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 0,
+            final_argument_whitespace: false,
+            has_content: true,
+            option_spec: GLOSSARY_OPTS,
+            kind: DirectiveKind::Glossary,
+        }),
+        _ => None,
+    }
+}
+
+/// One serialized 5-tuple for the index `entries` attr: docutils pformat
+/// renders list items via serial_escape (spaces backslash-escaped inside
+/// each item, items space-joined).
+pub(crate) fn index_entry_tuple(
+    entrytype: &str,
+    value: &str,
+    target_id: &str,
+    main: &str,
+    key: Option<&str>,
+) -> String {
+    let key_repr = match key {
+        Some(k) => py_repr(Some(k)),
+        None => "None".to_string(),
+    };
+    let tuple = format!(
+        "({}, {}, {}, {}, {})",
+        py_repr(Some(entrytype)),
+        py_repr(Some(value)),
+        py_repr(Some(target_id)),
+        py_repr(Some(main)),
+        key_repr
+    );
+    tuple.replace(' ', "\\ ")
+}
+
+/// process_index_entry (sphinx/util/nodes.py:431-482): returns serialized
+/// 5-tuples. Legacy types raise in sphinx; here they fall through to the
+/// single form (hardening note — the oracle corpus avoids them).
+fn process_index_entry(entry: &str, target_id: &str) -> Vec<String> {
+    const TYPES: &[&str] = &["single", "pair", "double", "triple", "see", "seealso"];
+    let (main, entry) = match entry.strip_prefix('!') {
+        Some(rest) => ("main", rest),
+        None => ("", entry),
+    };
+    for t in TYPES {
+        if let Some(value) = entry.strip_prefix(&format!("{t}:")) {
+            let value = value.trim();
+            let ty = if *t == "double" { "pair" } else { t };
+            return vec![index_entry_tuple(ty, value, target_id, main, None)];
+        }
+    }
+    // Comma shorthand with per-item '!'.
+    if entry.contains(',') {
+        return entry
+            .split(',')
+            .map(|part| {
+                let part = part.trim();
+                let (m, p) = match part.strip_prefix('!') {
+                    Some(rest) => ("main", rest),
+                    None => (main, part),
+                };
+                index_entry_tuple("single", p, target_id, m, None)
+            })
+            .collect();
+    }
+    vec![index_entry_tuple("single", entry, target_id, main, None)]
+}
+
+const SPHINX_MATH_OPTS: &[(&str, Conv)] = &[
+    ("label", Conv::Unchanged),
+    ("name", Conv::Unchanged),
+    ("class", Conv::ClassOption),
+    ("no-wrap", Conv::Flag),
+    ("nowrap", Conv::Flag),
+];
+
+const HLIST_OPTS: &[(&str, Conv)] = &[("columns", Conv::PyIntAny)];
+
+const GLOSSARY_OPTS: &[(&str, Conv)] = &[("sorted", Conv::Flag)];
+
+const UNICODE_OPTS: &[(&str, Conv)] = &[
+    ("trim", Conv::Flag),
+    ("ltrim", Conv::Flag),
+    ("rtrim", Conv::Flag),
+];
+
+/// `( |\n|^)\.\. ` comment split for the unicode directive (misc.py:399):
+/// returns the byte index where the argument text is cut.
+fn unicode_comment_cut(text: &str) -> usize {
+    if text.starts_with(".. ") {
+        return 0;
+    }
+    let bytes = text.as_bytes();
+    for i in 0..text.len() {
+        if (bytes[i] == b' ' || bytes[i] == b'\n') && text[i + 1..].starts_with(".. ") {
+            return i;
+        }
+    }
+    text.len()
+}
+
+/// Minimal strftime over the current LOCAL-approximated (UTC) time:
+/// %Y/%m/%d/%H/%M/%S/%% expand, other bytes pass through.
+fn strftime_now(format: &str) -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let days = (secs / 86400) as i64;
+    let (h, mi, s) = ((secs % 86400) / 3600, (secs % 3600) / 60, secs % 60);
+    // Howard Hinnant's civil_from_days.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if m <= 2 { y + 1 } else { y };
+    let mut out = String::new();
+    let mut chars = format.chars();
+    while let Some(c) = chars.next() {
+        if c != '%' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('Y') => out.push_str(&year.to_string()),
+            Some('m') => out.push_str(&format!("{m:02}")),
+            Some('d') => out.push_str(&format!("{d:02}")),
+            Some('H') => out.push_str(&format!("{h:02}")),
+            Some('M') => out.push_str(&format!("{mi:02}")),
+            Some('S') => out.push_str(&format!("{s:02}")),
+            Some('%') => out.push('%'),
+            Some(other) => {
+                out.push('%');
+                out.push(other);
+            }
+            None => out.push('%'),
+        }
+    }
+    out
+}
+
+const TABLE_OPTS: &[(&str, Conv)] = &[
+    ("align", Conv::Choice(H_ALIGN_VALUES)),
+    ("class", Conv::ClassOption),
+    ("name", Conv::Unchanged),
+    ("width", Conv::LengthOrPercentageOrUnitless("")),
+    ("widths", Conv::WidthsAutoGrid),
+];
+
+const CSV_TABLE_OPTS: &[(&str, Conv)] = &[
+    ("header-rows", Conv::NonnegativeInt),
+    ("stub-columns", Conv::NonnegativeInt),
+    ("header", Conv::Unchanged),
+    ("width", Conv::LengthOrPercentageOrUnitless("")),
+    ("widths", Conv::WidthsAuto),
+    ("file", Conv::Path),
+    ("url", Conv::Uri),
+    ("encoding", Conv::Encoding),
+    ("class", Conv::ClassOption),
+    ("name", Conv::Unchanged),
+    ("align", Conv::Choice(H_ALIGN_VALUES)),
+    ("delim", Conv::SingleCharOrWhitespaceOrUnicode),
+    ("keepspace", Conv::Flag),
+    ("quote", Conv::SingleCharOrUnicode),
+    ("escape", Conv::SingleCharOrUnicode),
+];
+
+const LIST_TABLE_OPTS: &[(&str, Conv)] = &[
+    ("header-rows", Conv::NonnegativeInt),
+    ("stub-columns", Conv::NonnegativeInt),
+    ("width", Conv::LengthOrPercentageOrUnitless("")),
+    ("widths", Conv::WidthsAuto),
+    ("class", Conv::ClassOption),
+    ("name", Conv::Unchanged),
+    ("align", Conv::Choice(H_ALIGN_VALUES)),
+];
+
+/// Python csv.reader over the option-configured dialect
+/// (tables.py DocutilsDialect): doublequote unless an escapechar is set,
+/// skipinitialspace unless :keepspace:, quoted cells may span lines.
+fn parse_csv_text(
+    text: &str,
+    delim: char,
+    quote: char,
+    escape: Option<char>,
+    doublequote: bool,
+    skipinitialspace: bool,
+) -> Vec<Vec<String>> {
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    let mut row: Vec<String> = Vec::new();
+    let mut cell = String::new();
+    let mut in_quotes = false;
+    let mut cell_started = false;
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if in_quotes {
+            if Some(c) == escape {
+                if let Some(n) = chars.next() {
+                    cell.push(n);
+                }
+            } else if c == quote {
+                if doublequote && chars.peek() == Some(&quote) {
+                    chars.next();
+                    cell.push(quote);
+                } else {
+                    in_quotes = false;
+                }
+            } else {
+                cell.push(c);
+            }
+            continue;
+        }
+        match c {
+            c if c == quote && !cell_started => {
+                in_quotes = true;
+                cell_started = true;
+            }
+            c if c == delim => {
+                row.push(std::mem::take(&mut cell));
+                cell_started = false;
+                if skipinitialspace {
+                    while chars.peek() == Some(&' ') {
+                        chars.next();
+                    }
+                }
+            }
+            '\n' => {
+                row.push(std::mem::take(&mut cell));
+                rows.push(std::mem::take(&mut row));
+                cell_started = false;
+            }
+            c => {
+                cell.push(c);
+                cell_started = true;
+            }
+        }
+    }
+    if !cell.is_empty() || !row.is_empty() {
+        row.push(cell);
+        rows.push(row);
+    }
+    rows
+}
+
+/// The docutils Directive class contract (rst/__init__.py:305-318).
+#[derive(Clone, Copy)]
+struct DirectiveSpec {
+    required_arguments: usize,
+    optional_arguments: usize,
+    final_argument_whitespace: bool,
+    has_content: bool,
+    option_spec: &'static [(&'static str, Conv)],
+    kind: DirectiveKind,
+}
+
+/// Option converters (directives/__init__.py:156-481). Each mirrors one
+/// docutils conversion function, including its exact error text.
+#[derive(Clone, Copy)]
+enum Conv {
+    Flag,
+    Unchanged,
+    UnchangedRequired,
+    NonnegativeInt,
+    Percentage,
+    LengthOrUnitless,
+    /// The &str is the docutils `default` unit suffix appended to unitless
+    /// values ("" for image width, "px" for figwidth).
+    LengthOrPercentageOrUnitless(&'static str),
+    ClassOption,
+    Choice(&'static [&'static str]),
+    Path,
+    Uri,
+    /// codecs.lookup validation is approximated as accept-any (hardening
+    /// note: exotic names docutils rejects are accepted here).
+    Encoding,
+    /// figure :figwidth:: the literal 'image' keyword or a length.
+    Figwidth,
+    /// Plain Python int() — negatives allowed (sphinx maxdepth).
+    PyIntAny,
+    SingleCharOrUnicode,
+    SingleCharOrWhitespaceOrUnicode,
+    /// value_or(('auto', 'grid'), positive_int_list) — the table :widths:.
+    WidthsAutoGrid,
+    /// value_or(('auto',), positive_int_list) — csv/list-table :widths:.
+    WidthsAuto,
+    /// positive_int as used by the widths list elements.
+    PositiveIntForList,
+}
+
+/// Converted option values (Python-typed in docutils: None/str/int/list).
+#[derive(Clone, Debug, PartialEq)]
+enum OptVal {
+    /// flag options convert to Python None.
+    Null,
+    Str(String),
+    Int(i64),
+    IntList(Vec<i64>),
+    StrList(Vec<String>),
+}
+
+/// The arguments/options/content/etc. handed to a directive's run().
+struct DirectiveInput<'a, 'r> {
+    /// The directive name AS WRITTEN (docutils self.name; error messages
+    /// reproduce the original case).
+    name: &'r str,
+    arguments: Vec<String>,
+    options: Vec<(String, OptVal)>,
+    content: Vec<LineRef<'a>>,
+    span: Span,
+    lineno: u32,
+    rawsource: &'r str,
+}
+
+fn opt_get<'o>(options: &'o [(String, OptVal)], name: &str) -> Option<&'o OptVal> {
+    options.iter().find(|(n, _)| n == name).map(|(_, v)| v)
+}
+
+const ADMONITION_OPTS: &[(&str, Conv)] = &[("class", Conv::ClassOption), ("name", Conv::Unchanged)];
+
+const SIDEBAR_OPTS: &[(&str, Conv)] = &[
+    ("subtitle", Conv::UnchangedRequired),
+    ("class", Conv::ClassOption),
+    ("name", Conv::Unchanged),
+];
+
+const NAME_ONLY_OPTS: &[(&str, Conv)] = &[("name", Conv::Unchanged)];
+
+const IMAGE_ALIGN_VALUES: &[&str] = &["top", "middle", "bottom", "left", "center", "right"];
+const IMAGE_LOADING_VALUES: &[&str] = &["embed", "link", "lazy"];
+const IMAGE_OPTS: &[(&str, Conv)] = &[
+    ("alt", Conv::Unchanged),
+    ("height", Conv::LengthOrUnitless),
+    ("width", Conv::LengthOrPercentageOrUnitless("")),
+    ("scale", Conv::Percentage),
+    ("align", Conv::Choice(IMAGE_ALIGN_VALUES)),
+    ("target", Conv::UnchangedRequired),
+    ("loading", Conv::Choice(IMAGE_LOADING_VALUES)),
+    ("class", Conv::ClassOption),
+    ("name", Conv::Unchanged),
+];
+
+const H_ALIGN_VALUES: &[&str] = &["left", "center", "right"];
+const FIGURE_OPTS: &[(&str, Conv)] = &[
+    ("alt", Conv::Unchanged),
+    ("height", Conv::LengthOrUnitless),
+    ("width", Conv::LengthOrPercentageOrUnitless("")),
+    ("scale", Conv::Percentage),
+    ("align", Conv::Choice(H_ALIGN_VALUES)),
+    ("target", Conv::UnchangedRequired),
+    ("loading", Conv::Choice(IMAGE_LOADING_VALUES)),
+    ("class", Conv::ClassOption),
+    ("name", Conv::Unchanged),
+    ("figwidth", Conv::Figwidth),
+    ("figclass", Conv::ClassOption),
+];
+
+const CODE_OPTS: &[(&str, Conv)] = &[
+    ("class", Conv::ClassOption),
+    ("name", Conv::Unchanged),
+    ("number-lines", Conv::Unchanged),
+];
+
+const RAW_OPTS: &[(&str, Conv)] = &[
+    ("file", Conv::Path),
+    ("url", Conv::Uri),
+    ("encoding", Conv::Encoding),
+    ("class", Conv::ClassOption),
+];
+
+fn directive_spec(lower: &str) -> Option<DirectiveSpec> {
+    let adm = |k: &'static str| {
+        Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 0,
+            final_argument_whitespace: true,
+            has_content: true,
+            option_spec: ADMONITION_OPTS,
+            kind: DirectiveKind::Admonition(k),
+        })
+    };
+    match lower {
+        "note" => adm("note"),
+        "warning" => adm("warning"),
+        "tip" => adm("tip"),
+        "hint" => adm("hint"),
+        "important" => adm("important"),
+        "caution" => adm("caution"),
+        "danger" => adm("danger"),
+        "error" => adm("error"),
+        "attention" => adm("attention"),
+        "admonition" => Some(DirectiveSpec {
+            required_arguments: 1,
+            optional_arguments: 0,
+            final_argument_whitespace: true,
+            has_content: true,
+            option_spec: ADMONITION_OPTS,
+            kind: DirectiveKind::GenericAdmonition,
+        }),
+        "image" => Some(DirectiveSpec {
+            required_arguments: 1,
+            optional_arguments: 0,
+            final_argument_whitespace: true,
+            has_content: false,
+            option_spec: IMAGE_OPTS,
+            kind: DirectiveKind::Image,
+        }),
+        "topic" => Some(DirectiveSpec {
+            required_arguments: 1,
+            optional_arguments: 0,
+            final_argument_whitespace: true,
+            has_content: true,
+            option_spec: ADMONITION_OPTS,
+            kind: DirectiveKind::PseudoSection("topic"),
+        }),
+        "sidebar" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 1,
+            final_argument_whitespace: true,
+            has_content: true,
+            option_spec: SIDEBAR_OPTS,
+            kind: DirectiveKind::PseudoSection("sidebar"),
+        }),
+        "rubric" => Some(DirectiveSpec {
+            required_arguments: 1,
+            optional_arguments: 0,
+            final_argument_whitespace: true,
+            has_content: false,
+            option_spec: ADMONITION_OPTS,
+            kind: DirectiveKind::Rubric,
+        }),
+        "epigraph" => Some(quote_class_spec("epigraph")),
+        "highlights" => Some(quote_class_spec("highlights")),
+        "pull-quote" => Some(quote_class_spec("pull-quote")),
+        "compound" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 0,
+            final_argument_whitespace: false,
+            has_content: true,
+            option_spec: ADMONITION_OPTS,
+            kind: DirectiveKind::Compound,
+        }),
+        "container" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 1,
+            final_argument_whitespace: true,
+            has_content: true,
+            option_spec: NAME_ONLY_OPTS,
+            kind: DirectiveKind::Container,
+        }),
+        "parsed-literal" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 0,
+            final_argument_whitespace: false,
+            has_content: true,
+            option_spec: ADMONITION_OPTS,
+            kind: DirectiveKind::ParsedLiteral,
+        }),
+        "figure" => Some(DirectiveSpec {
+            required_arguments: 1,
+            optional_arguments: 0,
+            final_argument_whitespace: true,
+            has_content: true,
+            option_spec: FIGURE_OPTS,
+            kind: DirectiveKind::Figure,
+        }),
+        "code" | "code-block" | "sourcecode" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 1,
+            final_argument_whitespace: false,
+            has_content: true,
+            option_spec: CODE_OPTS,
+            kind: DirectiveKind::Code,
+        }),
+        "math" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 0,
+            final_argument_whitespace: false,
+            has_content: true,
+            option_spec: ADMONITION_OPTS,
+            kind: DirectiveKind::MathBlock,
+        }),
+        "raw" => Some(DirectiveSpec {
+            required_arguments: 1,
+            optional_arguments: 0,
+            final_argument_whitespace: true,
+            has_content: true,
+            option_spec: RAW_OPTS,
+            kind: DirectiveKind::Raw,
+        }),
+        "line-block" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 0,
+            final_argument_whitespace: false,
+            has_content: true,
+            option_spec: ADMONITION_OPTS,
+            kind: DirectiveKind::LineBlockDir,
+        }),
+        // en-alias table entries whose canonical directive is implemented
+        // (languages/en.py: code-block/sourcecode -> code, rst-class ->
+        // class, section-numbering -> sectnum [unimplemented]).
+        "class" | "rst-class" => Some(DirectiveSpec {
+            required_arguments: 1,
+            optional_arguments: 0,
+            final_argument_whitespace: true,
+            has_content: true,
+            option_spec: &[],
+            kind: DirectiveKind::ClassDir,
+        }),
+        "table" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 1,
+            final_argument_whitespace: true,
+            has_content: true,
+            option_spec: TABLE_OPTS,
+            kind: DirectiveKind::RstTable,
+        }),
+        "csv-table" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 1,
+            final_argument_whitespace: true,
+            has_content: true,
+            option_spec: CSV_TABLE_OPTS,
+            kind: DirectiveKind::CsvTable,
+        }),
+        "list-table" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 1,
+            final_argument_whitespace: true,
+            has_content: true,
+            option_spec: LIST_TABLE_OPTS,
+            kind: DirectiveKind::ListTable,
+        }),
+        "replace" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 0,
+            final_argument_whitespace: false,
+            has_content: true,
+            option_spec: &[],
+            kind: DirectiveKind::Replace,
+        }),
+        "unicode" => Some(DirectiveSpec {
+            required_arguments: 1,
+            optional_arguments: 0,
+            final_argument_whitespace: true,
+            has_content: false,
+            option_spec: UNICODE_OPTS,
+            kind: DirectiveKind::UnicodeDir,
+        }),
+        "date" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 0,
+            final_argument_whitespace: false,
+            has_content: true,
+            option_spec: &[],
+            kind: DirectiveKind::DateDir,
+        }),
+        _ => None,
+    }
+}
+
+/// epigraph/highlights/pull-quote: content-only, NO options at all
+/// (body.py:257-283 — option_spec is not declared).
+fn quote_class_spec(class: &'static str) -> DirectiveSpec {
+    DirectiveSpec {
+        required_arguments: 0,
+        optional_arguments: 0,
+        final_argument_whitespace: false,
+        has_content: true,
+        option_spec: &[],
+        kind: DirectiveKind::QuoteClass(class),
+    }
+}
+
+/// parse_directive_arguments (states.py:2365-2380).
+fn parse_directive_arguments(arg_text: &str, spec: &DirectiveSpec) -> Result<Vec<String>, String> {
+    let required = spec.required_arguments;
+    let optional = spec.optional_arguments;
+    let words: Vec<&str> = arg_text.split_whitespace().collect();
+    if words.len() < required {
+        return Err(format!(
+            "{} argument(s) required, {} supplied",
+            required,
+            words.len()
+        ));
+    }
+    if words.len() > required + optional {
+        if spec.final_argument_whitespace {
+            return Ok(py_split_max(arg_text, required + optional - 1));
+        }
+        return Err(format!(
+            "maximum {} argument(s) allowed, {} supplied",
+            required + optional,
+            words.len()
+        ));
+    }
+    Ok(words.iter().map(|w| w.to_string()).collect())
+}
+
+/// Python `str.split(None, maxsplit)`: whitespace runs separate the first
+/// `maxsplit` tokens; the remainder keeps internal whitespace verbatim.
+fn py_split_max(text: &str, maxsplit: usize) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut rest = text.trim_start();
+    for _ in 0..maxsplit {
+        if rest.is_empty() {
+            return out;
+        }
+        match rest.find(char::is_whitespace) {
+            Some(i) => {
+                out.push(rest[..i].to_string());
+                rest = rest[i..].trim_start();
+            }
+            None => {
+                out.push(rest.to_string());
+                return out;
+            }
+        }
+    }
+    if !rest.is_empty() {
+        out.push(rest.to_string());
+    }
+    out
+}
+
+/// parse_extension_options + extract_options + assemble_option_dict
+/// (states.py:2382-2413, utils.py:274-369). Errors return the MarkupError
+/// detail string; the caller adds the 'Error in "X" directive:' wrapper.
+fn parse_extension_options(
+    opt_block: &[LineRef<'_>],
+    option_spec: &'static [(&'static str, Conv)],
+) -> Result<Vec<(String, OptVal)>, String> {
+    // Pass 1 (extract_options): collect (lowercased name, body) fields.
+    // A multi-word field name errors during this pass, in field order.
+    let mut fields: Vec<(String, Option<String>)> = Vec::new();
+    let mut i = 0usize;
+    while i < opt_block.len() {
+        let l = opt_block[i];
+        let marker = if l.indent() == 0 {
+            field_marker(l.text)
+        } else {
+            None
+        };
+        let Some((raw_name, body_start)) = marker else {
+            return Err("invalid option block".to_string());
+        };
+        let mut body_lines: Vec<&str> = Vec::new();
+        let first = l.text[body_start..].trim_start_matches(' ');
+        if !first.is_empty() {
+            body_lines.push(first);
+        }
+        // Continuation lines (any deeper indent) join the field body,
+        // dedented by their common indent, '\n'-separated.
+        let mut j = i + 1;
+        while j < opt_block.len() && opt_block[j].indent() > 0 {
+            j += 1;
+        }
+        let conts = &opt_block[i + 1..j];
+        let min_indent = conts.iter().map(|c| c.indent()).min().unwrap_or(0);
+        for c in conts {
+            body_lines.push(&c.text[min_indent.min(c.indent())..]);
+        }
+        if raw_name.split_whitespace().count() != 1 {
+            return Err(
+                "invalid option data: extension option field name may not contain multiple words"
+                    .to_string(),
+            );
+        }
+        let body = if body_lines.is_empty() {
+            None
+        } else {
+            Some(body_lines.join("\n"))
+        };
+        fields.push((raw_name.to_lowercase(), body));
+        i = j;
+    }
+    // Pass 2 (assemble_option_dict): unknown, then duplicate, then convert.
+    let mut out: Vec<(String, OptVal)> = Vec::new();
+    for (name, body) in &fields {
+        let Some((_, conv)) = option_spec.iter().find(|(n, _)| n == name) else {
+            return Err(format!("unknown option: \"{name}\""));
+        };
+        if out.iter().any(|(n, _)| n == name) {
+            return Err(format!("invalid option data: duplicate option \"{name}\""));
+        }
+        match convert_option(*conv, body.as_deref()) {
+            Ok(v) => out.push((name.clone(), v)),
+            Err(detail) => {
+                return Err(format!(
+                    "invalid option value: (option: \"{}\"; value: {})\n{}",
+                    name,
+                    py_repr(body.as_deref()),
+                    detail
+                ));
+            }
+        }
+    }
+    Ok(out)
+}
+
+fn convert_option(conv: Conv, value: Option<&str>) -> Result<OptVal, String> {
+    match conv {
+        Conv::Flag => match value {
+            Some(v) if !v.trim().is_empty() => {
+                Err(format!("no argument is allowed; \"{v}\" supplied"))
+            }
+            _ => Ok(OptVal::Null),
+        },
+        Conv::PyIntAny => {
+            let Some(v) = value else {
+                return Err(
+                    "int() argument must be a string, a bytes-like object or a real number, not 'NoneType'"
+                        .to_string(),
+                );
+            };
+            match py_int_canonical(v) {
+                Some((neg, digits)) => Ok(int_optval(neg, &digits)),
+                None => Err(format!(
+                    "invalid literal for int() with base 10: {}",
+                    py_repr(Some(v))
+                )),
+            }
+        }
+        Conv::NonnegativeInt => {
+            let Some(v) = value else {
+                return Err(
+                    "int() argument must be a string, a bytes-like object or a real number, not 'NoneType'"
+                        .to_string(),
+                );
+            };
+            nonnegative_int(v)
+        }
+        Conv::SingleCharOrUnicode | Conv::SingleCharOrWhitespaceOrUnicode => {
+            let Some(v) = value else {
+                return Err("argument required but none supplied".to_string());
+            };
+            if matches!(conv, Conv::SingleCharOrWhitespaceOrUnicode) {
+                if v == "tab" {
+                    return Ok(OptVal::Str("\t".to_string()));
+                }
+                if v == "space" {
+                    return Ok(OptVal::Str(" ".to_string()));
+                }
+            }
+            let decoded = unicode_code(v)?;
+            if decoded.chars().count() != 1 {
+                return Err(format!(
+                    "{} invalid; must be a single character or a Unicode code",
+                    py_repr(Some(&decoded))
+                ));
+            }
+            Ok(OptVal::Str(decoded))
+        }
+        Conv::WidthsAutoGrid | Conv::WidthsAuto => {
+            let Some(v) = value else {
+                return Err("argument required but none supplied".to_string());
+            };
+            let keywords: &[&str] = if matches!(conv, Conv::WidthsAutoGrid) {
+                &["auto", "grid"]
+            } else {
+                &["auto"]
+            };
+            if keywords.contains(&v) {
+                return Ok(OptVal::Str(v.to_string()));
+            }
+            let parts: Vec<&str> = if v.contains(',') {
+                v.split(',').collect()
+            } else {
+                v.split_whitespace().collect()
+            };
+            let mut list = Vec::new();
+            for p in parts {
+                match convert_option(Conv::PositiveIntForList, Some(p.trim()))? {
+                    OptVal::Int(n) => list.push(n),
+                    _ => unreachable!(),
+                }
+            }
+            Ok(OptVal::IntList(list))
+        }
+        Conv::PositiveIntForList => {
+            let Some(v) = value else {
+                return Err("argument required but none supplied".to_string());
+            };
+            match py_int(v) {
+                Some(n) if n >= 1 => Ok(OptVal::Int(n)),
+                Some(_) => Err("negative or zero value; must be positive".to_string()),
+                None => Err(format!(
+                    "invalid literal for int() with base 10: {}",
+                    py_repr(Some(v))
+                )),
+            }
+        }
+        Conv::Unchanged => Ok(OptVal::Str(value.unwrap_or("").to_string())),
+        Conv::UnchangedRequired => match value {
+            None => Err("argument required but none supplied".to_string()),
+            Some(v) => Ok(OptVal::Str(v.to_string())),
+        },
+        Conv::Percentage => {
+            // percentage(): rstrip(' %'), then nonnegative_int; None slips
+            // through to int(None)'s TypeError (directives/__init__.py:235).
+            let Some(v) = value else {
+                return Err(
+                    "int() argument must be a string, a bytes-like object or a real number, not 'NoneType'"
+                        .to_string(),
+                );
+            };
+            nonnegative_int(v.trim_end_matches([' ', '%']))
+        }
+        Conv::LengthOrUnitless => {
+            let Some(v) = value else {
+                return Err("expected string or bytes-like object, got 'NoneType'".to_string());
+            };
+            let mut units: Vec<&str> = CSS3_LENGTH_UNITS.to_vec();
+            units.push("");
+            get_measure(v, &units).map(OptVal::Str)
+        }
+        Conv::LengthOrPercentageOrUnitless(default) => {
+            let Some(v) = value else {
+                return Err("expected string or bytes-like object, got 'NoneType'".to_string());
+            };
+            let mut units: Vec<&str> = CSS3_LENGTH_UNITS.to_vec();
+            units.push("%");
+            match get_measure(v, &units) {
+                Ok(m) => Ok(OptVal::Str(m)),
+                Err(first_error) => match get_measure(v, &[""]) {
+                    Ok(m) => Ok(OptVal::Str(format!("{m}{default}"))),
+                    Err(_) => Err(first_error),
+                },
+            }
+        }
+        Conv::Path => {
+            let Some(v) = value else {
+                return Err("argument required but none supplied".to_string());
+            };
+            Ok(OptVal::Str(
+                v.lines().map(str::trim).collect::<Vec<_>>().join(""),
+            ))
+        }
+        Conv::Uri => {
+            let Some(v) = value else {
+                return Err("argument required but none supplied".to_string());
+            };
+            Ok(OptVal::Str(uri_from_argument(v)))
+        }
+        Conv::Encoding => {
+            let Some(v) = value else {
+                return Err("argument required but none supplied".to_string());
+            };
+            Ok(OptVal::Str(v.to_string()))
+        }
+        Conv::Figwidth => {
+            let Some(v) = value else {
+                return Err("expected string or bytes-like object, got 'NoneType'".to_string());
+            };
+            if v.eq_ignore_ascii_case("image") {
+                return Ok(OptVal::Str("image".to_string()));
+            }
+            convert_option(Conv::LengthOrPercentageOrUnitless("px"), Some(v))
+        }
+        Conv::ClassOption => {
+            let Some(v) = value else {
+                return Err("argument required but none supplied".to_string());
+            };
+            let mut names = Vec::new();
+            for word in v.split_whitespace() {
+                let id = ids::make_id(word);
+                if id.is_empty() {
+                    return Err(format!("cannot make \"{word}\" into a class name"));
+                }
+                names.push(id);
+            }
+            Ok(OptVal::StrList(names))
+        }
+        Conv::Choice(values) => {
+            let Some(v) = value else {
+                return Err(format!(
+                    "must supply an argument; choose from {}",
+                    format_choice_values(values)
+                ));
+            };
+            let lowered = v.trim().to_lowercase();
+            if values.contains(&lowered.as_str()) {
+                Ok(OptVal::Str(lowered))
+            } else {
+                Err(format!(
+                    "\"{v}\" unknown; choose from {}",
+                    format_choice_values(values)
+                ))
+            }
+        }
+    }
+}
+
+/// format_values (directives/__init__.py:448-450).
+fn format_choice_values(values: &[&str]) -> String {
+    let init = values[..values.len() - 1]
+        .iter()
+        .map(|v| format!("\"{v}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{}, or \"{}\"", init, values[values.len() - 1])
+}
+
+/// unicode_code (directives/__init__.py:330-352): decimal, hex forms
+/// (0x/x/\x/U+/\u/&#x...;), or the text itself when neither matches.
+fn unicode_code(code: &str) -> Result<String, String> {
+    // Python gates on str.isdigit() (Nd digits AND digit-typed No chars
+    // like '²'), then int() — which only accepts the Nd ones.
+    if !code.is_empty() && code.chars().all(super::digits::is_python_digit) {
+        let Some((false, digits)) = py_int_canonical(code) else {
+            return Err(format!(
+                "invalid literal for int() with base 10: {}",
+                py_repr(Some(code))
+            ));
+        };
+        let n: u32 = digits
+            .parse()
+            .map_err(|_| format!("code too large ({code})"))?;
+        return char::from_u32(n)
+            .map(|c| c.to_string())
+            .ok_or_else(|| "chr() arg not in range(0x110000)".to_string());
+    }
+    let lower = code.to_lowercase();
+    let hex = ["0x", "x", "\\x", "u+", "u", "\\u"]
+        .iter()
+        .find_map(|p| lower.strip_prefix(p))
+        .filter(|h| !h.is_empty() && h.bytes().all(|b| b.is_ascii_hexdigit()))
+        .map(|h| h.to_string())
+        .or_else(|| {
+            lower
+                .strip_prefix("&#x")
+                .and_then(|h| h.strip_suffix(';'))
+                .filter(|h| !h.is_empty() && h.bytes().all(|b| b.is_ascii_hexdigit()))
+                .map(|h| h.to_string())
+        });
+    match hex {
+        Some(h) => {
+            let n = u32::from_str_radix(&h, 16).map_err(|_| format!("code too large ({h})"))?;
+            char::from_u32(n)
+                .map(|c| c.to_string())
+                .ok_or_else(|| "chr() arg not in range(0x110000)".to_string())
+        }
+        None => Ok(code.to_string()),
+    }
+}
+
+/// The converted int as an OptVal: i64 when it fits, else the canonical
+/// decimal string (Python ints are arbitrary precision; pformat renders
+/// both identically).
+fn int_optval(neg: bool, digits: &str) -> OptVal {
+    let display = py_int_display(neg, digits);
+    match display.parse::<i64>() {
+        Ok(n) => OptVal::Int(n),
+        Err(_) => OptVal::Str(display),
+    }
+}
+
+/// nonnegative_int (directives/__init__.py:224-231), with Python's own
+/// int() error text for bad literals.
+fn nonnegative_int(s: &str) -> Result<OptVal, String> {
+    match py_int_canonical(s) {
+        Some((true, _)) => Err("negative value; must be positive or zero".to_string()),
+        Some((false, digits)) => Ok(int_optval(false, &digits)),
+        None => Err(format!(
+            "invalid literal for int() with base 10: {}",
+            py_repr(Some(s))
+        )),
+    }
+}
+
+/// Python int(str), canonicalized: arbitrary precision (the value is the
+/// canonical ASCII decimal string), Unicode Nd digits accepted with their
+/// decimal values, single underscores allowed BETWEEN digits, surrounding
+/// whitespace ignored. Returns (negative, digits-without-sign, canonical
+/// leading-zero-stripped ASCII string WITH sign).
+fn py_int_canonical(s: &str) -> Option<(bool, String)> {
+    let t = s.trim();
+    let (neg, body) = match t.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, t.strip_prefix('+').unwrap_or(t)),
+    };
+    if body.is_empty() {
+        return None;
+    }
+    let mut digits = String::with_capacity(body.len());
+    let mut prev_underscore = true; // leading underscore rejected
+    for c in body.chars() {
+        if c == '_' {
+            if prev_underscore {
+                return None;
+            }
+            prev_underscore = true;
+            continue;
+        }
+        let d = super::digits::decimal_digit_value(c)?;
+        digits.push(char::from(b'0' + d as u8));
+        prev_underscore = false;
+    }
+    if prev_underscore {
+        // trailing underscore (or all-underscores)
+        return None;
+    }
+    let stripped = digits.trim_start_matches('0');
+    let canonical = if stripped.is_empty() { "0" } else { stripped };
+    Some((neg && canonical != "0", canonical.to_string()))
+}
+
+fn py_int_display(neg: bool, digits: &str) -> String {
+    if neg {
+        format!("-{digits}")
+    } else {
+        digits.to_string()
+    }
+}
+
+/// Python int(str) for numeric consumers; None when invalid OR outside
+/// i64 (attr-facing paths must use [`py_int_canonical`] to keep exact
+/// digits for values Python would carry at arbitrary precision).
+fn py_int(s: &str) -> Option<i64> {
+    let (neg, digits) = py_int_canonical(s)?;
+    py_int_display(neg, &digits).parse::<i64>().ok()
+}
+
+/// Python repr() for option-value error messages (strings and None).
+fn py_repr(value: Option<&str>) -> String {
+    match value {
+        None => "None".to_string(),
+        Some(s) => {
+            let quote = if s.contains('\'') && !s.contains('"') {
+                '"'
+            } else {
+                '\''
+            };
+            let mut out = String::new();
+            out.push(quote);
+            for c in s.chars() {
+                match c {
+                    '\\' => out.push_str("\\\\"),
+                    '\n' => out.push_str("\\n"),
+                    '\r' => out.push_str("\\r"),
+                    '\t' => out.push_str("\\t"),
+                    c if c == quote => {
+                        out.push('\\');
+                        out.push(c);
+                    }
+                    c => out.push(c),
+                }
+            }
+            out.push(quote);
+            out
+        }
+    }
+}
+
+/// CSS3_LENGTH_UNITS (directives/__init__.py:247-248).
+const CSS3_LENGTH_UNITS: &[&str] = &[
+    "em", "ex", "ch", "rem", "vw", "vh", "vmin", "vmax", "cm", "mm", "Q", "in", "pt", "pc", "px",
+];
+
+/// get_measure (directives/__init__.py:260-274) over nodes.parse_measure
+/// (nodes.py:3084-3107). Returns the normalized `{value}{unit}` string.
+fn get_measure(argument: &str, units: &[&str]) -> Result<String, String> {
+    let no_valid = || format!("\"{argument}\" is no valid measure.");
+    // fullmatch: (-?[0-9.]+) *([a-zA-Zµ]*|%?)
+    let s = argument;
+    let digits_start = if s.starts_with('-') { 1 } else { 0 };
+    let mut j = digits_start;
+    let bytes = s.as_bytes();
+    while j < bytes.len() && (bytes[j].is_ascii_digit() || bytes[j] == b'.') {
+        j += 1;
+    }
+    if j == digits_start {
+        return Err(no_valid());
+    }
+    let number = &s[..j];
+    let mut k = j;
+    while k < bytes.len() && bytes[k] == b' ' {
+        k += 1;
+    }
+    let unit = &s[k..];
+    let unit_ok = unit == "%" || unit.chars().all(|c| c.is_ascii_alphabetic() || c == 'µ');
+    if !unit_ok {
+        return Err(no_valid());
+    }
+    // Python: int() first (arbitrary precision — exact digits preserved),
+    // float() second; negative or unlisted unit is the units-list error.
+    let (negative, norm) = if let Some((neg, digits)) = py_int_canonical(number) {
+        (neg, py_int_display(neg, &digits))
+    } else if let Ok(f) = number.parse::<f64>() {
+        (f < 0.0, py_float_str(f))
+    } else {
+        return Err(no_valid());
+    };
+    if negative || !units.contains(&unit) {
+        return Err(format!(
+            "not a positive number or measure of one of the following units:\n{}",
+            units
+                .iter()
+                .filter(|u| !u.is_empty())
+                .copied()
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    Ok(format!("{norm}{unit}"))
+}
+
+/// Python float repr for simple decimals (1.0 -> "1.0", 1.5 -> "1.5").
+fn py_float_str(f: f64) -> String {
+    if f == f.trunc() && f.abs() < 1e16 {
+        format!("{f:.1}")
+    } else {
+        format!("{f}")
+    }
+}
+
+/// directives.uri (directives/__init__.py:209-221): unescaped whitespace is
+/// removed; backslash-escaped whitespace separates space-joined parts.
+fn uri_from_argument(argument: &str) -> String {
+    let escaped = super::inline::escape2null(argument);
+    let mut parts: Vec<&str> = Vec::new();
+    for chunk in escaped.split("\x00 ") {
+        parts.extend(chunk.split("\x00\n"));
+    }
+    parts
+        .iter()
+        .map(|p| {
+            super::inline::unescape(p, false)
+                .split_whitespace()
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// states.py parse_target (2095-2113) for the image :target: option: a
+/// block whose last line ends in `_` may be an indirect reference;
+/// otherwise it is a refuri with all whitespace removed.
+enum ImageTarget {
+    Refname { name: String, refname: String },
+    Refuri(String),
+}
+
+fn parse_image_target(target: &str) -> ImageTarget {
+    let lines: Vec<&str> = target.lines().collect();
+    let ends_underscore = lines
+        .iter()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .map(|l| l.trim().ends_with('_'))
+        .unwrap_or(false);
+    if ends_underscore {
+        let joined = lines.iter().map(|l| l.trim()).collect::<Vec<_>>().join(" ");
+        if let Some(data) = reference_data_from_link(&joined) {
+            return ImageTarget::Refname {
+                name: ids::whitespace_normalize_name(&data),
+                refname: ids::fully_normalize_name(&data),
+            };
+        }
+    }
+    ImageTarget::Refuri(target.split_whitespace().collect::<String>())
+}
+
+/// `|name|` marker in a (possibly line-joined) substitution-def head:
+/// `\|(?![ ])(?P<name>.+?)(?<![\s\x00])\|([ ]+|$)` (states.py:1992-2001).
+struct SubstMarker {
+    name: String,
+    /// Byte index where the remainder after the marker + separator spaces
+    /// begins (== input length when the marker ends the line).
+    remainder_start: usize,
+}
+
+fn match_substitution_marker(acc: &str) -> Option<SubstMarker> {
+    let cs: Vec<(usize, char)> = acc.char_indices().collect();
+    if cs.len() < 3 || cs[0].1 != '|' || cs[1].1 == ' ' {
+        return None;
+    }
+    for k in 2..cs.len() {
+        if cs[k].1 != '|' || cs[k - 1].1.is_whitespace() {
+            continue;
+        }
+        let name = acc[cs[1].0..cs[k].0].to_string();
+        let after = &acc[cs[k].0 + 1..];
+        if after.is_empty() {
+            return Some(SubstMarker {
+                name,
+                remainder_start: acc.len(),
+            });
+        }
+        if after.starts_with(' ') {
+            let spaces = after.len() - after.trim_start_matches(' ').len();
+            return Some(SubstMarker {
+                name,
+                remainder_start: cs[k].0 + 1 + spaces,
+            });
+        }
+        // Closing pipe not followed by space/EOL: the non-greedy regex
+        // tries a later close.
+    }
+    None
+}
+
+/// SubstitutionDef embedded-directive marker: `(simplename)::( +|$)` —
+/// unlike the body-level form, NO space is allowed before `::`.
+fn match_embedded_directive(text: &str) -> Option<(String, &str)> {
+    let chars: Vec<char> = text.chars().collect();
+    let name_len = match_simplename_chars(&chars, 0)?;
+    if chars.get(name_len) != Some(&':') || chars.get(name_len + 1) != Some(&':') {
+        return None;
+    }
+    let after = name_len + 2;
+    match chars.get(after) {
+        None => {}
+        Some(' ') => {}
+        _ => return None,
+    }
+    let name: String = chars[..name_len].iter().collect();
+    let byte_after = text
+        .char_indices()
+        .nth(after + 1)
+        .map(|(b, _)| b)
+        .unwrap_or(text.len());
+    Some((name, &text[byte_after..]))
+}
+
+fn dedent_by_min<'a>(block: &[LineRef<'a>]) -> Vec<LineRef<'a>> {
+    let min = block
+        .iter()
+        .filter(|l| !l.is_blank())
+        .map(|l| l.indent())
+        .min()
+        .unwrap_or(0);
+    block.iter().map(|l| l.dedented(min)).collect()
+}
+
+/// docutils nodes.Inline membership for the kinds this parser emits
+/// (image/target/raw are genuinely Inline in docutils' class hierarchy).
+fn is_inline_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "emphasis"
+            | "strong"
+            | "literal"
+            | "reference"
+            | "title_reference"
+            | "abbreviation"
+            | "acronym"
+            | "subscript"
+            | "superscript"
+            | "math"
+            | "image"
+            | "problematic"
+            | "inline"
+            | "substitution_reference"
+            | "footnote_reference"
+            | "citation_reference"
+            | "target"
+            | "raw"
+    )
+}
+
+fn tree_any(node: &Node, pred: &dyn Fn(&Node) -> bool) -> bool {
+    node.children.iter().any(|c| pred(c) || tree_any(c, pred))
+}
+
+fn has_extra_attr(node: &Node, key: &str) -> bool {
+    node.attrs.extra.iter().any(|(k, _)| *k == key)
+}
+
+/// disallowed_inside_substitution_definitions (states.py:2219-2227),
+/// first hit in document order wins.
+fn find_disallowed_in_substitution(node: &Node) -> Option<&'static str> {
+    for c in &node.children {
+        let hit = if c.kind == kinds::REFERENCE && has_extra_attr(c, "anonymous") {
+            Some("Anonymous references")
+        } else if c.kind == kinds::FOOTNOTE_REFERENCE && has_extra_attr(c, "auto") {
+            Some("References to auto-numbered and auto-symbol footnotes")
+        } else if !c.attrs.names.is_empty() || !c.attrs.ids.is_empty() {
+            Some("Targets (names and identifiers)")
+        } else {
+            None
+        };
+        if hit.is_some() {
+            return hit;
+        }
+        if let Some(h) = find_disallowed_in_substitution(c) {
+            return Some(h);
+        }
+    }
+    None
+}
+
+fn count_subst_defs(node: &Node, name: &str) -> usize {
+    let mut c = usize::from(
+        node.kind == "substitution_definition" && node.attrs.names.iter().any(|n| n == name),
+    );
+    for ch in &node.children {
+        c += count_subst_defs(ch, name);
+    }
+    c
+}
+
+fn dupname_subst_defs(node: &mut Node, name: &str, remaining: &mut usize) {
+    if *remaining == 0 {
+        return;
+    }
+    if node.kind == "substitution_definition" && node.attrs.names.iter().any(|n| n == name) {
+        node.attrs.names.retain(|n| n != name);
+        node.attrs.dupnames.push(name.to_string());
+        *remaining -= 1;
+        return;
+    }
+    for ch in &mut node.children {
+        dupname_subst_defs(ch, name, remaining);
+        if *remaining == 0 {
+            return;
+        }
+    }
+}
+
+/// Like [`reference_name_from_link`] but returns the reference TEXT
+/// (simple name or phrase) before normalization — docutils is_reference().
+fn reference_data_from_link(link: &str) -> Option<String> {
+    let joined = ids::whitespace_normalize_name(link);
+    let body = joined.strip_suffix('_')?;
+    if body.ends_with('\\') {
+        return None;
+    }
+    if let Some(phrase) = body.strip_prefix('`').and_then(|b| b.strip_suffix('`')) {
+        if phrase.is_empty() {
+            return None;
+        }
+        return Some(phrase.to_string());
+    }
+    if !body.is_empty()
+        && !body.ends_with('_')
+        && !body.contains(char::is_whitespace)
+        && !body.contains('`')
+        && !body.contains('\\')
+    {
+        return Some(body.to_string());
     }
     None
 }
@@ -3297,6 +7423,8 @@ mod tests {
             src,
             &ParseOptions {
                 source_path: "<snippet>".into(),
+                sphinx: false,
+                docname: "index".into(),
             },
         )
         .root
@@ -3342,6 +7470,8 @@ mod tests {
             src,
             &ParseOptions {
                 source_path: "<snippet>".into(),
+                sphinx: false,
+                docname: "index".into(),
             },
         );
         let second = &tree.root.children[1];

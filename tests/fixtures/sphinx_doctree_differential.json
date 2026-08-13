@@ -1,0 +1,1711 @@
+{
+  "cases": [
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.paragraphs_single",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Just some text.\n",
+      "rst": "Just some text.\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.paragraphs_multiline",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        line one\n        line two\n",
+      "rst": "line one\nline two\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.paragraphs_blank_separated",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        para one\n    <paragraph>\n        para two\n",
+      "rst": "para one\n\n\npara two\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.paragraphs_punctuation_text",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        x -- y; z: w, (v) [u].\n",
+      "rst": "x -- y; z: w, (v) [u].\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.sections_simple_nested",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Para under title.\n        <section ids=\"sub\" names=\"sub\">\n            <title>\n                Sub\n            <paragraph>\n                Para under sub.\n",
+      "rst": "Title\n=====\n\nPara under title.\n\nSub\n---\n\nPara under sub.\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.sections_three_levels",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"a\" names=\"a\">\n        <title>\n            A\n        <section ids=\"b\" names=\"b\">\n            <title>\n                B\n            <section ids=\"c\" names=\"c\">\n                <title>\n                    C\n                <paragraph>\n                    deep text\n        <section ids=\"d\" names=\"d\">\n            <title>\n                D\n            <paragraph>\n                back at two\n",
+      "rst": "A\n=\n\nB\n-\n\nC\n~\n\ndeep text\n\nD\n-\n\nback at two\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.sections_over_under",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"over\" names=\"over\">\n        <title>\n            Over\n        <paragraph>\n            body here\n",
+      "rst": "=====\nOver\n=====\n\nbody here\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.sections_over_under_centered",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            body\n",
+      "rst": "==========\n  Title\n==========\n\nbody\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.sections_underline_exact_length",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"ab\" names=\"ab\">\n        <title>\n            AB\n        <paragraph>\n            x\n",
+      "rst": "AB\n==\n\nx\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.sections_underline_longer",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"ab\" names=\"ab\">\n        <title>\n            AB\n        <paragraph>\n            x\n",
+      "rst": "AB\n=====\n\nx\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.sections_unicode_title",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"uberblick\" names=\"überblick\">\n        <title>\n            Überblick\n        <paragraph>\n            text\n",
+      "rst": "Überblick\n=========\n\ntext\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.sections_digit_title",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"id1\" names=\"123\">\n        <title>\n            123\n        <paragraph>\n            text\n",
+      "rst": "123\n=====\n\ntext\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.sections_numbered_title",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"intro\" names=\"1.\\ intro\">\n        <title>\n            1. Intro\n        <paragraph>\n            text\n",
+      "rst": "1. Intro\n========\n\ntext\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.sections_same_level_siblings",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"alpha\" names=\"alpha\">\n        <title>\n            Alpha\n        <paragraph>\n            one\n    <section ids=\"b\" names=\"b\">\n        <title>\n            B\n        <paragraph>\n            two\n",
+      "rst": "Alpha\n-----\n\none\n\nB\n----------\n\ntwo\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.sections_whitespace_collapse_title",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"my-section-title\" names=\"my\\ section\\ title!\">\n        <title>\n            My  Section    Title!\n        <paragraph>\n            x\n",
+      "rst": "My  Section    Title!\n=====================\n\nx\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.transition_basic",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <transition>\n    <paragraph>\n        More.\n",
+      "rst": "Para.\n\n----\n\nMore.\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.transition_other_chars",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        a\n    <transition>\n    <paragraph>\n        b\n    <transition>\n    <paragraph>\n        c\n    <transition>\n    <paragraph>\n        d\n    <transition>\n    <paragraph>\n        e\n    <transition>\n    <paragraph>\n        f\n",
+      "rst": "a\n\n====\n\nb\n\n~~~~\n\nc\n\n****\n\nd\n\n::::\n\ne\n\n____\n\nf\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.lists_bullet_simple",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                one\n        <list_item>\n            <paragraph>\n                two\n        <list_item>\n            <paragraph>\n                three\n",
+      "rst": "- one\n- two\n- three\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.lists_bullet_loose",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                one\n        <list_item>\n            <paragraph>\n                two\n",
+      "rst": "- one\n\n- two\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.lists_bullet_nested",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                outer one\n            <bullet_list bullet=\"*\">\n                <list_item>\n                    <paragraph>\n                        inner a\n                <list_item>\n                    <paragraph>\n                        inner b\n        <list_item>\n            <paragraph>\n                outer two\n",
+      "rst": "- outer one\n\n  * inner a\n\n  * inner b\n\n- outer two\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.lists_bullet_multi_paragraph_item",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                first para of item\n            <paragraph>\n                second para of item\n",
+      "rst": "- first para of item\n\n  second para of item\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.lists_bullet_star_and_plus",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"*\">\n        <list_item>\n            <paragraph>\n                star one\n        <list_item>\n            <paragraph>\n                star two\n    <bullet_list bullet=\"+\">\n        <list_item>\n            <paragraph>\n                plus one\n        <list_item>\n            <paragraph>\n                plus two\n",
+      "rst": "* star one\n* star two\n\n+ plus one\n+ plus two\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.lists_bullet_marker_alone",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                body from next line\n",
+      "rst": "-\n  body from next line\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.lists_bullet_ends_no_blank",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                item\n    <system_message level=\"2\" line=\"2\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Bullet list ends without a blank line; unexpected unindent.\n    <paragraph>\n        plain\n",
+      "rst": "- item\nplain\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.lists_bullet_deep_nesting",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                a\n            <bullet_list bullet=\"-\">\n                <list_item>\n                    <paragraph>\n                        b\n                    <bullet_list bullet=\"-\">\n                        <list_item>\n                            <paragraph>\n                                c\n                            <bullet_list bullet=\"-\">\n                                <list_item>\n                                    <paragraph>\n                                        d\n                                    <bullet_list bullet=\"-\">\n                                        <list_item>\n                                            <paragraph>\n                                                e\n",
+      "rst": "- a\n\n  - b\n\n    - c\n\n      - d\n\n        - e\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.lists_bullet_different_bullet_adjacent",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                a\n    <system_message level=\"2\" line=\"2\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Bullet list ends without a blank line; unexpected unindent.\n    <bullet_list bullet=\"*\">\n        <list_item>\n            <paragraph>\n                b\n",
+      "rst": "- a\n* b\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.lists_bullet_item_with_quote",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                item\n            <block_quote>\n                <paragraph>\n                    quoted deeper\n",
+      "rst": "- item\n\n      quoted deeper\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.lists_enum_arabic",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <enumerated_list enumtype=\"arabic\" prefix=\"\" suffix=\".\">\n        <list_item>\n            <paragraph>\n                one\n        <list_item>\n            <paragraph>\n                two\n        <list_item>\n            <paragraph>\n                three\n",
+      "rst": "1. one\n2. two\n3. three\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.lists_enum_loweralpha",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <enumerated_list enumtype=\"loweralpha\" prefix=\"\" suffix=\".\">\n        <list_item>\n            <paragraph>\n                x\n        <list_item>\n            <paragraph>\n                y\n",
+      "rst": "a. x\nb. y\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.lists_enum_paren_arabic",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <enumerated_list enumtype=\"arabic\" prefix=\"(\" suffix=\")\">\n        <list_item>\n            <paragraph>\n                x\n        <list_item>\n            <paragraph>\n                y\n",
+      "rst": "(1) x\n(2) y\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.lists_enum_upper_paren",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <enumerated_list enumtype=\"upperalpha\" prefix=\"\" suffix=\")\">\n        <list_item>\n            <paragraph>\n                x\n        <list_item>\n            <paragraph>\n                y\n",
+      "rst": "A) x\nB) y\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.lists_enum_auto",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <enumerated_list enumtype=\"arabic\" prefix=\"\" suffix=\".\">\n        <list_item>\n            <paragraph>\n                x\n        <list_item>\n            <paragraph>\n                y\n",
+      "rst": "#. x\n#. y\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.lists_enum_auto_continue",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <enumerated_list enumtype=\"arabic\" prefix=\"\" suffix=\".\">\n        <list_item>\n            <paragraph>\n                one\n        <list_item>\n            <paragraph>\n                two\n",
+      "rst": "1. one\n#. two\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.lists_enum_single_i",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <enumerated_list enumtype=\"lowerroman\" prefix=\"\" suffix=\".\">\n        <list_item>\n            <paragraph>\n                single\n",
+      "rst": "i. single\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.lists_enum_not_a_list",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        1. one\n        not an item\n",
+      "rst": "1. one\nnot an item\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.lists_enum_type_switch_aborts",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        1. one\n        a. alpha\n",
+      "rst": "1. one\na. alpha\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.lists_enum_continuation_lines",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <enumerated_list enumtype=\"arabic\" prefix=\"\" suffix=\".\">\n        <list_item>\n            <paragraph>\n                first\n                more of first\n        <list_item>\n            <paragraph>\n                second\n",
+      "rst": "1. first\n   more of first\n2. second\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.deflist_simple",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                term\n            <definition>\n                <paragraph>\n                    definition here\n",
+      "rst": "term\n    definition here\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.deflist_classifiers",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                term2\n            <classifier>\n                classifier one\n            <classifier>\n                classifier two\n            <definition>\n                <paragraph>\n                    Definition2.\n",
+      "rst": "term2 : classifier one : classifier two\n    Definition2.\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.deflist_colon_no_space",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                term:not a classifier\n            <definition>\n                <paragraph>\n                    Definition.\n",
+      "rst": "term:not a classifier\n    Definition.\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.deflist_merge_items",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                term1\n            <definition>\n                <paragraph>\n                    Def1.\n        <definition_list_item>\n            <term>\n                term2\n            <definition>\n                <paragraph>\n                    Def2.\n",
+      "rst": "term1\n    Def1.\n\nterm2\n    Def2.\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.deflist_multi_para_definition",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                term\n            <definition>\n                <paragraph>\n                    para one\n                <paragraph>\n                    para two\n",
+      "rst": "term\n    para one\n\n    para two\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.deflist_nested_list_in_def",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                term\n            <definition>\n                <bullet_list bullet=\"-\">\n                    <list_item>\n                        <paragraph>\n                            a\n                    <list_item>\n                        <paragraph>\n                            b\n",
+      "rst": "term\n    - a\n    - b\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.deflist_ends_no_blank",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                term\n            <definition>\n                <paragraph>\n                    def\n    <system_message level=\"2\" line=\"3\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Definition list ends without a blank line; unexpected unindent.\n    <paragraph>\n        plain\n",
+      "rst": "term\n    def\nplain\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.deflist_adjacent_items",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                term\n            <definition>\n                <paragraph>\n                    def\n        <definition_list_item>\n            <term>\n                term2\n            <definition>\n                <paragraph>\n                    def2\n",
+      "rst": "term\n    def\nterm2\n    def2\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.quote_simple",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <paragraph>\n            No matter where you go, there you are.\n",
+      "rst": "Para.\n\n    No matter where you go, there you are.\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.quote_attribution",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <paragraph>\n            No matter where you go, there you are.\n        <attribution>\n            Buckaroo Banzai\n",
+      "rst": "Para.\n\n    No matter where you go, there you are.\n\n    -- Buckaroo Banzai\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.quote_attribution_em_dash",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <paragraph>\n            Quoted here.\n        <attribution>\n            Author\n",
+      "rst": "Para.\n\n    Quoted here.\n\n    — Author\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.quote_two_quotes_split",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <paragraph>\n            First quote.\n        <attribution>\n            First Author\n    <block_quote>\n        <paragraph>\n            Second quote.\n        <attribution>\n            Second Author\n",
+      "rst": "Para.\n\n    First quote.\n\n    -- First Author\n\n    Second quote.\n\n    -- Second Author\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.quote_nested_quote",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <paragraph>\n            outer quote\n        <block_quote>\n            <paragraph>\n                inner quote\n",
+      "rst": "Para.\n\n    outer quote\n\n        inner quote\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.quote_list_inside_quote",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <bullet_list bullet=\"-\">\n            <list_item>\n                <paragraph>\n                    a\n            <list_item>\n                <paragraph>\n                    b\n",
+      "rst": "Para.\n\n    - a\n    - b\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.quote_multi_paragraph",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <paragraph>\n            first quoted para\n        <paragraph>\n            second quoted para\n",
+      "rst": "Para.\n\n    first quoted para\n\n    second quoted para\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.literal_expanded",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Paragraph introducing:\n    <literal_block xml:space=\"preserve\">\n        literal line one\n        literal line two\n",
+      "rst": "Paragraph introducing::\n\n    literal line one\n    literal line two\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.literal_minimized",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Paragraph ends with\n    <literal_block xml:space=\"preserve\">\n        literal here\n",
+      "rst": "Paragraph ends with ::\n\n    literal here\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.literal_triple_colon",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        text::\n    <literal_block xml:space=\"preserve\">\n        x\n",
+      "rst": "text:::\n\n    x\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.literal_only_colons",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <literal_block xml:space=\"preserve\">\n        literal\n",
+      "rst": "::\n\n    literal\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.literal_quoted",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Next is a quoted literal:\n    <literal_block xml:space=\"preserve\">\n        > quoted line one\n        > quoted line two\n",
+      "rst": "Next is a quoted literal::\n\n> quoted line one\n> quoted line two\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.literal_missing",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Intro:\n    <system_message level=\"2\" line=\"3\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Literal block expected; none found.\n    <paragraph>\n        Not indented.\n",
+      "rst": "Intro::\n\nNot indented.\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.literal_ends_no_blank",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        para:\n    <literal_block xml:space=\"preserve\">\n        lit\n    <system_message level=\"2\" line=\"4\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Literal block ends without a blank line; unexpected unindent.\n    <paragraph>\n        back\n",
+      "rst": "para::\n\n    lit\nback\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.literal_internal_blank_lines",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        code:\n    <literal_block xml:space=\"preserve\">\n        line one\n        \n        line two\n",
+      "rst": "code::\n\n    line one\n\n    line two\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.literal_deeper_relative_indent",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        code:\n    <literal_block xml:space=\"preserve\">\n        six spaces\n          eight spaces\n",
+      "rst": "code::\n\n      six spaces\n        eight spaces\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.lineblock_simple",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <line_block>\n        <line>\n            Lend us a couple of bob till Thursday.\n        <line>\n            I am absolutely skint.\n",
+      "rst": "| Lend us a couple of bob till Thursday.\n| I am absolutely skint.\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.lineblock_nested",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <line_block>\n        <line>\n            top one\n        <line>\n            top two\n        <line_block>\n            <line>\n                nested one\n        <line>\n            back\n        <line>\n        <line>\n            after empty\n",
+      "rst": "| top one\n| top two\n|     nested one\n| back\n|\n| after empty\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.lineblock_continuation",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <line_block>\n        <line>\n            A very long line\n            continued here\n        <line>\n            second\n",
+      "rst": "| A very long line\n  continued here\n| second\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.lineblock_after_paragraph",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Intro para.\n    <line_block>\n        <line>\n            line one\n        <line>\n            line two\n",
+      "rst": "Intro para.\n\n| line one\n| line two\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.comment_target_comment_multiline",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n        This is a comment\n        that continues on\n        multiple lines.\n",
+      "rst": ".. This is a comment\n   that continues on\n   multiple lines.\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.comment_target_comment_empty_start",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n    <block_quote>\n        <paragraph>\n            Indented block attached\n            to an empty comment start.\n",
+      "rst": "..\n\n   Indented block attached\n   to an empty comment start.\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.comment_target_comment_bare",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n",
+      "rst": "..\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.comment_target_comment_weird_colons",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n        just a comment::  with weird colons\n",
+      "rst": ".. just a comment::  with weird colons\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.comment_target_comment_ragged",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n        first\n           deep\n        shallow\n",
+      "rst": ".. first\n      deep\n   shallow\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.comment_target_comment_adjacent_pair",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n        one\n    <comment xml:space=\"preserve\">\n        two\n",
+      "rst": ".. one\n.. two\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.review_comment_triple_space",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n        comment text\n",
+      "rst": "..   comment text\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.hardening_target_camel_name",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target ids=\"camelcase-name\" names=\"camelcase\\ name\" refuri=\"https://x/\">\n",
+      "rst": ".. _CamelCase  Name: https://x/\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.comment_target_target_backtick_name",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target ids=\"name-with-colon\" names=\"name\\ with:\\ colon\" refuri=\"https://x/\">\n",
+      "rst": ".. _`name with: colon`: https://x/\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.comment_target_target_escaped_colon",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target ids=\"a-b\" names=\"a:\\ b\" refuri=\"https://y/\">\n",
+      "rst": ".. _a\\: b: https://y/\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.comment_target_target_dup_external",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target dupnames=\"dup\" ids=\"dup\" refuri=\"https://1/\">\n    <system_message level=\"2\" line=\"3\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Duplicate explicit target name: \"dup\".\n    <target dupnames=\"dup\" ids=\"id1\" refuri=\"https://2/\">\n",
+      "rst": ".. _dup: https://1/\n\n.. _dup: https://2/\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.review_explicit_double_space_target",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target ids=\"t\" names=\"t\" refuri=\"https://x/\">\n",
+      "rst": "..  _t: https://x/\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.inline_basics_simple_emphasis",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        before \n        <emphasis>\n            emph\n         after\n",
+      "rst": "before *emph* after\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.inline_basics_three_kinds",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <emphasis>\n            a\n         \n        <strong>\n            b\n         \n        <literal>\n            c\n",
+      "rst": "*a* **b** ``c``\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.inline_basics_word_chars_block",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        a*b*c\n    <paragraph>\n        2*3*4\n",
+      "rst": "a*b*c\n\n2*3*4\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.inline_basics_punct_after_end",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <emphasis>\n            emph\n        . and \n        <emphasis>\n            emph\n        -like and \n        <emphasis>\n            emph\n        , done\n",
+      "rst": "*emph*. and *emph*-like and *emph*, done\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.inline_basics_escaped_stars_plain",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        *not markup*\n",
+      "rst": "\\*not markup\\*\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.inline_basics_escaped_space_joins",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        onetwo\n",
+      "rst": "one\\ two\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.inline_basics_markup_spans_lines",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <emphasis>\n            multi\n            line\n         end\n",
+      "rst": "*multi\nline* end\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.inline_basics_triple_stars",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <strong>\n            *x*\n",
+      "rst": "***x***\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.inline_basics_first_end_wins",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <emphasis>\n            word *word\n",
+      "rst": "*word *word*\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.inline_basics_no_nesting_emphasis",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <emphasis>\n            a **b*\n         c*\n",
+      "rst": "*a **b** c*\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.inline_basics_literal_protects_markup",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <literal>\n            *not markup*\n",
+      "rst": "``*not markup*``\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.inline_basics_unclosed_emphasis",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            *\n        oops\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Inline emphasis start-string without end-string.\n",
+      "rst": "*oops\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.inline_basics_unclosed_strong",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            **\n        oops\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Inline strong start-string without end-string.\n",
+      "rst": "**oops\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.inline_basics_unclosed_literal",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            ``\n        oops\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Inline literal start-string without end-string.\n",
+      "rst": "``oops\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.inline_basics_double_problematic",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        (\n        <problematic ids=\"id2\" refid=\"id1\">\n            *\n        emph \n        <problematic ids=\"id4\" refid=\"id3\">\n            *\n        nope\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Inline emphasis start-string without end-string.\n    <system_message backrefs=\"id4\" ids=\"id3\" level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Inline emphasis start-string without end-string.\n",
+      "rst": "(*emph *nope\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.inline_basics_emphasis_in_list",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                item \n                <emphasis>\n                    emph\n                 text\n",
+      "rst": "- item *emph* text\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.inline_carriers_markup_in_title",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"the-great-title\" names=\"the\\ great\\ title\">\n        <title>\n            The \n            <emphasis>\n                Great\n             Title\n        <paragraph>\n            body\n",
+      "rst": "The *Great* Title\n=================\n\nbody\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.inline_carriers_literal_in_title",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"using-code-here\" names=\"using\\ code\\ here\">\n        <title>\n            Using \n            <literal>\n                code\n             Here\n        <paragraph>\n            body\n",
+      "rst": "Using ``code`` Here\n===================\n\nbody\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.inline_carriers_markup_in_term",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                <emphasis>\n                    term\n                 text\n            <definition>\n                <paragraph>\n                    definition\n",
+      "rst": "*term* text\n    definition\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.inline_carriers_markup_in_attribution",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <paragraph>\n            body\n        <attribution>\n            <emphasis>\n                Anon\n             Author\n",
+      "rst": "Para.\n\n    body\n\n    -- *Anon* Author\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.inline_carriers_markup_in_lineblock",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <line_block>\n        <line>\n            plain line\n        <line>\n            <emphasis>\n                emph\n             line\n        <line>\n            <literal>\n                lit\n             line\n",
+      "rst": "| plain line\n| *emph* line\n| ``lit`` line\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.inline_refs_standalone_uris",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Go to \n        <reference refuri=\"https://x\">\n            https://x\n         and \n        <reference refuri=\"http://example.com/path?q=1\">\n            http://example.com/path?q=1\n         now.\n",
+      "rst": "Go to https://x and http://example.com/path?q=1 now.\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.inline_refs_bare_interpreted",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <title_reference>\n            interpreted\n         here.\n",
+      "rst": "See `interpreted` here.\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.inline_roles_generic_roles",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <emphasis>\n            text\n         and \n        <strong>\n            text\n         and \n        <literal>\n            text\n         end.\n",
+      "rst": ":emphasis:`text` and :strong:`text` and :literal:`text` end.\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.inline_roles_sub_sup",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Water \n        <subscript>\n            2\n         and x \n        <superscript>\n            2\n         end.\n",
+      "rst": "Water :sub:`2` and x :sup:`2` end.\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.inline_roles_title_aliases",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <title_reference>\n            Some Title\n         \n        <title_reference>\n            Some Title\n         \n        <title_reference>\n            Some Title\n         end.\n",
+      "rst": ":title-reference:`Some Title` :title:`Some Title` :t:`Some Title` end.\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.inline_roles_abbrev_acronym",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <abbreviation>\n            St. Nick\n         and \n        <acronym>\n            NATO\n         end.\n",
+      "rst": ":ab:`St. Nick` and :ac:`NATO` end.\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.inline_roles_math_role",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <math>\n            x^2 + y_1\n         and \n        <math>\n            a\\\\b\n         end.\n",
+      "rst": ":math:`x^2 + y_1` and :math:`a\\\\b` end.\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.inline_roles_literal_role_escapes",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <literal>\n            a*b\n         end.\n",
+      "rst": ":literal:`a\\*b` end.\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.inline_roles_suffix_syntax",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <emphasis>\n            text\n         and \n        <strong>\n            text\n         end.\n",
+      "rst": "`text`:emphasis: and `text`:strong: end.\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.fields_basic_mid_document",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        A paragraph first.\n    <field_list>\n        <field>\n            <field_name>\n                name\n            <field_body>\n                <paragraph>\n                    value\n        <field>\n            <field_name>\n                other\n            <field_body>\n                <paragraph>\n                    thing\n",
+      "rst": "A paragraph first.\n\n:name: value\n:other: thing\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.tables_grid_minimal_2x2",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"4\">\n            <colspec colwidth=\"4\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            A\n                    <entry>\n                        <paragraph>\n                            B\n                <row>\n                    <entry>\n                        <paragraph>\n                            C\n                    <entry>\n                        <paragraph>\n                            D\n",
+      "rst": "+----+----+\n| A  | B  |\n+----+----+\n| C  | D  |\n+----+----+\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.tables_grid_colwidths",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"3\">\n            <colspec colwidth=\"3\">\n            <colspec colwidth=\"9\">\n            <colspec colwidth=\"2\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            a\n                    <entry>\n                        <paragraph>\n                            bbbbbbb\n                    <entry>\n                        <paragraph>\n                            c\n",
+      "rst": "+---+---------+--+\n| a | bbbbbbb | c|\n+---+---------+--+\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.tables_grid_header_sep",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"4\">\n            <colspec colwidth=\"4\">\n            <thead>\n                <row>\n                    <entry>\n                        <paragraph>\n                            H1\n                    <entry>\n                        <paragraph>\n                            H2\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            C\n                    <entry>\n                        <paragraph>\n                            D\n",
+      "rst": "+----+----+\n| H1 | H2 |\n+====+====+\n| C  | D  |\n+----+----+\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.tables_grid_two_header_rows",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"4\">\n            <colspec colwidth=\"4\">\n            <thead>\n                <row>\n                    <entry>\n                        <paragraph>\n                            H1\n                    <entry>\n                        <paragraph>\n                            H2\n                <row>\n                    <entry>\n                        <paragraph>\n                            H3\n                    <entry>\n                        <paragraph>\n                            H4\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            C\n                    <entry>\n                        <paragraph>\n                            D\n",
+      "rst": "+----+----+\n| H1 | H2 |\n+----+----+\n| H3 | H4 |\n+====+====+\n| C  | D  |\n+----+----+\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.tables_grid_empty_header",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"4\">\n            <colspec colwidth=\"4\">\n            <thead>\n                <row>\n                    <entry>\n                    <entry>\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            C\n                    <entry>\n                        <paragraph>\n                            D\n",
+      "rst": "+----+----+\n+====+====+\n| C  | D  |\n+----+----+\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.tables_grid_column_span",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"4\">\n            <colspec colwidth=\"4\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            A\n                    <entry>\n                        <paragraph>\n                            B\n                <row>\n                    <entry morecols=\"1\">\n                        <paragraph>\n                            merged\n",
+      "rst": "+----+----+\n| A  | B  |\n+----+----+\n| merged  |\n+----+----+\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.tables_grid_row_span",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"6\">\n            <colspec colwidth=\"4\">\n            <tbody>\n                <row>\n                    <entry morerows=\"1\">\n                        <paragraph>\n                            span\n                    <entry>\n                        <paragraph>\n                            B\n                <row>\n                    <entry>\n                        <paragraph>\n                            D\n",
+      "rst": "+------+----+\n| span | B  |\n|      +----+\n|      | D  |\n+------+----+\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.tables_grid_multiline_cell",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"10\">\n            <colspec colwidth=\"4\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            Cells may\n                            span.\n                    <entry>\n                        <paragraph>\n                            B\n",
+      "rst": "+----------+----+\n| Cells may| B  |\n| span.    |    |\n+----------+----+\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.tables_grid_multi_para_cell",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"13\">\n            <colspec colwidth=\"4\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            para one\n                        <paragraph>\n                            para two\n                    <entry>\n                        <paragraph>\n                            B\n",
+      "rst": "+-------------+----+\n| para one    | B  |\n|             |    |\n| para two    |    |\n+-------------+----+\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.tables_grid_list_in_cell",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"10\">\n            <colspec colwidth=\"4\">\n            <tbody>\n                <row>\n                    <entry>\n                        <bullet_list bullet=\"-\">\n                            <list_item>\n                                <paragraph>\n                                    item\n                            <list_item>\n                                <paragraph>\n                                    two\n                    <entry>\n                        <paragraph>\n                            B\n",
+      "rst": "+----------+----+\n| - item   | B  |\n| - two    |    |\n+----------+----+\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.tables_grid_empty_cells",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"4\">\n            <colspec colwidth=\"4\">\n            <tbody>\n                <row>\n                    <entry>\n                    <entry>\n",
+      "rst": "+----+----+\n|    |    |\n+----+----+\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.tables_grid_borders_only",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"4\">\n            <colspec colwidth=\"4\">\n            <tbody>\n                <row>\n                    <entry>\n                    <entry>\n",
+      "rst": "+----+----+\n+----+----+\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.tables_grid_right_border_misaligned",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"2\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Malformed table.\n            Right border not aligned or missing.\n        <literal_block xml:space=\"preserve\">\n            +----+----+\n            | A  | B   |\n            +----+----+\n",
+      "rst": "+----+----+\n| A  | B   |\n+----+----+\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.tables_grid_short_bottom_border",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Malformed table.\n            Right border not aligned or missing.\n        <literal_block xml:space=\"preserve\">\n            +----+----+\n            | A  | B  |\n            +----+---+\n",
+      "rst": "+----+----+\n| A  | B  |\n+----+---+\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.tables_grid_unclosed_table",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"2\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Malformed table.\n            Bottom border missing or corrupt.\n        <literal_block xml:space=\"preserve\">\n            +----+----+\n            | A  | B  |\n",
+      "rst": "+----+----+\n| A  | B  |\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.tables_grid_nested_indent_in_cell",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"1\">\n            <colspec colwidth=\"12\">\n            <tbody>\n                <row>\n                    <entry>\n                        <block_quote>\n                            <paragraph>\n                                deep\n                        <system_message level=\"2\" line=\"4\" source=\"<snippet>\" type=\"WARNING\">\n                            <paragraph>\n                                Block quote ends without a blank line; unexpected unindent.\n                        <paragraph>\n                            shallow\n",
+      "rst": "+------------+\n|   deep     |\n| shallow    |\n+------------+\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.tables_grid_table_in_list_item",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                item\n            <table>\n                <tgroup cols=\"2\">\n                    <colspec colwidth=\"4\">\n                    <colspec colwidth=\"4\">\n                    <tbody>\n                        <row>\n                            <entry>\n                                <paragraph>\n                                    A\n                            <entry>\n                                <paragraph>\n                                    B\n",
+      "rst": "- item\n\n  +----+----+\n  | A  | B  |\n  +----+----+\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.tables_grid_text_after_table",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"4\">\n            <colspec colwidth=\"4\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            A\n                    <entry>\n                        <paragraph>\n                            B\n    <paragraph>\n        after para\n",
+      "rst": "+----+----+\n| A  | B  |\n+----+----+\n\nafter para\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.review2_grid_cjk_cells",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"8\">\n            <colspec colwidth=\"6\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            漢字\n                    <entry>\n                        <paragraph>\n                            col2\n                <row>\n                    <entry>\n                        <paragraph>\n                            x\n                    <entry>\n                        <paragraph>\n                            y\n",
+      "rst": "+--------+------+\n| 漢字   | col2 |\n+--------+------+\n| x      | y    |\n+--------+------+\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.tables_simple_basic",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"5\">\n            <colspec colwidth=\"5\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            A\n                    <entry>\n                        <paragraph>\n                            B\n                <row>\n                    <entry>\n                        <paragraph>\n                            C\n                    <entry>\n                        <paragraph>\n                            D\n",
+      "rst": "=====  =====\nA      B\nC      D\n=====  =====\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.tables_simple_header",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"5\">\n            <colspec colwidth=\"5\">\n            <thead>\n                <row>\n                    <entry>\n                        <paragraph>\n                            H1\n                    <entry>\n                        <paragraph>\n                            H2\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            A\n                    <entry>\n                        <paragraph>\n                            B\n",
+      "rst": "=====  =====\nH1     H2\n=====  =====\nA      B\n=====  =====\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.tables_simple_multiline_row",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"5\">\n            <colspec colwidth=\"5\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            first\n                    <entry>\n                        <paragraph>\n                            cell\n                <row>\n                    <entry>\n                        <paragraph>\n                            more\n                    <entry>\n                        <paragraph>\n                            text\n                <row>\n                    <entry>\n                        <paragraph>\n                            next\n                    <entry>\n                        <paragraph>\n                            row\n",
+      "rst": "=====  =====\nfirst  cell\nmore   text\n-----  -----\nnext   row\n=====  =====\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.tables_simple_column_span_rule",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"5\">\n            <colspec colwidth=\"5\">\n            <tbody>\n                <row>\n                    <entry morecols=\"1\">\n                        <paragraph>\n                            merged cells\n                <row>\n                    <entry>\n                        <paragraph>\n                            A\n                    <entry>\n                        <paragraph>\n                            B\n",
+      "rst": "=====  =====\nmerged cells\n------------\nA      B\n=====  =====\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.tables_simple_right_edge_overflow",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"5\">\n            <colspec colwidth=\"25\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            A\n                    <entry>\n                        <paragraph>\n                            B and this extends beyond\n",
+      "rst": "=====  =====\nA      B and this extends beyond\n=====  =====\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.tables_simple_borders_only",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"5\">\n            <colspec colwidth=\"5\">\n            <tbody>\n                <row>\n                    <entry>\n                    <entry>\n",
+      "rst": "=====  =====\n=====  =====\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.tables_simple_border_mismatch",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Malformed table.\n            Bottom border or header rule does not match top border.\n        <literal_block xml:space=\"preserve\">\n            =====  =====\n            A      B\n            ===  ===\n",
+      "rst": "=====  =====\nA      B\n===  ===\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.tables_simple_margin_text",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"2\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Malformed table.\n            Text in column margin in table line 2.\n        <literal_block xml:space=\"preserve\">\n            =====  =====\n            A     xB\n            =====  =====\n",
+      "rst": "=====  =====\nA     xB\n=====  =====\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.tables_simple_three_columns",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"3\">\n            <colspec colwidth=\"3\">\n            <colspec colwidth=\"3\">\n            <colspec colwidth=\"3\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            a\n                    <entry>\n                        <paragraph>\n                            b\n                    <entry>\n                        <paragraph>\n                            c\n                <row>\n                    <entry>\n                        <paragraph>\n                            d\n                    <entry>\n                        <paragraph>\n                            e\n                    <entry>\n                        <paragraph>\n                            f\n",
+      "rst": "===  ===  ===\na    b    c\nd    e    f\n===  ===  ===\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.review2_simple_cjk_cells",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"5\">\n            <colspec colwidth=\"5\">\n            <thead>\n                <row>\n                    <entry>\n                        <paragraph>\n                            col 1\n                    <entry>\n                        <paragraph>\n                            col 2\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            漢字\n                    <entry>\n                        <paragraph>\n                            B\n",
+      "rst": "=====  =====\ncol 1  col 2\n=====  =====\n漢字   B\n=====  =====\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.errors_underline_too_short",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"long-section-title\" names=\"long\\ section\\ title\">\n        <title>\n            Long Section Title\n        <system_message level=\"2\" line=\"2\" source=\"<snippet>\" type=\"WARNING\">\n            <paragraph>\n                Title underline too short.\n            <literal_block xml:space=\"preserve\">\n                Long Section Title\n                ======\n",
+      "rst": "Long Section Title\n======\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.errors_unexpected_indent",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        line one\n        line two\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unexpected indentation.\n    <block_quote>\n        <paragraph>\n            Indented without blank line.\n",
+      "rst": "line one\nline two\n    Indented without blank line.\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.errors_nested_transition",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                Unexpected section title or transition.\n            <literal_block xml:space=\"preserve\">\n                ----\n        <paragraph>\n            quoted\n",
+      "rst": "Para.\n\n    ----\n\n    quoted\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.errors_nested_title",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <system_message level=\"3\" line=\"4\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                Unexpected section title.\n            <literal_block xml:space=\"preserve\">\n                Fake\n                ====\n",
+      "rst": "Para.\n\n    Fake\n    ====\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.hardening_sections_no_blank_between",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"a\" names=\"a\">\n        <title>\n            A\n    <section ids=\"b\" names=\"b\">\n        <title>\n            B\n",
+      "rst": "A\n=\nB\n=\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.hardening_body_adjacent_after_underline",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            body adjacent\n",
+      "rst": "Title\n=====\nbody adjacent\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.hardening_tab_in_literal",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        code:\n    <literal_block xml:space=\"preserve\">\n        a   b\n",
+      "rst": "code::\n\n    a\tb\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.hardening_lone_double_colon",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"2\" line=\"2\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Literal block expected; none found.\n",
+      "rst": "::\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.mixtures_everything_adjacent",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"head\" names=\"head\">\n        <title>\n            Head\n        <definition_list>\n            <definition_list_item>\n                <term>\n                    term\n                <definition>\n                    <paragraph>\n                        def\n        <bullet_list bullet=\"-\">\n            <list_item>\n                <paragraph>\n                    a\n            <list_item>\n                <paragraph>\n                    b\n        <enumerated_list enumtype=\"arabic\" prefix=\"\" suffix=\".\">\n            <list_item>\n                <paragraph>\n                    one\n            <list_item>\n                <paragraph>\n                    two\n        <literal_block xml:space=\"preserve\">\n            lit\n        <comment xml:space=\"preserve\">\n            done\n",
+      "rst": "Head\n====\n\nterm\n    def\n\n- a\n- b\n\n1. one\n2. two\n\n::\n\n    lit\n\n.. done\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.mixtures_literal_in_list",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                item with code:\n            <literal_block xml:space=\"preserve\">\n                indented code\n        <list_item>\n            <paragraph>\n                next item\n",
+      "rst": "- item with code::\n\n      indented code\n\n- next item\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.mixtures_list_quote_list",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                outer\n            <block_quote>\n                <paragraph>\n                    quoted in item\n            <bullet_list bullet=\"-\">\n                <list_item>\n                    <paragraph>\n                        inner after quote\n",
+      "rst": "- outer\n\n      quoted in item\n\n  - inner after quote\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.mixtures_comment_between_paragraphs",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        one\n    <comment xml:space=\"preserve\">\n        hidden note\n    <paragraph>\n        two\n",
+      "rst": "one\n\n.. hidden note\n\ntwo\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.mixtures_lineblock_then_list",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <line_block>\n        <line>\n            a\n        <line>\n            b\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                item\n",
+      "rst": "| a\n| b\n\n- item\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.mixtures_tabbed_list",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                item\n            <block_quote>\n                <paragraph>\n                    continued via tab\n",
+      "rst": "- item\n\n\tcontinued via tab\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.target_external_only",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target ids=\"docutils\" names=\"docutils\" refuri=\"https://docutils.sourceforge.io/\">\n    <paragraph>\n        para\n",
+      "rst": ".. _docutils: https://docutils.sourceforge.io/\n\npara\n"
+    },
+    {
+      "family": "sx_plain",
+      "name": "sx_plain.two_external_targets",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target ids=\"a\" names=\"a\" refuri=\"https://x/\">\n    <target ids=\"b\" names=\"b\" refuri=\"https://y/\">\n    <paragraph>\n        para here\n",
+      "rst": ".. _a: https://x/\n.. _b: https://y/\n\npara here\n"
+    },
+    {
+      "family": "sx_admonitions",
+      "name": "sx_admonitions.dir_admonitions_note_indented_body",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <paragraph>\n            Body text.\n",
+      "rst": ".. note::\n\n   Body text.\n"
+    },
+    {
+      "family": "sx_admonitions",
+      "name": "sx_admonitions.dir_admonitions_note_inline_content",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <paragraph>\n            inline text\n",
+      "rst": ".. note:: inline text\n"
+    },
+    {
+      "family": "sx_admonitions",
+      "name": "sx_admonitions.dir_admonitions_note_inline_plus_body",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <paragraph>\n            inline text\n        <paragraph>\n            Body.\n",
+      "rst": ".. note:: inline text\n\n   Body.\n"
+    },
+    {
+      "family": "sx_admonitions",
+      "name": "sx_admonitions.dir_admonitions_note_class_option",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note classes=\"foo\">\n        <paragraph>\n            inline text\n        <paragraph>\n            Body.\n",
+      "rst": ".. note:: inline text\n   :class: foo\n\n   Body.\n"
+    },
+    {
+      "family": "sx_admonitions",
+      "name": "sx_admonitions.dir_admonitions_note_unknown_option",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"note\" directive:\n            unknown option: \"bogus\".\n        <literal_block xml:space=\"preserve\">\n            .. note::\n               :bogus: x\n            \n               Body.\n",
+      "rst": ".. note::\n   :bogus: x\n\n   Body.\n"
+    },
+    {
+      "family": "sx_admonitions",
+      "name": "sx_admonitions.dir_admonitions_empty_note_error",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"note\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. note::\n",
+      "rst": ".. note::\n"
+    },
+    {
+      "family": "sx_admonitions",
+      "name": "sx_admonitions.dir_admonitions_all_admonition_kinds",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <warning>\n        <paragraph>\n            w\n    <tip>\n        <paragraph>\n            t\n    <danger>\n        <paragraph>\n            d\n    <attention>\n        <paragraph>\n            a\n",
+      "rst": ".. warning:: w\n\n.. tip:: t\n\n.. danger:: d\n\n.. attention:: a\n"
+    },
+    {
+      "family": "sx_admonitions",
+      "name": "sx_admonitions.dir_admonitions_generic_admonition",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <admonition classes=\"admonition-custom-title\">\n        <title>\n            Custom Title\n        <paragraph>\n            Body text.\n",
+      "rst": ".. admonition:: Custom Title\n\n   Body text.\n"
+    },
+    {
+      "family": "sx_admonitions",
+      "name": "sx_admonitions.dir_admonitions_generic_admonition_class",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <admonition classes=\"special\">\n        <title>\n            T\n        <paragraph>\n            Body.\n",
+      "rst": ".. admonition:: T\n   :class: special\n\n   Body.\n"
+    },
+    {
+      "family": "sx_admonitions",
+      "name": "sx_admonitions.dir_admonitions_generic_missing_arg",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"admonition\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. admonition::\n            \n               Body.\n",
+      "rst": ".. admonition::\n\n   Body.\n"
+    },
+    {
+      "family": "sx_admonitions",
+      "name": "sx_admonitions.dir_admonitions_note_nested_list",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <bullet_list bullet=\"-\">\n            <list_item>\n                <paragraph>\n                    a\n            <list_item>\n                <paragraph>\n                    b\n",
+      "rst": ".. note::\n\n   - a\n   - b\n"
+    },
+    {
+      "family": "sx_admonitions",
+      "name": "sx_admonitions.dir_admonitions_note_named",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note ids=\"my-note\" names=\"my-note\">\n        <paragraph>\n            Body.\n",
+      "rst": ".. note::\n   :name: my-note\n\n   Body.\n"
+    },
+    {
+      "family": "sx_admonitions",
+      "name": "sx_admonitions.dir_admonitions_nested_admonition",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <warning>\n            <paragraph>\n                inner\n",
+      "rst": ".. note::\n\n   .. warning::\n\n      inner\n"
+    },
+    {
+      "family": "sx_admonitions",
+      "name": "sx_admonitions.dir_admonitions_directive_no_blank_after",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <paragraph>\n            content\n    <system_message level=\"2\" line=\"2\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Explicit markup ends without a blank line; unexpected unindent.\n    <paragraph>\n        adjacent para\n",
+      "rst": ".. note:: content\nadjacent para\n"
+    },
+    {
+      "family": "sx_admonitions",
+      "name": "sx_admonitions.dir_options_duplicate_option",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"note\" directive:\n            invalid option data: duplicate option \"class\".\n        <literal_block xml:space=\"preserve\">\n            .. note::\n               :class: a\n               :class: b\n            \n               Body.\n",
+      "rst": ".. note::\n   :class: a\n   :class: b\n\n   Body.\n"
+    },
+    {
+      "family": "sx_admonitions",
+      "name": "sx_admonitions.dir_options_duplicate_option_mixed_case",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"note\" directive:\n            invalid option data: duplicate option \"class\".\n        <literal_block xml:space=\"preserve\">\n            .. note::\n               :Class: a\n               :class: b\n            \n               Body.\n",
+      "rst": ".. note::\n   :Class: a\n   :class: b\n\n   Body.\n"
+    },
+    {
+      "family": "sx_admonitions",
+      "name": "sx_admonitions.dir_options_multiword_field_name",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"note\" directive:\n            invalid option data: extension option field name may not contain multiple words.\n        <literal_block xml:space=\"preserve\">\n            .. note::\n               :class extra: v\n            \n               Body.\n",
+      "rst": ".. note::\n   :class extra: v\n\n   Body.\n"
+    },
+    {
+      "family": "sx_admonitions",
+      "name": "sx_admonitions.dir_options_class_empty_value",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"note\" directive:\n            invalid option value: (option: \"class\"; value: None)\n            argument required but none supplied.\n        <literal_block xml:space=\"preserve\">\n            .. note::\n               :class:\n            \n               Body.\n",
+      "rst": ".. note::\n   :class:\n\n   Body.\n"
+    },
+    {
+      "family": "sx_admonitions",
+      "name": "sx_admonitions.dir_options_name_empty_value",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note ids=\"id1\" names=\"\">\n        <paragraph>\n            Body text.\n",
+      "rst": ".. note::\n   :name:\n\n   Body text.\n"
+    },
+    {
+      "family": "sx_admonitions",
+      "name": "sx_admonitions.dir_options_name_and_class",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note classes=\"foo bar\" ids=\"target-one\" names=\"target\\ one\">\n        <paragraph>\n            Body.\n",
+      "rst": ".. note::\n   :class: foo bar\n   :name: target one\n\n   Body.\n"
+    },
+    {
+      "family": "sx_admonitions",
+      "name": "sx_admonitions.dir_options_option_value_continuation",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note classes=\"foo bar continued\">\n        <paragraph>\n            Body text.\n",
+      "rst": ".. note::\n   :class: foo\n      bar continued\n\n   Body text.\n"
+    },
+    {
+      "family": "sx_admonitions",
+      "name": "sx_admonitions.dir_options_options_after_blank_are_content",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note classes=\"foo\">\n        <field_list>\n            <field>\n                <field_name>\n                    name\n                <field_body>\n                    <paragraph>\n                        bar\n        <paragraph>\n            Body.\n",
+      "rst": ".. note::\n   :class: foo\n\n   :name: bar\n\n   Body.\n"
+    },
+    {
+      "family": "sx_admonitions",
+      "name": "sx_admonitions.dir_options_two_blanks_before_content",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note classes=\"foo\">\n        <paragraph>\n            Body after two blank lines.\n",
+      "rst": ".. note::\n   :class: foo\n\n\n   Body after two blank lines.\n"
+    },
+    {
+      "family": "sx_admonitions",
+      "name": "sx_admonitions.dir_options_malformed_field_marker_to_content",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <paragraph>\n            :class value\n        <paragraph>\n            Body.\n",
+      "rst": ".. note::\n   :class value\n\n   Body.\n"
+    },
+    {
+      "family": "sx_admonitions",
+      "name": "sx_admonitions.dir_options_admonition_multiline_title",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <admonition classes=\"admonition-the-title-continues-here\">\n        <title>\n            The Title\n            continues here\n        <paragraph>\n            Body text.\n",
+      "rst": ".. admonition:: The Title\n   continues here\n\n   Body text.\n"
+    },
+    {
+      "family": "sx_admonitions",
+      "name": "sx_admonitions.dir_options_admonition_punct_title_class",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <admonition classes=\"admonition-\">\n        <title>\n            !!!\n        <paragraph>\n            Body.\n",
+      "rst": ".. admonition:: !!!\n\n   Body.\n"
+    },
+    {
+      "family": "sx_admonitions",
+      "name": "sx_admonitions.dir_options_note_empty_uppercase",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"NOTE\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. NOTE::\n",
+      "rst": ".. NOTE::\n"
+    },
+    {
+      "family": "sx_admonitions",
+      "name": "sx_admonitions.dir_options_note_marker_line_content_only",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <paragraph>\n            This whole line becomes content, not an argument.\n",
+      "rst": ".. note:: This whole line becomes content, not an argument.\n"
+    },
+    {
+      "family": "sx_admonitions",
+      "name": "sx_admonitions.dir_options_warning_continuation_content",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <warning>\n        <paragraph>\n            Danger\n            ahead. This continues the paragraph.\n        <paragraph>\n            Second paragraph of warning.\n",
+      "rst": ".. warning:: Danger\n   ahead. This continues the paragraph.\n\n   Second paragraph of warning.\n"
+    },
+    {
+      "family": "sx_admonitions",
+      "name": "sx_admonitions.dir_options_unexpected_indentation_in_note",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <definition_list>\n            <definition_list_item>\n                <term>\n                    a\n                <definition>\n                    <paragraph>\n                        b\n",
+      "rst": ".. note::\n\n   a\n     b\n"
+    },
+    {
+      "family": "sx_admonitions",
+      "name": "sx_admonitions.dir_options_note_content_unindent_warning",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <paragraph>\n            para\n    <system_message level=\"2\" line=\"4\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Explicit markup ends without a blank line; unexpected unindent.\n    <paragraph>\n        after\n",
+      "rst": ".. note::\n\n   para\nafter\n"
+    },
+    {
+      "family": "sx_admonitions",
+      "name": "sx_admonitions.dir_options_consecutive_directives_no_blank",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <paragraph>\n            one\n    <note>\n        <paragraph>\n            two\n",
+      "rst": ".. note:: one\n.. note:: two\n"
+    },
+    {
+      "family": "sx_admonitions",
+      "name": "sx_admonitions.dir_core_no_space_paragraph",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        ..note:\n    <literal_block xml:space=\"preserve\">\n        Body text.\n",
+      "rst": "..note::\n\n   Body text.\n"
+    },
+    {
+      "family": "sx_admonitions",
+      "name": "sx_admonitions.dir_core_single_colon_comment",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n        note:\n        \n        Body text.\n",
+      "rst": ".. note:\n\n   Body text.\n"
+    },
+    {
+      "family": "sx_admonitions",
+      "name": "sx_admonitions.dir_core_two_spaces_comment",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n        note  ::\n        \n        Body text.\n",
+      "rst": ".. note  ::\n\n   Body text.\n"
+    },
+    {
+      "family": "sx_admonitions",
+      "name": "sx_admonitions.dir_core_one_space_before_colons_ok",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <paragraph>\n            Body text.\n",
+      "rst": ".. note ::\n\n   Body text.\n"
+    },
+    {
+      "family": "sx_admonitions",
+      "name": "sx_admonitions.dir_core_case_insensitive",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <paragraph>\n            Body text.\n",
+      "rst": ".. NOTE::\n\n   Body text.\n"
+    },
+    {
+      "family": "sx_admonitions",
+      "name": "sx_admonitions.remaining_kinds",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <hint>\n        <paragraph>\n            h\n    <important>\n        <paragraph>\n            i\n    <caution>\n        <paragraph>\n            c\n    <error>\n        <paragraph>\n            e\n",
+      "rst": ".. hint:: h\n\n.. important:: i\n\n.. caution:: c\n\n.. error:: e\n"
+    },
+    {
+      "family": "sx_body",
+      "name": "sx_body.dir_body_topic_basic",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <topic>\n        <title>\n            Topic Title\n        <paragraph>\n            Topic body paragraph.\n",
+      "rst": ".. topic:: Topic Title\n\n   Topic body paragraph.\n"
+    },
+    {
+      "family": "sx_body",
+      "name": "sx_body.dir_body_topic_no_body",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"topic\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. topic:: Topic Title\n",
+      "rst": ".. topic:: Topic Title\n"
+    },
+    {
+      "family": "sx_body",
+      "name": "sx_body.dir_body_topic_in_note",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                The \"topic\" directive may not be used within topics or body elements.\n            <literal_block xml:space=\"preserve\">\n                .. topic:: Inner\n                \n                   body\n",
+      "rst": ".. note::\n\n   .. topic:: Inner\n\n      body\n"
+    },
+    {
+      "family": "sx_body",
+      "name": "sx_body.dir_body_topic_in_list_item",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                item\n            <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n                <paragraph>\n                    The \"topic\" directive may not be used within topics or body elements.\n                <literal_block xml:space=\"preserve\">\n                    .. topic:: Inner\n                    \n                       body\n",
+      "rst": "- item\n\n  .. topic:: Inner\n\n     body\n"
+    },
+    {
+      "family": "sx_body",
+      "name": "sx_body.dir_body_topic_class_name",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <topic classes=\"special\" ids=\"my-topic\" names=\"my\\ topic\">\n        <title>\n            T\n        <paragraph>\n            Body.\n",
+      "rst": ".. topic:: T\n   :class: special\n   :name: my topic\n\n   Body.\n"
+    },
+    {
+      "family": "sx_body",
+      "name": "sx_body.dir_body_topic_markup_title",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <topic>\n        <title>\n            <emphasis>\n                emphasized\n             title\n        <paragraph>\n            Body.\n",
+      "rst": ".. topic:: *emphasized* title\n\n   Body.\n"
+    },
+    {
+      "family": "sx_body",
+      "name": "sx_body.dir_body_sidebar_title_body",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <sidebar>\n        <title>\n            Sidebar Title\n        <paragraph>\n            Sidebar body.\n",
+      "rst": ".. sidebar:: Sidebar Title\n\n   Sidebar body.\n"
+    },
+    {
+      "family": "sx_body",
+      "name": "sx_body.dir_body_sidebar_subtitle",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <sidebar>\n        <title>\n            Sidebar Title\n        <subtitle>\n            Sidebar Subtitle\n        <paragraph>\n            Sidebar body.\n",
+      "rst": ".. sidebar:: Sidebar Title\n   :subtitle: Sidebar Subtitle\n\n   Sidebar body.\n"
+    },
+    {
+      "family": "sx_body",
+      "name": "sx_body.dir_body_sidebar_subtitle_no_title",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            The \"subtitle\" option may not be used without a title.\n        <literal_block xml:space=\"preserve\">\n            .. sidebar::\n               :subtitle: A Subtitle\n            \n               Body text.\n",
+      "rst": ".. sidebar::\n   :subtitle: A Subtitle\n\n   Body text.\n"
+    },
+    {
+      "family": "sx_body",
+      "name": "sx_body.dir_body_sidebar_no_title",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <sidebar>\n        <paragraph>\n            Body only.\n",
+      "rst": ".. sidebar::\n\n   Body only.\n"
+    },
+    {
+      "family": "sx_body",
+      "name": "sx_body.dir_body_sidebar_nested_error",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <sidebar>\n        <title>\n            Outer\n        <paragraph>\n            Outer body.\n        <system_message level=\"3\" line=\"5\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                The \"sidebar\" directive may not be used within a sidebar element.\n            <literal_block xml:space=\"preserve\">\n                .. sidebar:: Inner\n                \n                   Inner body.\n",
+      "rst": ".. sidebar:: Outer\n\n   Outer body.\n\n   .. sidebar:: Inner\n\n      Inner body.\n"
+    },
+    {
+      "family": "sx_body",
+      "name": "sx_body.dir_body_topic_in_sidebar",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <sidebar>\n        <title>\n            Outer\n        <topic>\n            <title>\n                Inner Topic\n            <paragraph>\n                body\n",
+      "rst": ".. sidebar:: Outer\n\n   .. topic:: Inner Topic\n\n      body\n"
+    },
+    {
+      "family": "sx_body",
+      "name": "sx_body.dir_body_rubric_minimal",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <rubric>\n        This is a rubric\n",
+      "rst": ".. rubric:: This is a rubric\n"
+    },
+    {
+      "family": "sx_body",
+      "name": "sx_body.dir_body_rubric_options",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <rubric classes=\"myrubricclass\" ids=\"rub1\" names=\"rub1\">\n        Named rubric\n",
+      "rst": ".. rubric:: Named rubric\n   :class: myrubricclass\n   :name: rub1\n"
+    },
+    {
+      "family": "sx_body",
+      "name": "sx_body.dir_body_rubric_markup",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <rubric>\n        A \n        <emphasis>\n            marked up\n         rubric\n",
+      "rst": ".. rubric:: A *marked up* rubric\n"
+    },
+    {
+      "family": "sx_body",
+      "name": "sx_body.dir_body_rubric_content_error",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"rubric\" directive:\n            no content permitted.\n        <literal_block xml:space=\"preserve\">\n            .. rubric:: Title\n            \n               body not allowed\n",
+      "rst": ".. rubric:: Title\n\n   body not allowed\n"
+    },
+    {
+      "family": "sx_body",
+      "name": "sx_body.dir_body_rubric_missing_arg",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"rubric\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. rubric::\n",
+      "rst": ".. rubric::\n"
+    },
+    {
+      "family": "sx_body",
+      "name": "sx_body.dir_body_epigraph_attribution",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <block_quote classes=\"epigraph\">\n        <paragraph>\n            Epigraph text.\n        <attribution>\n            Attribution\n",
+      "rst": ".. epigraph::\n\n   Epigraph text.\n\n   -- Attribution\n"
+    },
+    {
+      "family": "sx_body",
+      "name": "sx_body.dir_body_highlights_basic",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <block_quote classes=\"highlights\">\n        <paragraph>\n            Highlighted text.\n",
+      "rst": ".. highlights::\n\n   Highlighted text.\n"
+    },
+    {
+      "family": "sx_body",
+      "name": "sx_body.dir_body_pull_quote_basic",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <block_quote classes=\"pull-quote\">\n        <paragraph>\n            Pulled text.\n",
+      "rst": ".. pull-quote::\n\n   Pulled text.\n"
+    },
+    {
+      "family": "sx_body",
+      "name": "sx_body.dir_body_epigraph_empty",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"epigraph\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. epigraph::\n",
+      "rst": ".. epigraph::\n"
+    },
+    {
+      "family": "sx_body",
+      "name": "sx_body.dir_body_epigraph_marker_line",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <block_quote classes=\"epigraph\">\n        <paragraph>\n            text on the marker line\n",
+      "rst": ".. epigraph:: text on the marker line\n"
+    },
+    {
+      "family": "sx_body",
+      "name": "sx_body.dir_body_epigraph_unknown_option",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <block_quote classes=\"epigraph\">\n        <field_list>\n            <field>\n                <field_name>\n                    class\n                <field_body>\n                    <paragraph>\n                        x\n        <paragraph>\n            text\n",
+      "rst": ".. epigraph::\n   :class: x\n\n   text\n"
+    },
+    {
+      "family": "sx_body",
+      "name": "sx_body.dir_body_compound_two_paras",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <compound>\n        <paragraph>\n            First paragraph of compound.\n        <paragraph>\n            Second paragraph of compound.\n",
+      "rst": ".. compound::\n\n   First paragraph of compound.\n\n   Second paragraph of compound.\n"
+    },
+    {
+      "family": "sx_body",
+      "name": "sx_body.dir_body_compound_empty_error",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"compound\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. compound::\n",
+      "rst": ".. compound::\n"
+    },
+    {
+      "family": "sx_body",
+      "name": "sx_body.dir_body_compound_class",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <compound classes=\"custom\">\n        <paragraph>\n            Body.\n",
+      "rst": ".. compound::\n   :class: custom\n\n   Body.\n"
+    },
+    {
+      "family": "sx_body",
+      "name": "sx_body.dir_body_container_no_class",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <container>\n        <paragraph>\n            Container body.\n",
+      "rst": ".. container::\n\n   Container body.\n"
+    },
+    {
+      "family": "sx_body",
+      "name": "sx_body.dir_body_container_classes",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <container classes=\"custom-class another-class\">\n        <paragraph>\n            Container body.\n",
+      "rst": ".. container:: custom-class another-class\n\n   Container body.\n"
+    },
+    {
+      "family": "sx_body",
+      "name": "sx_body.dir_body_container_bad_class",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Invalid class attribute value for \"container\" directive: \"!!!\".\n        <literal_block xml:space=\"preserve\">\n            .. container:: !!!\n            \n               Body.\n",
+      "rst": ".. container:: !!!\n\n   Body.\n"
+    },
+    {
+      "family": "sx_body",
+      "name": "sx_body.dir_body_container_named",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <container classes=\"cls\" ids=\"cont\" names=\"cont\">\n        <paragraph>\n            Body.\n",
+      "rst": ".. container:: cls\n   :name: cont\n\n   Body.\n"
+    },
+    {
+      "family": "sx_body",
+      "name": "sx_body.dir_body_parsed_literal_inline",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <literal_block xml:space=\"preserve\">\n        Text with \n        <emphasis>\n            emphasis\n         and \n        <strong>\n            strong\n         and a\n        <reference name=\"link\" refuri=\"http://example.com\">\n            link\n        <target ids=\"link\" names=\"link\" refuri=\"http://example.com\">\n        .\n",
+      "rst": ".. parsed-literal::\n\n   Text with *emphasis* and **strong** and a\n   `link <http://example.com>`_.\n"
+    },
+    {
+      "family": "sx_body",
+      "name": "sx_body.dir_body_parsed_literal_class",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <literal_block classes=\"code-ish\" ids=\"pl1\" names=\"pl1\" xml:space=\"preserve\">\n        plain *escaped* text\n",
+      "rst": ".. parsed-literal::\n   :class: code-ish\n   :name: pl1\n\n   plain \\*escaped\\* text\n"
+    },
+    {
+      "family": "sx_image",
+      "name": "sx_image.dir_image_missing_arg",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"image\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. image::\n",
+      "rst": ".. image::\n"
+    },
+    {
+      "family": "sx_image",
+      "name": "sx_image.dir_image_content_not_permitted",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"image\" directive:\n            no content permitted.\n        <literal_block xml:space=\"preserve\">\n            .. image:: pic.png\n            \n               caption text\n",
+      "rst": ".. image:: pic.png\n\n   caption text\n"
+    },
+    {
+      "family": "sx_image",
+      "name": "sx_image.dir_image_align_vertical_error",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"image\" directive: \"top\" is not a valid value for the \"align\" option.  Valid values for \"align\" are: \"left\", \"center\", \"right\".\n        <literal_block xml:space=\"preserve\">\n            .. image:: pic.png\n               :align: top\n",
+      "rst": ".. image:: pic.png\n   :align: top\n"
+    },
+    {
+      "family": "sx_image",
+      "name": "sx_image.dir_image_align_invalid_choice",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"image\" directive:\n            invalid option value: (option: \"align\"; value: 'sideways')\n            \"sideways\" unknown; choose from \"top\", \"middle\", \"bottom\", \"left\", \"center\", or \"right\".\n        <literal_block xml:space=\"preserve\">\n            .. image:: pic.png\n               :align: sideways\n",
+      "rst": ".. image:: pic.png\n   :align: sideways\n"
+    },
+    {
+      "family": "sx_image",
+      "name": "sx_image.dir_image_scale_not_number",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"image\" directive:\n            invalid option value: (option: \"scale\"; value: 'notanumber')\n            invalid literal for int() with base 10: 'notanumber'.\n        <literal_block xml:space=\"preserve\">\n            .. image:: pic.png\n               :scale: notanumber\n",
+      "rst": ".. image:: pic.png\n   :scale: notanumber\n"
+    },
+    {
+      "family": "sx_image",
+      "name": "sx_image.dir_image_scale_negative",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"image\" directive:\n            invalid option value: (option: \"scale\"; value: '-5')\n            negative value; must be positive or zero.\n        <literal_block xml:space=\"preserve\">\n            .. image:: pic.png\n               :scale: -5\n",
+      "rst": ".. image:: pic.png\n   :scale: -5\n"
+    },
+    {
+      "family": "sx_image",
+      "name": "sx_image.dir_image_width_banana",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"image\" directive:\n            invalid option value: (option: \"width\"; value: 'banana')\n            \"banana\" is no valid measure..\n        <literal_block xml:space=\"preserve\">\n            .. image:: pic.png\n               :width: banana\n",
+      "rst": ".. image:: pic.png\n   :width: banana\n"
+    },
+    {
+      "family": "sx_image",
+      "name": "sx_image.dir_image_height_bad_unit",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"image\" directive:\n            invalid option value: (option: \"height\"; value: '10banana')\n            not a positive number or measure of one of the following units:\n            em, ex, ch, rem, vw, vh, vmin, vmax, cm, mm, Q, in, pt, pc, px.\n        <literal_block xml:space=\"preserve\">\n            .. image:: pic.png\n               :height: 10banana\n",
+      "rst": ".. image:: pic.png\n   :height: 10banana\n"
+    },
+    {
+      "family": "sx_image",
+      "name": "sx_image.dir_image_target_empty",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"image\" directive:\n            invalid option value: (option: \"target\"; value: None)\n            argument required but none supplied.\n        <literal_block xml:space=\"preserve\">\n            .. image:: pic.png\n               :target:\n",
+      "rst": ".. image:: pic.png\n   :target:\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.versionadded_bare",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <versionmodified type=\"versionadded\" version=\"1.2\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified added\">\n                Added in version 1.2.\n",
+      "rst": ".. versionadded:: 1.2\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.versionadded_content",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <versionmodified type=\"versionadded\" version=\"1.2\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified added\">\n                Added in version 1.2: \n            Some explanation text.\n",
+      "rst": ".. versionadded:: 1.2\n\n   Some explanation text.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.versionadded_single_line",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <versionmodified type=\"versionadded\" version=\"1.2\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified added\">\n                Added in version 1.2: \n            Available since this release.\n",
+      "rst": ".. versionadded:: 1.2 Available since this release.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.versionchanged",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <versionmodified type=\"versionchanged\" version=\"2.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified changed\">\n                Changed in version 2.0: \n            Something changed.\n",
+      "rst": ".. versionchanged:: 2.0\n\n   Something changed.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.deprecated",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <versionmodified type=\"deprecated\" version=\"3.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified deprecated\">\n                Deprecated since version 3.0: \n            Use something else.\n",
+      "rst": ".. deprecated:: 3.0\n\n   Use something else.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.versionremoved",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <versionmodified type=\"versionremoved\" version=\"4.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified removed\">\n                Removed in version 4.0: \n            Gone now.\n",
+      "rst": ".. versionremoved:: 4.0\n\n   Gone now.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.versionadded_markup",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <versionmodified type=\"versionadded\" version=\"1.2\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified added\">\n                Added in version 1.2: \n            Text with \n            <emphasis>\n                emphasis\n            .\n",
+      "rst": ".. versionadded:: 1.2\n\n   Text with *emphasis*.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.seealso_block",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <seealso>\n        <paragraph>\n            Some related thing.\n            Second line same paragraph.\n        <paragraph>\n            A second paragraph.\n",
+      "rst": ".. seealso::\n\n   Some related thing.\n   Second line same paragraph.\n\n   A second paragraph.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.seealso_role",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <seealso>\n        <paragraph>\n            <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"0\" reftarget=\"somepage\" reftype=\"doc\" refwarn=\"1\">\n                <inline classes=\"xref std std-doc\">\n                    somepage\n            , Chapter 3\n",
+      "rst": ".. seealso:: :doc:`somepage`, Chapter 3\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.code_block_lang",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <literal_block force=\"0\" highlight_args=\"{}\" language=\"python\" xml:space=\"preserve\">\n        x = 1\n        y = 2\n",
+      "rst": ".. code-block:: python\n\n   x = 1\n   y = 2\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.code_block_no_lang",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <literal_block force=\"0\" highlight_args=\"{}\" language=\"default\" xml:space=\"preserve\">\n        plain text block\n        (no language argument at all)\n",
+      "rst": ".. code-block::\n\n   plain text block\n   (no language argument at all)\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.highlight_then_code_block",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <highlightlang force=\"0\" lang=\"c\" linenothreshold=\"5\">\n    <literal_block force=\"0\" highlight_args=\"{}\" language=\"c\" xml:space=\"preserve\">\n        int x = 1;\n",
+      "rst": ".. highlight:: c\n   :linenothreshold: 5\n\n.. code-block::\n\n   int x = 1;\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.highlight_bare",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <highlightlang force=\"0\" lang=\"python\" linenothreshold=\"9223372036854775807\">\n",
+      "rst": ".. highlight:: python\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.code_block_full_options",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <container classes=\"literal-block-wrapper\" ids=\"mycode\" literal_block=\"1\" names=\"mycode\">\n        <caption>\n            example.py\n        <literal_block force=\"0\" highlight_args=\"{'hl_lines': [2, 4, 5]}\" language=\"python\" linenos=\"1\" xml:space=\"preserve\">\n            x = 1\n            y = 2\n            z = 3\n            w = 4\n            v = 5\n",
+      "rst": ".. code-block:: python\n   :linenos:\n   :emphasize-lines: 2,4-5\n   :caption: example.py\n   :name: mycode\n\n   x = 1\n   y = 2\n   z = 3\n   w = 4\n   v = 5\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.code_block_name_only",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <literal_block force=\"0\" highlight_args=\"{}\" ids=\"mycode2\" language=\"python\" names=\"mycode2\" xml:space=\"preserve\">\n        x = 1\n",
+      "rst": ".. code-block:: python\n   :name: mycode2\n\n   x = 1\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.only_simple",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <only expr=\"html\">\n        <paragraph>\n            HTML only content.\n",
+      "rst": ".. only:: html\n\n   HTML only content.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.only_expr",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <only expr=\"html and not epub\">\n        <paragraph>\n            Complex expr content.\n",
+      "rst": ".. only:: html and not epub\n\n   Complex expr content.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.rst_class",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph classes=\"myclass otherclass\">\n            Paragraph after.\n",
+      "rst": "Title\n=====\n\n.. rst-class:: myclass otherclass\n\nParagraph after.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.toctree_bare_entries",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <compound classes=\"toctree-wrapper\">\n        <toctree caption=\"True\" entries=\"\" glob=\"0\" hidden=\"0\" includefiles=\"\" includehidden=\"0\" maxdepth=\"2\" numbered=\"0\" parent=\"index\" rawentries=\"\" titlesonly=\"0\">\n",
+      "rst": ".. toctree::\n   :maxdepth: 2\n\n   installation\n   Linked Title <other>\n"
+    },
+    {
+      "family": "sx_roles",
+      "name": "sx_roles.doc_role",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"0\" reftarget=\"somepage\" reftype=\"doc\" refwarn=\"1\">\n            <inline classes=\"xref std std-doc\">\n                somepage\n         here.\n",
+      "rst": "See :doc:`somepage` here.\n"
+    },
+    {
+      "family": "sx_roles",
+      "name": "sx_roles.doc_role_explicit_title",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"1\" reftarget=\"somepage\" reftype=\"doc\" refwarn=\"1\">\n            <inline classes=\"xref std std-doc\">\n                The Guide\n         here.\n",
+      "rst": "See :doc:`The Guide <somepage>` here.\n"
+    },
+    {
+      "family": "sx_roles",
+      "name": "sx_roles.ref_role",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"0\" reftarget=\"some label\" reftype=\"ref\" refwarn=\"1\">\n            <inline classes=\"xref std std-ref\">\n                Some Label\n         here.\n",
+      "rst": "See :ref:`Some Label` here.\n"
+    },
+    {
+      "family": "sx_roles",
+      "name": "sx_roles.func_role",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Call \n        <pending_xref py:class=\"True\" py:module=\"True\" refdoc=\"index\" refdomain=\"py\" refexplicit=\"0\" reftarget=\"mymod.myfunc\" reftype=\"func\" refwarn=\"0\">\n            <literal classes=\"xref py py-func\">\n                mymod.myfunc()\n         now.\n",
+      "rst": "Call :func:`mymod.myfunc` now.\n"
+    },
+    {
+      "family": "sx_roles",
+      "name": "sx_roles.func_role_tilde",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Call \n        <pending_xref py:class=\"True\" py:module=\"True\" refdoc=\"index\" refdomain=\"py\" refexplicit=\"0\" reftarget=\"mymod.myfunc\" reftype=\"func\" refwarn=\"0\">\n            <literal classes=\"xref py py-func\">\n                myfunc()\n         now.\n",
+      "rst": "Call :func:`~mymod.myfunc` now.\n"
+    },
+    {
+      "family": "sx_roles",
+      "name": "sx_roles.domain_qualified_role",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Call \n        <pending_xref py:class=\"True\" py:module=\"True\" refdoc=\"index\" refdomain=\"py\" refexplicit=\"0\" reftarget=\"obj.method\" reftype=\"meth\" refwarn=\"0\">\n            <literal classes=\"xref py py-meth\">\n                obj.method()\n         now.\n",
+      "rst": "Call :py:meth:`obj.method` now.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.math_labeled",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target refid=\"equation-eq1\">\n    <math_block docname=\"index\" ids=\"equation-eq1\" label=\"eq1\" no-wrap=\"0\" nowrap=\"0\" number=\"1\" xml:space=\"preserve\">\n        E = mc^2\n",
+      "rst": ".. math::\n   :label: eq1\n\n   E = mc^2\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.math_unlabeled",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <math_block docname=\"index\" label=\"True\" no-wrap=\"0\" nowrap=\"0\" number=\"True\" xml:space=\"preserve\">\n        a + b\n",
+      "rst": ".. math::\n\n   a + b\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.math_nowrap",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <math_block docname=\"index\" label=\"True\" no-wrap=\"1\" nowrap=\"1\" number=\"True\" xml:space=\"preserve\">\n        x\n",
+      "rst": ".. math::\n   :nowrap:\n\n   x\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.math_marker_arg",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <math_block docname=\"index\" label=\"True\" no-wrap=\"0\" nowrap=\"0\" number=\"True\" xml:space=\"preserve\">\n        E = mc^2\n        \n",
+      "rst": ".. math:: E = mc^2\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.index_single",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <index entries=\"('single',\\ 'MyTerm',\\ 'index-0',\\ '',\\ None)\" inline=\"0\">\n    <target ids=\"index-0\">\n",
+      "rst": ".. index:: single: MyTerm\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.index_pair",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <index entries=\"('pair',\\ 'MyTerm;\\ OtherTerm',\\ 'index-0',\\ '',\\ None)\" inline=\"0\">\n    <target ids=\"index-0\">\n",
+      "rst": ".. index:: pair: MyTerm; OtherTerm\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.index_bare",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <index entries=\"('single',\\ 'MyTerm',\\ 'index-0',\\ '',\\ None)\" inline=\"0\">\n    <target ids=\"index-0\">\n",
+      "rst": ".. index:: MyTerm\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.index_comma_main",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <index entries=\"('single',\\ 'foo',\\ 'index-0',\\ '',\\ None) ('single',\\ 'bar',\\ 'index-0',\\ '',\\ None) ('single',\\ 'baz',\\ 'index-0',\\ 'main',\\ None)\" inline=\"0\">\n    <target ids=\"index-0\">\n",
+      "rst": ".. index:: foo, bar, !baz\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.hlist_columns",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <hlist ncolumns=\"3\">\n        <hlistcol>\n            <bullet_list>\n                <list_item>\n                    <paragraph>\n                        a\n                <list_item>\n                    <paragraph>\n                        b\n        <hlistcol>\n            <bullet_list>\n                <list_item>\n                    <paragraph>\n                        c\n                <list_item>\n                    <paragraph>\n                        d\n        <hlistcol>\n            <bullet_list>\n                <list_item>\n                    <paragraph>\n                        e\n",
+      "rst": ".. hlist::\n   :columns: 3\n\n   * a\n   * b\n   * c\n   * d\n   * e\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.hlist_default",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <hlist ncolumns=\"2\">\n        <hlistcol>\n            <bullet_list>\n                <list_item>\n                    <paragraph>\n                        one\n                <list_item>\n                    <paragraph>\n                        two\n        <hlistcol>\n            <bullet_list>\n                <list_item>\n                    <paragraph>\n                        three\n",
+      "rst": ".. hlist::\n\n   * one\n   * two\n   * three\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.glossary_basic",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <glossary sorted=\"0\">\n        <definition_list classes=\"glossary\">\n            <definition_list_item>\n                <term ids=\"term-environment\">\n                    environment\n                    <index entries=\"('single',\\ 'environment',\\ 'term-environment',\\ 'main',\\ None)\">\n                <definition>\n                    <paragraph>\n                        A structure where information about all documents under the root is\n                        saved.\n            <definition_list_item>\n                <term ids=\"term-source-directory\">\n                    source directory\n                    <index entries=\"('single',\\ 'source\\ directory',\\ 'term-source-directory',\\ 'main',\\ None)\">\n                <definition>\n                    <paragraph>\n                        The directory which holds all source files.\n",
+      "rst": ".. glossary::\n\n   environment\n      A structure where information about all documents under the root is\n      saved.\n\n   source directory\n      The directory which holds all source files.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.glossary_multi_term",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <glossary sorted=\"0\">\n        <definition_list classes=\"glossary\">\n            <definition_list_item>\n                <term ids=\"term-term-a\">\n                    term a\n                    <index entries=\"('single',\\ 'term\\ a',\\ 'term-term-a',\\ 'main',\\ None)\">\n                <term ids=\"term-term-b\">\n                    term b\n                    <index entries=\"('single',\\ 'term\\ b',\\ 'term-term-b',\\ 'main',\\ None)\">\n                <definition>\n                    <paragraph>\n                        Shared definition.\n",
+      "rst": ".. glossary::\n\n   term a\n   term b\n      Shared definition.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.glossary_sorted_classifier",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <glossary sorted=\"1\">\n        <definition_list classes=\"glossary\">\n            <definition_list_item>\n                <term ids=\"term-zeta\">\n                    zeta\n                    <index entries=\"('single',\\ 'zeta',\\ 'term-zeta',\\ 'main',\\ 'key')\">\n                <definition>\n                    <paragraph>\n                        Z def.\n",
+      "rst": ".. glossary::\n   :sorted:\n\n   zeta : key\n      Z def.\n"
+    },
+    {
+      "family": "sx_roles",
+      "name": "sx_roles.pep_role",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <index entries=\"('single',\\ 'Python\\ Enhancement\\ Proposals;\\ PEP\\ 8',\\ 'index-0',\\ '',\\ None)\">\n        <target ids=\"index-0\">\n        <reference classes=\"pep\" internal=\"0\" refuri=\"https://peps.python.org/pep-0008/\">\n            <strong>\n                PEP 8\n         for style.\n",
+      "rst": "See :pep:`8` for style.\n"
+    },
+    {
+      "family": "sx_roles",
+      "name": "sx_roles.pep_role_anchor",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <index entries=\"('single',\\ 'Python\\ Enhancement\\ Proposals;\\ PEP\\ 8#imports',\\ 'index-0',\\ '',\\ None)\">\n        <target ids=\"index-0\">\n        <reference classes=\"pep\" internal=\"0\" refuri=\"https://peps.python.org/pep-0008/#imports\">\n            <strong>\n                PEP 8#imports\n         here.\n",
+      "rst": "See :pep:`8#imports` here.\n"
+    },
+    {
+      "family": "sx_roles",
+      "name": "sx_roles.pep_role_explicit",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <index entries=\"('single',\\ 'Python\\ Enhancement\\ Proposals;\\ PEP\\ 8',\\ 'index-0',\\ '',\\ None)\">\n        <target ids=\"index-0\">\n        <reference classes=\"pep\" internal=\"0\" refuri=\"https://peps.python.org/pep-0008/\">\n            <strong>\n                the style guide\n         here.\n",
+      "rst": "See :pep:`the style guide <8>` here.\n"
+    },
+    {
+      "family": "sx_roles",
+      "name": "sx_roles.rfc_role",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <index entries=\"('single',\\ 'RFC;\\ RFC\\ 2324',\\ 'index-0',\\ '',\\ None)\">\n        <target ids=\"index-0\">\n        <reference classes=\"rfc\" internal=\"0\" refuri=\"https://datatracker.ietf.org/doc/html/rfc2324.html\">\n            <strong>\n                RFC 2324\n         for details.\n",
+      "rst": "See :rfc:`2324` for details.\n"
+    },
+    {
+      "family": "sx_roles",
+      "name": "sx_roles.rfc_role_section",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <index entries=\"('single',\\ 'RFC;\\ RFC\\ 2324\\ Section\\ 5.1',\\ 'index-0',\\ '',\\ None)\">\n        <target ids=\"index-0\">\n        <reference classes=\"rfc\" internal=\"0\" refuri=\"https://datatracker.ietf.org/doc/html/rfc2324.html#section-5.1\">\n            <strong>\n                RFC 2324 Section 5.1\n         here.\n",
+      "rst": "See :rfc:`2324#section-5.1` here.\n"
+    },
+    {
+      "family": "sx_roles",
+      "name": "sx_roles.cve_role",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <index entries=\"('single',\\ 'Common\\ Vulnerabilities\\ and\\ Exposures;\\ CVE\\ 2020-10735',\\ 'index-0',\\ '',\\ None)\">\n        <target ids=\"index-0\">\n        <reference classes=\"cve\" internal=\"0\" refuri=\"https://www.cve.org/CVERecord?id=CVE-2020-10735\">\n            <strong>\n                CVE 2020-10735\n         here.\n",
+      "rst": "See :cve:`2020-10735` here.\n"
+    },
+    {
+      "family": "sx_roles",
+      "name": "sx_roles.cwe_role",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <index entries=\"('single',\\ 'Common\\ Weakness\\ Enumeration;\\ CWE\\ 787',\\ 'index-0',\\ '',\\ None)\">\n        <target ids=\"index-0\">\n        <reference classes=\"cwe\" internal=\"0\" refuri=\"https://cwe.mitre.org/data/definitions/787.html\">\n            <strong>\n                CWE 787\n         here.\n",
+      "rst": "See :cwe:`787` here.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.code_block_emphasize_invalid",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            invalid line number spec: '5-3'\n",
+      "rst": ".. code-block:: python\n   :emphasize-lines: 5-3\n\n   x = 1\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.code_block_emphasize_open_range",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <literal_block force=\"0\" highlight_args=\"{'hl_lines': [2, 3]}\" language=\"python\" xml:space=\"preserve\">\n        a\n        b\n        c\n",
+      "rst": ".. code-block:: python\n   :emphasize-lines: 2-\n\n   a\n   b\n   c\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.code_block_emphasize_out_of_range",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <literal_block force=\"0\" highlight_args=\"{'hl_lines': [1]}\" language=\"python\" xml:space=\"preserve\">\n        a\n        b\n",
+      "rst": ".. code-block:: python\n   :emphasize-lines: 1,99\n\n   a\n   b\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.toctree_bare_angle_entry",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <compound classes=\"toctree-wrapper\">\n        <toctree caption=\"True\" entries=\"\" glob=\"0\" hidden=\"0\" includefiles=\"\" includehidden=\"0\" maxdepth=\"-1\" numbered=\"0\" parent=\"index\" rawentries=\"\" titlesonly=\"0\">\n",
+      "rst": ".. toctree::\n\n   <foo>\n"
+    }
+  ],
+  "docutils_version": "0.22.4",
+  "generator": "tools/gen_sphinx_fixture.py",
+  "harness": "sphinx.util.docutils._parse_str_to_doctree with env.settings + registry transforms (probes-doc 'harness3'; byte-identical to a full dummy-builder build + env.get_doctree)",
+  "normalizations": [
+    "srcdir index.rst absolute path -> <snippet>",
+    "document translation_progress attribute stripped (i18n.TranslationProgressTotaliser artifact)"
+  ],
+  "settings": {
+    "auto_id_prefix": "id",
+    "docname": "index",
+    "doctitle_xform": false,
+    "extensions": [],
+    "halt_level": 5,
+    "id_prefix": "",
+    "keep_warnings": true,
+    "language": "en",
+    "report_level": 2,
+    "sectsubtitle_xform": false,
+    "smartquotes": false
+  },
+  "sphinx_version": "9.1.0"
+}

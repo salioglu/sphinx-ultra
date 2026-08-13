@@ -1,18 +1,24 @@
-//! Differential test: our RST block parser vs docutils 0.22.4 parse-layer
-//! pseudo-XML, over the committed fixture corpus.
+//! Differential test: our RST parser vs the SPHINX ORACLE — the pseudo-XML a
+//! real `sphinx-build` 9.1.0 read phase (dummy builder, `extensions = []`,
+//! smartquotes off, keep_warnings on) produces for the committed fixture corpus.
 //!
 //! Regenerate the fixture (manual, never in CI):
-//!     uv run --python 3.12 --with docutils==0.22.4 python tools/gen_doctree_fixture.py
+//!     uv run --python 3.12 --with 'sphinx==9.1.0' --with 'docutils==0.22.4' \
+//!         python tools/gen_sphinx_fixture.py
 //!
-//! Clones the tests/pattern_differential.rs shape: committed JSON, floor
-//! guard against silent truncation, collect ALL mismatches before
-//! asserting, and panics surface as named mismatches, not test aborts.
+//! Clones the tests/doctree_differential.rs shape: committed JSON, version
+//! assertions (BOTH sphinx and docutils are recorded), floor guard against
+//! silent truncation, collect ALL mismatches before asserting, and panics
+//! surface as named mismatches, not test aborts. The fixture's source paths
+//! are normalized to the "<snippet>" token; ParseOptions.source_path below
+//! must use the same token.
 
 use sphinx_ultra::rst::{parse_rst, ParseOptions};
 
 #[derive(serde::Deserialize)]
 struct Fixture {
     docutils_version: String,
+    sphinx_version: String,
     cases: Vec<Case>,
 }
 
@@ -24,15 +30,16 @@ struct Case {
 }
 
 #[test]
-fn matches_docutils_parser_pformat() {
+fn matches_sphinx_oracle_pformat() {
     let raw = include_str!(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/doctree_differential.json"
+        "/tests/fixtures/sphinx_doctree_differential.json"
     ));
     let fixture: Fixture = serde_json::from_str(raw).expect("fixture parses");
     assert_eq!(fixture.docutils_version, "0.22.4");
+    assert_eq!(fixture.sphinx_version, "9.1.0");
     assert!(
-        fixture.cases.len() >= 200,
+        fixture.cases.len() >= 40,
         "fixture truncated? only {} cases",
         fixture.cases.len()
     );
@@ -45,7 +52,7 @@ fn matches_docutils_parser_pformat() {
                 &rst,
                 &ParseOptions {
                     source_path: "<snippet>".into(),
-                    sphinx: false,
+                    sphinx: true,
                     docname: "index".into(),
                 },
             )
@@ -55,7 +62,7 @@ fn matches_docutils_parser_pformat() {
         match ours {
             Err(_) => mismatches.push(format!("[{}] PANICKED on:\n{}", case.name, case.rst)),
             Ok(got) if got != case.pseudo_xml => mismatches.push(format!(
-                "[{}] MISMATCH\n--- rst ---\n{}\n--- docutils ---\n{}\n--- ours ---\n{}",
+                "[{}] MISMATCH\n--- rst ---\n{}\n--- sphinx 9.1.0 ---\n{}\n--- ours ---\n{}",
                 case.name, case.rst, case.pseudo_xml, got
             )),
             Ok(_) => {}
@@ -63,7 +70,7 @@ fn matches_docutils_parser_pformat() {
     }
     assert!(
         mismatches.is_empty(),
-        "{} divergence(s) from docutils 0.22.4:\n\n{}",
+        "{} divergence(s) from the sphinx 9.1.0 oracle:\n\n{}",
         mismatches.len(),
         mismatches.join("\n\n")
     );

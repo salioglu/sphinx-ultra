@@ -62,6 +62,9 @@ pub const OPTION: &str = "option";
 pub const OPTION_STRING: &str = "option_string";
 pub const OPTION_ARGUMENT: &str = "option_argument";
 pub const DESCRIPTION: &str = "description";
+// wave 3: directives
+pub const SUBTITLE: &str = "subtitle";
+
 pub const TABLE: &str = "table";
 pub const TGROUP: &str = "tgroup";
 pub const COLSPEC: &str = "colspec";

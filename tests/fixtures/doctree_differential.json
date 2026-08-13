@@ -2251,6 +2251,1344 @@
       "rst": ".. [1] See :pep:`8` for style.\n"
     },
     {
+      "family": "dir_core",
+      "name": "dir_core.unknown_directive",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            No directive entry for \"bogusdirective\" in module \"docutils.parsers.rst.languages.en\".\n            Trying \"bogusdirective\" as canonical directive name.\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown directive type \"bogusdirective\".\n        <literal_block xml:space=\"preserve\">\n            .. bogusdirective::\n            \n               content\n",
+      "rst": ".. bogusdirective::\n\n   content\n"
+    },
+    {
+      "family": "dir_core",
+      "name": "dir_core.unknown_dotted_name",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            No directive entry for \"foo.bar\" in module \"docutils.parsers.rst.languages.en\".\n            Trying \"foo.bar\" as canonical directive name.\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown directive type \"foo.bar\".\n        <literal_block xml:space=\"preserve\">\n            .. foo.bar::\n            \n               content\n",
+      "rst": ".. foo.bar::\n\n   content\n"
+    },
+    {
+      "family": "dir_core",
+      "name": "dir_core.unknown_domain_name",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            No directive entry for \"py:function\" in module \"docutils.parsers.rst.languages.en\".\n            Trying \"py:function\" as canonical directive name.\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown directive type \"py:function\".\n        <literal_block xml:space=\"preserve\">\n            .. py:function:: foo(x)\n            \n               content\n",
+      "rst": ".. py:function:: foo(x)\n\n   content\n"
+    },
+    {
+      "family": "dir_core",
+      "name": "dir_core.dangling_separator_comment",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n        note-::\n        \n        content\n",
+      "rst": ".. note-::\n\n   content\n"
+    },
+    {
+      "family": "dir_core",
+      "name": "dir_core.no_space_paragraph",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        ..note:\n    <literal_block xml:space=\"preserve\">\n        Body text.\n",
+      "rst": "..note::\n\n   Body text.\n"
+    },
+    {
+      "family": "dir_core",
+      "name": "dir_core.single_colon_comment",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n        note:\n        \n        Body text.\n",
+      "rst": ".. note:\n\n   Body text.\n"
+    },
+    {
+      "family": "dir_core",
+      "name": "dir_core.two_spaces_comment",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n        note  ::\n        \n        Body text.\n",
+      "rst": ".. note  ::\n\n   Body text.\n"
+    },
+    {
+      "family": "dir_core",
+      "name": "dir_core.one_space_before_colons_ok",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <paragraph>\n            Body text.\n",
+      "rst": ".. note ::\n\n   Body text.\n"
+    },
+    {
+      "family": "dir_core",
+      "name": "dir_core.case_insensitive",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <paragraph>\n            Body text.\n",
+      "rst": ".. NOTE::\n\n   Body text.\n"
+    },
+    {
+      "family": "dir_core",
+      "name": "dir_core.leading_underscore_target",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n        _note::\n        \n        content\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            malformed hyperlink target.\n",
+      "rst": ".. _note::\n\n   content\n"
+    },
+    {
+      "family": "dir_admonitions",
+      "name": "dir_admonitions.note_indented_body",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <paragraph>\n            Body text.\n",
+      "rst": ".. note::\n\n   Body text.\n"
+    },
+    {
+      "family": "dir_admonitions",
+      "name": "dir_admonitions.note_inline_content",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <paragraph>\n            inline text\n",
+      "rst": ".. note:: inline text\n"
+    },
+    {
+      "family": "dir_admonitions",
+      "name": "dir_admonitions.note_inline_plus_body",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <paragraph>\n            inline text\n        <paragraph>\n            Body.\n",
+      "rst": ".. note:: inline text\n\n   Body.\n"
+    },
+    {
+      "family": "dir_admonitions",
+      "name": "dir_admonitions.note_class_option",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note classes=\"foo\">\n        <paragraph>\n            inline text\n        <paragraph>\n            Body.\n",
+      "rst": ".. note:: inline text\n   :class: foo\n\n   Body.\n"
+    },
+    {
+      "family": "dir_admonitions",
+      "name": "dir_admonitions.note_invalid_option_block",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"note\" directive:\n            invalid option block.\n        <literal_block xml:space=\"preserve\">\n            .. note:: inline text\n               :class: foo\n               more inline text same para as option???\n            \n               Body.\n",
+      "rst": ".. note:: inline text\n   :class: foo\n   more inline text same para as option???\n\n   Body.\n"
+    },
+    {
+      "family": "dir_admonitions",
+      "name": "dir_admonitions.note_unknown_option",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"note\" directive:\n            unknown option: \"bogus\".\n        <literal_block xml:space=\"preserve\">\n            .. note::\n               :bogus: x\n            \n               Body.\n",
+      "rst": ".. note::\n   :bogus: x\n\n   Body.\n"
+    },
+    {
+      "family": "dir_admonitions",
+      "name": "dir_admonitions.empty_note_error",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"note\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. note::\n",
+      "rst": ".. note::\n"
+    },
+    {
+      "family": "dir_admonitions",
+      "name": "dir_admonitions.all_admonition_kinds",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <warning>\n        <paragraph>\n            w\n    <tip>\n        <paragraph>\n            t\n    <danger>\n        <paragraph>\n            d\n    <attention>\n        <paragraph>\n            a\n",
+      "rst": ".. warning:: w\n\n.. tip:: t\n\n.. danger:: d\n\n.. attention:: a\n"
+    },
+    {
+      "family": "dir_admonitions",
+      "name": "dir_admonitions.generic_admonition",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <admonition classes=\"admonition-custom-title\">\n        <title>\n            Custom Title\n        <paragraph>\n            Body text.\n",
+      "rst": ".. admonition:: Custom Title\n\n   Body text.\n"
+    },
+    {
+      "family": "dir_admonitions",
+      "name": "dir_admonitions.generic_admonition_class",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <admonition classes=\"special\">\n        <title>\n            T\n        <paragraph>\n            Body.\n",
+      "rst": ".. admonition:: T\n   :class: special\n\n   Body.\n"
+    },
+    {
+      "family": "dir_admonitions",
+      "name": "dir_admonitions.generic_missing_arg",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"admonition\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. admonition::\n            \n               Body.\n",
+      "rst": ".. admonition::\n\n   Body.\n"
+    },
+    {
+      "family": "dir_admonitions",
+      "name": "dir_admonitions.note_nested_list",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <bullet_list bullet=\"-\">\n            <list_item>\n                <paragraph>\n                    a\n            <list_item>\n                <paragraph>\n                    b\n",
+      "rst": ".. note::\n\n   - a\n   - b\n"
+    },
+    {
+      "family": "dir_admonitions",
+      "name": "dir_admonitions.note_named",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note ids=\"my-note\" names=\"my-note\">\n        <paragraph>\n            Body.\n",
+      "rst": ".. note::\n   :name: my-note\n\n   Body.\n"
+    },
+    {
+      "family": "dir_admonitions",
+      "name": "dir_admonitions.nested_admonition",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <warning>\n            <paragraph>\n                inner\n",
+      "rst": ".. note::\n\n   .. warning::\n\n      inner\n"
+    },
+    {
+      "family": "dir_admonitions",
+      "name": "dir_admonitions.directive_no_blank_after",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <paragraph>\n            content\n    <system_message level=\"2\" line=\"2\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Explicit markup ends without a blank line; unexpected unindent.\n    <paragraph>\n        adjacent para\n",
+      "rst": ".. note:: content\nadjacent para\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.unknown_option_uppercase_name",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"NOTE\" directive:\n            unknown option: \"bogus\".\n        <literal_block xml:space=\"preserve\">\n            .. NOTE::\n               :bogus: x\n            \n               Body.\n",
+      "rst": ".. NOTE::\n   :bogus: x\n\n   Body.\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.duplicate_option",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"note\" directive:\n            invalid option data: duplicate option \"class\".\n        <literal_block xml:space=\"preserve\">\n            .. note::\n               :class: a\n               :class: b\n            \n               Body.\n",
+      "rst": ".. note::\n   :class: a\n   :class: b\n\n   Body.\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.duplicate_option_mixed_case",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"note\" directive:\n            invalid option data: duplicate option \"class\".\n        <literal_block xml:space=\"preserve\">\n            .. note::\n               :Class: a\n               :class: b\n            \n               Body.\n",
+      "rst": ".. note::\n   :Class: a\n   :class: b\n\n   Body.\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.multiword_field_name",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"note\" directive:\n            invalid option data: extension option field name may not contain multiple words.\n        <literal_block xml:space=\"preserve\">\n            .. note::\n               :class extra: v\n            \n               Body.\n",
+      "rst": ".. note::\n   :class extra: v\n\n   Body.\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.multiword_beats_unknown",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"note\" directive:\n            invalid option data: extension option field name may not contain multiple words.\n        <literal_block xml:space=\"preserve\">\n            .. note::\n               :bogus: x\n               :class extra: v\n            \n               Body.\n",
+      "rst": ".. note::\n   :bogus: x\n   :class extra: v\n\n   Body.\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.class_empty_value",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"note\" directive:\n            invalid option value: (option: \"class\"; value: None)\n            argument required but none supplied.\n        <literal_block xml:space=\"preserve\">\n            .. note::\n               :class:\n            \n               Body.\n",
+      "rst": ".. note::\n   :class:\n\n   Body.\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.name_empty_value",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note ids=\"id1\" names=\"\">\n        <paragraph>\n            Body text.\n",
+      "rst": ".. note::\n   :name:\n\n   Body text.\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.name_and_class",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note classes=\"foo bar\" ids=\"target-one\" names=\"target\\ one\">\n        <paragraph>\n            Body.\n",
+      "rst": ".. note::\n   :class: foo bar\n   :name: target one\n\n   Body.\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.option_value_continuation",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note classes=\"foo bar continued\">\n        <paragraph>\n            Body text.\n",
+      "rst": ".. note::\n   :class: foo\n      bar continued\n\n   Body text.\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.options_after_blank_are_content",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note classes=\"foo\">\n        <field_list>\n            <field>\n                <field_name>\n                    name\n                <field_body>\n                    <paragraph>\n                        bar\n        <paragraph>\n            Body.\n",
+      "rst": ".. note::\n   :class: foo\n\n   :name: bar\n\n   Body.\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.two_blanks_before_content",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note classes=\"foo\">\n        <paragraph>\n            Body after two blank lines.\n",
+      "rst": ".. note::\n   :class: foo\n\n\n   Body after two blank lines.\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.malformed_field_marker_to_content",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <paragraph>\n            :class value\n        <paragraph>\n            Body.\n",
+      "rst": ".. note::\n   :class value\n\n   Body.\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.field_body_blockquote_promotion",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note classes=\"first para\">\n        <block_quote>\n            <paragraph>\n                second para\n        <paragraph>\n            Body text.\n",
+      "rst": ".. note::\n   :class: first para\n\n       second para\n\n   Body text.\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.admonition_multiline_title",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <admonition classes=\"admonition-the-title-continues-here\">\n        <title>\n            The Title\n            continues here\n        <paragraph>\n            Body text.\n",
+      "rst": ".. admonition:: The Title\n   continues here\n\n   Body text.\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.admonition_punct_title_class",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <admonition classes=\"admonition-\">\n        <title>\n            !!!\n        <paragraph>\n            Body.\n",
+      "rst": ".. admonition:: !!!\n\n   Body.\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.note_empty_uppercase",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"NOTE\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. NOTE::\n",
+      "rst": ".. NOTE::\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.note_marker_line_content_only",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <paragraph>\n            This whole line becomes content, not an argument.\n",
+      "rst": ".. note:: This whole line becomes content, not an argument.\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.warning_continuation_content",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <warning>\n        <paragraph>\n            Danger\n            ahead. This continues the paragraph.\n        <paragraph>\n            Second paragraph of warning.\n",
+      "rst": ".. warning:: Danger\n   ahead. This continues the paragraph.\n\n   Second paragraph of warning.\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.unexpected_indentation_in_note",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <definition_list>\n            <definition_list_item>\n                <term>\n                    a\n                <definition>\n                    <paragraph>\n                        b\n",
+      "rst": ".. note::\n\n   a\n     b\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.note_content_unindent_warning",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <paragraph>\n            para\n    <system_message level=\"2\" line=\"4\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Explicit markup ends without a blank line; unexpected unindent.\n    <paragraph>\n        after\n",
+      "rst": ".. note::\n\n   para\nafter\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.trailing_blanks_rawsource",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            No directive entry for \"frobnicate\" in module \"docutils.parsers.rst.languages.en\".\n            Trying \"frobnicate\" as canonical directive name.\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown directive type \"frobnicate\".\n        <literal_block xml:space=\"preserve\">\n            .. frobnicate:: x\n            \n               c\n            \n    <paragraph>\n        after\n",
+      "rst": ".. frobnicate:: x\n\n   c\n\n\nafter\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.trailing_blanks_eof",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            No directive entry for \"frobnicate\" in module \"docutils.parsers.rst.languages.en\".\n            Trying \"frobnicate\" as canonical directive name.\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown directive type \"frobnicate\".\n        <literal_block xml:space=\"preserve\">\n            .. frobnicate:: x\n            \n               c\n            \n",
+      "rst": ".. frobnicate:: x\n\n   c\n\n\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.trailing_blank_single",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            No directive entry for \"frobnicate\" in module \"docutils.parsers.rst.languages.en\".\n            Trying \"frobnicate\" as canonical directive name.\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown directive type \"frobnicate\".\n        <literal_block xml:space=\"preserve\">\n            .. frobnicate:: x\n            \n               c\n    <paragraph>\n        after\n",
+      "rst": ".. frobnicate:: x\n\n   c\n\nafter\n"
+    },
+    {
+      "family": "dir_options",
+      "name": "dir_options.consecutive_directives_no_blank",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <paragraph>\n            one\n    <note>\n        <paragraph>\n            two\n",
+      "rst": ".. note:: one\n.. note:: two\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.minimal",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <image uri=\"picture.png\">\n",
+      "rst": ".. image:: picture.png\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.multiword_uri_collapses",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <image uri=\"picturewithspaces.png\">\n",
+      "rst": ".. image:: picture with spaces.png\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.multiline_uri",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <image uri=\"picture.png\">\n",
+      "rst": ".. image:: pic\n   ture.png\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.full_options",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <image align=\"left\" alt=\"alt text\" height=\"100px\" scale=\"50\" uri=\"picture.png\" width=\"200px\">\n",
+      "rst": ".. image:: picture.png\n   :alt: alt text\n   :height: 100px\n   :width: 200 px\n   :scale: 50 %\n   :align: left\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.align_vertical_error",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"image\" directive: \"top\" is not a valid value for the \"align\" option.  Valid values for \"align\" are: \"left\", \"center\", \"right\".\n        <literal_block xml:space=\"preserve\">\n            .. image:: pic.png\n               :align: top\n",
+      "rst": ".. image:: pic.png\n   :align: top\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.align_invalid_choice",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"image\" directive:\n            invalid option value: (option: \"align\"; value: 'sideways')\n            \"sideways\" unknown; choose from \"top\", \"middle\", \"bottom\", \"left\", \"center\", or \"right\".\n        <literal_block xml:space=\"preserve\">\n            .. image:: pic.png\n               :align: sideways\n",
+      "rst": ".. image:: pic.png\n   :align: sideways\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.scale_not_number",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"image\" directive:\n            invalid option value: (option: \"scale\"; value: 'notanumber')\n            invalid literal for int() with base 10: 'notanumber'.\n        <literal_block xml:space=\"preserve\">\n            .. image:: pic.png\n               :scale: notanumber\n",
+      "rst": ".. image:: pic.png\n   :scale: notanumber\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.scale_negative",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"image\" directive:\n            invalid option value: (option: \"scale\"; value: '-5')\n            negative value; must be positive or zero.\n        <literal_block xml:space=\"preserve\">\n            .. image:: pic.png\n               :scale: -5\n",
+      "rst": ".. image:: pic.png\n   :scale: -5\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.width_banana",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"image\" directive:\n            invalid option value: (option: \"width\"; value: 'banana')\n            \"banana\" is no valid measure..\n        <literal_block xml:space=\"preserve\">\n            .. image:: pic.png\n               :width: banana\n",
+      "rst": ".. image:: pic.png\n   :width: banana\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.width_percentage",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <image uri=\"pic.png\" width=\"50%\">\n",
+      "rst": ".. image:: pic.png\n   :width: 50%\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.width_unitless",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <image uri=\"pic.png\" width=\"120\">\n",
+      "rst": ".. image:: pic.png\n   :width: 120\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.height_bad_unit",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"image\" directive:\n            invalid option value: (option: \"height\"; value: '10banana')\n            not a positive number or measure of one of the following units:\n            em, ex, ch, rem, vw, vh, vmin, vmax, cm, mm, Q, in, pt, pc, px.\n        <literal_block xml:space=\"preserve\">\n            .. image:: pic.png\n               :height: 10banana\n",
+      "rst": ".. image:: pic.png\n   :height: 10banana\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.height_decimal_em",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <image height=\"1.5em\" uri=\"pic.png\">\n",
+      "rst": ".. image:: pic.png\n   :height: 1.5em\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.target_url",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <reference refuri=\"https://example.com/page\">\n        <image uri=\"pic.png\">\n",
+      "rst": ".. image:: pic.png\n   :target: https://example.com/page\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.target_refname_simple",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <reference name=\"sometarget\" refname=\"sometarget\">\n        <image uri=\"pic.png\">\n",
+      "rst": ".. image:: pic.png\n   :target: sometarget_\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.target_refname_phrase",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <reference name=\"some phrase\" refname=\"some phrase\">\n        <image uri=\"pic.png\">\n",
+      "rst": ".. image:: pic.png\n   :target: `some phrase`_\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.target_empty",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"image\" directive:\n            invalid option value: (option: \"target\"; value: None)\n            argument required but none supplied.\n        <literal_block xml:space=\"preserve\">\n            .. image:: pic.png\n               :target:\n",
+      "rst": ".. image:: pic.png\n   :target:\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.loading_option",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <image loading=\"lazy\" uri=\"pic.png\">\n",
+      "rst": ".. image:: pic.png\n   :loading: lazy\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.class_and_name",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <image classes=\"big shot\" ids=\"my-pic\" names=\"my\\ pic\" uri=\"pic.png\">\n",
+      "rst": ".. image:: pic.png\n   :class: big shot\n   :name: my pic\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.missing_arg",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"image\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. image::\n",
+      "rst": ".. image::\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.content_not_permitted",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"image\" directive:\n            no content permitted.\n        <literal_block xml:space=\"preserve\">\n            .. image:: pic.png\n            \n               caption text\n",
+      "rst": ".. image:: pic.png\n\n   caption text\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.second_uri_line_no_blank",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <image uri=\"pic.pngsecondlineofuri\">\n",
+      "rst": ".. image:: pic.png\n   second line of uri\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.scale_bigint",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <image scale=\"99999999999999999999\" uri=\"x.png\">\n",
+      "rst": ".. image:: x.png\n   :scale: 99999999999999999999\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.width_bigint_px",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <image uri=\"x.png\" width=\"99999999999999999999px\">\n",
+      "rst": ".. image:: x.png\n   :width: 99999999999999999999px\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.scale_arabic_digits",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <image scale=\"50\" uri=\"x.png\">\n",
+      "rst": ".. image:: x.png\n   :scale: ٥٠\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.scale_underscore_literal",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <image scale=\"10\" uri=\"x.png\">\n",
+      "rst": ".. image:: x.png\n   :scale: 1_0\n"
+    },
+    {
+      "family": "dir_image",
+      "name": "dir_image.width_leading_zeros",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <image uri=\"x.png\" width=\"7px\">\n",
+      "rst": ".. image:: x.png\n   :width: 007px\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.csv_delim_superscript_two",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"csv-table\" directive:\n            invalid option value: (option: \"delim\"; value: '²')\n            invalid literal for int() with base 10: '²'.\n        <literal_block xml:space=\"preserve\">\n            .. csv-table::\n               :delim: ²\n            \n               a,b\n",
+      "rst": ".. csv-table::\n   :delim: ²\n\n   a,b\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.csv_delim_arabic_two",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"1\">\n            <colspec colwidth=\"100\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            a٢b\n",
+      "rst": ".. csv-table::\n   :delim: ٢\n\n   a٢b\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.unicode_arabic_decimal",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition names=\"c5\">\n        2\n",
+      "rst": ".. |c5| unicode:: ٥٠\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.pipe_space_comment",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n        | not a substitution\n",
+      "rst": ".. | not a substitution\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.bare_pipe_comment",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n        |\n",
+      "rst": ".. |\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.topic_basic",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <topic>\n        <title>\n            Topic Title\n        <paragraph>\n            Topic body paragraph.\n",
+      "rst": ".. topic:: Topic Title\n\n   Topic body paragraph.\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.topic_no_body",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"topic\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. topic:: Topic Title\n",
+      "rst": ".. topic:: Topic Title\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.topic_in_note",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                The \"topic\" directive may not be used within topics or body elements.\n            <literal_block xml:space=\"preserve\">\n                .. topic:: Inner\n                \n                   body\n",
+      "rst": ".. note::\n\n   .. topic:: Inner\n\n      body\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.topic_in_list_item",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                item\n            <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n                <paragraph>\n                    The \"topic\" directive may not be used within topics or body elements.\n                <literal_block xml:space=\"preserve\">\n                    .. topic:: Inner\n                    \n                       body\n",
+      "rst": "- item\n\n  .. topic:: Inner\n\n     body\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.topic_class_name",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <topic classes=\"special\" ids=\"my-topic\" names=\"my\\ topic\">\n        <title>\n            T\n        <paragraph>\n            Body.\n",
+      "rst": ".. topic:: T\n   :class: special\n   :name: my topic\n\n   Body.\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.topic_markup_title",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <topic>\n        <title>\n            <emphasis>\n                emphasized\n             title\n        <paragraph>\n            Body.\n",
+      "rst": ".. topic:: *emphasized* title\n\n   Body.\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.sidebar_title_body",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <sidebar>\n        <title>\n            Sidebar Title\n        <paragraph>\n            Sidebar body.\n",
+      "rst": ".. sidebar:: Sidebar Title\n\n   Sidebar body.\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.sidebar_subtitle",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <sidebar>\n        <title>\n            Sidebar Title\n        <subtitle>\n            Sidebar Subtitle\n        <paragraph>\n            Sidebar body.\n",
+      "rst": ".. sidebar:: Sidebar Title\n   :subtitle: Sidebar Subtitle\n\n   Sidebar body.\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.sidebar_subtitle_no_title",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            The \"subtitle\" option may not be used without a title.\n        <literal_block xml:space=\"preserve\">\n            .. sidebar::\n               :subtitle: A Subtitle\n            \n               Body text.\n",
+      "rst": ".. sidebar::\n   :subtitle: A Subtitle\n\n   Body text.\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.sidebar_no_title",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <sidebar>\n        <paragraph>\n            Body only.\n",
+      "rst": ".. sidebar::\n\n   Body only.\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.sidebar_nested_error",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <sidebar>\n        <title>\n            Outer\n        <paragraph>\n            Outer body.\n        <system_message level=\"3\" line=\"5\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                The \"sidebar\" directive may not be used within a sidebar element.\n            <literal_block xml:space=\"preserve\">\n                .. sidebar:: Inner\n                \n                   Inner body.\n",
+      "rst": ".. sidebar:: Outer\n\n   Outer body.\n\n   .. sidebar:: Inner\n\n      Inner body.\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.topic_in_sidebar",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <sidebar>\n        <title>\n            Outer\n        <topic>\n            <title>\n                Inner Topic\n            <paragraph>\n                body\n",
+      "rst": ".. sidebar:: Outer\n\n   .. topic:: Inner Topic\n\n      body\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.rubric_minimal",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <rubric>\n        This is a rubric\n",
+      "rst": ".. rubric:: This is a rubric\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.rubric_options",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <rubric classes=\"myrubricclass\" ids=\"rub1\" names=\"rub1\">\n        Named rubric\n",
+      "rst": ".. rubric:: Named rubric\n   :class: myrubricclass\n   :name: rub1\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.rubric_markup",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <rubric>\n        A \n        <emphasis>\n            marked up\n         rubric\n",
+      "rst": ".. rubric:: A *marked up* rubric\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.rubric_content_error",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"rubric\" directive:\n            no content permitted.\n        <literal_block xml:space=\"preserve\">\n            .. rubric:: Title\n            \n               body not allowed\n",
+      "rst": ".. rubric:: Title\n\n   body not allowed\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.rubric_missing_arg",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"rubric\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. rubric::\n",
+      "rst": ".. rubric::\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.epigraph_attribution",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <block_quote classes=\"epigraph\">\n        <paragraph>\n            Epigraph text.\n        <attribution>\n            Attribution\n",
+      "rst": ".. epigraph::\n\n   Epigraph text.\n\n   -- Attribution\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.highlights_basic",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <block_quote classes=\"highlights\">\n        <paragraph>\n            Highlighted text.\n",
+      "rst": ".. highlights::\n\n   Highlighted text.\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.pull_quote_basic",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <block_quote classes=\"pull-quote\">\n        <paragraph>\n            Pulled text.\n",
+      "rst": ".. pull-quote::\n\n   Pulled text.\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.epigraph_empty",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"epigraph\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. epigraph::\n",
+      "rst": ".. epigraph::\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.epigraph_marker_line",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <block_quote classes=\"epigraph\">\n        <paragraph>\n            text on the marker line\n",
+      "rst": ".. epigraph:: text on the marker line\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.epigraph_unknown_option",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <block_quote classes=\"epigraph\">\n        <field_list>\n            <field>\n                <field_name>\n                    class\n                <field_body>\n                    <paragraph>\n                        x\n        <paragraph>\n            text\n",
+      "rst": ".. epigraph::\n   :class: x\n\n   text\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.compound_two_paras",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <compound>\n        <paragraph>\n            First paragraph of compound.\n        <paragraph>\n            Second paragraph of compound.\n",
+      "rst": ".. compound::\n\n   First paragraph of compound.\n\n   Second paragraph of compound.\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.compound_empty_error",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"compound\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. compound::\n",
+      "rst": ".. compound::\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.compound_class",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <compound classes=\"custom\">\n        <paragraph>\n            Body.\n",
+      "rst": ".. compound::\n   :class: custom\n\n   Body.\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.container_no_class",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <container>\n        <paragraph>\n            Container body.\n",
+      "rst": ".. container::\n\n   Container body.\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.container_classes",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <container classes=\"custom-class another-class\">\n        <paragraph>\n            Container body.\n",
+      "rst": ".. container:: custom-class another-class\n\n   Container body.\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.container_bad_class",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Invalid class attribute value for \"container\" directive: \"!!!\".\n        <literal_block xml:space=\"preserve\">\n            .. container:: !!!\n            \n               Body.\n",
+      "rst": ".. container:: !!!\n\n   Body.\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.container_named",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <container classes=\"cls\" ids=\"cont\" names=\"cont\">\n        <paragraph>\n            Body.\n",
+      "rst": ".. container:: cls\n   :name: cont\n\n   Body.\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.parsed_literal_inline",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <literal_block xml:space=\"preserve\">\n        Text with \n        <emphasis>\n            emphasis\n         and \n        <strong>\n            strong\n         and a\n        <reference name=\"link\" refuri=\"http://example.com\">\n            link\n        <target ids=\"link\" names=\"link\" refuri=\"http://example.com\">\n        .\n",
+      "rst": ".. parsed-literal::\n\n   Text with *emphasis* and **strong** and a\n   `link <http://example.com>`_.\n"
+    },
+    {
+      "family": "dir_body",
+      "name": "dir_body.parsed_literal_class",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <literal_block classes=\"code-ish\" ids=\"pl1\" names=\"pl1\" xml:space=\"preserve\">\n        plain *escaped* text\n",
+      "rst": ".. parsed-literal::\n   :class: code-ish\n   :name: pl1\n\n   plain \\*escaped\\* text\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.figure_caption_legend",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <figure>\n        <image uri=\"pic.png\">\n        <caption>\n            This is the caption.\n        <legend>\n            <paragraph>\n                This is a legend paragraph.\n            <paragraph>\n                Second legend paragraph.\n",
+      "rst": ".. figure:: pic.png\n\n   This is the caption.\n\n   This is a legend paragraph.\n\n   Second legend paragraph.\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.figure_caption_only",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <figure>\n        <image uri=\"pic.png\">\n        <caption>\n            Caption text.\n",
+      "rst": ".. figure:: pic.png\n\n   Caption text.\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.figure_no_caption_comment",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <figure>\n        <image uri=\"pic.png\">\n        <legend>\n            <paragraph>\n                Legend after empty comment.\n",
+      "rst": ".. figure:: pic.png\n\n   ..\n\n   Legend after empty comment.\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.figure_no_content",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <figure>\n        <image uri=\"pic.png\">\n",
+      "rst": ".. figure:: pic.png\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.figure_options",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <figure align=\"right\" classes=\"myfigclass\" width=\"300px\">\n        <image uri=\"pic.png\">\n        <caption>\n            Caption text.\n",
+      "rst": ".. figure:: pic.png\n   :figwidth: 300\n   :figclass: myfigclass\n   :align: right\n\n   Caption text.\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.figure_figwidth_image",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <figure>\n        <image uri=\"pic.png\" width=\"300px\">\n        <caption>\n            Caption.\n",
+      "rst": ".. figure:: pic.png\n   :figwidth: image\n   :width: 300px\n\n   Caption.\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.figure_bad_scale",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"figure\" directive:\n            invalid option value: (option: \"scale\"; value: 'abc')\n            invalid literal for int() with base 10: 'abc'.\n        <literal_block xml:space=\"preserve\">\n            .. figure:: pic.png\n               :scale: abc\n            \n               Caption.\n",
+      "rst": ".. figure:: pic.png\n   :scale: abc\n\n   Caption.\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.figure_bad_first_child",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <figure>\n        <image uri=\"pic.png\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Figure caption must be a paragraph or empty comment.\n        <literal_block xml:space=\"preserve\">\n            .. figure:: pic.png\n            \n               - bullet\n               - list\n",
+      "rst": ".. figure:: pic.png\n\n   - bullet\n   - list\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.figure_name_option",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <figure>\n        <image ids=\"fig-one\" names=\"fig\\ one\" uri=\"pic.png\">\n        <caption>\n            Caption.\n",
+      "rst": ".. figure:: pic.png\n   :name: fig one\n\n   Caption.\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.figure_align_vertical_rejected",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"figure\" directive:\n            invalid option value: (option: \"align\"; value: 'top')\n            \"top\" unknown; choose from \"left\", \"center\", or \"right\".\n        <literal_block xml:space=\"preserve\">\n            .. figure:: pic.png\n               :align: top\n            \n               Caption.\n",
+      "rst": ".. figure:: pic.png\n   :align: top\n\n   Caption.\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.code_plain",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <literal_block classes=\"code\" xml:space=\"preserve\">\n        x = 1\n        y = 2\n",
+      "rst": ".. code::\n\n   x = 1\n   y = 2\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.code_class_name",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <literal_block classes=\"code extra\" ids=\"snippet-one\" names=\"snippet\\ one\" xml:space=\"preserve\">\n        pass\n",
+      "rst": ".. code::\n   :class: extra\n   :name: snippet one\n\n   pass\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.code_language_warning",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Cannot analyze code. Pygments package not found.\n        <literal_block xml:space=\"preserve\">\n            .. code:: python\n            \n               x = 1\n",
+      "rst": ".. code:: python\n\n   x = 1\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.code_number_lines",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <literal_block classes=\"code\" xml:space=\"preserve\">\n        <inline classes=\"ln\">\n            1 \n        one\n        <inline classes=\"ln\">\n            2 \n        two\n",
+      "rst": ".. code::\n   :number-lines:\n\n   one\n   two\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.code_number_lines_start",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <literal_block classes=\"code\" xml:space=\"preserve\">\n        <inline classes=\"ln\">\n             9 \n        one\n        <inline classes=\"ln\">\n            10 \n        two\n",
+      "rst": ".. code::\n   :number-lines: 9\n\n   one\n   two\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.code_number_lines_bad",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            :number-lines: with non-integer start value\n        <literal_block xml:space=\"preserve\">\n            .. code::\n               :number-lines: xyz\n            \n               one\n",
+      "rst": ".. code::\n   :number-lines: xyz\n\n   one\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.code_empty_error",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"code\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. code::\n",
+      "rst": ".. code::\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.math_single",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <math_block xml:space=\"preserve\">\n        E = mc^2\n",
+      "rst": ".. math::\n\n   E = mc^2\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.math_two_blocks",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <math_block xml:space=\"preserve\">\n        a = 1\n    <math_block xml:space=\"preserve\">\n        b = 2\n",
+      "rst": ".. math::\n\n   a = 1\n\n   b = 2\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.math_marker_line",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <math_block xml:space=\"preserve\">\n        E = mc^2\n",
+      "rst": ".. math:: E = mc^2\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.math_options",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <math_block classes=\"eq\" ids=\"my-eq\" names=\"my\\ eq\" xml:space=\"preserve\">\n        x^2\n",
+      "rst": ".. math::\n   :class: eq\n   :name: my eq\n\n   x^2\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.math_label_unknown",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"math\" directive:\n            unknown option: \"label\".\n        <literal_block xml:space=\"preserve\">\n            .. math::\n               :label: eq1\n            \n               x\n",
+      "rst": ".. math::\n   :label: eq1\n\n   x\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.math_empty_error",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"math\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. math::\n",
+      "rst": ".. math::\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.raw_html",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <raw format=\"html\" xml:space=\"preserve\">\n        <hr>\n",
+      "rst": ".. raw:: html\n\n   <hr>\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.raw_multi_format",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <raw format=\"html latex\" xml:space=\"preserve\">\n        text\n",
+      "rst": ".. raw:: html latex\n\n   text\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.raw_missing_arg",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"raw\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. raw::\n            \n               text\n",
+      "rst": ".. raw::\n\n   text\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.raw_file_and_content",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            \"raw\" directive may not both specify an external file and have content.\n        <literal_block xml:space=\"preserve\">\n            .. raw:: html\n               :file: x.html\n            \n               inline too\n",
+      "rst": ".. raw:: html\n   :file: x.html\n\n   inline too\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.raw_missing_file",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"4\" line=\"1\" source=\"<snippet>\" type=\"SEVERE\">\n        <paragraph>\n            Problems with \"raw\" directive path:\n            InputError: [Errno 2] No such file or directory: 'nonexistent-raw-input.html'.\n        <literal_block xml:space=\"preserve\">\n            .. raw:: html\n               :file: nonexistent-raw-input.html\n",
+      "rst": ".. raw:: html\n   :file: nonexistent-raw-input.html\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.raw_name_unknown_option",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"raw\" directive:\n            unknown option: \"name\".\n        <literal_block xml:space=\"preserve\">\n            .. raw:: html\n               :name: r1\n            \n               text\n",
+      "rst": ".. raw:: html\n   :name: r1\n\n   text\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.raw_empty",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"raw\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. raw:: html\n",
+      "rst": ".. raw:: html\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.lineblock_dir_basic",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <line_block>\n        <line>\n            Line one\n        <line>\n            Line two\n",
+      "rst": ".. line-block::\n\n   Line one\n   Line two\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.lineblock_dir_nested",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <line_block>\n        <line>\n            Line one\n        <line>\n            Line two\n        <line_block>\n            <line>\n                Indented line three\n",
+      "rst": ".. line-block::\n\n   Line one\n   Line two\n      Indented line three\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.lineblock_dir_class",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <line_block classes=\"verse\">\n        <line>\n            a\n        <line>\n            b\n",
+      "rst": ".. line-block::\n   :class: verse\n\n   a\n   b\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.lineblock_dir_empty_error",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"line-block\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. line-block::\n",
+      "rst": ".. line-block::\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.class_pending",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <pending>\n        .. internal attributes:\n             .transform: docutils.transforms.misc.ClassAttribute\n             .details:\n               class: ['myclass']\n               directive: 'class'\n    <paragraph>\n        Some paragraph following.\n",
+      "rst": ".. class:: myclass\n\nSome paragraph following.\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.class_with_content",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph classes=\"myclass\">\n        First paragraph.\n    <paragraph classes=\"myclass\">\n        Second paragraph.\n",
+      "rst": ".. class:: myclass\n\n   First paragraph.\n\n   Second paragraph.\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.class_two_values",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <pending>\n        .. internal attributes:\n             .transform: docutils.transforms.misc.ClassAttribute\n             .details:\n               class: ['class-one', 'class-two']\n               directive: 'class'\n    <paragraph>\n        Para.\n",
+      "rst": ".. class:: class-one class-two\n\nPara.\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.class_slugify",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <pending>\n        .. internal attributes:\n             .transform: docutils.transforms.misc.ClassAttribute\n             .details:\n               class: ['bad-class']\n               directive: 'class'\n    <paragraph>\n        Para.\n",
+      "rst": ".. class:: 123bad!!class\n\nPara.\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.class_bad_value",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Invalid class attribute value for \"class\" directive: \"!!!\".\n        <literal_block xml:space=\"preserve\">\n            .. class:: !!!\n    <paragraph>\n        Para.\n",
+      "rst": ".. class:: !!!\n\nPara.\n"
+    },
+    {
+      "family": "dir_media",
+      "name": "dir_media.class_missing_arg",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"class\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. class::\n            \n               Body.\n",
+      "rst": ".. class::\n\n   Body.\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.table_title_widths_align",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table align=\"center\" classes=\"colwidths-given\">\n        <title>\n            Table Title\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"30\">\n            <colspec colwidth=\"70\">\n            <thead>\n                <row>\n                    <entry>\n                        <paragraph>\n                            A\n                    <entry>\n                        <paragraph>\n                            B\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            1\n                    <entry>\n                        <paragraph>\n                            2\n",
+      "rst": ".. table:: Table Title\n   :widths: 30 70\n   :align: center\n\n   =====  =====\n   A      B\n   =====  =====\n   1      2\n   =====  =====\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.table_plain",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"5\">\n            <colspec colwidth=\"5\">\n            <thead>\n                <row>\n                    <entry>\n                        <paragraph>\n                            A\n                    <entry>\n                        <paragraph>\n                            B\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            1\n                    <entry>\n                        <paragraph>\n                            2\n",
+      "rst": ".. table::\n\n   =====  =====\n   A      B\n   =====  =====\n   1      2\n   =====  =====\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.table_widths_auto",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table classes=\"colwidths-auto\">\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"5\">\n            <colspec colwidth=\"5\">\n            <thead>\n                <row>\n                    <entry>\n                        <paragraph>\n                            A\n                    <entry>\n                        <paragraph>\n                            B\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            1\n                    <entry>\n                        <paragraph>\n                            2\n",
+      "rst": ".. table::\n   :widths: auto\n\n   =====  =====\n   A      B\n   =====  =====\n   1      2\n   =====  =====\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.table_widths_grid",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table classes=\"colwidths-given\">\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"5\">\n            <colspec colwidth=\"5\">\n            <thead>\n                <row>\n                    <entry>\n                        <paragraph>\n                            A\n                    <entry>\n                        <paragraph>\n                            B\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            1\n                    <entry>\n                        <paragraph>\n                            2\n",
+      "rst": ".. table::\n   :widths: grid\n\n   =====  =====\n   A      B\n   =====  =====\n   1      2\n   =====  =====\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.table_widths_mismatch",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            \"table\" widths do not match the number of columns in table (2).\n        <literal_block xml:space=\"preserve\">\n            .. table::\n               :widths: 10 20 30\n            \n               =====  =====\n               A      B\n               =====  =====\n               1      2\n               =====  =====\n",
+      "rst": ".. table::\n   :widths: 10 20 30\n\n   =====  =====\n   A      B\n   =====  =====\n   1      2\n   =====  =====\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.table_widths_and_class",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table classes=\"mytable colwidths-given\">\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"30\">\n            <colspec colwidth=\"70\">\n            <thead>\n                <row>\n                    <entry>\n                        <paragraph>\n                            A\n                    <entry>\n                        <paragraph>\n                            B\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            1\n                    <entry>\n                        <paragraph>\n                            2\n",
+      "rst": ".. table::\n   :widths: 30 70\n   :class: mytable\n\n   =====  =====\n   A      B\n   =====  =====\n   1      2\n   =====  =====\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.table_no_content",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Content block expected for the \"table\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. table:: Title\n",
+      "rst": ".. table:: Title\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.table_not_exactly_one",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error parsing content block for the \"table\" directive: exactly one table expected.\n        <literal_block xml:space=\"preserve\">\n            .. table::\n            \n               just a paragraph\n",
+      "rst": ".. table::\n\n   just a paragraph\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.table_named",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table ids=\"tbl-one\" names=\"tbl\\ one\">\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"5\">\n            <colspec colwidth=\"5\">\n            <thead>\n                <row>\n                    <entry>\n                        <paragraph>\n                            A\n                    <entry>\n                        <paragraph>\n                            B\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            1\n                    <entry>\n                        <paragraph>\n                            2\n",
+      "rst": ".. table::\n   :name: tbl one\n\n   =====  =====\n   A      B\n   =====  =====\n   1      2\n   =====  =====\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.csv_header_widths_title",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table classes=\"colwidths-given\">\n        <title>\n            CSV Table Title\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"10\">\n            <colspec colwidth=\"20\">\n            <thead>\n                <row>\n                    <entry>\n                        <paragraph>\n                            A\n                    <entry>\n                        <paragraph>\n                            B\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            1\n                    <entry>\n                        <paragraph>\n                            2\n                <row>\n                    <entry>\n                        <paragraph>\n                            3\n                    <entry>\n                        <paragraph>\n                            4\n",
+      "rst": ".. csv-table:: CSV Table Title\n   :header: A, B\n   :widths: 10, 20\n\n   1, 2\n   3, 4\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.csv_bare",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"50\">\n            <colspec colwidth=\"50\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            1\n                    <entry>\n                        <paragraph>\n                            2\n                <row>\n                    <entry>\n                        <paragraph>\n                            3\n                    <entry>\n                        <paragraph>\n                            4\n",
+      "rst": ".. csv-table::\n\n   1, 2\n   3, 4\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.csv_header_rows",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"50\">\n            <colspec colwidth=\"50\">\n            <thead>\n                <row>\n                    <entry>\n                        <paragraph>\n                            A\n                    <entry>\n                        <paragraph>\n                            B\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            1\n                    <entry>\n                        <paragraph>\n                            2\n",
+      "rst": ".. csv-table::\n   :header-rows: 1\n\n   A, B\n   1, 2\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.csv_widths_auto",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table classes=\"colwidths-auto\">\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"50\">\n            <colspec colwidth=\"50\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            1\n                    <entry>\n                        <paragraph>\n                            2\n",
+      "rst": ".. csv-table::\n   :widths: auto\n\n   1, 2\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.csv_quoted_comma",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"50\">\n            <colspec colwidth=\"50\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            value, with comma\n                    <entry>\n                        <paragraph>\n                            plain\n",
+      "rst": ".. csv-table::\n\n   \"value, with comma\", plain\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.csv_stub_align_class",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table align=\"right\" classes=\"mytable\">\n        <title>\n            T\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"50\" stub=\"1\">\n            <colspec colwidth=\"50\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            a\n                    <entry>\n                        <paragraph>\n                            b\n                <row>\n                    <entry>\n                        <paragraph>\n                            c\n                    <entry>\n                        <paragraph>\n                            d\n",
+      "rst": ".. csv-table:: T\n   :stub-columns: 1\n   :align: right\n   :class: mytable\n\n   a, b\n   c, d\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.csv_class_plus_widths",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table classes=\"colwidths-given mine\">\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"40\">\n            <colspec colwidth=\"60\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            1\n                    <entry>\n                        <paragraph>\n                            2\n",
+      "rst": ".. csv-table::\n   :widths: 40, 60\n   :class: mine\n\n   1, 2\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.csv_header_rows_exceed",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            3 header row(s) specified but only 1 row(s) of data supplied (\"csv-table\" directive).\n        <literal_block xml:space=\"preserve\">\n            .. csv-table::\n               :header-rows: 3\n            \n               1, 2\n",
+      "rst": ".. csv-table::\n   :header-rows: 3\n\n   1, 2\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.csv_all_header_no_body",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Insufficient data supplied (1 row(s)); no data remaining for table body, required by \"csv-table\" directive.\n        <literal_block xml:space=\"preserve\">\n            .. csv-table::\n               :header-rows: 1\n            \n               only, row\n",
+      "rst": ".. csv-table::\n   :header-rows: 1\n\n   only, row\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.csv_empty_warning",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            The \"csv-table\" directive requires content; none supplied.\n        <literal_block xml:space=\"preserve\">\n            .. csv-table::\n",
+      "rst": ".. csv-table::\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.csv_file_and_content",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            \"csv-table\" directive may not both specify an external file and have content.\n        <literal_block xml:space=\"preserve\">\n            .. csv-table::\n               :file: data.csv\n            \n               1, 2\n",
+      "rst": ".. csv-table::\n   :file: data.csv\n\n   1, 2\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.csv_missing_file",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"4\" line=\"1\" source=\"<snippet>\" type=\"SEVERE\">\n        <paragraph>\n            Problems with \"csv-table\" directive path:\n            [Errno 2] No such file or directory: 'nonexistent-table-data.csv'.\n        <literal_block xml:space=\"preserve\">\n            .. csv-table::\n               :file: nonexistent-table-data.csv\n",
+      "rst": ".. csv-table::\n   :file: nonexistent-table-data.csv\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.csv_delim_option",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"50\">\n            <colspec colwidth=\"50\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            1\n                    <entry>\n                        <paragraph>\n                            2\n",
+      "rst": ".. csv-table::\n   :delim: ;\n\n   1; 2\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.csv_short_rows",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"3\">\n            <colspec colwidth=\"33\">\n            <colspec colwidth=\"33\">\n            <colspec colwidth=\"33\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            1\n                    <entry>\n                        <paragraph>\n                            2\n                    <entry>\n                        <paragraph>\n                            3\n                <row>\n                    <entry>\n                        <paragraph>\n                            4\n                    <entry>\n                    <entry>\n",
+      "rst": ".. csv-table::\n\n   1, 2, 3\n   4\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.csv_multiline_quoted_cell",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"50\">\n            <colspec colwidth=\"50\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            line one\n                            line two\n                    <entry>\n                        <paragraph>\n                            second\n",
+      "rst": ".. csv-table::\n\n   \"line one\n   line two\", second\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.csv_keepspace",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"50\">\n            <colspec colwidth=\"50\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            1\n                    <entry>\n                        <block_quote>\n                            <paragraph>\n                                spaced\n",
+      "rst": ".. csv-table::\n   :keepspace:\n\n   1,  spaced\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.list_basic_header",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table classes=\"colwidths-given\">\n        <title>\n            List Table Title\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"10\">\n            <colspec colwidth=\"20\">\n            <thead>\n                <row>\n                    <entry>\n                        <paragraph>\n                            A\n                    <entry>\n                        <paragraph>\n                            B\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            1\n                    <entry>\n                        <paragraph>\n                            2\n",
+      "rst": ".. list-table:: List Table Title\n   :header-rows: 1\n   :widths: 10 20\n\n   * - A\n     - B\n   * - 1\n     - 2\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.list_bare",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"50\">\n            <colspec colwidth=\"50\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            a\n                    <entry>\n                        <paragraph>\n                            b\n",
+      "rst": ".. list-table::\n\n   * - a\n     - b\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.list_row_mismatch",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error parsing content block for the \"list-table\" directive: uniform two-level bullet list expected, but row 2 does not contain the same number of items as row 1 (1 vs 2).\n        <literal_block xml:space=\"preserve\">\n            .. list-table::\n            \n               * - a\n                 - b\n               * - only one\n",
+      "rst": ".. list-table::\n\n   * - a\n     - b\n   * - only one\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.list_not_bullet",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error parsing content block for the \"list-table\" directive: exactly one bullet list expected.\n        <literal_block xml:space=\"preserve\">\n            .. list-table::\n            \n               just a paragraph\n",
+      "rst": ".. list-table::\n\n   just a paragraph\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.list_no_second_level",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error parsing content block for the \"list-table\" directive: two-level bullet list expected, but row 1 does not contain a second-level bullet list.\n        <literal_block xml:space=\"preserve\">\n            .. list-table::\n            \n               * flat item\n",
+      "rst": ".. list-table::\n\n   * flat item\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.list_empty_error",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            The \"list-table\" directive is empty; content required.\n        <literal_block xml:space=\"preserve\">\n            .. list-table::\n",
+      "rst": ".. list-table::\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.list_stub_columns",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"50\" stub=\"1\">\n            <colspec colwidth=\"50\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            a\n                    <entry>\n                        <paragraph>\n                            b\n",
+      "rst": ".. list-table::\n   :stub-columns: 1\n\n   * - a\n     - b\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.list_widths_mismatch",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            \"list-table\" widths do not match the number of columns in table (2).\n        <literal_block xml:space=\"preserve\">\n            .. list-table::\n               :widths: 5 10 15\n            \n               * - a\n                 - b\n",
+      "rst": ".. list-table::\n   :widths: 5 10 15\n\n   * - a\n     - b\n"
+    },
+    {
+      "family": "dir_tables",
+      "name": "dir_tables.list_multi_block_cell",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"50\">\n            <colspec colwidth=\"50\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            para one\n                        <paragraph>\n                            para two\n                    <entry>\n                        <paragraph>\n                            b\n",
+      "rst": ".. list-table::\n\n   * - para one\n\n       para two\n     - b\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.replace_basic",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition names=\"sub\">\n        replacement text\n    <paragraph>\n        Use \n        <substitution_reference refname=\"sub\">\n            sub\n         here.\n",
+      "rst": ".. |sub| replace:: replacement text\n\nUse |sub| here.\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.replace_inline_markup",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition names=\"b\">\n        <strong>\n            bold\n         and \n        <emphasis>\n            emph\n",
+      "rst": ".. |b| replace:: **bold** and *emph*\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.replace_multiline",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition names=\"m\">\n        line one\n        line two\n",
+      "rst": ".. |m| replace:: line one\n   line two\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.replace_multi_paragraph_error",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"replace\" directive: may contain a single paragraph only.\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"p\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |p| replace:: para one\n            \n               para two\n",
+      "rst": ".. |p| replace:: para one\n\n   para two\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.replace_no_content",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"replace\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            replace::\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"e\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |e| replace::\n",
+      "rst": ".. |e| replace::\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.replace_named_ref_allowed",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition names=\"r\">\n        see \n        <reference name=\"docs\" refname=\"docs\">\n            docs\n",
+      "rst": ".. |r| replace:: see `docs`_\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.replace_anonymous_ref_error",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Anonymous references are not supported in a substitution definition.\n        <literal_block xml:space=\"preserve\">\n            .. |a| replace:: see `docs`__\n",
+      "rst": ".. |a| replace:: see `docs`__\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.replace_auto_footnote_error",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            References to auto-numbered and auto-symbol footnotes are not supported in a substitution definition.\n        <literal_block xml:space=\"preserve\">\n            .. |f| replace:: note [#]_\n",
+      "rst": ".. |f| replace:: note [#]_\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.replace_problematic",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message ids=\"id1\" level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Inline emphasis start-string without end-string.\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Problematic content in substitution definition\n        <literal_block xml:space=\"preserve\">\n            .. |bad| replace:: *unclosed\n        <block_quote>\n            <paragraph>\n                <problematic ids=\"id2\" refid=\"id1\">\n                    *\n                unclosed\n",
+      "rst": ".. |bad| replace:: *unclosed\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.replace_at_body_level",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Invalid context: the \"replace\" directive can only be used within a substitution definition.\n        <literal_block xml:space=\"preserve\">\n            .. replace:: not in a substitution\n",
+      "rst": ".. replace:: not in a substitution\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.unicode_hex_forms",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition names=\"c\">\n        ©\n",
+      "rst": ".. |c| unicode:: 0xA9\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.unicode_entity_form",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition names=\"c2\">\n        ©\n",
+      "rst": ".. |c2| unicode:: &#xA9;\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.unicode_decimal",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition names=\"c3\">\n        ©\n",
+      "rst": ".. |c3| unicode:: 169\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.unicode_multi_codes",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition names=\"arrow\">\n        →\n        →\n",
+      "rst": ".. |arrow| unicode:: 0x2192 0x2192\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.unicode_comment_stripped",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition names=\"c4\">\n        ©\n",
+      "rst": ".. |c4| unicode:: 0xA9 .. copyright sign\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.unicode_passthrough_token",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition names=\"t\">\n        abc\n",
+      "rst": ".. |t| unicode:: abc\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.unicode_out_of_range",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Invalid character code: 0x110000\n            ValueError: chr() arg not in range(0x110000)\n        <literal_block xml:space=\"preserve\">\n            unicode:: 0x110000\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"x\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |x| unicode:: 0x110000\n",
+      "rst": ".. |x| unicode:: 0x110000\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.unicode_trim",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition ltrim=\"1\" names=\"tm\" rtrim=\"1\">\n        ©\n",
+      "rst": ".. |tm| unicode:: 0xA9\n   :trim:\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.unicode_ltrim_only",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition ltrim=\"1\" names=\"lt\">\n        ©\n",
+      "rst": ".. |lt| unicode:: 0xA9\n   :ltrim:\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.unicode_missing_arg",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"unicode\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            unicode::\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"u\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |u| unicode::\n",
+      "rst": ".. |u| unicode::\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.unicode_at_body_level",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Invalid context: the \"unicode\" directive can only be used within a substitution definition.\n        <literal_block xml:space=\"preserve\">\n            .. unicode:: 0xA9\n",
+      "rst": ".. unicode:: 0xA9\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.date_at_body_level",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Invalid context: the \"date\" directive can only be used within a substitution definition.\n        <literal_block xml:space=\"preserve\">\n            .. date::\n",
+      "rst": ".. date::\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.image_substitution_auto_alt",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition names=\"pic\">\n        <image alt=\"pic\" uri=\"picture.png\">\n",
+      "rst": ".. |pic| image:: picture.png\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.image_substitution_explicit_alt",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition names=\"pic2\">\n        <image alt=\"custom\" uri=\"picture.png\">\n",
+      "rst": ".. |pic2| image:: picture.png\n   :alt: custom\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.image_substitution_align_horizontal_error",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"image\" directive: \"left\" is not a valid value for the \"align\" option within a substitution definition.  Valid values for \"align\" are: \"top\", \"middle\", \"bottom\".\n        <literal_block xml:space=\"preserve\">\n            image:: p.png\n               :align: left\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"pic3\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |pic3| image:: p.png\n               :align: left\n",
+      "rst": ".. |pic3| image:: p.png\n   :align: left\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.image_substitution_align_vertical_ok",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition names=\"pic4\">\n        <image align=\"top\" alt=\"pic4\" uri=\"p.png\">\n",
+      "rst": ".. |pic4| image:: p.png\n   :align: top\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.unknown_directive_inside",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            No directive entry for \"bogusdir\" in module \"docutils.parsers.rst.languages.en\".\n            Trying \"bogusdir\" as canonical directive name.\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown directive type \"bogusdir\".\n        <literal_block xml:space=\"preserve\">\n            bogusdir:: x\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"z\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |z| bogusdir:: x\n",
+      "rst": ".. |z| bogusdir:: x\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.no_directive_marker",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"s\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |s| just plain text\n",
+      "rst": ".. |s| just plain text\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.missing_contents",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"empty\" missing contents.\n        <literal_block xml:space=\"preserve\">\n            .. |empty|\n",
+      "rst": ".. |empty|\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.hanging_indent_form",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition names=\"h\">\n        hanging\n",
+      "rst": ".. |h|\n   replace:: hanging\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.duplicate_definition",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition dupnames=\"d\">\n        first\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Duplicate substitution definition name: \"d\".\n    <substitution_definition names=\"d\">\n        second\n",
+      "rst": ".. |d| replace:: first\n\n.. |d| replace:: second\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.duplicate_case_sensitive_ok",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition names=\"D\">\n        upper\n    <substitution_definition names=\"d\">\n        lower\n",
+      "rst": ".. |D| replace:: upper\n\n.. |d| replace:: lower\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.malformed_no_closing_pipe",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <comment xml:space=\"preserve\">\n        |broken replace:: text\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            malformed substitution definition.\n",
+      "rst": ".. |broken replace:: text\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.marker_multiline",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition names=\"long\\ name\">\n        joined\n",
+      "rst": ".. |long\n   name| replace:: joined\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.non_inline_promoted_out",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            The \"topic\" directive may not be used within topics or body elements.\n        <literal_block xml:space=\"preserve\">\n            topic:: T\n            \n               body\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"topic\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |topic| topic:: T\n            \n               body\n",
+      "rst": ".. |topic| topic:: T\n\n   body\n"
+    },
+    {
+      "family": "substitutions",
+      "name": "substitutions.substitution_ref_trailing_underscore",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition names=\"s2\">\n        text\n    <paragraph>\n        <reference refname=\"s2\">\n            <substitution_reference refname=\"s2\">\n                s2\n         and \n        <reference anonymous=\"1\">\n            <substitution_reference refname=\"s2\">\n                s2\n         refs.\n",
+      "rst": ".. |s2| replace:: text\n\n|s2|_ and |s2|__ refs.\n"
+    },
+    {
       "family": "review2",
       "name": "review2.multi_segment_role",
       "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            :py:func:`target`\n         end.\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            No role entry for \"py:func\" in module \"docutils.parsers.rst.languages.en\".\n            Trying \"py:func\" as canonical role name.\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown interpreted text role \"py:func\".\n",

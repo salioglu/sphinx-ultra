@@ -13,6 +13,34 @@ everything forward is [ROADMAP.md](ROADMAP.md).
 
 ### Added
 
+- **M2 wave 3: the docutils-fidelity parser is now THE parser.**
+  `Parser::parse` runs `src/rst/` (sphinx mode) and derives the whole
+  `Document` from the doctree — title, toc with docutils `make_id`
+  anchors, explicit-target labels, toctree entries with real per-entry
+  lines, and directive/role records that feed the validation and
+  nitpicky passes. The M1 line-scanner and the three raw-source
+  re-scanners in the builder are gone; the 39-test e2e warning/exit-code
+  surface is byte-preserved.
+- M2 wave 3 directive machinery (docutils-exact): argument/option/content
+  extraction with typed option converters and docutils-verbatim error
+  texts, content re-parsing/nesting, unknown-directive shapes, and the
+  full docutils built-in set — admonitions (incl. generic), topic,
+  sidebar, rubric, epigraph/highlights/pull-quote, compound, container,
+  parsed-literal, image, figure, code, math, raw, line-block, class
+  (pending node), table/csv-table/list-table — plus substitution
+  definitions (`replace::`/`unicode::`/`date::` and embedded directives,
+  duplicate dupname semantics). Docutils differential fixture: 653 cases,
+  zero divergence.
+- M2 wave 3 Sphinx set against a second, real-Sphinx oracle
+  (`tools/gen_sphinx_fixture.py`, 277 cases at zero divergence vs a
+  sphinx-build 9.1.0 read phase): toctree, versionadded/versionchanged/
+  deprecated/versionremoved, seealso, code-block/sourcecode + highlight,
+  only, rst-class, math (labels + equation targets), index directive,
+  hlist, glossary, xref roles (`:doc:`/`:ref:`/py-domain pending_xref
+  anatomy), and pep/rfc/cve/cwe index-emitting external links.
+  Deliberate deferrals (literalinclude/include, object descriptions,
+  ifconfig, meta, rst_prolog/epilog/default_role) are recorded in the
+  wave notes.
 - M2 wave 2 (library-only): the docutils inline parser — emphasis/strong/
   literal, all reference forms (named/phrase/anonymous/embedded with inline
   targets), built-in interpreted-text roles (incl. PEP/RFC references),
