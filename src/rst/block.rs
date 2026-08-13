@@ -148,6 +148,10 @@ pub(crate) struct BlockParser<'a> {
     /// Sphinx-mode class/rst-class pending classes (the ClassAttribute
     /// transform effect applied inline).
     pending_classes: Option<Vec<String>>,
+    /// Per-document serial for `index-N` target ids (env.new_serialno).
+    index_serial: u32,
+    /// Per-document equation counter (math domain numbering).
+    equation_serial: u32,
     /// Validation-feed records collected during the parse.
     directive_records: Vec<super::DirectiveRecord>,
     role_records: Vec<super::RoleRecord>,
@@ -190,6 +194,8 @@ impl<'a> BlockParser<'a> {
             docname: "index".to_string(),
             highlight_language: None,
             pending_classes: None,
+            index_serial: 0,
+            equation_serial: 0,
             directive_records: Vec::new(),
             role_records: Vec::new(),
             toctree_records: Vec::new(),
@@ -2855,7 +2861,222 @@ impl<'a> BlockParser<'a> {
             DirectiveKind::SphinxCodeBlock => self.run_sphinx_code_block(input, out),
             DirectiveKind::Highlight => self.run_highlight(input, out),
             DirectiveKind::Only => self.run_only(input, out),
+            DirectiveKind::SphinxMath => self.run_sphinx_math(input, out),
+            DirectiveKind::IndexDir => self.run_index(input, out),
+            DirectiveKind::HList => self.run_hlist(input, out),
+            DirectiveKind::Glossary => self.run_glossary(input, out),
         }
+    }
+
+    /// sphinx math (patches.py MathDirective + math-domain numbering).
+    /// Absent label/number are Python None -> pformat "True".
+    fn run_sphinx_math(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        let mut latex = input
+            .content
+            .iter()
+            .map(|l| l.text)
+            .collect::<Vec<_>>()
+            .join("\n");
+        if let Some(arg) = input.arguments.first() {
+            latex = if latex.is_empty() {
+                format!("{arg}\n\n")
+            } else {
+                format!("{arg}\n\n{latex}")
+            };
+        }
+        let label =
+            match opt_get(&input.options, "label").or_else(|| opt_get(&input.options, "name")) {
+                Some(OptVal::Str(s)) if !s.is_empty() => Some(s.clone()),
+                _ => None,
+            };
+        let nowrap = opt_get(&input.options, "nowrap").is_some()
+            || opt_get(&input.options, "no-wrap").is_some();
+        let mut node = Node::elem("math_block", input.span);
+        if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
+            node.attrs.classes.extend(classes.iter().cloned());
+        }
+        node.set("docname", AttrValue::Str(self.docname.clone()));
+        node.set("no-wrap", AttrValue::Int(i64::from(nowrap)));
+        node.set("nowrap", AttrValue::Int(i64::from(nowrap)));
+        node.set("xml:space", AttrValue::Str("preserve".to_string()));
+        node.children.push(Node::text_node(latex, input.span));
+        match label {
+            Some(label) => {
+                self.equation_serial += 1;
+                let id = ids::make_id(&format!("equation-{label}"));
+                node.attrs.ids.push(id.clone());
+                node.set("label", AttrValue::Str(label));
+                node.set("number", AttrValue::Int(i64::from(self.equation_serial)));
+                let mut target = Node::elem(kinds::TARGET, input.span);
+                target.set("refid", AttrValue::Str(id));
+                out.push(target);
+                out.push(node);
+            }
+            None => {
+                node.set("label", AttrValue::Str("True".to_string()));
+                node.set("number", AttrValue::Str("True".to_string()));
+                out.push(node);
+            }
+        }
+    }
+
+    /// sphinx index directive (sphinx/domains/index.py IndexDirective).
+    fn run_index(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        let target_id = format!("index-{}", self.index_serial);
+        self.index_serial += 1;
+        let mut entries: Vec<String> = Vec::new();
+        for line in input.arguments[0].split('\n') {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            entries.extend(process_index_entry(line, &target_id));
+        }
+        let mut index = Node::elem("index", input.span);
+        index.set("entries", AttrValue::Str(entries.join(" ")));
+        index.set("inline", AttrValue::Int(0));
+        let mut target = Node::elem(kinds::TARGET, input.span);
+        match opt_get(&input.options, "name") {
+            Some(OptVal::Str(n)) => {
+                target.attrs.names.push(ids::fully_normalize_name(n));
+            }
+            _ => target.attrs.ids.push(target_id),
+        }
+        out.push(index);
+        out.push(target);
+    }
+
+    /// sphinx hlist (other.py HList): content must be exactly one bullet
+    /// list; distributed into ncolumns hlistcol children.
+    fn run_hlist(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        let ncolumns = match opt_get(&input.options, "columns") {
+            Some(OptVal::Int(n)) if *n > 0 => *n as usize,
+            _ => 2,
+        };
+        let children = self.parse_nested(&input.content, "element");
+        let one_list = children.len() == 1 && children[0].kind == kinds::BULLET_LIST;
+        if !one_list {
+            // logger.warning('.. hlist content is not a list') goes to the
+            // log stream, not the tree.
+            return;
+        }
+        let list = children.into_iter().next().expect("length checked");
+        let items = list.children;
+        let npercol = items.len() / ncolumns;
+        let nmore = items.len() % ncolumns;
+        let mut hlist = Node::elem("hlist", input.span);
+        hlist.set("ncolumns", AttrValue::Str(ncolumns.to_string()));
+        let mut it = items.into_iter();
+        for col in 0..ncolumns {
+            let take = npercol + usize::from(col < nmore);
+            let mut bl = Node::elem(kinds::BULLET_LIST, input.span);
+            for _ in 0..take {
+                match it.next() {
+                    Some(item) => bl.children.push(item),
+                    None => break,
+                }
+            }
+            let mut colnode = Node::elem("hlistcol", input.span);
+            colnode.children.push(bl);
+            hlist.children.push(colnode);
+        }
+        out.push(hlist);
+    }
+
+    /// sphinx glossary (std domain): term lines + indented definitions;
+    /// each term gets a term-<id> target and an embedded index entry.
+    fn run_glossary(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        let mut glossary = Node::elem("glossary", input.span);
+        glossary.set(
+            "sorted",
+            AttrValue::Int(i64::from(opt_get(&input.options, "sorted").is_some())),
+        );
+        let mut dl = Node::elem(kinds::DEFINITION_LIST, input.span);
+        dl.attrs.classes.push("glossary".to_string());
+        // Entry split: unindented term line(s) followed by an indented
+        // definition block (misformat warnings go to the log, not the
+        // tree; the corpus pins well-formed input).
+        let mut i = 0usize;
+        let content = &input.content;
+        while i < content.len() {
+            if content[i].is_blank() {
+                i += 1;
+                continue;
+            }
+            if content[i].indent() > 0 {
+                // Stray indented line without a term: log-warned, skipped.
+                i += 1;
+                continue;
+            }
+            let mut term_lines: Vec<LineRef<'a>> = Vec::new();
+            while i < content.len() && !content[i].is_blank() && content[i].indent() == 0 {
+                term_lines.push(content[i]);
+                i += 1;
+            }
+            let mut def_lines: Vec<LineRef<'a>> = Vec::new();
+            while i < content.len() && (content[i].is_blank() || content[i].indent() > 0) {
+                if content[i].is_blank()
+                    && content
+                        .get(i + 1)
+                        .map(|l| !l.is_blank() && l.indent() == 0)
+                        .unwrap_or(true)
+                {
+                    i += 1;
+                    break;
+                }
+                def_lines.push(content[i]);
+                i += 1;
+            }
+            while def_lines.last().map(|l| l.is_blank()).unwrap_or(false) {
+                def_lines.pop();
+            }
+            let mut item = Node::elem(kinds::DEFINITION_LIST_ITEM, input.span);
+            let mut term_messages: Vec<Node> = Vec::new();
+            for tl in &term_lines {
+                let raw_term = tl.text.trim();
+                // split_term_classifiers: ' +: +' — first classifier is
+                // the index key.
+                let mut parts = raw_term.splitn(2, " : ");
+                let term_text = parts.next().unwrap_or(raw_term).trim_end().to_string();
+                let index_key = parts
+                    .next()
+                    .map(|c| c.split(" : ").next().unwrap_or(c).trim().to_string());
+                let inline = self.inline(&term_text, input.span, tl.lineno);
+                let mut term = Node::elem(kinds::TERM, input.span);
+                term.children = inline.nodes;
+                term_messages.extend(inline.messages);
+                let base = ids::make_id(&format!("term-{term_text}"));
+                let node_id = if base == "term" || base.is_empty() {
+                    let id = format!("term-{}", self.index_serial);
+                    self.index_serial += 1;
+                    id
+                } else {
+                    base
+                };
+                term.attrs.ids.push(node_id.clone());
+                let mut index = Node::elem("index", input.span);
+                index.set(
+                    "entries",
+                    AttrValue::Str(index_entry_tuple(
+                        "single",
+                        &term_text,
+                        &node_id,
+                        "main",
+                        index_key.as_deref(),
+                    )),
+                );
+                term.children.push(index);
+                item.children.push(term);
+            }
+            item.children.extend(term_messages);
+            let dedented = dedent_by_min(&def_lines);
+            let mut definition = Node::elem(kinds::DEFINITION, input.span);
+            definition.children = self.parse_nested(&dedented, "definition");
+            item.children.push(definition);
+            dl.children.push(item);
+        }
+        glossary.children.push(dl);
+        out.push(glossary);
     }
 
     /// versionadded family (sphinx/domains/changeset.py VersionChange):
@@ -5165,6 +5386,10 @@ enum DirectiveKind {
     SphinxCodeBlock,
     Highlight,
     Only,
+    SphinxMath,
+    IndexDir,
+    HList,
+    Glossary,
 }
 
 /// Sphinx-mode registry: overlays/extends the docutils-native table.
@@ -5265,9 +5490,111 @@ fn sphinx_directive_spec(lower: &str) -> Option<DirectiveSpec> {
             option_spec: &[],
             kind: DirectiveKind::Only,
         }),
+        "math" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 1,
+            final_argument_whitespace: true,
+            has_content: true,
+            option_spec: SPHINX_MATH_OPTS,
+            kind: DirectiveKind::SphinxMath,
+        }),
+        "index" => Some(DirectiveSpec {
+            required_arguments: 1,
+            optional_arguments: 0,
+            final_argument_whitespace: true,
+            has_content: false,
+            option_spec: NAME_ONLY_OPTS,
+            kind: DirectiveKind::IndexDir,
+        }),
+        "hlist" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 0,
+            final_argument_whitespace: false,
+            has_content: true,
+            option_spec: HLIST_OPTS,
+            kind: DirectiveKind::HList,
+        }),
+        "glossary" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 0,
+            final_argument_whitespace: false,
+            has_content: true,
+            option_spec: GLOSSARY_OPTS,
+            kind: DirectiveKind::Glossary,
+        }),
         _ => None,
     }
 }
+
+/// One serialized 5-tuple for the index `entries` attr: docutils pformat
+/// renders list items via serial_escape (spaces backslash-escaped inside
+/// each item, items space-joined).
+fn index_entry_tuple(
+    entrytype: &str,
+    value: &str,
+    target_id: &str,
+    main: &str,
+    key: Option<&str>,
+) -> String {
+    let key_repr = match key {
+        Some(k) => py_repr(Some(k)),
+        None => "None".to_string(),
+    };
+    let tuple = format!(
+        "({}, {}, {}, {}, {})",
+        py_repr(Some(entrytype)),
+        py_repr(Some(value)),
+        py_repr(Some(target_id)),
+        py_repr(Some(main)),
+        key_repr
+    );
+    tuple.replace(' ', "\\ ")
+}
+
+/// process_index_entry (sphinx/util/nodes.py:431-482): returns serialized
+/// 5-tuples. Legacy types raise in sphinx; here they fall through to the
+/// single form (hardening note — the oracle corpus avoids them).
+fn process_index_entry(entry: &str, target_id: &str) -> Vec<String> {
+    const TYPES: &[&str] = &["single", "pair", "double", "triple", "see", "seealso"];
+    let (main, entry) = match entry.strip_prefix('!') {
+        Some(rest) => ("main", rest),
+        None => ("", entry),
+    };
+    for t in TYPES {
+        if let Some(value) = entry.strip_prefix(&format!("{t}:")) {
+            let value = value.trim();
+            let ty = if *t == "double" { "pair" } else { t };
+            return vec![index_entry_tuple(ty, value, target_id, main, None)];
+        }
+    }
+    // Comma shorthand with per-item '!'.
+    if entry.contains(',') {
+        return entry
+            .split(',')
+            .map(|part| {
+                let part = part.trim();
+                let (m, p) = match part.strip_prefix('!') {
+                    Some(rest) => ("main", rest),
+                    None => (main, part),
+                };
+                index_entry_tuple("single", p, target_id, m, None)
+            })
+            .collect();
+    }
+    vec![index_entry_tuple("single", entry, target_id, main, None)]
+}
+
+const SPHINX_MATH_OPTS: &[(&str, Conv)] = &[
+    ("label", Conv::Unchanged),
+    ("name", Conv::Unchanged),
+    ("class", Conv::ClassOption),
+    ("no-wrap", Conv::Flag),
+    ("nowrap", Conv::Flag),
+];
+
+const HLIST_OPTS: &[(&str, Conv)] = &[("columns", Conv::PyIntAny)];
+
+const GLOSSARY_OPTS: &[(&str, Conv)] = &[("sorted", Conv::Flag)];
 
 const UNICODE_OPTS: &[(&str, Conv)] = &[
     ("trim", Conv::Flag),

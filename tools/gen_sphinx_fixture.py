@@ -214,6 +214,11 @@ SUPPORTED_KINDS = {
     "highlightlang",
     "only",
     "toctree",
+    "math_block",
+    "index",
+    "hlist",
+    "hlistcol",
+    "glossary",
 }
 
 CASES = [
@@ -479,6 +484,19 @@ CASES = [
     ('sx_roles', 'func_role', 'Call :func:`mymod.myfunc` now.\n'),
     ('sx_roles', 'func_role_tilde', 'Call :func:`~mymod.myfunc` now.\n'),
     ('sx_roles', 'domain_qualified_role', 'Call :py:meth:`obj.method` now.\n'),
+    ('sx_directives', 'math_labeled', '.. math::\n   :label: eq1\n\n   E = mc^2\n'),
+    ('sx_directives', 'math_unlabeled', '.. math::\n\n   a + b\n'),
+    ('sx_directives', 'math_nowrap', '.. math::\n   :nowrap:\n\n   x\n'),
+    ('sx_directives', 'math_marker_arg', '.. math:: E = mc^2\n'),
+    ('sx_directives', 'index_single', '.. index:: single: MyTerm\n'),
+    ('sx_directives', 'index_pair', '.. index:: pair: MyTerm; OtherTerm\n'),
+    ('sx_directives', 'index_bare', '.. index:: MyTerm\n'),
+    ('sx_directives', 'index_comma_main', '.. index:: foo, bar, !baz\n'),
+    ('sx_directives', 'hlist_columns', '.. hlist::\n   :columns: 3\n\n   * a\n   * b\n   * c\n   * d\n   * e\n'),
+    ('sx_directives', 'hlist_default', '.. hlist::\n\n   * one\n   * two\n   * three\n'),
+    ('sx_directives', 'glossary_basic', '.. glossary::\n\n   environment\n      A structure where information about all documents under the root is\n      saved.\n\n   source directory\n      The directory which holds all source files.\n'),
+    ('sx_directives', 'glossary_multi_term', '.. glossary::\n\n   term a\n   term b\n      Shared definition.\n'),
+    ('sx_directives', 'glossary_sorted_classifier', '.. glossary::\n   :sorted:\n\n   zeta : key\n      Z def.\n'),
 ]
 
 

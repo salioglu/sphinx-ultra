@@ -1541,6 +1541,84 @@
       "name": "sx_roles.domain_qualified_role",
       "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Call \n        <pending_xref py:class=\"True\" py:module=\"True\" refdoc=\"index\" refdomain=\"py\" refexplicit=\"0\" reftarget=\"obj.method\" reftype=\"meth\" refwarn=\"0\">\n            <literal classes=\"xref py py-meth\">\n                obj.method()\n         now.\n",
       "rst": "Call :py:meth:`obj.method` now.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.math_labeled",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target refid=\"equation-eq1\">\n    <math_block docname=\"index\" ids=\"equation-eq1\" label=\"eq1\" no-wrap=\"0\" nowrap=\"0\" number=\"1\" xml:space=\"preserve\">\n        E = mc^2\n",
+      "rst": ".. math::\n   :label: eq1\n\n   E = mc^2\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.math_unlabeled",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <math_block docname=\"index\" label=\"True\" no-wrap=\"0\" nowrap=\"0\" number=\"True\" xml:space=\"preserve\">\n        a + b\n",
+      "rst": ".. math::\n\n   a + b\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.math_nowrap",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <math_block docname=\"index\" label=\"True\" no-wrap=\"1\" nowrap=\"1\" number=\"True\" xml:space=\"preserve\">\n        x\n",
+      "rst": ".. math::\n   :nowrap:\n\n   x\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.math_marker_arg",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <math_block docname=\"index\" label=\"True\" no-wrap=\"0\" nowrap=\"0\" number=\"True\" xml:space=\"preserve\">\n        E = mc^2\n        \n",
+      "rst": ".. math:: E = mc^2\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.index_single",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <index entries=\"('single',\\ 'MyTerm',\\ 'index-0',\\ '',\\ None)\" inline=\"0\">\n    <target ids=\"index-0\">\n",
+      "rst": ".. index:: single: MyTerm\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.index_pair",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <index entries=\"('pair',\\ 'MyTerm;\\ OtherTerm',\\ 'index-0',\\ '',\\ None)\" inline=\"0\">\n    <target ids=\"index-0\">\n",
+      "rst": ".. index:: pair: MyTerm; OtherTerm\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.index_bare",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <index entries=\"('single',\\ 'MyTerm',\\ 'index-0',\\ '',\\ None)\" inline=\"0\">\n    <target ids=\"index-0\">\n",
+      "rst": ".. index:: MyTerm\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.index_comma_main",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <index entries=\"('single',\\ 'foo',\\ 'index-0',\\ '',\\ None) ('single',\\ 'bar',\\ 'index-0',\\ '',\\ None) ('single',\\ 'baz',\\ 'index-0',\\ 'main',\\ None)\" inline=\"0\">\n    <target ids=\"index-0\">\n",
+      "rst": ".. index:: foo, bar, !baz\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.hlist_columns",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <hlist ncolumns=\"3\">\n        <hlistcol>\n            <bullet_list>\n                <list_item>\n                    <paragraph>\n                        a\n                <list_item>\n                    <paragraph>\n                        b\n        <hlistcol>\n            <bullet_list>\n                <list_item>\n                    <paragraph>\n                        c\n                <list_item>\n                    <paragraph>\n                        d\n        <hlistcol>\n            <bullet_list>\n                <list_item>\n                    <paragraph>\n                        e\n",
+      "rst": ".. hlist::\n   :columns: 3\n\n   * a\n   * b\n   * c\n   * d\n   * e\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.hlist_default",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <hlist ncolumns=\"2\">\n        <hlistcol>\n            <bullet_list>\n                <list_item>\n                    <paragraph>\n                        one\n                <list_item>\n                    <paragraph>\n                        two\n        <hlistcol>\n            <bullet_list>\n                <list_item>\n                    <paragraph>\n                        three\n",
+      "rst": ".. hlist::\n\n   * one\n   * two\n   * three\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.glossary_basic",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <glossary sorted=\"0\">\n        <definition_list classes=\"glossary\">\n            <definition_list_item>\n                <term ids=\"term-environment\">\n                    environment\n                    <index entries=\"('single',\\ 'environment',\\ 'term-environment',\\ 'main',\\ None)\">\n                <definition>\n                    <paragraph>\n                        A structure where information about all documents under the root is\n                        saved.\n            <definition_list_item>\n                <term ids=\"term-source-directory\">\n                    source directory\n                    <index entries=\"('single',\\ 'source\\ directory',\\ 'term-source-directory',\\ 'main',\\ None)\">\n                <definition>\n                    <paragraph>\n                        The directory which holds all source files.\n",
+      "rst": ".. glossary::\n\n   environment\n      A structure where information about all documents under the root is\n      saved.\n\n   source directory\n      The directory which holds all source files.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.glossary_multi_term",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <glossary sorted=\"0\">\n        <definition_list classes=\"glossary\">\n            <definition_list_item>\n                <term ids=\"term-term-a\">\n                    term a\n                    <index entries=\"('single',\\ 'term\\ a',\\ 'term-term-a',\\ 'main',\\ None)\">\n                <term ids=\"term-term-b\">\n                    term b\n                    <index entries=\"('single',\\ 'term\\ b',\\ 'term-term-b',\\ 'main',\\ None)\">\n                <definition>\n                    <paragraph>\n                        Shared definition.\n",
+      "rst": ".. glossary::\n\n   term a\n   term b\n      Shared definition.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.glossary_sorted_classifier",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <glossary sorted=\"1\">\n        <definition_list classes=\"glossary\">\n            <definition_list_item>\n                <term ids=\"term-zeta\">\n                    zeta\n                    <index entries=\"('single',\\ 'zeta',\\ 'term-zeta',\\ 'main',\\ 'key')\">\n                <definition>\n                    <paragraph>\n                        Z def.\n",
+      "rst": ".. glossary::\n   :sorted:\n\n   zeta : key\n      Z def.\n"
     }
   ],
   "docutils_version": "0.22.4",
