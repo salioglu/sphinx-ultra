@@ -9,12 +9,15 @@ repos:
         types: [rust]
         pass_filenames: false
 
+      # clippy/check depend on the manifests and toolchain pin as well as on
+      # .rs, so they match a files regex rather than types: [rust]. pre-commit
+      # ANDs files with types, so listing both would narrow instead of widen.
       - id: cargo-clippy
         name: cargo clippy
         description: Run Clippy linter
         entry: cargo clippy --all-targets --all-features -- -D warnings
         language: system
-        types: [rust]
+        files: '(\.rs$|^Cargo\.toml$|^Cargo\.lock$|^rust-toolchain\.toml$)'
         pass_filenames: false
 
       - id: cargo-check
@@ -22,8 +25,19 @@ repos:
         description: Check Rust code for errors
         entry: cargo check --all-targets --all-features
         language: system
-        types: [rust]
+        files: '(\.rs$|^Cargo\.toml$|^Cargo\.lock$|^rust-toolchain\.toml$)'
         pass_filenames: false
+
+      # Bytecode caches are build output, never source. check-added-large-files
+      # cannot catch them: its default threshold is 500 KB and a .pyc is ~37 KB.
+      - id: no-compiled-python
+        name: block compiled Python artifacts
+        description: Reject __pycache__/ and *.pyc so generator bytecode cannot be committed
+        entry: >-
+          compiled Python artifacts are build output and must not be committed
+          (see the Python block in .gitignore)
+        language: fail
+        files: '((^|/)__pycache__/|\.py[cod]$)'
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.4.0

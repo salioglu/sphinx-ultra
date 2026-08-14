@@ -1,6 +1,13 @@
 # Rust
 /target/
 
+# Python (fixture/table generators in tools/)
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+
 # IDE
 .vscode/
 .idea/
