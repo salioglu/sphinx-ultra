@@ -94,6 +94,18 @@ transform, which this crate does not run). src/rst/block.rs's
 `a_figure_name_lands_on_the_image_in_docutils_and_the_figure_in_sphinx` pins
 the id placement until the image-collection task can fold the case in here.
 
+Wave-4 task 9 also left `ObjectDescription`'s `parse_content_to_nodes(
+allow_section_headings=True)` (`directives/__init__.py:288`) out of the corpus.
+That flag is docutils' `nested_parse(match_titles=True)`, which makes a section
+title inside a description body open a real `section` AND lifts the
+`BasePseudoSection` guard, so `.. topic::`/`.. sidebar::` are legal there. This
+crate's nested parse is `match_titles=False` throughout, so both come back as
+`Unexpected section title.` / `The "topic" directive may not be used within
+topics or body elements.` — verified against the oracle in that task. Threading
+a real `match_titles` through the nested parse is a change to the section
+machinery itself, not to these directives, so it is deferred with the two
+probe cases removed rather than committed as a knowingly-red corpus.
+
 Provenance: cases whose (family, name) mirror a case of
 tests/fixtures/doctree_differential.json reuse that case's exact rst input;
 three inputs are new (marked). Never remove or rename existing cases; later
