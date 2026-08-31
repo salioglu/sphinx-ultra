@@ -912,14 +912,20 @@ fn nitpicky_flags_broken_refs() {
         )],
     );
 
-    // Without -n: silent (the heuristics are opt-in)
+    // Without -n: `:doc:` and `:ref:` are `warn_dangling` roles, so Sphinx
+    // reports them broken in a plain build too — `nitpicky` only widens the
+    // warning to the roles that are *not* warn_dangling (and to the other
+    // domains). Until the std domain landed, this crate reported neither
+    // without -n; the environment-differential oracle (`doc_refs`,
+    // `glossary_terms`, built with nitpicky off) is what settles it.
     let out_quiet = out_dir("nitpicky-broken-off");
     let result = build(&src, &out_quiet, &[]);
     assert!(result.status.success());
+    let quiet_stderr = stderr_of(&result);
     assert!(
-        !stderr_of(&result).contains("unknown document"),
-        "cross-ref validation must be opt-in, stderr: {}",
-        stderr_of(&result)
+        quiet_stderr.contains("index.rst:4: WARNING: unknown document: 'missing_doc'")
+            && quiet_stderr.contains("index.rst:4: WARNING: undefined label: 'missing-label'"),
+        "warn_dangling roles report broken references without -n, stderr: {quiet_stderr}"
     );
 
     // With -n (compat mode): both broken refs warn, with line numbers

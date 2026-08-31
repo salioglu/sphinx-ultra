@@ -396,7 +396,7 @@ pub fn docname_join(base_docname: &str, docname: &str) -> String {
 
 /// `repr()` of a Python `str`: single quotes unless that would need
 /// escaping and double quotes wouldn't.
-fn py_repr_str(s: &str) -> String {
+pub(crate) fn py_repr_str(s: &str) -> String {
     let quote = if s.contains('\'') && !s.contains('"') {
         '"'
     } else {

@@ -486,7 +486,7 @@ fn std_enumerable_node_type(node: &Node) -> Option<&'static str> {
 /// the caption (or title) of an enumerable node, or `None` when the node
 /// isn't enumerable at all. Note `section` is deliberately absent from
 /// `enumerable_nodes`, so a section has no numfig title.
-fn std_numfig_title(node: &Node) -> Option<&Node> {
+pub(crate) fn std_numfig_title(node: &Node) -> Option<&Node> {
     if !matches!(node.kind, "figure" | "container" | kinds::TABLE) {
         return None;
     }
@@ -498,7 +498,7 @@ fn std_numfig_title(node: &Node) -> Option<&Node> {
 /// `sphinx.util.nodes.clean_astext`: the node's text with `raw` subtrees
 /// dropped and image alt text blanked (an `image` contributes no text here
 /// either way).
-fn clean_astext(node: &Node) -> String {
+pub(crate) fn clean_astext(node: &Node) -> String {
     fn walk(node: &Node, out: &mut String) {
         if node.kind == "raw" {
             return;

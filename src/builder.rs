@@ -1,7 +1,8 @@
 use anyhow::Result;
 use log::{debug, info};
 use rayon::prelude::*;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::borrow::Cow;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -12,6 +13,8 @@ use crate::doctree::Doctree;
 use crate::document::Document;
 use crate::env::metadata as env_metadata;
 use crate::env::numbers as env_numbers;
+use crate::env::resolve as env_resolve;
+use crate::env::std_domain as env_std;
 use crate::env::toctree as env_toctree;
 use crate::env::toctree::{ConsistencyLevel, ToctreeWarningKind};
 use crate::env::BuildEnvironment;
@@ -29,14 +32,6 @@ const DOCTREE_SUBDIR: &str = "doctrees";
 /// Sphinx's `root_doc` default (`config.py`), used when the configuration
 /// leaves it unset.
 const DEFAULT_ROOT_DOC: &str = "index";
-
-/// Resolve a cross-reference target against the document that references
-/// it, the way Sphinx does (`docname_join`): a leading `/` means
-/// source-root-relative, anything else is relative to the referencing
-/// document's directory.
-fn resolve_docname(target: &str, referencing_doc: &str) -> String {
-    env_toctree::docname_join(referencing_doc, target)
-}
 
 /// One document's read-phase output.
 ///
@@ -93,6 +88,12 @@ pub struct SphinxBuilder {
     /// than consulted for what is outdated. Reading it back is what a later
     /// wave-4 task's incremental-rebuild logic needs.
     env: BuildEnvironment,
+    /// docname -> the pseudo-XML of that document's *resolved* doctree, as
+    /// the resolve phase left it (Sphinx's `get_and_resolve_doctree`
+    /// output). Kept for [`Self::snapshot_env`], which is what the
+    /// environment-oracle differential diffs; the write phase does not
+    /// consume doctrees yet.
+    resolved: Mutex<BTreeMap<String, String>>,
 }
 
 impl SphinxBuilder {
@@ -164,6 +165,7 @@ impl SphinxBuilder {
             sphinx_app: Some(sphinx_app),
             extension_loader,
             env,
+            resolved: Mutex::new(BTreeMap::new()),
         })
     }
 
@@ -263,13 +265,6 @@ impl SphinxBuilder {
         // Directive/role validation runs in every build unless disabled
         if self.config.validate_directives {
             self.validate_directives_and_roles(&processed_docs);
-        }
-
-        // Cross-reference validation is opt-in (-n/nitpicky): its heuristics
-        // still false-positive on refs we cannot resolve yet (intersphinx,
-        // python objects before the M5 sidecar).
-        if self.config.nitpicky {
-            self.validate_cross_references(&processed_docs)?;
         }
 
         // Generate cross-references and indices
@@ -557,6 +552,26 @@ impl SphinxBuilder {
         let mut ordered: Vec<&ReadResult> = results.iter().collect();
         ordered.sort_by(|a, b| a.docname.cmp(&b.docname));
 
+        // Sphinx's `env.doc2path`: the source file a docname was read from.
+        // Documents this build did not read fall back to the conventional
+        // `<srcdir>/<docname>.rst`, the same shape `doc2path` synthesizes
+        // from `source_suffix`.
+        let paths: HashMap<&str, &Path> = results
+            .iter()
+            .map(|result| {
+                (
+                    result.docname.as_str(),
+                    result.document.source_path.as_path(),
+                )
+            })
+            .collect();
+        let doc2path = |docname: &str| -> PathBuf {
+            paths
+                .get(docname)
+                .map(|path| path.to_path_buf())
+                .unwrap_or_else(|| self.source_dir.join(format!("{docname}.rst")))
+        };
+
         for result in ordered {
             let docname = result.docname.as_str();
             // Every document is re-read on every build today, so each one's
@@ -593,6 +608,27 @@ impl SphinxBuilder {
             // were resolved. Sphinx logs them during the read phase, which
             // walks documents in this same sorted order.
             self.report_toctree_warnings(&result.document);
+
+            // The std domain's own read-phase hook (`process_doc`), which
+            // Sphinx dispatches through `doctree-read` — after the parse
+            // that produced the toctree diagnostics above, hence the order
+            // here.
+            let mut std_warnings = Vec::new();
+            env_std::process_doc(
+                env,
+                &env_std::DocumentSource {
+                    docname,
+                    doctree: &result.doctree,
+                    registry: &result.document.registry,
+                    text: &result.document.content.to_string(),
+                    path: &result.document.source_path,
+                },
+                &doc2path,
+                &mut std_warnings,
+            );
+            for warning in std_warnings {
+                self.add_warning(warning);
+            }
         }
     }
 
@@ -664,7 +700,78 @@ impl SphinxBuilder {
             }
         }
 
+        self.xref_phase(env, results);
+
         env.save(self.cache.cache_dir())
+    }
+
+    /// Cross-reference resolution (`ReferencesResolver`, run per document as
+    /// Sphinx writes it — after numbering, which `:numref:` reads).
+    ///
+    /// Each document is resolved over a *copy* of its doctree, exactly like
+    /// Sphinx's `get_and_resolve_doctree`, and the result is kept as
+    /// pseudo-XML for [`Self::snapshot_env`]. Documents are visited in
+    /// docname order, which is the order Sphinx's write loop uses and
+    /// therefore the order its warnings come out in.
+    fn xref_phase(&self, env: &BuildEnvironment, results: &[ReadResult]) {
+        let in_memory: HashMap<&str, &Doctree> = results
+            .iter()
+            .map(|result| (result.docname.as_str(), &result.doctree))
+            .collect();
+        let load_doctree = |docname: &str| -> Option<Cow<'_, Doctree>> {
+            match in_memory.get(docname) {
+                Some(doctree) => Some(Cow::Borrowed(*doctree)),
+                None => self.load_doctree(docname).map(Cow::Owned),
+            }
+        };
+        // The oracle builds with sphinx's dummy builder, whose
+        // `get_target_uri` is `''`; nothing consumes a resolved doctree's
+        // URIs yet (the write phase renders from `Document.html`), so this
+        // is the one honest answer until the HTML writer supplies its own.
+        let relative_uri = |_from: &str, _to: &str| String::new();
+        let resolver = env_resolve::Resolver {
+            env,
+            numfig: self.config.numfig,
+            numfig_format: &self.config.numfig_format,
+            doctree: &load_doctree,
+            relative_uri: &relative_uri,
+        };
+        let nitpick = env_resolve::NitpickConfig {
+            nitpicky: self.config.nitpicky,
+            ignore: &self.config.nitpick_ignore,
+            ignore_regex: &self.config.nitpick_ignore_regex,
+        };
+
+        let mut ordered: Vec<&ReadResult> = results.iter().collect();
+        ordered.sort_by(|a, b| a.docname.cmp(&b.docname));
+
+        let mut unresolvable_domain_refs = 0usize;
+        for result in ordered {
+            let mut doctree = result.doctree.clone();
+            let resolution = env_resolve::resolve_document(
+                &resolver,
+                &nitpick,
+                &result.docname,
+                &mut doctree,
+                &result.document.content.to_string(),
+                &result.document.source_path,
+            );
+            unresolvable_domain_refs += resolution.unresolvable_domain_refs;
+            for warning in resolution.warnings {
+                self.add_warning(warning);
+            }
+            self.resolved
+                .lock()
+                .unwrap()
+                .insert(result.docname.clone(), doctree.root.pformat());
+        }
+
+        if unresolvable_domain_refs > 0 {
+            info!(
+                "{unresolvable_domain_refs} python-domain reference(s) not validated \
+                 (no object inventory until M5)"
+            );
+        }
     }
 
     /// Section and figure numbering (`TocTreeCollector.get_updated_docs`,
@@ -910,14 +1017,8 @@ impl SphinxBuilder {
         Ok(())
     }
 
-    /// Root-relative docname (no extension, forward slashes) for a document.
-    fn docname_of(&self, doc: &Document) -> String {
-        self.docname_of_path(&doc.source_path)
-    }
-
     /// Root-relative docname (no extension, forward slashes) for a source
-    /// path. `docname_of` delegates here; this variant exists for callers
-    /// (the parse step) that only have a path, not yet a [`Document`].
+    /// path.
     fn docname_of_path(&self, path: &Path) -> String {
         let relative = path.strip_prefix(&self.source_dir).unwrap_or(path);
         relative
@@ -1034,194 +1135,6 @@ impl SphinxBuilder {
         }
     }
 
-    /// Nitpicky cross-reference validation (`-n`): resolve every `:doc:` and
-    /// `:ref:` against the documents and labels this build actually produced,
-    /// via the domain registry. Python-domain references are counted but not
-    /// validated (no object inventory until the M5 sidecar) — silently
-    /// reporting them broken would false-positive on every third-party ref.
-    fn validate_cross_references(&self, processed_docs: &[Document]) -> Result<()> {
-        use crate::document::DocumentContent;
-        use crate::domains::rst::RstDomain;
-        use crate::domains::{DomainRegistry, ReferenceType};
-
-        // docutils label matching is case-insensitive AND whitespace-
-        // collapsing (fully_normalize_name); the doctree labels arrive
-        // already collapsed, so role targets must collapse too or
-        // multi-space :ref: text false-positives (review finding 38/42).
-        let normalize_label = |label: &str| {
-            label
-                .trim()
-                .to_lowercase()
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ")
-        };
-
-        let mut rst_domain = RstDomain::new();
-        for doc in processed_docs {
-            let docname = self.docname_of(doc);
-            let location = crate::domains::ReferenceLocation {
-                docname: docname.clone(),
-                lineno: None,
-                column: None,
-                source_path: Some(doc.source_path.display().to_string()),
-            };
-            rst_domain.register_document(docname.clone(), doc.title.clone(), location.clone())?;
-
-            // Explicit targets from the doctree (docutils-normalized names,
-            // which are already lowercase).
-            if matches!(&doc.content, DocumentContent::RestructuredText(_)) {
-                for label in &doc.labels {
-                    rst_domain.register_label(
-                        normalize_label(&label.name),
-                        "section".to_string(),
-                        None,
-                        docname.clone(),
-                        crate::domains::ReferenceLocation {
-                            lineno: Some(label.line),
-                            ..location.clone()
-                        },
-                    )?;
-                }
-            }
-
-            // Section anchors double as :ref: targets (autosectionlabel-style;
-            // better than false-positives on every section reference).
-            let mut stack: Vec<&crate::document::TocEntry> = doc.toc.iter().collect();
-            while let Some(entry) = stack.pop() {
-                stack.extend(entry.children.iter());
-                rst_domain.register_section(
-                    normalize_label(&entry.anchor),
-                    entry.title.clone(),
-                    docname.clone(),
-                    crate::domains::ReferenceLocation {
-                        lineno: Some(entry.line_number),
-                        ..location.clone()
-                    },
-                )?;
-            }
-        }
-
-        let mut registry = DomainRegistry::new();
-        registry.register_domain(Box::new(rst_domain))?;
-
-        let mut python_refs = 0usize;
-        for doc in processed_docs {
-            if !matches!(&doc.content, DocumentContent::RestructuredText(_)) {
-                continue;
-            }
-            let docname = self.docname_of(doc);
-            // Since wave 3: role occurrences come from the parse-time
-            // records (all roles; unmapped ones are dropped exactly like
-            // the M1 scanner's Custom type).
-            for record in &doc.role_records {
-                let ref_type = match record.name.as_str() {
-                    "doc" => ReferenceType::Document,
-                    "ref" => ReferenceType::Section,
-                    "func" => ReferenceType::Function,
-                    "class" => ReferenceType::Class,
-                    "mod" => ReferenceType::Module,
-                    "meth" => ReferenceType::Method,
-                    "attr" => ReferenceType::Attribute,
-                    "data" => ReferenceType::Data,
-                    "exc" => ReferenceType::Exception,
-                    _ => continue,
-                };
-                // External-reference heuristics (M1 parity): URL-ish doc
-                // targets and known-stdlib python targets are skipped.
-                let external = match &ref_type {
-                    ReferenceType::Document => {
-                        record.target.starts_with("http://")
-                            || record.target.starts_with("https://")
-                            || record.target.starts_with("file://")
-                    }
-                    ReferenceType::Function | ReferenceType::Class | ReferenceType::Module => [
-                        "builtins.",
-                        "typing.",
-                        "collections.",
-                        "pathlib.",
-                        "os.",
-                        "sys.",
-                        "json.",
-                        "re.",
-                        "datetime.",
-                        "urllib.",
-                        "http.",
-                    ]
-                    .iter()
-                    .any(|p| record.target.starts_with(p)),
-                    _ => false,
-                };
-                if external {
-                    continue;
-                }
-                match ref_type {
-                    ReferenceType::Document | ReferenceType::Section => {
-                        let target = if matches!(ref_type, ReferenceType::Document) {
-                            // :doc: targets resolve like toctree entries:
-                            // leading `/` is source-root-relative, else
-                            // current-doc-relative.
-                            resolve_docname(&record.target, &docname)
-                        } else {
-                            normalize_label(&record.target)
-                        };
-                        registry.add_cross_reference(crate::domains::CrossReference {
-                            ref_type,
-                            target,
-                            display_text: record.display.clone(),
-                            source_location: crate::domains::ReferenceLocation {
-                                docname: docname.clone(),
-                                lineno: Some(record.line as usize),
-                                column: None,
-                                source_path: Some(doc.source_path.display().to_string()),
-                            },
-                            is_external: false,
-                        });
-                    }
-                    _ => python_refs += 1,
-                }
-            }
-        }
-
-        // Validate exactly once; stats/broken helpers re-validate internally.
-        for result in registry.validate_all_references() {
-            if result.is_valid {
-                continue;
-            }
-            let reference = &result.reference;
-            let message = match reference.ref_type {
-                ReferenceType::Document => {
-                    format!("unknown document: '{}'", reference.target)
-                }
-                ReferenceType::Section => {
-                    format!("undefined label: '{}'", reference.target)
-                }
-                _ => continue,
-            };
-            let file = reference
-                .source_location
-                .source_path
-                .as_deref()
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from(&reference.source_location.docname));
-            self.add_warning(BuildWarning::new(
-                file,
-                reference.source_location.lineno,
-                message,
-                crate::error::WarningType::BrokenCrossReference,
-            ));
-        }
-
-        if python_refs > 0 {
-            info!(
-                "{} python-domain reference(s) not validated (no object inventory until M5)",
-                python_refs
-            );
-        }
-
-        Ok(())
-    }
-
     async fn generate_search_index(&self, _documents: &[Document]) -> Result<()> {
         info!("Generating search index");
         // TODO: Implement search index generation
@@ -1234,9 +1147,26 @@ impl SphinxBuilder {
     }
 
     /// [`BuildEnvironment::snapshot`] of this build's environment — the
-    /// shape the `env_differential` oracle compares against.
+    /// shape the `env_differential` oracle compares against — plus the
+    /// `resolved_pformat` of every document this build resolved, which is
+    /// build output rather than environment state and so has no home inside
+    /// [`BuildEnvironment`].
     pub fn snapshot_env(&self) -> serde_json::Value {
-        self.env.snapshot()
+        let mut snapshot = self.env.snapshot();
+        let resolved: serde_json::Map<String, serde_json::Value> = self
+            .resolved
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(docname, pformat)| (docname.clone(), serde_json::Value::String(pformat.clone())))
+            .collect();
+        if let Some(object) = snapshot.as_object_mut() {
+            object.insert(
+                "resolved_pformat".to_string(),
+                serde_json::Value::Object(resolved),
+            );
+        }
+        snapshot
     }
 }
 

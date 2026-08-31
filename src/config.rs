@@ -119,6 +119,16 @@ pub struct BuildConfig {
     /// Warn about all missing cross-references (Sphinx `nitpicky` / `-n`)
     pub nitpicky: bool,
 
+    /// `(reftype, target)` pairs whose missing-reference warnings `nitpicky`
+    /// must not raise (`nitpick_ignore`, `config.py`). Matched exactly, with
+    /// the reftype spelled either `domain:type` or — for the std domain —
+    /// bare `type` (`post_transforms/__init__.py:266-273`).
+    pub nitpick_ignore: Vec<(String, String)>,
+
+    /// The same, with both halves matched as regular expressions that must
+    /// match in full (`nitpick_ignore_regex`, `:274-282`).
+    pub nitpick_ignore_regex: Vec<(String, String)>,
+
     /// Tags set via `-t` (consumed by `only`/`ifconfig` once M2 lands)
     pub tags: Vec<String>,
 
@@ -276,6 +286,8 @@ impl Default for BuildConfig {
             exclude_patterns: vec![],
 
             nitpicky: false,
+            nitpick_ignore: vec![],
+            nitpick_ignore_regex: vec![],
             tags: vec![],
             doctree_dir: None,
             html_context: std::collections::HashMap::new(),

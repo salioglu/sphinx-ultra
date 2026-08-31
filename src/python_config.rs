@@ -256,6 +256,25 @@ impl PythonConfigParser {
                 .unwrap_or_default()
         };
 
+        // Helper function to extract a list of 2-string tuples
+        // (`nitpick_ignore`'s `[('py:func', 'foo'), ...]` shape).
+        let extract_pair_list = |key: &str| -> Vec<(String, String)> {
+            self.conf_namespace
+                .get(key)
+                .and_then(|val| val.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|pair| {
+                            let pair = pair.as_array()?;
+                            let first = pair.first()?.as_str()?;
+                            let second = pair.get(1)?.as_str()?;
+                            Some((first.to_string(), second.to_string()))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+
         // Helper function to extract dictionary
         let extract_dict = |key: &str| -> HashMap<String, serde_json::Value> {
             self.conf_namespace
@@ -319,6 +338,8 @@ impl PythonConfigParser {
         // Extract build options
         config.needs_sphinx = extract_string("needs_sphinx");
         config.nitpicky = extract_bool("nitpicky");
+        config.nitpick_ignore = extract_pair_list("nitpick_ignore");
+        config.nitpick_ignore_regex = extract_pair_list("nitpick_ignore_regex");
         config.numfig = extract_bool("numfig");
         // `numfig_format` is a str -> str dict; a non-string value is not a
         // format string sphinx could interpolate, so it is dropped here
@@ -1032,6 +1053,8 @@ impl ConfPyConfig {
         config.exclude_patterns = self.exclude_patterns.clone();
 
         config.nitpicky = self.nitpicky.unwrap_or(false);
+        config.nitpick_ignore = self.nitpick_ignore.clone();
+        config.nitpick_ignore_regex = self.nitpick_ignore_regex.clone();
         config.html_context = self.html_context.clone();
 
         // Numbering (`numfig` family). `numfig_format` MERGES over the

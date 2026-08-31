@@ -19,6 +19,8 @@
 
 pub mod metadata;
 pub mod numbers;
+pub mod resolve;
+pub mod std_domain;
 pub mod toctree;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -59,27 +61,7 @@ pub const ENV_VERSION: u32 = 2;
 /// The `env.bin` filename inside a build's cache directory.
 const ENV_FILENAME: &str = "env.bin";
 
-/// Standard-domain (`std`) registries: cross-reference labels, generic
-/// objects (`:option:`, `:envvar:`, ...), program options, and glossary
-/// terms. Field shapes mirror Sphinx's `StandardDomain.data` exactly (see
-/// `domains/std/__init__.py`).
-///
-/// This is a minimal stub: Task 8 gives it real read/write behavior. Here it
-/// only needs to exist, round-trip through serde, and support the
-/// docname-scrubbing half of [`BuildEnvironment::clear_doc`].
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct StdDomainData {
-    /// labelname -> (docname, labelid, sectionname).
-    pub labels: BTreeMap<String, (String, String, String)>,
-    /// labelname -> (docname, labelid).
-    pub anonlabels: BTreeMap<String, (String, String)>,
-    /// (objtype, name) -> (docname, labelid).
-    pub objects: BTreeMap<(String, String), (String, String)>,
-    /// (program, optname) -> (docname, labelid).
-    pub progoptions: BTreeMap<(Option<String>, String), (String, String)>,
-    /// lowercased term -> (docname, labelid).
-    pub terms: BTreeMap<String, (String, String)>,
-}
+pub use std_domain::StdDomainData;
 
 /// One entry from a document's `.. index::` directives, as recorded in
 /// Sphinx's `env.domaindata['index']['entries'][docname]`. `main` mirrors
@@ -563,8 +545,12 @@ mod tests {
         // docname; clear_doc scrubs them by matching the docname *inside*
         // each entry's value, which is "index" here (an envvar/label/term
         // defined directly in index.rst).
-        assert!(env.std.labels.is_empty());
-        assert!(env.std.anonlabels.is_empty());
+        // The preseeded virtual labels (genindex/modindex/py-modindex/
+        // search) belong to no source document, so they survive.
+        assert!(!env.std.labels.contains_key("intro"));
+        assert!(!env.std.anonlabels.contains_key("intro"));
+        assert_eq!(env.std.labels, StdDomainData::default().labels);
+        assert_eq!(env.std.anonlabels, StdDomainData::default().anonlabels);
         assert!(env.std.objects.is_empty());
         assert!(env.std.progoptions.is_empty());
         assert!(env.std.terms.is_empty());

@@ -102,7 +102,7 @@ pub struct StdData {
     pub terms: BTreeMap<String, (String, String)>,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Debug, PartialEq, Eq)]
 pub struct StdObjectEntry {
     pub objtype: String,
     pub name: String,
@@ -110,7 +110,7 @@ pub struct StdObjectEntry {
     pub labelid: String,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Debug, PartialEq, Eq)]
 pub struct StdProgOptionEntry {
     pub program: Option<String>,
     pub name: String,
@@ -336,26 +336,33 @@ const KNOWN_WARNING_GAPS: &[(&str, &str)] = &[
     ),
     (
         "numfig_off_numref",
-        "`image file not readable` plus `numfig is disabled. :numref: is \
-         ignored.` — both land with numbering/std-domain resolution",
-    ),
-    (
-        "labels_dups",
-        "`duplicate label` is a std-domain diagnostic (std domain task)",
-    ),
-    (
-        "glossary_terms",
-        "`term not in glossary` is a std-domain resolution diagnostic",
+        "`image file not readable` — image collection is not ported yet (the \
+         project's other warning, `numfig is disabled. :numref: is ignored.`, \
+         this task does produce)",
     ),
     (
         "std_objects",
-        "`unknown option` is a std-domain resolution diagnostic",
-    ),
-    (
-        "doc_refs",
-        "`unknown document` is a std-domain cross-reference diagnostic",
+        "`unknown option` needs the `option` directive to have registered \
+         the program options it names; nothing produces desc nodes yet (the \
+         std-directives task lands them, and flips this)",
     ),
 ];
+
+/// Projects whose oracle `std` data this task deliberately does not
+/// reproduce. Checked **strictly**, exactly like [`KNOWN_TOC_GAPS`].
+const KNOWN_STD_GAPS: &[(&str, &str)] = &[(
+    "std_objects",
+    "`option`/`envvar`/`confval` register their objects from the `desc` \
+     anatomy their directives build; nothing in this crate produces desc \
+     nodes yet (the std-directives task lands them, and flips this)",
+)];
+
+fn known_std_gap(project: &str) -> Option<&'static str> {
+    KNOWN_STD_GAPS
+        .iter()
+        .find(|(p, _)| *p == project)
+        .map(|(_, why)| *why)
+}
 
 fn known_warning_gap(project: &str) -> Option<&'static str> {
     KNOWN_WARNING_GAPS
@@ -653,14 +660,91 @@ fn section_and_figure_numbering_matches_oracle() {
 // Pending: later wave-4 tasks
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Live: task 8 keys
+// ---------------------------------------------------------------------------
+
+/// `env.domaindata['std']` — the labels, anonymous labels, objects, program
+/// options and glossary terms `StandardDomain.process_doc` (and the
+/// directives that register objects) collect.
 #[test]
-#[ignore = "task 7+: needs std domain (labels/anonlabels/objects/progoptions/terms)"]
 fn std_domain_matches_oracle() {
     let fixture = load_fixture();
+    let mut divergences = Vec::new();
+    let mut visited_gaps: Vec<&str> = Vec::new();
+
     for project in &fixture.projects {
-        let _ = &project.expect.std;
+        let env = env_of(project);
+        let expected = &project.expect.std;
+
+        let std = &env["std"];
+        let labels: BTreeMap<String, (String, String, String)> = snapshot_field(std, "labels");
+        let anonlabels: BTreeMap<String, (String, String)> = snapshot_field(std, "anonlabels");
+        let objects: Vec<StdObjectEntry> = snapshot_field(std, "objects");
+        let progoptions: Vec<StdProgOptionEntry> = snapshot_field(std, "progoptions");
+        let terms: BTreeMap<String, (String, String)> = snapshot_field(std, "terms");
+
+        let mut mismatches = Vec::new();
+        if labels != expected.labels {
+            mismatches.push(format!(
+                "  labels\n    expected: {:?}\n    actual:   {labels:?}",
+                expected.labels
+            ));
+        }
+        if anonlabels != expected.anonlabels {
+            mismatches.push(format!(
+                "  anonlabels\n    expected: {:?}\n    actual:   {anonlabels:?}",
+                expected.anonlabels
+            ));
+        }
+        if objects != expected.objects {
+            mismatches.push(format!(
+                "  objects\n    expected: {:?}\n    actual:   {objects:?}",
+                expected.objects
+            ));
+        }
+        if progoptions != expected.progoptions {
+            mismatches.push(format!(
+                "  progoptions\n    expected: {:?}\n    actual:   {progoptions:?}",
+                expected.progoptions
+            ));
+        }
+        if terms != expected.terms {
+            mismatches.push(format!(
+                "  terms\n    expected: {:?}\n    actual:   {terms:?}",
+                expected.terms
+            ));
+        }
+
+        match known_std_gap(&project.name) {
+            Some(why) => {
+                visited_gaps.push(project.name.as_str());
+                assert!(
+                    !mismatches.is_empty(),
+                    "[{}] listed in KNOWN_STD_GAPS ({why}) but the std domain \
+                     data now matches the oracle — delete the exemption",
+                    project.name
+                );
+            }
+            None if !mismatches.is_empty() => {
+                divergences.push(format!("[{}] std\n{}", project.name, mismatches.join("\n")))
+            }
+            None => {}
+        }
     }
-    todo!("diff std.labels/anonlabels/objects/progoptions/terms");
+
+    for (project, why) in KNOWN_STD_GAPS {
+        assert!(
+            visited_gaps.contains(project),
+            "KNOWN_STD_GAPS entry ({project}) — {why} — was never visited: \
+             no such project in the fixture. Delete it."
+        );
+    }
+
+    report(
+        &divergences,
+        "std.labels/anonlabels/objects/progoptions/terms",
+    );
 }
 
 #[test]
