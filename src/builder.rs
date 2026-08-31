@@ -420,7 +420,8 @@ impl SphinxBuilder {
 
         // Read and parse the file
         let content = std::fs::read_to_string(file_path)?;
-        let mut document = self.parser.parse(file_path, &content)?;
+        let docname = self.docname_of_path(file_path);
+        let mut document = self.parser.parse(file_path, &content, &docname)?;
 
         // Simple document rendering (placeholder)
         let rendered_html = format!(
@@ -549,10 +550,14 @@ impl SphinxBuilder {
 
     /// Root-relative docname (no extension, forward slashes) for a document.
     fn docname_of(&self, doc: &Document) -> String {
-        let relative = doc
-            .source_path
-            .strip_prefix(&self.source_dir)
-            .unwrap_or(&doc.source_path);
+        self.docname_of_path(&doc.source_path)
+    }
+
+    /// Root-relative docname (no extension, forward slashes) for a source
+    /// path. `docname_of` delegates here; this variant exists for callers
+    /// (the parse step) that only have a path, not yet a [`Document`].
+    fn docname_of_path(&self, path: &Path) -> String {
+        let relative = path.strip_prefix(&self.source_dir).unwrap_or(path);
         relative
             .with_extension("")
             .to_string_lossy()

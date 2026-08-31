@@ -81,6 +81,22 @@ pub struct ToctreeEntryRecord {
     pub line: u32,
 }
 
+/// Snapshot of the parser's id/name registry (docutils `document.nameids`),
+/// harvested from [`crate::doctree::ids::IdRegistry`] right before it drops
+/// at the end of the parse. Downstream consumers — e.g. wave 4's std-domain
+/// label harvest — need name -> (id, explicit) data the registry itself
+/// doesn't survive to hand out. Intended to eventually ride the document
+/// cache, so it stays serde-serializable and cheap to clone.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct RegistryExport {
+    /// `(name, id, explicit)`, one entry per registered name. `id` is
+    /// `None` once a name has been duplicated away.
+    pub nameids: Vec<(String, Option<String>, bool)>,
+    /// sphinx `env.new_serialno('index')` counter value at the end of the
+    /// parse (shared by the index directive and index-entry-emitting roles).
+    pub index_serial: u32,
+}
+
 /// Everything a parse produces: the doctree plus the flat records the
 /// build pipeline consumes without re-walking raw source.
 pub struct ParseOutput {
@@ -88,6 +104,7 @@ pub struct ParseOutput {
     pub directive_records: Vec<DirectiveRecord>,
     pub role_records: Vec<RoleRecord>,
     pub toctrees: Vec<ToctreeRecord>,
+    pub registry: RegistryExport,
 }
 
 /// Parse RST source into a doctree. Total: never panics, never errors —

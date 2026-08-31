@@ -359,6 +359,23 @@ impl IdRegistry {
     pub fn take_fixups(&mut self) -> Vec<DupnameFixup> {
         std::mem::take(&mut self.fixups)
     }
+
+    /// Snapshot of the name->id table for downstream consumers (wave 4's
+    /// std-domain label harvest) that need name -> (id, explicit) after
+    /// this registry itself is dropped: `(name, id, explicit)`. `id` is
+    /// `None` once a name has been duplicated away (see [`Self::register`]).
+    pub fn nameids_snapshot(&self) -> Vec<(String, Option<String>, bool)> {
+        self.nameids
+            .iter()
+            .map(|(name, entry)| (name.clone(), entry.id.clone(), entry.explicit))
+            .collect()
+    }
+
+    /// Current value of the `env.new_serialno('index')` counter (see
+    /// [`Self::new_index_serialno`]).
+    pub fn index_serial(&self) -> u32 {
+        self.index_serial
+    }
 }
 
 /// Post-parse pass: move `name` from `names` to `dupnames` on the node

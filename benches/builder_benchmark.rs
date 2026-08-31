@@ -64,6 +64,7 @@ Tables
                 .parse(
                     black_box(&PathBuf::from("test.rst")),
                     black_box(rst_content),
+                    black_box("test"),
                 )
                 .unwrap()
         })

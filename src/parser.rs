@@ -15,7 +15,7 @@ use pulldown_cmark::{Event, Parser as MarkdownParser, Tag};
 use std::path::Path;
 
 use crate::config::BuildConfig;
-use crate::doctree::{kinds, Node};
+use crate::doctree::{kinds, Doctree, Node};
 use crate::document::{
     Document, DocumentContent, LabelRecord, MarkdownContent, MarkdownNode, RstContent, TocEntry,
 };
@@ -29,7 +29,7 @@ impl Parser {
         Ok(Self {})
     }
 
-    pub fn parse(&self, file_path: &Path, content: &str) -> Result<Document> {
+    pub fn parse(&self, file_path: &Path, content: &str, docname: &str) -> Result<Document> {
         let output_path = self.get_output_path(file_path)?;
         let mut document = Document::new(file_path.to_path_buf(), output_path);
 
@@ -43,7 +43,7 @@ impl Parser {
 
         match extension {
             "rst" => {
-                self.parse_rst_into(content, file_path, &mut document);
+                self.parse_rst_into(content, file_path, docname, &mut document);
             }
             "md" => {
                 document.content = self.parse_markdown(content)?;
@@ -64,37 +64,44 @@ impl Parser {
         Ok(document)
     }
 
-    fn parse_rst_into(&self, content: &str, file_path: &Path, document: &mut Document) {
+    /// Returns the parsed doctree so callers (tests included) can inspect
+    /// docname-carrying attrs (`pending_xref[refdoc]`, toctree `parent`)
+    /// that don't otherwise survive onto `Document`.
+    fn parse_rst_into(
+        &self,
+        content: &str,
+        file_path: &Path,
+        docname: &str,
+        document: &mut Document,
+    ) -> Doctree {
         let output = rst::parse_rst_full(
             content,
             &rst::ParseOptions {
                 source_path: file_path.display().to_string(),
                 sphinx: true,
-                docname: file_path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("index")
-                    .to_string(),
+                docname: docname.to_string(),
             },
         );
         let line_starts = line_start_offsets(content);
-        let root = &output.doctree.root;
+        {
+            let root = &output.doctree.root;
 
-        // Title: the first section title (the M1 scanner's "Untitled"
-        // fallback preserved).
-        document.title = first_section_title(root).unwrap_or_else(|| "Untitled".to_string());
+            // Title: the first section title (the M1 scanner's "Untitled"
+            // fallback preserved).
+            document.title = first_section_title(root).unwrap_or_else(|| "Untitled".to_string());
 
-        // Flat TOC; the builder's stack walk nests by level. Anchors are
-        // the sections' docutils ids (make_id) — a verified Sphinx-parity
-        // improvement over the M1 lowercase/space-hyphen slugs.
-        let mut toc = Vec::new();
-        collect_toc(root, 1, &line_starts, &mut toc);
-        document.toc = toc;
+            // Flat TOC; the builder's stack walk nests by level. Anchors are
+            // the sections' docutils ids (make_id) — a verified Sphinx-parity
+            // improvement over the M1 lowercase/space-hyphen slugs.
+            let mut toc = Vec::new();
+            collect_toc(root, 1, &line_starts, &mut toc);
+            document.toc = toc;
 
-        // Explicit targets for nitpicky label resolution.
-        let mut labels = Vec::new();
-        collect_labels(root, &line_starts, &mut labels);
-        document.labels = labels;
+            // Explicit targets for nitpicky label resolution.
+            let mut labels = Vec::new();
+            collect_labels(root, &line_starts, &mut labels);
+            document.labels = labels;
+        }
 
         document.toctrees = output.toctrees;
         document.directive_records = output.directive_records;
@@ -105,6 +112,8 @@ impl Parser {
             ast: Vec::new(),
             directives: Vec::new(),
         });
+
+        output.doctree
     }
 
     fn parse_markdown(&self, content: &str) -> Result<DocumentContent> {
@@ -224,13 +233,22 @@ fn collect_labels(node: &Node, line_starts: &[u32], out: &mut Vec<LabelRecord>) 
 mod tests {
     use super::*;
     use crate::config::BuildConfig;
+    use crate::doctree::AttrValue;
 
     fn parse_doc(content: &str) -> Document {
         let parser = Parser::new(&BuildConfig::default()).unwrap();
         // Bypass mtime lookup by parsing through the internals.
         let mut document = Document::new("test.rst".into(), "test.html".into());
-        parser.parse_rst_into(content, Path::new("test.rst"), &mut document);
+        parser.parse_rst_into(content, Path::new("test.rst"), "index", &mut document);
         document
+    }
+
+    /// First node of the given kind, depth-first.
+    fn find_by_kind<'a>(node: &'a Node, kind: &str) -> Option<&'a Node> {
+        if node.kind == kind {
+            return Some(node);
+        }
+        node.children.iter().find_map(|c| find_by_kind(c, kind))
     }
 
     #[test]
@@ -295,5 +313,66 @@ mod tests {
         assert_eq!(names, vec!["ref", "doc"]);
         assert_eq!(doc.role_records[0].target, "setup-label");
         assert_eq!(doc.role_records[0].line, 3);
+    }
+
+    /// Nested docs (e.g. `guide/install.rst`) must carry their real
+    /// root-relative docname into `pending_xref[refdoc]` and the toctree
+    /// `parent` attr — not the bare file stem (`install`).
+    #[test]
+    fn real_docname_threads_into_refdoc_and_toctree_parent() {
+        let parser = Parser::new(&BuildConfig::default()).unwrap();
+        let mut document = Document::new("guide/install.rst".into(), "guide/install.html".into());
+        let doctree = parser.parse_rst_into(
+            ".. toctree::\n\n   other\n\nSee :doc:`other`.\n",
+            Path::new("guide/install.rst"),
+            "guide/install",
+            &mut document,
+        );
+
+        let toctree = find_by_kind(&doctree.root, "toctree").expect("toctree node");
+        assert_eq!(
+            toctree.get("parent"),
+            Some(&AttrValue::Str("guide/install".to_string()))
+        );
+
+        let xref = find_by_kind(&doctree.root, "pending_xref").expect("pending_xref node");
+        assert_eq!(
+            xref.get("refdoc"),
+            Some(&AttrValue::Str("guide/install".to_string()))
+        );
+    }
+
+    /// The id registry's nameids table (name -> (id, explicit)) must
+    /// survive parse_document_full as `ParseOutput.registry` — wave 4's
+    /// std-domain label harvest needs it after the registry itself drops.
+    #[test]
+    fn registry_export_carries_nameids_with_explicitness() {
+        let output = rst::parse_rst_full(
+            "Section\n=======\n\n.. _tgt:\n\nBody.\n",
+            &rst::ParseOptions {
+                source_path: "<snippet>".to_string(),
+                sphinx: true,
+                docname: "index".to_string(),
+            },
+        );
+
+        let tgt = output
+            .registry
+            .nameids
+            .iter()
+            .find(|(name, _, _)| name == "tgt")
+            .expect("tgt registered");
+        assert_eq!(tgt, &("tgt".to_string(), Some("tgt".to_string()), true));
+
+        let section = output
+            .registry
+            .nameids
+            .iter()
+            .find(|(name, _, _)| name == "section")
+            .expect("section registered");
+        assert_eq!(
+            section,
+            &("section".to_string(), Some("section".to_string()), false)
+        );
     }
 }

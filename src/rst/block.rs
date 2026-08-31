@@ -205,6 +205,13 @@ impl<'a> BlockParser<'a> {
     /// parse_document plus the flat build-pipeline records.
     pub(crate) fn parse_document_full(mut self) -> super::ParseOutput {
         let root = self.parse_document_impl();
+        // Harvest the id/name registry before it drops with `self`: wave 4's
+        // std-domain label harvest needs name -> (id, explicit) data that
+        // otherwise dies with the BlockParser.
+        let registry = super::RegistryExport {
+            nameids: self.registry.nameids_snapshot(),
+            index_serial: self.registry.index_serial(),
+        };
         super::ParseOutput {
             doctree: crate::doctree::Doctree {
                 root,
@@ -213,6 +220,7 @@ impl<'a> BlockParser<'a> {
             directive_records: std::mem::take(&mut self.directive_records),
             role_records: std::mem::take(&mut self.role_records),
             toctrees: std::mem::take(&mut self.toctree_records),
+            registry,
         }
     }
 
