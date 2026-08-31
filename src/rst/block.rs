@@ -4412,15 +4412,24 @@ impl<'a> BlockParser<'a> {
         })
     }
 
-    /// figure (images.py:110-186).
+    /// figure (images.py:110-186), plus sphinx's override (patches.py:33-56)
+    /// which moves `:name:` from the inner image onto the figure itself.
     fn run_figure(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
+        // sphinx pops `name` before delegating to docutils, so the image
+        // never sees it, and re-applies it to the figure node afterwards —
+        // but only on the success path (a figure returned *with* an error
+        // node, or an error alone, keeps no name at all).
+        let name_on_figure = self.sphinx;
         let image_input = DirectiveInput {
             name: input.name,
             arguments: input.arguments.clone(),
             options: input
                 .options
                 .iter()
-                .filter(|(n, _)| !matches!(n.as_str(), "figwidth" | "figclass" | "align"))
+                .filter(|(n, _)| {
+                    !matches!(n.as_str(), "figwidth" | "figclass" | "align")
+                        && !(name_on_figure && n == "name")
+                })
                 .cloned()
                 .collect(),
             content: Vec::new(),
@@ -4486,6 +4495,11 @@ impl<'a> BlockParser<'a> {
                 legend.children = legend_children;
                 figure.children.push(legend);
             }
+        }
+        if name_on_figure {
+            // After the nested parse, exactly where sphinx calls it — the
+            // caption's own targets are registered first.
+            self.directive_add_name(&mut figure, &input.options, input.lineno, out);
         }
         out.push(figure);
     }
@@ -7475,6 +7489,59 @@ mod tests {
         )
         .root
         .pformat()
+    }
+
+    /// Same, with sphinx's directive set and node overrides enabled.
+    fn pf_sphinx(src: &str) -> String {
+        parse_rst(
+            src,
+            &ParseOptions {
+                source_path: "<snippet>".into(),
+                sphinx: true,
+                docname: "index".into(),
+                exclude_patterns: Vec::new(),
+                found_docs: None,
+            },
+        )
+        .root
+        .pformat()
+    }
+
+    /// docutils registers a figure's `:name:` on the *image*
+    /// (`Image.run` -> `add_name`); sphinx pops the option first and applies
+    /// it to the figure instead (`directives/patches.py:33-56`). The
+    /// difference is load-bearing: `numfig` keys figure numbers off
+    /// `figure['ids'][0]`, and `:ref:`/`:numref:` resolve to that node.
+    #[test]
+    fn a_figure_name_lands_on_the_image_in_docutils_and_the_figure_in_sphinx() {
+        let src = ".. figure:: pic.png\n   :name: fig one\n\n   Caption.\n";
+
+        let docutils = pf(src);
+        assert!(
+            docutils.contains(r#"<image ids="fig-one" names="fig\ one" uri="pic.png">"#),
+            "{docutils}"
+        );
+        assert!(docutils.contains("<figure>"), "{docutils}");
+
+        let sphinx = pf_sphinx(src);
+        assert!(
+            sphinx.contains(r#"<figure ids="fig-one" names="fig\ one">"#),
+            "{sphinx}"
+        );
+        assert!(sphinx.contains(r#"<image uri="pic.png">"#), "{sphinx}");
+    }
+
+    /// sphinx returns early — without re-applying the popped `:name:` —
+    /// when the figure came back with an error node, so neither node ends
+    /// up named.
+    #[test]
+    fn a_figure_whose_caption_is_malformed_keeps_no_name() {
+        let sphinx = pf_sphinx(".. figure:: pic.png\n   :name: fig-bad\n\n   - not a caption\n");
+        // (the raw source is echoed inside the error's literal_block, so
+        // this checks the attributes, not the text)
+        assert!(!sphinx.contains(r#"ids="fig-bad""#), "{sphinx}");
+        assert!(sphinx.contains("<figure>\n"), "{sphinx}");
+        assert!(sphinx.contains("<system_message"), "{sphinx}");
     }
 
     // ----- task 7: document + paragraphs -----
