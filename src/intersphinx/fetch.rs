@@ -124,6 +124,31 @@ pub struct UreqFetcher;
 /// misconfigured URL cannot stream unbounded data into memory.
 const MAX_INVENTORY_BYTES: u64 = 64 * 1024 * 1024;
 
+/// Every certificate in a PEM bundle, in file order.
+///
+/// A CA bundle — which is what `tls_cacerts` names — is a *concatenation* of
+/// PEM certificates: `openssl`'s `cert.pem`, a corporate root plus its
+/// intermediates, a trust store shipped by a distribution. `Certificate::from_pem`
+/// documents that it "picks the first certificate", so trusting its result
+/// alone would silently drop every root after the first and reject servers
+/// chaining to any of them.
+///
+/// Non-certificate PEM sections (a private key sitting in the same file, say)
+/// are skipped rather than rejected, mirroring how a trust store is read.
+fn root_certs_from_pem(pem: &[u8]) -> Result<Vec<ureq::tls::Certificate<'static>>> {
+    let mut certs = Vec::new();
+    for item in ureq::tls::parse_pem(pem) {
+        match item.map_err(|e| anyhow::anyhow!("{e}"))? {
+            ureq::tls::PemItem::Certificate(cert) => certs.push(cert),
+            _ => continue,
+        }
+    }
+    if certs.is_empty() {
+        anyhow::bail!("no PEM-encoded certificate found");
+    }
+    Ok(certs)
+}
+
 impl InventoryFetcher for UreqFetcher {
     fn fetch(&self, url: &str, http: &HttpConfig) -> Result<Vec<u8>> {
         let mut tls = ureq::tls::TlsConfig::builder().disable_verification(!http.tls_verify);
@@ -133,9 +158,9 @@ impl InventoryFetcher for UreqFetcher {
             if let Some(bundle) = http.ca_bundle_for(url) {
                 let pem = std::fs::read(bundle)
                     .with_context(|| format!("cannot read tls_cacerts bundle {bundle}"))?;
-                let cert = ureq::tls::Certificate::from_pem(&pem)
+                let certs = root_certs_from_pem(&pem)
                     .map_err(|e| anyhow::anyhow!("invalid tls_cacerts bundle {bundle}: {e}"))?;
-                tls = tls.root_certs(ureq::tls::RootCerts::new_with_certs(&[cert]));
+                tls = tls.root_certs(ureq::tls::RootCerts::new_with_certs(&certs));
             }
         }
 
@@ -160,6 +185,34 @@ impl InventoryFetcher for UreqFetcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Two PEM sections, which is the shape of every real CA bundle. The
+    /// bodies are arbitrary: this is the PEM *framing* under test, and the
+    /// parser hands back one certificate per section.
+    const TWO_CERT_BUNDLE: &[u8] = b"\
+-----BEGIN CERTIFICATE-----
+AQID
+-----END CERTIFICATE-----
+-----BEGIN CERTIFICATE-----
+BAUG
+-----END CERTIFICATE-----
+";
+
+    #[test]
+    fn a_ca_bundle_keeps_every_certificate_in_it() {
+        let certs = root_certs_from_pem(TWO_CERT_BUNDLE).expect("a two-cert bundle parses");
+        assert_eq!(
+            certs.len(),
+            2,
+            "a bundle's later roots must not be dropped: `Certificate::from_pem` \
+             returns only the first, which would reject servers chaining to any other"
+        );
+    }
+
+    #[test]
+    fn a_bundle_with_no_certificate_in_it_is_an_error() {
+        assert!(root_certs_from_pem(b"not a pem file at all\n").is_err());
+    }
 
     #[test]
     fn the_default_configuration_verifies_certificates() {

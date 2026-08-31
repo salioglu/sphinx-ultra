@@ -114,6 +114,7 @@ fn load(
         },
         fetcher,
     )
+    .expect("these mappings all satisfy the project invariants")
 }
 
 /// A `conf.py` dict literal, through the real conf.py literal parser — the
@@ -451,17 +452,17 @@ fn the_disk_cache_short_circuits_a_remote_fetch_until_it_expires() {
         .as_secs() as i64;
 
     // Cold: fetched, and the raw bytes are written to the disk cache.
-    let outcome = load_mappings(&request(real_now, 5), &fetcher);
+    let outcome = load_mappings(&request(real_now, 5), &fetcher).unwrap();
     assert!(outcome.data.inventory_exists("remote"));
     assert_eq!(fetcher.calls.borrow().len(), 1);
     assert!(cache_dir.join("remote_objects.inv").is_file());
 
     // Warm: the disk copy is fresh, so the fetcher is never called again.
-    let outcome = load_mappings(&request(real_now, 5), &NoNetwork);
+    let outcome = load_mappings(&request(real_now, 5), &NoNetwork).unwrap();
     assert!(outcome.data.inventory_exists("remote"));
 
     // Expired: `now` is a year on with a 5-day limit, so it re-fetches.
-    let outcome = load_mappings(&request(real_now + 365 * 86400, 5), &fetcher);
+    let outcome = load_mappings(&request(real_now + 365 * 86400, 5), &fetcher).unwrap();
     assert!(outcome.data.inventory_exists("remote"));
     assert_eq!(
         fetcher.calls.borrow().len(),
@@ -470,7 +471,7 @@ fn the_disk_cache_short_circuits_a_remote_fetch_until_it_expires() {
     );
 
     // A negative limit never expires: back to the disk copy, no network.
-    let outcome = load_mappings(&request(real_now + 365 * 86400, -1), &NoNetwork);
+    let outcome = load_mappings(&request(real_now + 365 * 86400, -1), &NoNetwork).unwrap();
     assert!(outcome.data.inventory_exists("remote"));
 }
 
@@ -504,7 +505,8 @@ fn a_local_location_is_re_read_even_when_a_disk_cache_exists() {
             http: &http,
         },
         &NoNetwork,
-    );
+    )
+    .unwrap();
 
     assert!(outcome.data.named["other"].contains("std:label", "only-here"));
     assert!(
@@ -1144,4 +1146,152 @@ fn an_unresolved_external_reference_names_its_domain_and_type() {
             category: Some("ref.ref".to_string()),
         }
     );
+}
+
+// ---------------------------------------------------------------------------
+// 5. regressions found in review
+// ---------------------------------------------------------------------------
+
+#[test]
+fn basic_auth_credentials_never_reach_a_generated_link() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    std::fs::write(
+        tmp.path().join("local.inv"),
+        fixture_bytes("std_objects_and_docs.inv"),
+    )
+    .unwrap();
+
+    let mapping = mapping(&[(
+        "private",
+        "https://user:hunter2@docs.example.org/v1/",
+        &[Some("local.inv")],
+    )]);
+    let outcome = load(&mapping, tmp.path(), &NoNetwork);
+
+    let uri = &outcome.data.named["private"]
+        .get("std:label", "example")
+        .expect("the label loads")
+        .uri;
+    assert_eq!(
+        uri, "https://docs.example.org/v1/b.html#example",
+        "the target URI is stripped of its credentials before any item URI is \
+         built from it — otherwise the password ships in the href of every \
+         published cross-project link"
+    );
+    for item in outcome.data.main.data.values().flat_map(|o| o.values()) {
+        assert!(
+            !item.uri.contains("hunter2") && !item.uri.contains('@'),
+            "no item may carry credentials: {}",
+            item.uri
+        );
+    }
+}
+
+#[test]
+fn strip_basic_auth_matches_sphinxs_split_semantics() {
+    assert_eq!(
+        strip_basic_auth("https://user:pass@example.com/v1/"),
+        "https://example.com/v1/"
+    );
+    assert_eq!(
+        strip_basic_auth("https://user@example.com"),
+        "https://example.com"
+    );
+    assert_eq!(
+        strip_basic_auth("https://example.com/v1/"),
+        "https://example.com/v1/",
+        "a URL with no credentials is untouched"
+    );
+    assert_eq!(
+        strip_basic_auth("py3k"),
+        "py3k",
+        "a relative target URI has no netloc to strip"
+    );
+    assert_eq!(
+        strip_basic_auth("https://a@b@example.com/x"),
+        "https://b@example.com/x",
+        "sphinx keeps `split('@')[1]`, not the last field"
+    );
+}
+
+#[test]
+fn a_corrupt_but_fresh_disk_cache_does_not_report_a_successful_load_as_failed() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let cache_dir = tmp.path().join(CACHE_DIR_NAME);
+    std::fs::create_dir_all(&cache_dir).unwrap();
+    // A disk cache entry that is fresh (just written) but unparseable.
+    std::fs::write(cache_dir.join("remote_objects.inv"), b"garbage").unwrap();
+
+    let http = HttpConfig::default();
+    let mapping = mapping(&[("remote", "https://example.org/v1/", &[None])]);
+    let fetcher = MockFetcher::with(
+        "https://example.org/v1/objects.inv",
+        fixture_bytes("std_objects_and_docs.inv"),
+    );
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let outcome = load_mappings(
+        &LoadRequest {
+            mapping: &mapping,
+            srcdir: tmp.path(),
+            cache_dir: Some(cache_dir),
+            cache_limit: 5,
+            now,
+            http: &http,
+        },
+        &fetcher,
+    )
+    .unwrap();
+
+    assert!(
+        outcome.data.inventory_exists("remote"),
+        "the re-fetch after a corrupt cache must still load the inventory"
+    );
+    assert!(
+        outcome.warnings.is_empty(),
+        "a load that succeeded must not report `failed to reach any of the \
+         inventories` — that warning fails a -W build: {:?}",
+        outcome.warnings
+    );
+    // The corrupt cache is still worth mentioning, as the alternative that
+    // did not work.
+    assert!(outcome.infos.iter().any(|info| info
+        == "encountered some issues with some of the inventories, \
+            but they had working alternatives:"));
+}
+
+#[test]
+fn an_empty_location_tuple_is_the_config_error_sphinx_raises() {
+    // `('https://x/', ())` passes validation — the location list is simply
+    // empty — and then fails `_IntersphinxProject`'s invariants at load.
+    let tmp = tempfile::TempDir::new().unwrap();
+    let mapping = mapping(&[("p", "https://example.org/", &[])]);
+    let http = HttpConfig::default();
+    let err = load_mappings(
+        &LoadRequest {
+            mapping: &mapping,
+            srcdir: tmp.path(),
+            cache_dir: None,
+            cache_limit: 5,
+            now: 1_700_000_000,
+            http: &http,
+        },
+        &NoNetwork,
+    )
+    .expect_err("an empty location tuple must abort the build");
+    assert_eq!(
+        err.to_string(),
+        "An invalid intersphinx_mapping entry was added after normalisation."
+    );
+}
+
+#[test]
+fn an_empty_location_tuple_survives_mapping_validation() {
+    // The precondition for the test above: validation itself has nothing to
+    // say about an empty tuple, which is why the invariant check exists.
+    let (mapping, errors) = validate_mapping(&conf_value("{'p': ('https://x/', ())}"));
+    assert!(errors.is_empty(), "{errors:?}");
+    assert_eq!(mapping["p"], ("https://x/".to_string(), vec![]));
 }

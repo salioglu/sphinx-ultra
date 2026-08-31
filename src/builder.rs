@@ -189,9 +189,13 @@ impl SphinxBuilder {
     /// and re-read on every build; remote ones go through [`UreqFetcher`]
     /// and are cached under the (fingerprint-wiped) cache directory, so a
     /// configuration change discards them along with everything else.
-    fn load_intersphinx_inventories(&mut self) {
+    /// Fails where Sphinx raises `ConfigError` from `load_mappings` — an
+    /// entry that survived normalisation but violates
+    /// `_IntersphinxProject`'s invariants — which aborts the build with the
+    /// same config-error exit code an invalid mapping gets at config time.
+    fn load_intersphinx_inventories(&mut self) -> Result<()> {
         if self.config.intersphinx_mapping.is_empty() {
-            return;
+            return Ok(());
         }
         let http = HttpConfig {
             tls_verify: self.config.tls_verify,
@@ -213,7 +217,7 @@ impl SphinxBuilder {
                 http: &http,
             },
             &UreqFetcher,
-        );
+        )?;
         for message in outcome.infos {
             info!("{message}");
         }
@@ -238,6 +242,7 @@ impl SphinxBuilder {
                 .collect(),
             resolve_self: self.config.intersphinx_resolve_self.clone(),
         };
+        Ok(())
     }
 
     pub fn set_parallel_jobs(&mut self, jobs: usize) {
@@ -315,7 +320,7 @@ impl SphinxBuilder {
             dependency_graph.len()
         );
 
-        self.load_intersphinx_inventories();
+        self.load_intersphinx_inventories()?;
 
         let mut read_results = self.read_phase(&source_files, &dependency_graph)?;
 

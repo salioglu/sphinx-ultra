@@ -1168,3 +1168,34 @@ fn an_invalid_intersphinx_mapping_exits_two_with_sphinxs_config_error() {
         "the per-entry error is logged before the abort, stderr: {stderr}"
     );
 }
+
+#[test]
+fn an_empty_inventory_location_tuple_exits_two_with_sphinxs_invariant_error() {
+    // `('https://x/', ())` passes `intersphinx_mapping` validation and then
+    // fails `_IntersphinxProject`'s invariants when the inventories load,
+    // which is a ConfigError in Sphinx — the same abort, one phase later.
+    let src = temp_source(
+        "intersphinx-empty-locations",
+        &[
+            ("index.rst", "Title\n=====\n\nText.\n"),
+            (
+                "conf.py",
+                "project = 'Empty'\nintersphinx_mapping = {'p': ('https://x/', ())}\n",
+            ),
+        ],
+    );
+    let out = out_dir("intersphinx-empty-locations");
+    let result = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap()]);
+
+    assert_eq!(
+        result.status.code(),
+        Some(2),
+        "stderr: {}",
+        stderr_of(&result)
+    );
+    let stderr = stderr_of(&result);
+    assert!(
+        stderr.contains("An invalid intersphinx_mapping entry was added after normalisation."),
+        "stderr: {stderr}"
+    );
+}

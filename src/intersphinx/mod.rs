@@ -279,17 +279,47 @@ pub struct LoadOutcome {
 /// The in-memory map below is per-call, and exists so the merge order and
 /// the cache-hit checks stay byte-faithful to Sphinx's.
 ///
-/// The one thing Sphinx's memory cache does that a disk cache cannot is
-/// *prune*: it drops a cached entry whose project changed target URI
-/// (`_load.py:164-173`), where the disk file — keyed by project name alone —
-/// would otherwise serve bytes fetched from somewhere else. Here that is
-/// covered a layer up: changing a target URI changes `intersphinx_mapping`,
-/// which changes the configuration fingerprint, which wipes the whole cache
-/// directory this file lives in.
-pub fn load_mappings(request: &LoadRequest<'_>, fetcher: &dyn InventoryFetcher) -> LoadOutcome {
+/// Two things Sphinx's memory cache does that this one cannot:
+///
+/// 1. **Pruning.** Sphinx drops a cached entry whose project changed target
+///    URI (`_load.py:164-173`), where a disk file keyed by project name alone
+///    would otherwise serve bytes fetched from somewhere else. Covered a
+///    layer up here: changing a target URI changes `intersphinx_mapping`,
+///    changes the configuration fingerprint, and wipes the whole cache
+///    directory this file lives in.
+/// 2. **Graceful degradation, which is genuinely lost.** In Sphinx the
+///    previous inventory stays in `env.intersphinx_cache` across builds, so
+///    when an *expired* remote's refresh fails the old data is still there
+///    and references still resolve — an offline or flaky-network build keeps
+///    working. Here a failed refresh leaves nothing behind: the project
+///    contributes no inventory, and every reference into it becomes a
+///    dangling warning (and fails `-W`). The stale bytes are still on disk;
+///    falling back to them on fetch failure is the obvious remedy and is
+///    deliberately **not** implemented here — it is a behaviour change from
+///    Sphinx, not a port of it, and belongs to T13/post-wave with its own
+///    decision about how stale is too stale.
+pub fn load_mappings(
+    request: &LoadRequest<'_>,
+    fetcher: &dyn InventoryFetcher,
+) -> anyhow::Result<LoadOutcome> {
     let mut outcome = LoadOutcome::default();
     if request.mapping.is_empty() {
-        return outcome;
+        return Ok(outcome);
+    }
+
+    // `_IntersphinxProject`'s invariants (`_shared.py:60-83`), checked before
+    // any fetching starts, exactly as `load_mappings` builds every project up
+    // front: a violation is a `ConfigError` that aborts the build
+    // (`_load.py:150-160`). Validation guarantees the name and target URI are
+    // non-empty and every location is `None`-or-non-empty, so an empty
+    // location *tuple* — `('https://x/', ())` — is the one invariant that can
+    // still fail here.
+    if request
+        .mapping
+        .values()
+        .any(|(_, locations)| locations.is_empty())
+    {
+        anyhow::bail!("An invalid intersphinx_mapping entry was added after normalisation.");
     }
 
     // uri -> (name, expiry, inventory) — Sphinx's `intersphinx_cache`.
@@ -324,7 +354,7 @@ pub fn load_mappings(request: &LoadRequest<'_>, fetcher: &dyn InventoryFetcher) 
         outcome.data.named.insert(name, inventory);
     }
 
-    outcome
+    Ok(outcome)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -350,18 +380,41 @@ fn fetch_inventory_group(
         .as_ref()
         .map(|dir| dir.join(format!("{name}_{INVENTORY_FILENAME}")));
 
-    let mut failures: Vec<String> = Vec::new();
-    // Sphinx's `project.locations` is never empty: a mapping with no
-    // locations normalises to `(None,)`.
-    let locations: Vec<Option<String>> = if locations.is_empty() {
-        vec![None]
+    // The URI every resolved link is built from. Basic-auth credentials are
+    // stripped from it before it is ever joined onto an inventory entry
+    // (`_fetch_inventory_data`, `_load.py:361-364`) — otherwise the password
+    // in `https://user:pw@example.org/` would be published in the `href` of
+    // every cross-project reference. The inventory *location* keeps its
+    // credentials: that one has to authenticate.
+    //
+    // (Sphinx skips this on its disk-cache path, which loads with the
+    // unstripped `project.target_uri` (`_load.py:279`); this port strips on
+    // both paths, because reproducing a credential leak for bug-parity is
+    // not parity worth having.)
+    let link_uri = if target_uri.contains("://") {
+        strip_basic_auth(target_uri)
     } else {
-        locations.to_vec()
+        target_uri.to_string()
     };
+
+    let mut failures: Vec<String> = Vec::new();
+    // Whether any location ultimately produced an inventory. Sphinx decides
+    // between its two failure reports with `len(failures) < len(locations)`,
+    // which assumes each location contributes at most one failure — but the
+    // disk-cache short-circuit here can fail *and* the same location then
+    // succeed, and that arithmetic would report a successful load as "failed
+    // to reach any of the inventories". Tracking the outcome directly says
+    // the same thing in every case Sphinx's count was right about, and the
+    // truth in the one it was not.
+    let mut succeeded = false;
+    let locations: Vec<Option<String>> = locations.to_vec();
 
     for location in &locations {
         let inv_location = match location {
             Some(location) => location.clone(),
+            // Built from the *unstripped* target URI: this one is fetched,
+            // so it is the one that still needs the credentials
+            // (`_load.py:262-267` runs before the strip).
             None => posix_join(target_uri, INVENTORY_FILENAME),
         };
         let remote = inv_location.contains("://");
@@ -373,10 +426,11 @@ fn fetch_inventory_group(
                 if mtime >= cache_time {
                     match std::fs::read(cache_path)
                         .map_err(|e| read_failure(&inv_location, &e))
-                        .and_then(|raw| load_inventory(&raw, target_uri))
+                        .and_then(|raw| load_inventory(&raw, &link_uri))
                     {
                         Ok(inventory) => {
                             cache.push((name.to_string(), mtime, inventory));
+                            succeeded = true;
                             break;
                         }
                         Err(message) => failures.push(message),
@@ -405,9 +459,10 @@ fn fetch_inventory_group(
             std::fs::read(&path).map_err(|e| read_failure(&inv_location, &e))
         };
 
-        match fetched.and_then(|raw| load_inventory(&raw, target_uri)) {
+        match fetched.and_then(|raw| load_inventory(&raw, &link_uri)) {
             Ok(inventory) => {
                 cache.push((name.to_string(), request.now, inventory));
+                succeeded = true;
                 break;
             }
             Err(message) => failures.push(message),
@@ -418,7 +473,7 @@ fn fetch_inventory_group(
     // (`_load.py:319-334`): all-failed is one warning, some-failed with a
     // working alternative is a set of infos.
     if failures.is_empty() {
-    } else if failures.len() < locations.len() {
+    } else if succeeded {
         outcome.infos.push(
             "encountered some issues with some of the inventories, \
              but they had working alternatives:"
@@ -519,6 +574,27 @@ pub fn safe_url(url: &str) -> String {
     };
     let user = userinfo.split_once(':').map_or(userinfo, |(user, _)| user);
     format!("{scheme}://{user}@{host}{tail}")
+}
+
+/// `_strip_basic_auth` (`_load.py:464-482`): `user[:pass]@hostname` in the
+/// netloc becomes `hostname`.
+///
+/// Note the split semantics Sphinx uses — `frags[1].split('@')[1]`, the
+/// *second* field, not the last — so a netloc containing more than one `@`
+/// keeps everything after the first one, `@`s included. Reproduced rather
+/// than improved on: this decides what every published link says.
+pub fn strip_basic_auth(url: &str) -> String {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return url.to_string();
+    };
+    let (netloc, tail) = match rest.find(['/', '?', '#']) {
+        Some(end) => (&rest[..end], &rest[end..]),
+        None => (rest, ""),
+    };
+    match netloc.split_once('@') {
+        Some((_userinfo, host)) => format!("{scheme}://{host}{tail}"),
+        None => url.to_string(),
+    }
 }
 
 /// The redirect rule (`_load.py:410-419`), kept pure: after a fetch that
