@@ -10,6 +10,7 @@ fn opts() -> ParseOptions {
         source_path: "<p>".into(),
         sphinx: true,
         docname: "index".into(),
+        found_docs: None,
     }
 }
 

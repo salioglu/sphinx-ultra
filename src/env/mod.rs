@@ -17,6 +17,8 @@
 //! `Hash*` equivalent so that bincode bytes and [`BuildEnvironment::snapshot`]
 //! output are deterministic across runs and processes.
 
+pub mod toctree;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -156,12 +158,25 @@ impl BuildEnvironment {
     /// if needed. Always stamps [`ENV_VERSION`] into the persisted bytes
     /// (regardless of `self.version`'s current in-memory value), so callers
     /// never need to remember to set it before saving.
+    ///
+    /// The in-memory `version` is only updated once the write has actually
+    /// succeeded: a failed save must not leave the caller holding an
+    /// environment that claims to have been written at the current version.
     pub fn save(&mut self, cache_dir: &Path) -> anyhow::Result<()> {
-        self.version = ENV_VERSION;
-        std::fs::create_dir_all(cache_dir)?;
-        let bytes = bincode::serde::encode_to_vec(&*self, bincode::config::standard())?;
-        std::fs::write(cache_dir.join(ENV_FILENAME), bytes)?;
-        Ok(())
+        let previous = std::mem::replace(&mut self.version, ENV_VERSION);
+        let write = || -> anyhow::Result<()> {
+            std::fs::create_dir_all(cache_dir)?;
+            let bytes = bincode::serde::encode_to_vec(&*self, bincode::config::standard())?;
+            std::fs::write(cache_dir.join(ENV_FILENAME), bytes)?;
+            Ok(())
+        };
+        match write() {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                self.version = previous;
+                Err(e)
+            }
+        }
     }
 
     /// Remove every trace of `docname` from the environment — the Rust
@@ -430,6 +445,23 @@ mod tests {
         assert_eq!(env.version, ENV_VERSION);
         let restored = BuildEnvironment::load(tmp.path()).unwrap();
         assert_eq!(restored.version, ENV_VERSION);
+    }
+
+    #[test]
+    fn failed_save_leaves_the_in_memory_version_untouched() {
+        // A file where the cache dir should be: create_dir_all fails, so the
+        // environment must not be left claiming it was saved at the current
+        // version.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let blocked = tmp.path().join("not-a-dir");
+        std::fs::write(&blocked, b"").unwrap();
+
+        let mut env = BuildEnvironment {
+            version: 0,
+            ..Default::default()
+        };
+        assert!(env.save(&blocked).is_err());
+        assert_eq!(env.version, 0);
     }
 
     #[test]

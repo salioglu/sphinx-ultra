@@ -54,6 +54,7 @@ fn matches_sphinx_oracle_pformat() {
                     source_path: "<snippet>".into(),
                     sphinx: true,
                     docname: "index".into(),
+                    found_docs: None,
                 },
             )
             .root

@@ -37,13 +37,21 @@ impl Span {
     };
 }
 
-/// Scalar attribute value. docutils attribute dicts hold ints and strings for
-/// everything wave 1 emits; list-valued attributes live in [`Attrs`]' typed
-/// fields instead.
+/// Attribute value. docutils attribute dicts hold ints and strings for
+/// everything wave 1 emits; docutils' five *universal* list attributes
+/// (`ids`, `names`, ...) live in [`Attrs`]' typed fields instead.
+///
+/// [`AttrValue::List`] covers the element-specific list-valued attributes
+/// docutils renders through the same `serial_escape`-and-join path as the
+/// universal ones (`toctree[entries]`, `toctree[includefiles]`) — storing
+/// them as a list rather than a pre-joined string keeps the escaping in
+/// `pformat` (one implementation, not one per producer) and keeps the items
+/// readable by consumers such as `env::toctree::note_toctree`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AttrValue {
     Int(i64),
     Str(String),
+    List(Vec<String>),
 }
 
 /// docutils' universal list attributes (`basic_attributes` + `backrefs`) as
@@ -128,6 +136,19 @@ impl Node {
             span,
             text: Some(s.into()),
             attrs: Attrs::default(),
+            children: Vec::new(),
+        }
+    }
+
+    /// docutils `Element.copy()`: same kind, span and attributes, but **no
+    /// children** (docutils copies `rawsource` and attributes only;
+    /// `deepcopy` is the one that takes the subtree).
+    pub fn shallow_copy(&self) -> Node {
+        Node {
+            kind: self.kind,
+            span: self.span,
+            text: self.text.clone(),
+            attrs: self.attrs.clone(),
             children: Vec::new(),
         }
     }

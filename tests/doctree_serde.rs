@@ -32,6 +32,7 @@ fn round_trip_fixture(raw: &str, sphinx: bool, source: &str) {
                 source_path: "<snippet>".into(),
                 sphinx,
                 docname: "index".into(),
+                found_docs: None,
             },
         );
         let original_pformat = tree.root.pformat();

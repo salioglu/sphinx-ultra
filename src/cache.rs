@@ -80,7 +80,33 @@ impl BuildCache {
     }
 
     pub fn get_document(&self, file_path: &Path) -> Result<Document> {
-        let hash = self.calculate_file_hash(file_path)?;
+        self.get_document_with(file_path, |_| Some(()))
+            .map(|(document, ())| document)
+            .ok_or_else(|| BuildError::Cache("Document not found in cache".to_string()).into())
+    }
+
+    /// Look up a cached document, letting the caller have the final say.
+    ///
+    /// `accept` runs only after the entry passed the cache's own checks
+    /// (content+mtime hash, expiry). Returning `None` from it means the
+    /// caller cannot actually use the entry — because some companion state
+    /// it needs is missing, say — and the lookup is then counted and
+    /// reported as a **miss**, not a hit: a "hit" the build has to redo
+    /// anyway is not a hit. Anything `accept` computes from the document
+    /// (loading that companion state) comes back alongside it, so callers
+    /// don't have to do the work twice.
+    pub fn get_document_with<T>(
+        &self,
+        file_path: &Path,
+        accept: impl FnOnce(&Document) -> Option<T>,
+    ) -> Option<(Document, T)> {
+        let hash = match self.calculate_file_hash(file_path) {
+            Ok(hash) => hash,
+            Err(_) => {
+                *self.miss_count.write() += 1;
+                return None;
+            }
+        };
 
         // Clone what we need out of the `get` guard before touching the map
         // again: holding a DashMap `Ref` while calling `alter` on the same
@@ -92,23 +118,28 @@ impl BuildCache {
 
         if let Some((cached_hash, cached_at, document)) = cached {
             if cached_hash == hash && !self.is_expired(&cached_at) {
-                // Update access count
-                self.documents.alter(file_path, |_, mut cached| {
-                    cached.access_count += 1;
-                    cached
-                });
+                if let Some(extra) = accept(&document) {
+                    // Update access count
+                    self.documents.alter(file_path, |_, mut cached| {
+                        cached.access_count += 1;
+                        cached
+                    });
 
-                *self.hit_count.write() += 1;
-                debug!("Cache hit for {}", file_path.display());
-                return Ok(document);
+                    *self.hit_count.write() += 1;
+                    debug!("Cache hit for {}", file_path.display());
+                    return Some((document, extra));
+                }
+            } else {
+                // Remove expired or outdated entry. A caller-rejected entry
+                // is left alone: it is still a valid record of the file,
+                // and the rebuild that follows overwrites it anyway.
+                self.documents.remove(file_path);
             }
-            // Remove expired or outdated entry
-            self.documents.remove(file_path);
         }
 
         *self.miss_count.write() += 1;
         debug!("Cache miss for {}", file_path.display());
-        Err(BuildError::Cache("Document not found in cache".to_string()).into())
+        None
     }
 
     pub fn store_document(&self, file_path: &Path, document: &Document) -> Result<()> {
@@ -396,6 +427,31 @@ mod tests {
             cache.get_document(&source).unwrap();
         }
         assert_eq!(cache.hit_count(), 3);
+    }
+
+    #[test]
+    fn caller_rejected_entry_counts_as_a_miss() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("page.rst");
+        std::fs::write(&source, "Page\n----\n").unwrap();
+
+        let cache = BuildCache::new(tmp.path().join("cache"), 500, 24, "fp-1").unwrap();
+        cache
+            .store_document(&source, &make_document(&source))
+            .unwrap();
+
+        let rejected = cache.get_document_with(&source, |_| None::<()>);
+        assert!(rejected.is_none());
+        assert_eq!(cache.hit_count(), 0, "a rejected entry is not a hit");
+        assert_eq!(cache.miss_count(), 1);
+
+        // The entry survives rejection, so a later accepting lookup hits.
+        let accepted = cache.get_document_with(&source, |doc| Some(doc.html.clone()));
+        assert_eq!(
+            accepted.map(|(_, html)| html).as_deref(),
+            Some("<html><body>cached</body></html>")
+        );
+        assert_eq!(cache.hit_count(), 1);
     }
 
     #[test]

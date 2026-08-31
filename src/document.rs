@@ -71,6 +71,15 @@ pub struct Document {
 
     /// Explicit hyperlink-target labels (docutils-normalized names).
     pub labels: Vec<LabelRecord>,
+
+    /// The parse's id/name registry snapshot (docutils `document.nameids`),
+    /// which the std-domain label harvest consumes. It rides the `Document`
+    /// — rather than being a separate read-phase value — so an incremental
+    /// cache hit, which skips parsing entirely, still has the real registry
+    /// instead of an empty stand-in. Deliberately *not* `#[serde(default)]`:
+    /// a cache entry written before this field existed fails to decode and
+    /// is re-parsed, which is the honest outcome.
+    pub registry: crate::rst::RegistryExport,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -273,6 +282,7 @@ impl Document {
             directive_records: Vec::new(),
             role_records: Vec::new(),
             labels: Vec::new(),
+            registry: crate::rst::RegistryExport::default(),
         }
     }
 

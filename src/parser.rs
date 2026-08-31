@@ -12,10 +12,12 @@
 use anyhow::Result;
 use log::debug;
 use pulldown_cmark::{Event, Parser as MarkdownParser, Tag};
+use std::collections::BTreeSet;
 use std::path::Path;
+use std::sync::Arc;
 
 use crate::config::BuildConfig;
-use crate::doctree::{kinds, Doctree, Node};
+use crate::doctree::{kinds, Doctree, Node, Span};
 use crate::document::{
     Document, DocumentContent, LabelRecord, MarkdownContent, MarkdownNode, RstContent, TocEntry,
 };
@@ -24,12 +26,37 @@ use crate::utils;
 
 pub struct Parser {}
 
+/// Everything one source file's parse produces: the pipeline's [`Document`]
+/// and the doctree it was derived from. The build's read phase keeps both —
+/// the doctree is what the environment layer (tocs, titles, domains) reads,
+/// and what gets persisted per document.
+pub struct ParsedFile {
+    pub document: Document,
+    pub doctree: Doctree,
+}
+
 impl Parser {
     pub fn new(_config: &BuildConfig) -> Result<Self> {
         Ok(Self {})
     }
 
     pub fn parse(&self, file_path: &Path, content: &str, docname: &str) -> Result<Document> {
+        Ok(self.parse_full(file_path, content, docname, None)?.document)
+    }
+
+    /// Parse one source file, keeping the doctree.
+    ///
+    /// `found_docs` is the project's full docname set (sphinx
+    /// `env.found_docs`), which the `toctree` directive resolves its entries
+    /// against; `None` parses without an environment (see
+    /// [`crate::rst::ParseOptions::found_docs`]).
+    pub fn parse_full(
+        &self,
+        file_path: &Path,
+        content: &str,
+        docname: &str,
+        found_docs: Option<Arc<BTreeSet<String>>>,
+    ) -> Result<ParsedFile> {
         let output_path = self.get_output_path(file_path)?;
         let mut document = Document::new(file_path.to_path_buf(), output_path);
 
@@ -41,19 +68,19 @@ impl Parser {
             .and_then(|ext| ext.to_str())
             .unwrap_or("");
 
-        match extension {
-            "rst" => {
-                self.parse_rst_into(content, file_path, docname, &mut document);
-            }
+        let doctree = match extension {
+            "rst" => self.parse_rst_into(content, file_path, docname, found_docs, &mut document),
             "md" => {
                 document.content = self.parse_markdown(content)?;
                 document.title = "Untitled".to_string();
+                empty_doctree()
             }
             _ => {
                 document.content = DocumentContent::PlainText(content.to_string());
                 document.title = "Untitled".to_string();
+                empty_doctree()
             }
-        }
+        };
 
         debug!(
             "Parsed document: {} ({} chars)",
@@ -61,7 +88,7 @@ impl Parser {
             content.len()
         );
 
-        Ok(document)
+        Ok(ParsedFile { document, doctree })
     }
 
     /// Returns the parsed doctree so callers (tests included) can inspect
@@ -72,6 +99,7 @@ impl Parser {
         content: &str,
         file_path: &Path,
         docname: &str,
+        found_docs: Option<Arc<BTreeSet<String>>>,
         document: &mut Document,
     ) -> Doctree {
         let output = rst::parse_rst_full(
@@ -80,6 +108,7 @@ impl Parser {
                 source_path: file_path.display().to_string(),
                 sphinx: true,
                 docname: docname.to_string(),
+                found_docs,
             },
         );
         let line_starts = line_start_offsets(content);
@@ -106,6 +135,7 @@ impl Parser {
         document.toctrees = output.toctrees;
         document.directive_records = output.directive_records;
         document.role_records = output.role_records;
+        document.registry = output.registry;
 
         document.content = DocumentContent::RestructuredText(RstContent {
             raw: content.to_string(),
@@ -162,6 +192,18 @@ impl Parser {
         let mut output_path = source_path.to_path_buf();
         output_path.set_extension("html");
         Ok(output_path)
+    }
+}
+
+/// The doctree of a source file this crate has no real parser for yet
+/// (Markdown, plain text): an empty `document`. It is deliberately empty
+/// rather than a guess — the environment layer reading it will report no
+/// sections, no toc entries and no toctrees, which is exactly what this
+/// crate currently knows about such a file.
+fn empty_doctree() -> Doctree {
+    Doctree {
+        root: Node::elem(kinds::DOCUMENT, Span::ZERO),
+        sources: vec!["<document>".to_string()],
     }
 }
 
@@ -239,7 +281,7 @@ mod tests {
         let parser = Parser::new(&BuildConfig::default()).unwrap();
         // Bypass mtime lookup by parsing through the internals.
         let mut document = Document::new("test.rst".into(), "test.html".into());
-        parser.parse_rst_into(content, Path::new("test.rst"), "index", &mut document);
+        parser.parse_rst_into(content, Path::new("test.rst"), "index", None, &mut document);
         document
     }
 
@@ -326,6 +368,7 @@ mod tests {
             ".. toctree::\n\n   other\n\nSee :doc:`other`.\n",
             Path::new("guide/install.rst"),
             "guide/install",
+            None,
             &mut document,
         );
 
@@ -353,6 +396,7 @@ mod tests {
                 source_path: "<snippet>".to_string(),
                 sphinx: true,
                 docname: "index".to_string(),
+                found_docs: None,
             },
         );
 

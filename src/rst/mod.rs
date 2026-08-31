@@ -27,6 +27,16 @@ pub struct ParseOptions {
     pub sphinx: bool,
     /// The docname recorded on pending_xref nodes (sphinx `refdoc`).
     pub docname: String,
+    /// Every docname the project discovered (sphinx `env.found_docs`).
+    /// The `toctree` directive resolves its entries against this set at
+    /// parse time, exactly as Sphinx's `TocTree.parse_content` does.
+    ///
+    /// `None` means "parsed without an environment" — a standalone parse
+    /// (the differential harnesses, `parse_rst` callers) where no document
+    /// exists, so every toctree entry resolves to nothing and `entries`/
+    /// `includefiles` stay empty. Shared by `Arc` because the build clones
+    /// these options once per source file.
+    pub found_docs: Option<std::sync::Arc<std::collections::BTreeSet<String>>>,
 }
 
 impl Default for ParseOptions {
@@ -35,6 +45,7 @@ impl Default for ParseOptions {
             source_path: "<string>".to_string(),
             sphinx: false,
             docname: "index".to_string(),
+            found_docs: None,
         }
     }
 }
@@ -118,5 +129,6 @@ pub fn parse_rst_full(source: &str, opts: &ParseOptions) -> ParseOutput {
     let mut parser = block::BlockParser::new(&lines, &opts.source_path, source.len());
     parser.sphinx = opts.sphinx;
     parser.docname = opts.docname.clone();
+    parser.found_docs = opts.found_docs.clone();
     parser.parse_document_full()
 }

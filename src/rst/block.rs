@@ -142,6 +142,10 @@ pub(crate) struct BlockParser<'a> {
     pub(crate) sphinx: bool,
     /// The docname stamped on pending_xref nodes (sphinx `refdoc`).
     pub(crate) docname: String,
+    /// Every discovered docname (sphinx `env.found_docs`), for toctree entry
+    /// resolution; `None` outside a build (see
+    /// [`super::ParseOptions::found_docs`]).
+    pub(crate) found_docs: Option<std::sync::Arc<std::collections::BTreeSet<String>>>,
     /// `.. highlight::` state consumed by later code-blocks in the same
     /// document (sphinx env.temp_data\['highlight_language'\]).
     highlight_language: Option<String>,
@@ -190,6 +194,7 @@ impl<'a> BlockParser<'a> {
             nested_node_kind: None,
             sphinx: false,
             docname: "index".to_string(),
+            found_docs: None,
             highlight_language: None,
             pending_classes: None,
             equation_serial: 0,
@@ -336,6 +341,7 @@ impl<'a> BlockParser<'a> {
         // directive/role records were dropped).
         sub.sphinx = self.sphinx;
         sub.docname = self.docname.clone();
+        sub.found_docs = self.found_docs.clone();
         sub.highlight_language = self.highlight_language.clone();
         let top = std::mem::take(&mut sub.top);
         let nodes = sub.parse_elements(&top);
@@ -3295,20 +3301,19 @@ impl<'a> BlockParser<'a> {
     fn run_toctree(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
         let glob = matches!(opt_get(&input.options, "glob"), Some(OptVal::Null));
         let mut entries: Vec<super::ToctreeEntryRecord> = Vec::new();
+        let mut raw_entries: Vec<String> = Vec::new();
         for l in &input.content {
             if l.is_blank() {
                 continue;
             }
             let t = l.text.trim();
+            raw_entries.push(t.to_string());
             // sphinx explicit_title_re `^(.+?)\s*<(.*?)>$`: the TITLE part
             // must be nonempty — a bare `<foo>` entry is a literal target
             // named '<foo>' (review finding 40).
-            let (title, target) = match (t.rfind('<'), t.ends_with('>')) {
-                (Some(lt), true) if lt > 0 => (
-                    Some(t[..lt].trim_end().to_string()),
-                    t[lt + 1..t.len() - 1].to_string(),
-                ),
-                _ => (None, t.to_string()),
+            let (title, target) = match crate::env::toctree::split_explicit_title(t) {
+                Some((title, target)) => (Some(title.to_string()), target.to_string()),
+                None => (None, t.to_string()),
             };
             entries.push(super::ToctreeEntryRecord {
                 title,
@@ -3322,22 +3327,33 @@ impl<'a> BlockParser<'a> {
             line: input.lineno,
         });
         // Full sphinx attr set (oracle-pinned). entries/includefiles are
-        // env-resolved (nonexistent docnames drop; the oracle srcdir has
-        // none) — the build pipeline uses the records instead; wave 4
-        // populates these from the environment.
+        // resolved against the environment's document set the way
+        // `TocTree.parse_content` does; a parse with no environment
+        // (`found_docs: None`) resolves nothing and leaves both empty.
+        let resolved = match &self.found_docs {
+            Some(found) => crate::env::toctree::resolve_entries(
+                &raw_entries,
+                &self.docname,
+                glob,
+                opt_get(&input.options, "reversed").is_some(),
+                found,
+                SOURCE_SUFFIXES,
+            ),
+            None => crate::env::toctree::ResolvedEntries::default(),
+        };
         let mut toctree = Node::elem("toctree", input.span);
         match opt_get(&input.options, "caption") {
             // pformat renders a Python None attr value as "True".
             Some(OptVal::Str(c)) => toctree.set("caption", AttrValue::Str(c.clone())),
             _ => toctree.set("caption", AttrValue::Str("True".to_string())),
         }
-        toctree.set("entries", AttrValue::Str(String::new()));
+        toctree.set("entries", resolved.entries_attr());
         toctree.set("glob", AttrValue::Int(i64::from(glob)));
         toctree.set(
             "hidden",
             AttrValue::Int(i64::from(opt_get(&input.options, "hidden").is_some())),
         );
-        toctree.set("includefiles", AttrValue::Str(String::new()));
+        toctree.set("includefiles", resolved.includefiles_attr());
         toctree.set(
             "includehidden",
             AttrValue::Int(i64::from(
@@ -3349,8 +3365,10 @@ impl<'a> BlockParser<'a> {
             _ => -1,
         };
         toctree.set("maxdepth", AttrValue::Int(maxdepth));
+        // sphinx `int_or_nothing` (directives/other.py:36): a bare
+        // `:numbered:` is depth 999, not 999_999.
         let numbered = match opt_get(&input.options, "numbered") {
-            Some(OptVal::Str(s)) if s.is_empty() => 999_999,
+            Some(OptVal::Str(s)) if s.is_empty() => 999,
             Some(OptVal::Str(s)) => py_int(s).unwrap_or(0),
             _ => 0,
         };
@@ -5434,6 +5452,11 @@ fn directive_spec_mode(lower: &str, sphinx: bool) -> Option<DirectiveSpec> {
     directive_spec(lower)
 }
 
+/// Suffixes a toctree entry may spell out and still name a document
+/// (sphinx `config.source_suffix`, whose default is `{'.rst': ...}`). These
+/// are the extensions `SphinxBuilder::is_source_file` discovers.
+const SOURCE_SUFFIXES: &[&str] = &[".rst", ".md", ".txt"];
+
 const TOCTREE_OPTS: &[(&str, Conv)] = &[
     ("maxdepth", Conv::PyIntAny),
     ("name", Conv::Unchanged),
@@ -7436,6 +7459,7 @@ mod tests {
                 source_path: "<snippet>".into(),
                 sphinx: false,
                 docname: "index".into(),
+                found_docs: None,
             },
         )
         .root
@@ -7483,6 +7507,7 @@ mod tests {
                 source_path: "<snippet>".into(),
                 sphinx: false,
                 docname: "index".into(),
+                found_docs: None,
             },
         );
         let second = &tree.root.children[1];

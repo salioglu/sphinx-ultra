@@ -1,20 +1,27 @@
 use anyhow::Result;
 use log::{debug, info};
 use rayon::prelude::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::cache::BuildCache;
 use crate::config::BuildConfig;
+use crate::doctree::Doctree;
 use crate::document::Document;
+use crate::env::toctree as env_toctree;
 use crate::env::BuildEnvironment;
 use crate::error::{BuildErrorReport, BuildWarning, ErrorType};
 use crate::extensions::{ExtensionLoader, SphinxApp};
 use crate::matching;
 use crate::parser::Parser;
 use crate::utils;
+
+/// Subdirectory of the cache dir holding one bincode doctree per document.
+/// It lives inside the `.config-fingerprint`-governed cache directory, so a
+/// configuration change wipes these along with everything else.
+const DOCTREE_SUBDIR: &str = "doctrees";
 
 /// A single toctree entry with its real source position.
 #[derive(Debug, Clone)]
@@ -29,33 +36,28 @@ struct ToctreeEntry {
 }
 
 /// Resolve a toctree target against the document that references it, the way
-/// Sphinx does: a leading `/` means source-root-relative, anything else is
-/// relative to the referencing document's directory. `.`/`..` segments are
-/// normalized.
+/// Sphinx does (`docname_join`): a leading `/` means source-root-relative,
+/// anything else is relative to the referencing document's directory.
 fn resolve_docname(target: &str, referencing_doc: &str) -> String {
-    let (base, target) = if let Some(stripped) = target.strip_prefix('/') {
-        ("", stripped)
-    } else {
-        (
-            referencing_doc
-                .rsplit_once('/')
-                .map(|(d, _)| d)
-                .unwrap_or(""),
-            target,
-        )
-    };
+    env_toctree::docname_join(referencing_doc, target)
+}
 
-    let mut segments: Vec<&str> = Vec::new();
-    for seg in base.split('/').chain(target.split('/')) {
-        match seg {
-            "" | "." => {}
-            ".." => {
-                segments.pop();
-            }
-            s => segments.push(s),
-        }
-    }
-    segments.join("/")
+/// One document's read-phase output.
+///
+/// This is the brief's `ReadResult { document, doctree, registry }` with the
+/// registry riding `document.registry` instead of sitting beside it: a
+/// cache hit skips parsing, so the only honest source for that document's
+/// registry is the one persisted with the cached `Document` (see
+/// [`Document::registry`]). Splitting it out would mean either a second
+/// copy or an empty stand-in on every cache hit.
+struct ReadResult {
+    /// Root-relative docname (`docname_of_path`).
+    docname: String,
+    document: Document,
+    doctree: Doctree,
+    /// Read completion time in microseconds since the epoch — what Sphinx
+    /// stores in `env.all_docs[docname]` (`builders/__init__.py:665`).
+    read_time_us: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -87,11 +89,13 @@ pub struct SphinxBuilder {
     extension_loader: ExtensionLoader,
     /// Persisted build state (toctree graph, section/figure numbering, std
     /// domain data, ...). Loaded from the cache dir's `env.bin` if present
-    /// and current; otherwise a fresh, empty environment. Not yet wired
-    /// into the build loop -- that lands with the incremental-rebuild work
-    /// in a later wave-4 task -- so this field is presently write-only from
-    /// the build's point of view and does not change build output.
-    #[allow(dead_code)]
+    /// and current; otherwise a fresh, empty environment. The merge phase
+    /// fills it and the resolve phase saves it back.
+    ///
+    /// It does not yet steer the build: every discovered document is read
+    /// on every build, so the loaded environment is fully rebuilt rather
+    /// than consulted for what is outdated. Reading it back is what a later
+    /// wave-4 task's incremental-rebuild logic needs.
     env: BuildEnvironment,
 }
 
@@ -208,7 +212,23 @@ impl SphinxBuilder {
         Ok(())
     }
 
-    pub async fn build(&self) -> Result<BuildStats> {
+    /// Run the build: read → merge → resolve → write, then validation.
+    ///
+    /// The four phases mirror Sphinx's own split (`builders/__init__.py`):
+    ///
+    /// - **read** ([`Self::read_phase`], parallel): parse every source file
+    ///   into a `Document` + doctree, persisting the doctree per document.
+    /// - **merge** ([`Self::merge_phase`], sequential, docname-ordered):
+    ///   fold each document's read output into the [`BuildEnvironment`] —
+    ///   Sphinx's `merge_info_from` plus the collectors it dispatches.
+    /// - **resolve** ([`Self::resolve_phase`]): whole-project state that
+    ///   needs every document read first, then persist the environment.
+    /// - **write** ([`Self::write_phase`]): emit the output files.
+    ///
+    /// `&mut self` only so the environment can be moved out and back; the
+    /// phase methods themselves take `&self` and the environment by
+    /// reference.
+    pub async fn build(&mut self) -> Result<BuildStats> {
         let start_time = Instant::now();
         info!("Starting build process...");
 
@@ -226,10 +246,23 @@ impl SphinxBuilder {
             dependency_graph.len()
         );
 
-        // Process files in dependency order
-        let processed_docs = self
-            .process_files_parallel(&source_files, &dependency_graph)
-            .await?;
+        let read_results = self.read_phase(&source_files, &dependency_graph)?;
+
+        let mut env = std::mem::take(&mut self.env);
+        self.merge_phase(&mut env, &read_results);
+        let resolved = self.resolve_phase(&mut env);
+        self.env = env;
+        resolved?;
+
+        // Keep documents in discovery order (the merge phase iterates a
+        // docname-sorted view of its own): the write and validation phases
+        // below produce warnings in this order, which is user-visible.
+        let processed_docs: Vec<Document> = read_results
+            .into_iter()
+            .map(|result| result.document)
+            .collect();
+
+        self.write_phase(&processed_docs);
 
         // Validate documents and collect warnings/errors
         self.validate_documents(&processed_docs, &source_files)
@@ -369,15 +402,29 @@ impl SphinxBuilder {
         Ok(graph)
     }
 
-    async fn process_files_parallel(
+    /// Read phase: parse every source file in parallel.
+    ///
+    /// One file failing must not abort the build: failures become
+    /// `BuildErrorReport`s (and a non-zero exit) while the rest continue.
+    /// Results keep the discovery order of `files`.
+    fn read_phase(
         &self,
         files: &[PathBuf],
         _dependency_graph: &HashMap<PathBuf, Vec<PathBuf>>,
-    ) -> Result<Vec<Document>> {
+    ) -> Result<Vec<ReadResult>> {
         info!(
             "Processing {} files with {} parallel jobs",
             files.len(),
             self.parallel_jobs
+        );
+
+        // Sphinx's `env.found_docs`: known before any file is parsed, and
+        // needed *during* the parse so `toctree` entries resolve.
+        let found_docs = Arc::new(
+            files
+                .iter()
+                .map(|path| self.docname_of_path(path))
+                .collect::<BTreeSet<String>>(),
         );
 
         // Configure rayon thread pool
@@ -385,19 +432,22 @@ impl SphinxBuilder {
             .num_threads(self.parallel_jobs)
             .build()?;
 
-        // One file failing must not abort the build: failures become
-        // BuildErrorReports (and a non-zero exit) while the rest continue.
-        let results: Vec<(PathBuf, Result<Document>)> = pool.install(|| {
+        let results: Vec<(PathBuf, Result<ReadResult>)> = pool.install(|| {
             files
                 .par_iter()
-                .map(|file_path| (file_path.clone(), self.process_single_file(file_path)))
+                .map(|file_path| {
+                    (
+                        file_path.clone(),
+                        self.read_one_file(file_path, &found_docs),
+                    )
+                })
                 .collect()
         });
 
-        let mut documents = Vec::with_capacity(results.len());
+        let mut read_results = Vec::with_capacity(results.len());
         for (file_path, result) in results {
             match result {
-                Ok(document) => documents.push(document),
+                Ok(read) => read_results.push(read),
                 Err(e) => {
                     self.errors.lock().unwrap().push(BuildErrorReport::new(
                         file_path,
@@ -409,56 +459,214 @@ impl SphinxBuilder {
             }
         }
 
-        Ok(documents)
+        Ok(read_results)
     }
 
-    fn process_single_file(&self, file_path: &Path) -> Result<Document> {
+    fn read_one_file(
+        &self,
+        file_path: &Path,
+        found_docs: &Arc<BTreeSet<String>>,
+    ) -> Result<ReadResult> {
         let relative_path = file_path.strip_prefix(&self.source_dir)?;
         debug!("Processing file: {}", relative_path.display());
+        let docname = self.docname_of_path(file_path);
 
-        // Check cache if incremental build is enabled. A cache hit still
-        // writes the rendered output — skipping the write is how cached pages
+        // Check cache if incremental build is enabled. A cache hit skips the
+        // parse but must still produce a usable doctree, and the write phase
+        // still writes the page — skipping the write is how cached pages
         // went missing from the output tree.
         if self.incremental {
-            if let Ok(cached_doc) = self.cache.get_document(file_path) {
-                let file_mtime = utils::get_file_mtime(file_path)?;
-                if cached_doc.source_mtime >= file_mtime && !cached_doc.html.is_empty() {
-                    debug!("Using cached version of {}", relative_path.display());
-                    let output_path = self.get_output_path(file_path)?;
-                    if let Some(parent) = output_path.parent() {
-                        std::fs::create_dir_all(parent)?;
+            if let Ok(file_mtime) = utils::get_file_mtime(file_path) {
+                let hit = self.cache.get_document_with(file_path, |cached| {
+                    if cached.source_mtime < file_mtime || cached.html.is_empty() {
+                        return None;
                     }
-                    std::fs::write(&output_path, &cached_doc.html)?;
-                    return Ok(cached_doc);
+                    // A cached document whose doctree file is gone or
+                    // unreadable is not usable: the environment layer needs
+                    // that doctree, and inventing an empty one would quietly
+                    // drop the document's toc, titles and toctrees. Re-parse
+                    // instead — this counts as a cache miss.
+                    self.load_doctree(&docname)
+                });
+                if let Some((document, doctree)) = hit {
+                    debug!("Using cached version of {}", relative_path.display());
+                    return Ok(ReadResult {
+                        docname,
+                        document,
+                        doctree,
+                        // A cache hit is hash-validated against the file on
+                        // disk, so what it holds is as current as a re-read:
+                        // this document was (re)established now.
+                        read_time_us: now_micros(),
+                    });
                 }
             }
         }
 
         // Read and parse the file
         let content = std::fs::read_to_string(file_path)?;
-        let docname = self.docname_of_path(file_path);
-        let mut document = self.parser.parse(file_path, &content, &docname)?;
+        let parsed =
+            self.parser
+                .parse_full(file_path, &content, &docname, Some(Arc::clone(found_docs)))?;
+        let mut document = parsed.document;
 
-        // Simple document rendering (placeholder)
+        // Simple document rendering (placeholder). Done here, in the read
+        // phase, because the rendered HTML is part of what the incremental
+        // cache stores; the write phase only puts it on disk.
         let rendered_html = format!(
             "<html><body>{}</body></html>",
             html_escape::encode_text(&document.content.to_string())
         );
         document.html = rendered_html;
 
-        // Write output file
-        let output_path = self.get_output_path(file_path)?;
-        if let Some(parent) = output_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&output_path, &document.html)?;
+        // Every successful parse persists its doctree, whether this is a
+        // first build or a re-parse after a rejected cache entry.
+        self.store_doctree(&docname, &parsed.doctree)?;
 
         // Cache the document
         if self.incremental {
             self.cache.store_document(file_path, &document)?;
         }
 
-        Ok(document)
+        Ok(ReadResult {
+            docname,
+            document,
+            doctree: parsed.doctree,
+            read_time_us: now_micros(),
+        })
+    }
+
+    /// Merge phase: fold the read phase's per-document output into the
+    /// environment, in docname order.
+    ///
+    /// Sequential and deterministic, mirroring Sphinx's `merge_info_from`
+    /// (`environment/__init__.py:421`) and the collectors it dispatches to:
+    /// `all_docs`, the title collector, and the toctree collector.
+    fn merge_phase(&self, env: &mut BuildEnvironment, results: &[ReadResult]) {
+        // Documents that vanished since the saved environment was written
+        // (Sphinx's `removed` set) must not leave stale state behind.
+        let present: HashSet<&str> = results.iter().map(|r| r.docname.as_str()).collect();
+        let stale: Vec<String> = env
+            .all_docs
+            .keys()
+            .filter(|docname| !present.contains(docname.as_str()))
+            .cloned()
+            .collect();
+        for docname in stale {
+            env.clear_doc(&docname);
+        }
+
+        let mut ordered: Vec<&ReadResult> = results.iter().collect();
+        ordered.sort_by(|a, b| a.docname.cmp(&b.docname));
+
+        for result in ordered {
+            let docname = result.docname.as_str();
+            // Every document is re-read on every build today, so each one's
+            // environment state is rebuilt from scratch — without this, the
+            // `extend`-shaped fields (toctree_includes) would accumulate
+            // duplicates across incremental builds.
+            env.clear_doc(docname);
+
+            env.all_docs
+                .insert(docname.to_string(), result.read_time_us);
+
+            let title = env_toctree::document_title(&result.doctree);
+            // Sphinx's longtitle differs from the title only for documents
+            // carrying an explicit `title` attribute, which nothing produces
+            // yet (`collectors/title.py:27`).
+            env.longtitles.insert(docname.to_string(), title.clone());
+            env.titles.insert(docname.to_string(), title);
+
+            let (toc, num_entries) = env_toctree::build_toc(&result.doctree, docname);
+            // Each toctree node copied into the toc is noted, in the order
+            // it was copied (which is the order Sphinx notes them in).
+            for toctree in env_toctree::toctree_copies(&toc) {
+                env_toctree::note_toctree(env, docname, toctree);
+            }
+            env.tocs.insert(docname.to_string(), toc);
+            env.toc_num_entries.insert(docname.to_string(), num_entries);
+        }
+    }
+
+    /// Resolve phase: whole-project state that only exists once every
+    /// document has been read, then persist the environment.
+    ///
+    /// Sphinx computes document relations, section/figure numbering and
+    /// domain cross-references here; those land in later wave-4 tasks. What
+    /// this phase does today is save the environment the merge phase built,
+    /// which is Sphinx's own end-of-read-phase step
+    /// (`builders/__init__.py:420`).
+    fn resolve_phase(&self, env: &mut BuildEnvironment) -> Result<()> {
+        info!("Resolving build environment");
+        env.save(self.cache.cache_dir())
+    }
+
+    /// Write phase: emit every document's rendered output.
+    ///
+    /// Sequential, and after resolution, so that a page can be written with
+    /// whole-project knowledge (numbering, relations) once those exist. The
+    /// placeholder renderer only uses the `Document`, so moving the write
+    /// here leaves the bytes unchanged.
+    ///
+    /// One page failing to write must not abort the build (the same rule the
+    /// read phase follows): it becomes a `BuildErrorReport`, and a non-zero
+    /// exit, while the remaining pages are still written.
+    fn write_phase(&self, documents: &[Document]) {
+        for document in documents {
+            if let Err(e) = self.write_one(document) {
+                self.errors.lock().unwrap().push(BuildErrorReport::new(
+                    document.source_path.clone(),
+                    None,
+                    format!("{e:#}"),
+                    ErrorType::Other,
+                ));
+            }
+        }
+    }
+
+    fn write_one(&self, document: &Document) -> Result<()> {
+        let output_path = self.get_output_path(&document.source_path)?;
+        if let Some(parent) = output_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&output_path, &document.html)?;
+        Ok(())
+    }
+
+    /// `<cache_dir>/doctrees/<blake3(docname)>.doctree`.
+    fn doctree_path(&self, docname: &str) -> PathBuf {
+        let hash = blake3::hash(docname.as_bytes());
+        self.cache
+            .cache_dir()
+            .join(DOCTREE_SUBDIR)
+            .join(format!("{}.doctree", hash.to_hex()))
+    }
+
+    fn store_doctree(&self, docname: &str, doctree: &Doctree) -> Result<()> {
+        let path = self.doctree_path(docname);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, crate::doctree::to_bincode(doctree))?;
+        Ok(())
+    }
+
+    /// The persisted doctree for `docname`, or `None` if it is missing or
+    /// cannot be decoded (a truncated write, or a blob from another version
+    /// of this crate).
+    fn load_doctree(&self, docname: &str) -> Option<Doctree> {
+        let path = self.doctree_path(docname);
+        let bytes = std::fs::read(&path).ok()?;
+        match crate::doctree::from_bincode(&bytes) {
+            Ok(doctree) => Some(doctree),
+            Err(e) => {
+                debug!(
+                    "Ignoring unreadable doctree {}: {e:#} (re-reading {docname})",
+                    path.display()
+                );
+                None
+            }
+        }
     }
 
     fn get_output_path(&self, source_path: &Path) -> Result<PathBuf> {
@@ -977,5 +1185,158 @@ impl SphinxBuilder {
         info!("Generating search index");
         // TODO: Implement search index generation
         Ok(())
+    }
+
+    /// The environment this build produced (empty before [`Self::build`]).
+    pub fn env(&self) -> &BuildEnvironment {
+        &self.env
+    }
+
+    /// [`BuildEnvironment::snapshot`] of this build's environment — the
+    /// shape the `env_differential` oracle compares against.
+    pub fn snapshot_env(&self) -> serde_json::Value {
+        self.env.snapshot()
+    }
+}
+
+/// Wall-clock microseconds since the Unix epoch, the unit Sphinx stores in
+/// `env.all_docs` (`time.time_ns() // 1_000`). A pre-epoch clock yields 0
+/// rather than wrapping.
+fn now_micros() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_micros() as u64)
+        .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn write_project(source_dir: &Path) {
+        std::fs::create_dir_all(source_dir).unwrap();
+        std::fs::write(
+            source_dir.join("index.rst"),
+            "Index\n=====\n\n.. toctree::\n\n   a\n",
+        )
+        .unwrap();
+        std::fs::write(source_dir.join("a.rst"), "A\n=\n\nBody.\n").unwrap();
+    }
+
+    fn build_incrementally(source_dir: &Path, output_dir: &Path) -> (BuildStats, SphinxBuilder) {
+        let mut builder = SphinxBuilder::new(
+            BuildConfig::default(),
+            source_dir.to_path_buf(),
+            output_dir.to_path_buf(),
+        )
+        .unwrap();
+        builder.enable_incremental();
+        let stats = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(builder.build())
+            .unwrap();
+        (stats, builder)
+    }
+
+    #[test]
+    fn every_read_document_persists_its_doctree() {
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("source");
+        let output_dir = tmp.path().join("build");
+        write_project(&source_dir);
+
+        let (_stats, builder) = build_incrementally(&source_dir, &output_dir);
+
+        for docname in ["index", "a"] {
+            let path = builder.doctree_path(docname);
+            assert!(
+                path.is_file(),
+                "{docname}: no doctree at {}",
+                path.display()
+            );
+            let doctree = builder.load_doctree(docname).expect("doctree decodes");
+            assert_eq!(doctree.root.kind, crate::doctree::kinds::DOCUMENT);
+        }
+        assert!(
+            builder.cache.cache_dir().join("env.bin").is_file(),
+            "the resolve phase must persist the environment"
+        );
+    }
+
+    #[test]
+    fn cache_hit_whose_doctree_is_missing_is_treated_as_a_miss() {
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("source");
+        let output_dir = tmp.path().join("build");
+        write_project(&source_dir);
+
+        let (first, builder) = build_incrementally(&source_dir, &output_dir);
+        assert_eq!(first.cache_hits, 0, "cold build cannot hit the cache");
+
+        // Warm: both documents come from the cache.
+        let (warm, _) = build_incrementally(&source_dir, &output_dir);
+        assert_eq!(warm.cache_hits, 2);
+
+        // Delete one document's doctree. Its cache entry is still valid, but
+        // unusable — the build must re-read the file rather than pretend.
+        std::fs::remove_file(builder.doctree_path("a")).unwrap();
+        let (degraded, rebuilt) = build_incrementally(&source_dir, &output_dir);
+        assert_eq!(
+            degraded.cache_hits, 1,
+            "a document whose doctree is gone is a cache miss, not a hit"
+        );
+        assert!(
+            rebuilt.doctree_path("a").is_file(),
+            "the re-read must persist the doctree it just produced"
+        );
+        assert_eq!(degraded.errors, 0);
+
+        // And the environment is complete either way.
+        let env = rebuilt.env();
+        assert_eq!(env.all_docs.len(), 2);
+        assert!(env.tocs.contains_key("a"));
+    }
+
+    #[test]
+    fn corrupt_doctree_file_is_treated_as_a_miss() {
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("source");
+        let output_dir = tmp.path().join("build");
+        write_project(&source_dir);
+
+        let (_cold, builder) = build_incrementally(&source_dir, &output_dir);
+        std::fs::write(builder.doctree_path("index"), b"not a doctree").unwrap();
+
+        let (stats, rebuilt) = build_incrementally(&source_dir, &output_dir);
+        assert_eq!(stats.cache_hits, 1);
+        assert_eq!(stats.errors, 0);
+        assert!(rebuilt.load_doctree("index").is_some());
+    }
+
+    #[test]
+    fn cache_hit_still_writes_output_and_fills_the_environment() {
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("source");
+        let output_dir = tmp.path().join("build");
+        write_project(&source_dir);
+
+        let (_cold, _) = build_incrementally(&source_dir, &output_dir);
+        std::fs::remove_file(output_dir.join("index.html")).unwrap();
+        std::fs::remove_file(output_dir.join("a.html")).unwrap();
+
+        let (warm, builder) = build_incrementally(&source_dir, &output_dir);
+
+        assert_eq!(warm.cache_hits, 2);
+        assert!(output_dir.join("index.html").is_file());
+        assert!(output_dir.join("a.html").is_file());
+        assert_eq!(
+            builder.env().toctree_includes.get("index"),
+            Some(&vec!["a".to_string()]),
+            "a fully cached build still rebuilds the environment from the \
+             persisted doctrees"
+        );
     }
 }
