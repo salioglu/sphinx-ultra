@@ -308,12 +308,7 @@ fn snapshot_field<T: serde::de::DeserializeOwned>(env: &serde_json::Value, key: 
 /// wave-4 task that will. Checked **strictly**: a listed (project, docname)
 /// that stops diverging fails the test, so the exemption is deleted rather
 /// than left to rot.
-const KNOWN_TOC_GAPS: &[(&str, &str, &str)] = &[(
-    "std_objects",
-    "a",
-    "the `.. confval::` object signature contributes an `addnodes.desc` toc \
-     entry; nothing in this crate produces desc nodes yet",
-)];
+const KNOWN_TOC_GAPS: &[(&str, &str, &str)] = &[];
 
 fn known_toc_gap(project: &str, docname: &str) -> Option<&'static str> {
     KNOWN_TOC_GAPS
@@ -349,22 +344,11 @@ const KNOWN_WARNING_GAPS: &[(&str, &str)] = &[
          project's other warning, `numfig is disabled. :numref: is ignored.`, \
          this task does produce)",
     ),
-    (
-        "std_objects",
-        "`unknown option` needs the `option` directive to have registered \
-         the program options it names; nothing produces desc nodes yet (the \
-         std-directives task lands them, and flips this)",
-    ),
 ];
 
 /// Projects whose oracle `std` data this task deliberately does not
 /// reproduce. Checked **strictly**, exactly like [`KNOWN_TOC_GAPS`].
-const KNOWN_STD_GAPS: &[(&str, &str)] = &[(
-    "std_objects",
-    "`option`/`envvar`/`confval` register their objects from the `desc` \
-     anatomy their directives build; nothing in this crate produces desc \
-     nodes yet (the std-directives task lands them, and flips this)",
-)];
+const KNOWN_STD_GAPS: &[(&str, &str)] = &[];
 
 /// The one normalization this harness applies to the oracle's
 /// `resolved_pformat`: docutils' i18n totaliser stamps every `document` node
@@ -382,8 +366,6 @@ const IMAGE_CANDIDATES: &str = "`ImageCollector.process_doc` stamps `candidates`
 const PROPAGATE_TARGETS: &str = "docutils' `PropagateTargets` transform (which moves a \
      block-level target's ids and names onto the node after it) is replayed for label \
      collection but not applied to the tree itself";
-const DESC_ANATOMY: &str = "the std object directives (`option`/`envvar`/`confval`/\
-     `describe`) produce no `desc` anatomy yet";
 
 /// Per-document `resolved_pformat` divergences this task deliberately does
 /// not close, each pinned to what would close it. Checked **strictly**,
@@ -439,8 +421,6 @@ const KNOWN_RESOLVED_GAPS: &[(&str, &str, &str)] = &[
         "PROPAGATE_TARGETS, plus the `! Important` index entry keeping the \
          space the `!` marker left behind",
     ),
-    ("std_objects", "a", DESC_ANATOMY),
-    ("std_objects", "b", DESC_ANATOMY),
 ];
 
 fn known_resolved_gap(project: &str, docname: &str) -> Option<&'static str> {
@@ -1096,14 +1076,20 @@ fn a_warm_rebuild_reports_the_same_std_domain_warnings() {
         "Index\n=====\n\n.. toctree::\n\n   a\n   b\n",
     )
     .unwrap();
+    // The program/option pair at the end of `a` and the `:option:` in `b`
+    // are here for the *cache* round trip: a program option's scope lives
+    // only in the parse export (`RegistryExport::program_options`), so a
+    // warm rebuild that skipped the parse has to recover it from the cached
+    // document or `progoptions` comes back empty. Both are appended after
+    // the existing content so the warning line numbers below are unmoved.
     std::fs::write(
         source_dir.join("a.rst"),
-        "A\n=\n\n.. _dup:\n\nOne\n---\n\nSee :doc:`nope`.\n",
+        "A\n=\n\n.. _dup:\n\nOne\n---\n\nSee :doc:`nope`.\n\n         .. program:: myprog\n\n.. option:: --verbose\n\n   Verbose output.\n",
     )
     .unwrap();
     std::fs::write(
         source_dir.join("b.rst"),
-        "B\n=\n\n.. _dup:\n\nTwo\n---\n\nSee :ref:`dup` and :term:`nothing`.\n",
+        "B\n=\n\n.. _dup:\n\nTwo\n---\n\nSee :ref:`dup` and :term:`nothing`.\n\n         Also :option:`myprog --verbose`.\n",
     )
     .unwrap();
     // Warning locations come from the canonicalized source tree (macOS
@@ -1135,6 +1121,16 @@ fn a_warm_rebuild_reports_the_same_std_domain_warnings() {
     };
 
     let (cold, cold_env) = build_once();
+    assert_eq!(
+        cold_env["std"]["progoptions"],
+        serde_json::json!([{
+            "program": "myprog",
+            "name": "--verbose",
+            "docname": "a",
+            "labelid": "cmdoption-myprog-verbose",
+        }]),
+        "the `.. program::` scope must reach the std domain"
+    );
     assert_eq!(
         cold,
         vec![

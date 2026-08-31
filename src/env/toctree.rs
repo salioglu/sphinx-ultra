@@ -29,9 +29,7 @@
 //!
 //! NOT here (later wave-4 tasks): `assign_section_numbers` /
 //! `assign_figure_numbers` (they write `toc_secnumbers`/`toc_fignumbers` and
-//! stamp `secnumber` onto the references this module builds), the
-//! `addnodes.desc` branch of `build_toc` — no `desc` nodes exist in the
-//! doctree until the object-description directives land — and
+//! stamp `secnumber` onto the references this module builds) and
 //! `_resolve_toctree`, the write-phase renderer that turns a `toctree` node
 //! into the rendered navigation tree (and emits the `circular toctree
 //! references detected` diagnostic).
@@ -431,14 +429,12 @@ pub(crate) fn py_repr_str(s: &str) -> String {
 /// The document's local table of contents (`env.tocs[docname]`) and its
 /// entry count (`env.toc_num_entries[docname]`).
 ///
-/// Exact port of `TocTreeCollector.process_doc`'s nested `build_toc`, for
-/// the node kinds that exist in the doctree today: sections (title filtered
-/// through [`filter_title_children`], anchor `''` for the first entry and
-/// `'#' + ids[0]` afterwards), `only` wrappers, and `toctree` nodes copied
-/// out of any other element. The `addnodes.desc` branch — object signatures
-/// contributing `compact_paragraph[skip_section_number] > reference >
-/// literal` entries — is deliberately absent: no directive produces `desc`
-/// nodes yet.
+/// Exact port of `TocTreeCollector.process_doc`'s nested `build_toc`:
+/// sections (title filtered through [`filter_title_children`], anchor `''`
+/// for the first entry and `'#' + ids[0]` afterwards), `only` wrappers, and
+/// — inside any other element — `toctree` copies plus the object signatures
+/// of `desc` nodes, which contribute
+/// `compact_paragraph[skip_section_number] > reference > literal` entries.
 ///
 /// An empty document yields an empty `bullet_list` and 0 entries.
 pub fn build_toc(doctree: &Doctree, docname: &str) -> (Node, u32) {
@@ -494,11 +490,11 @@ fn build_toc_level(nodes: &[Node], docname: &str, num_entries: &mut u32) -> Opti
             }
         } else {
             // Any other element: `findall()` over the whole subtree for
-            // toctree nodes to copy into the toc. (sphinx `continue`s on
+            // `toctree` nodes to copy into the toc and `desc` nodes whose
+            // signatures become object entries. (sphinx `continue`s on
             // nested sections, which only skips *processing* them — findall
-            // still descends, and nothing below a section is a toctree that
-            // this walk would otherwise miss.)
-            collect_toctree_copies(node, &mut entries);
+            // still descends.)
+            collect_body_entries(node, docname, num_entries, &mut entries, &[]);
         }
     }
 
@@ -510,14 +506,111 @@ fn build_toc_level(nodes: &[Node], docname: &str, num_entries: &mut u32) -> Opti
     Some(list)
 }
 
-fn collect_toctree_copies(node: &Node, entries: &mut Vec<Node>) {
-    // docutils findall() yields the node itself first, then descendants.
+/// The `elif isinstance(sectionnode, nodes.Element)` arm of `build_toc`
+/// (`collectors/toctree.py:112-181`), in document order.
+///
+/// Sphinx keeps a `memo_parents` map from each `desc` to the `list_item` its
+/// last signature produced, and attaches a nested description's entries to
+/// the nearest ancestor `desc` that has one. That "nearest memo'd ancestor"
+/// is exactly what recursion already tracks, so it rides along as `path`:
+/// the chain of indices from `entries` down to the list_item currently
+/// standing in for `memo_parents`. `toctree` copies ignore it — sphinx
+/// appends those to the section-level `entries` wherever it finds them.
+fn collect_body_entries(
+    node: &Node,
+    docname: &str,
+    num_entries: &mut u32,
+    entries: &mut Vec<Node>,
+    path: &[usize],
+) {
+    if node.kind == kinds::TEXT {
+        return;
+    }
     if node.kind == kinds::TOCTREE {
         entries.push(node.shallow_copy());
+        return;
+    }
+    if node.kind == "desc" {
+        // "Save the latest desc_signature as the one we put sub entries in."
+        let mut child_path: Option<Vec<usize>> = None;
+        for signature in node.children.iter().filter(|c| c.kind == "desc_signature") {
+            let Some(entry) = object_toc_entry(node, signature, docname, num_entries) else {
+                continue;
+            };
+            let target = resolve_attach_point(entries, path);
+            target.push(entry);
+            let mut deeper = path.to_vec();
+            deeper.push(target.len() - 1);
+            child_path = Some(deeper);
+        }
+        let child_path = child_path.unwrap_or_else(|| path.to_vec());
+        for child in &node.children {
+            collect_body_entries(child, docname, num_entries, entries, &child_path);
+        }
+        return;
     }
     for child in &node.children {
-        collect_toctree_copies(child, entries);
+        collect_body_entries(child, docname, num_entries, entries, path);
     }
+}
+
+/// Walk `path` (a chain of list_item indices) down to the entry list a
+/// nested object entry belongs in, creating the `bullet_list` each step
+/// needs — sphinx's `if isinstance(root_entry[-1], bullet_list): ... else:
+/// root_entry.append(bullet_list(...))` (`:167-175`). An empty path is the
+/// section level itself.
+fn resolve_attach_point<'a>(entries: &'a mut Vec<Node>, path: &[usize]) -> &'a mut Vec<Node> {
+    let mut current = entries;
+    for &index in path {
+        let item = &mut current[index];
+        if item.children.last().map(|c| c.kind) != Some(kinds::BULLET_LIST) {
+            item.children
+                .push(Node::elem(kinds::BULLET_LIST, Span::ZERO));
+        }
+        current = &mut item
+            .children
+            .last_mut()
+            .expect("a bullet_list was just ensured")
+            .children;
+    }
+    current
+}
+
+/// One object signature's toc entry (`collectors/toctree.py:129-157`), or
+/// `None` for the three skips: no `_toc_name` (the domain opted out of toc
+/// entries for this objtype), `:no-contents-entry:` on the description, and
+/// no ids (`:no-index:`).
+fn object_toc_entry(
+    desc: &Node,
+    signature: &Node,
+    docname: &str,
+    num_entries: &mut u32,
+) -> Option<Node> {
+    let toc_name = match signature.get("_toc_name") {
+        Some(AttrValue::Str(name)) if !name.is_empty() => name.clone(),
+        _ => return None,
+    };
+    if matches!(desc.get("no-contents-entry"), Some(AttrValue::Int(1))) {
+        return None;
+    }
+    if signature.attrs.ids.is_empty() {
+        return None;
+    }
+    let anchorname = make_anchor_name(&signature.attrs.ids, num_entries);
+
+    let mut literal = Node::elem(kinds::LITERAL, Span::ZERO);
+    literal.children.push(Node::text_node(toc_name, Span::ZERO));
+    let mut reference = Node::elem(kinds::REFERENCE, Span::ZERO);
+    reference.set("anchorname", AttrValue::Str(anchorname));
+    reference.set("internal", AttrValue::Int(1));
+    reference.set("refuri", AttrValue::Str(docname.to_string()));
+    reference.children.push(literal);
+    let mut para = Node::elem(kinds::COMPACT_PARAGRAPH, Span::ZERO);
+    para.set("skip_section_number", AttrValue::Int(1));
+    para.children.push(reference);
+    let mut item = Node::elem(kinds::LIST_ITEM, Span::ZERO);
+    item.children.push(para);
+    Some(item)
 }
 
 /// `_make_anchor_name` (`collectors/toctree.py:381`): the very first entry
@@ -927,6 +1020,112 @@ mod tests {
                 "                        Sub\n",
             )
         );
+    }
+
+    /// `build_toc`'s `memo_parents` bubbling (`collectors/toctree.py:159-181`),
+    /// pinned against a sphinx 9.1.0 `env.tocs['a']` for this exact source:
+    /// nested descriptions nest, a multi-signature description collects its
+    /// children under its LAST signature, and a description that produced no
+    /// entry of its own (`describe` has no `_toc_name`) is walked past, so
+    /// its children land at the section level.
+    #[test]
+    fn object_entries_nest_under_the_nearest_description_that_has_one() {
+        let doctree = parse(
+            concat!(
+                "A\n=\n\n",
+                ".. confval:: outer\n\n   Outer body.\n\n",
+                "   .. confval:: inner\n\n      Inner body.\n\n",
+                "      .. confval:: deepest\n\n         Deep body.\n\n",
+                ".. confval:: sibling\n\n",
+                ".. confval:: multi_a\n             multi_b\n\n",
+                "   .. confval:: under_multi\n\n",
+                ".. describe:: nothing\n\n   .. confval:: under_describe\n",
+            ),
+            "a",
+            &docs(&["a"]),
+        );
+        let (toc, n) = build_toc(&doctree, "a");
+        assert_eq!(n, 9);
+        assert_eq!(
+            toc.pformat(),
+            concat!(
+                "<bullet_list>\n",
+                "    <list_item>\n",
+                "        <compact_paragraph>\n",
+                "            <reference anchorname=\"\" internal=\"1\" refuri=\"a\">\n",
+                "                A\n",
+                "        <bullet_list>\n",
+                "            <list_item>\n",
+                "                <compact_paragraph skip_section_number=\"1\">\n",
+                "                    <reference anchorname=\"#confval-outer\" internal=\"1\" refuri=\"a\">\n",
+                "                        <literal>\n",
+                "                            outer\n",
+                "                <bullet_list>\n",
+                "                    <list_item>\n",
+                "                        <compact_paragraph skip_section_number=\"1\">\n",
+                "                            <reference anchorname=\"#confval-inner\" internal=\"1\" refuri=\"a\">\n",
+                "                                <literal>\n",
+                "                                    inner\n",
+                "                        <bullet_list>\n",
+                "                            <list_item>\n",
+                "                                <compact_paragraph skip_section_number=\"1\">\n",
+                "                                    <reference anchorname=\"#confval-deepest\" internal=\"1\" refuri=\"a\">\n",
+                "                                        <literal>\n",
+                "                                            deepest\n",
+                "            <list_item>\n",
+                "                <compact_paragraph skip_section_number=\"1\">\n",
+                "                    <reference anchorname=\"#confval-sibling\" internal=\"1\" refuri=\"a\">\n",
+                "                        <literal>\n",
+                "                            sibling\n",
+                "            <list_item>\n",
+                "                <compact_paragraph skip_section_number=\"1\">\n",
+                "                    <reference anchorname=\"#confval-multi_a\" internal=\"1\" refuri=\"a\">\n",
+                "                        <literal>\n",
+                "                            multi_a\n",
+                "            <list_item>\n",
+                "                <compact_paragraph skip_section_number=\"1\">\n",
+                "                    <reference anchorname=\"#confval-multi_b\" internal=\"1\" refuri=\"a\">\n",
+                "                        <literal>\n",
+                "                            multi_b\n",
+                "                <bullet_list>\n",
+                "                    <list_item>\n",
+                "                        <compact_paragraph skip_section_number=\"1\">\n",
+                "                            <reference anchorname=\"#confval-under_multi\" internal=\"1\" refuri=\"a\">\n",
+                "                                <literal>\n",
+                "                                    under_multi\n",
+                "            <list_item>\n",
+                "                <compact_paragraph skip_section_number=\"1\">\n",
+                "                    <reference anchorname=\"#confval-under_describe\" internal=\"1\" refuri=\"a\">\n",
+                "                        <literal>\n",
+                "                            under_describe\n",
+            )
+        );
+    }
+
+    /// The three `build_toc` skips: no `_toc_name` (only `confval` sets one
+    /// in the std domain), `:no-contents-entry:`, and an id-less signature
+    /// (`:no-index:`).
+    #[test]
+    fn object_entries_skip_unnamed_opted_out_and_id_less_signatures() {
+        let doctree = parse(
+            concat!(
+                "A\n=\n\n",
+                ".. envvar:: HOME\n\n",
+                ".. confval:: hidden\n   :no-contents-entry:\n\n",
+                ".. confval:: unindexed\n   :no-index:\n\n",
+                ".. confval:: kept\n",
+            ),
+            "a",
+            &docs(&["a"]),
+        );
+        let (toc, n) = build_toc(&doctree, "a");
+        // The section plus exactly one object entry.
+        assert_eq!(n, 2);
+        let out = toc.pformat();
+        assert!(out.contains("#confval-kept"), "{out}");
+        assert!(!out.contains("HOME"), "{out}");
+        assert!(!out.contains("hidden"), "{out}");
+        assert!(!out.contains("unindexed"), "{out}");
     }
 
     #[test]

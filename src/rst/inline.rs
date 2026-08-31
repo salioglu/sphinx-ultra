@@ -214,6 +214,10 @@ struct Inliner<'a> {
     /// (no messages) and every role occurrence is recorded.
     sphinx: bool,
     docname: &'a str,
+    /// `env.ref_context['std:program']` — the `.. program::` in scope, which
+    /// `OptionXRefRole.process_link` stamps on every `:option:` reference
+    /// (`domains/std/__init__.py:351-364`).
+    program: Option<&'a str>,
     roles: Vec<super::RoleRecord>,
     nodes: Vec<Node>,
     messages: Vec<Node>,
@@ -848,7 +852,10 @@ impl<'a> Inliner<'a> {
         );
         self.nodes.push(index);
         let mut tnode = Node::elem(kinds::TARGET, self.span);
-        tnode.attrs.ids.push(target_id);
+        tnode.attrs.ids.push(target_id.clone());
+        // `self.inliner.document.note_explicit_target(target)` (`roles.py`):
+        // the id joins `document.ids`, so a later `make_id` cannot reuse it.
+        self.registry.note_explicit_id(&target_id);
         self.nodes.push(tnode);
         let mut reference = Node::elem(kinds::REFERENCE, self.span);
         reference.attrs.classes.push(kind_key.to_string());
@@ -947,6 +954,15 @@ impl<'a> Inliner<'a> {
             )
         );
         node.set("refwarn", AttrValue::Int(i64::from(warn_dangling)));
+        // `OptionXRefRole.process_link` (`domains/std/__init__.py:351-364`).
+        // Outside a `.. program::` scope the value is Python None, which
+        // pformat renders as the "True" sentinel.
+        if domain == "std" && reftype == "option" {
+            node.set(
+                "std:program",
+                AttrValue::Str(self.program.unwrap_or("True").to_string()),
+            );
+        }
         // py xrefs wrap in a literal (code-styled); callables display
         // with parens.
         let mut display = display;
@@ -976,6 +992,40 @@ impl<'a> Inliner<'a> {
         inner.children.push(Node::text_node(display, self.span));
         node.children.push(inner);
         self.flush_text();
+        // `EnvVarXRefRole.result_nodes` (`domains/std/__init__.py:91-112`):
+        // an `:envvar:` reference also *indexes* the variable, under its bare
+        // name and under the same 'environment variable; %s' heading the
+        // `.. envvar::` directive uses, both anchored on a fresh
+        // `index-N` target placed just before the reference.
+        if domain == "std" && reftype == "envvar" {
+            let varname = match node.get("reftarget") {
+                Some(AttrValue::Str(target)) => target.clone(),
+                _ => String::new(),
+            };
+            let target_id = format!("index-{}", self.registry.new_index_serialno());
+            let mut index = Node::elem("index", self.span);
+            index.set(
+                "entries",
+                AttrValue::Str(
+                    [
+                        super::block::index_entry_tuple("single", &varname, &target_id, "", None),
+                        super::block::index_entry_tuple(
+                            "single",
+                            &format!("environment variable; {varname}"),
+                            &target_id,
+                            "",
+                            None,
+                        ),
+                    ]
+                    .join(" "),
+                ),
+            );
+            self.nodes.push(index);
+            let mut tnode = Node::elem(kinds::TARGET, self.span);
+            tnode.attrs.ids.push(target_id.clone());
+            self.registry.note_explicit_id(&target_id);
+            self.nodes.push(tnode);
+        }
         self.nodes.push(node);
     }
 
@@ -1544,7 +1594,16 @@ pub fn parse_inline(
     registry: &mut IdRegistry,
     source_path: &str,
 ) -> InlineResult {
-    parse_inline_ext(text, span, lineno, registry, source_path, false, "index")
+    parse_inline_ext(
+        text,
+        span,
+        lineno,
+        registry,
+        source_path,
+        false,
+        "index",
+        None,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1556,6 +1615,7 @@ pub fn parse_inline_ext(
     source_path: &str,
     sphinx: bool,
     docname: &str,
+    program: Option<&str>,
 ) -> InlineResult {
     let escaped = escape2null(text);
     let mut inliner = Inliner {
@@ -1566,6 +1626,7 @@ pub fn parse_inline_ext(
         registry,
         sphinx,
         docname,
+        program,
         roles: Vec::new(),
         nodes: Vec::new(),
         messages: Vec::new(),

@@ -1829,6 +1829,36 @@
       "name": "sx_std.default_domain",
       "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Text after the default-domain.\n",
       "rst": ".. default-domain:: py\n\nText after the default-domain.\n"
+    },
+    {
+      "family": "sx_roles",
+      "name": "sx_roles.envvar_role",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <index entries=\"('single',\\ 'HOME_A',\\ 'index-0',\\ '',\\ None) ('single',\\ 'environment\\ variable;\\ HOME_A',\\ 'index-0',\\ '',\\ None)\">\n        <target ids=\"index-0\">\n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"0\" reftarget=\"HOME_A\" reftype=\"envvar\" refwarn=\"0\">\n            <literal classes=\"xref std std-envvar\">\n                HOME_A\n         for details.\n",
+      "rst": "See :envvar:`HOME_A` for details.\n"
+    },
+    {
+      "family": "sx_roles",
+      "name": "sx_roles.envvar_role_explicit_title",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <index entries=\"('single',\\ 'HOME_A',\\ 'index-0',\\ '',\\ None) ('single',\\ 'environment\\ variable;\\ HOME_A',\\ 'index-0',\\ '',\\ None)\">\n        <target ids=\"index-0\">\n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"1\" reftarget=\"HOME_A\" reftype=\"envvar\" refwarn=\"0\">\n            <literal classes=\"xref std std-envvar\">\n                the home dir\n         here.\n",
+      "rst": "See :envvar:`the home dir <HOME_A>` here.\n"
+    },
+    {
+      "family": "sx_roles",
+      "name": "sx_roles.option_role",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Use \n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"0\" reftarget=\"--verbose\" reftype=\"option\" refwarn=\"1\" std:program=\"True\">\n            <literal classes=\"xref std std-option\">\n                --verbose\n         now.\n",
+      "rst": "Use :option:`--verbose` now.\n"
+    },
+    {
+      "family": "sx_roles",
+      "name": "sx_roles.option_role_in_program_scope",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Use \n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"0\" reftarget=\"--verbose\" reftype=\"option\" refwarn=\"1\" std:program=\"myprog\">\n            <literal classes=\"xref std std-option\">\n                --verbose\n         now.\n",
+      "rst": ".. program:: myprog\n\nUse :option:`--verbose` now.\n"
+    },
+    {
+      "family": "sx_roles",
+      "name": "sx_roles.confval_role",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"0\" reftarget=\"my_setting\" reftype=\"confval\" refwarn=\"1\">\n            <literal classes=\"xref std std-confval\">\n                my_setting\n         here.\n",
+      "rst": "See :confval:`my_setting` here.\n"
     }
   ],
   "docutils_version": "0.22.4",

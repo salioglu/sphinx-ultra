@@ -322,6 +322,7 @@ impl<'a> BlockParser<'a> {
             self.source_path,
             self.sphinx,
             &self.docname,
+            self.program.as_deref(),
         );
         self.role_records.append(&mut result.roles);
         result

@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::doctree::{kinds, AttrValue, Doctree, Node};
+use crate::doctree::{ids, kinds, AttrValue, Doctree, Node};
 use crate::env::numbers::{clean_astext, std_numfig_title};
 use crate::env::BuildEnvironment;
 use crate::error::{BuildWarning, WarningType};
@@ -269,11 +269,13 @@ fn section_name(node: &Node) -> Option<String> {
 /// docutils renders a `None` attribute value as the string `True`
 /// (`nodes.Element.starttag`: a value of `None` prints as `name="True"`),
 /// and our parse layer stores that rendering directly — `toctree[caption]`,
-/// `math_block[label]`/`[number]`, `pending_xref[py:class]`/`[py:module]`.
-/// A consumer testing such an attribute for Python truthiness has to treat
-/// the sentinel as absent, or a captionless toctree ends up named "True".
+/// `math_block[label]`/`[number]`, `pending_xref[py:class]`/`[py:module]`
+/// and `pending_xref[std:program]`. A consumer testing such an attribute for
+/// Python truthiness has to treat the sentinel as absent, or a captionless
+/// toctree ends up named "True" and every `:option:` written outside a
+/// `.. program::` looks scoped to a program called "True".
 ///
-/// The other attributes this module reads are not affected: `refuri`,
+/// The other attributes read across this crate are not affected: `refuri`,
 /// `refid` and `refname` are presence-tested on `target` nodes, which never
 /// carry the sentinel (our parser sets them only to real values), and the
 /// `desc` attributes are string-valued by construction. Any *new* read of a
@@ -283,7 +285,7 @@ fn section_name(node: &Node) -> Option<String> {
 /// `"True"`, so `:caption: True` is read as no caption. Fixing that means
 /// giving the parse layer an optional attribute value rather than the
 /// rendered sentinel — a doctree-wide change, not one this module can make.
-fn is_none_sentinel(value: &str) -> bool {
+pub(crate) fn is_none_sentinel(value: &str) -> bool {
     value == "True"
 }
 
@@ -354,20 +356,29 @@ fn collect_glossary_term_nodes<'a>(node: &'a Node, out: &mut Vec<&'a Node>) {
 /// `add_program_option`, `domains/std/__init__.py:226-330`), so this replays
 /// the registration from the finished `desc` anatomy instead.
 ///
-/// Nothing produces `desc` nodes yet — the std directives land in the next
-/// task, which is when the `std_objects` fixture project stops being
-/// exempted. The walk is here so that landing them is a parser change only.
+/// Program options are the one registration the anatomy cannot carry — the
+/// program in scope comes from `env.ref_context`, which is stamped on no
+/// node — so the parse layer records those calls directly (see
+/// [`crate::rst::ProgramOptionRecord`]).
 fn collect_descriptions(
     env: &mut BuildEnvironment,
     doc: &DocumentSource<'_>,
     warnings: &mut Vec<BuildWarning>,
 ) {
+    for record in &doc.registry.program_options {
+        env.std.add_program_option(
+            record.program.as_deref(),
+            &record.name,
+            doc.docname,
+            &record.node_id,
+        );
+    }
     let mut descs: Vec<&Node> = Vec::new();
     collect_desc_nodes(&doc.doctree.root, &mut descs);
     for desc in descs {
-        // `describe`/`object` (GenericObject's base) deliberately register
-        // nothing: `ObjectDescription.add_target_and_index` is a no-op
-        // unless a domain overrides it.
+        // `describe`/`object` (the bare `ObjectDescription`) deliberately
+        // register nothing: `add_target_and_index` is a no-op unless a
+        // domain overrides it, and they carry `domain=""`.
         let Some(AttrValue::Str(domain)) = desc.get("domain") else {
             continue;
         };
@@ -377,28 +388,17 @@ fn collect_descriptions(
         let Some(AttrValue::Str(objtype)) = desc.get("objtype") else {
             continue;
         };
+        // `Cmdoption` REPLACES `add_target_and_index` (`:292-330`): it calls
+        // `add_program_option`, never `note_object`, so its two directive
+        // names contribute no std objects. Handled above.
+        if objtype == "option" || objtype == "cmdoption" {
+            continue;
+        }
         for signature in desc.children.iter().filter(|c| c.kind == "desc_signature") {
             let Some(node_id) = signature.attrs.ids.first() else {
                 continue;
             };
-            if objtype == "option" {
-                // `Cmdoption.add_target_and_index` (`:290-315`) registers
-                // every `allnames` spelling of the option against the
-                // program in scope.
-                let program = match desc.get("std:program") {
-                    Some(AttrValue::Str(program)) => Some(program.as_str()),
-                    _ => None,
-                };
-                for name in signature_names(signature) {
-                    env.std
-                        .add_program_option(program, &name, doc.docname, node_id);
-                }
-                continue;
-            }
-            let name = match signature.get("fullname") {
-                Some(AttrValue::Str(name)) => name.clone(),
-                _ => desc_name(signature),
-            };
+            let name = object_name(signature);
             if let Some(other) = env.std.note_object(objtype, &name, doc.docname, node_id) {
                 warnings.push(duplicate_object_warning(
                     doc,
@@ -422,13 +422,15 @@ fn collect_desc_nodes<'a>(node: &'a Node, out: &mut Vec<&'a Node>) {
     }
 }
 
-/// `desc_signature['allnames']`: every spelling an `option` directive
-/// declared (`--foo`, `-f`, ...).
-fn signature_names(signature: &Node) -> Vec<String> {
-    match signature.get("allnames") {
-        Some(AttrValue::List(names)) => names.clone(),
-        Some(AttrValue::Str(name)) => vec![name.clone()],
-        _ => vec![desc_name(signature)],
+/// The name `note_object` was called with. `ConfigurationValue` publishes it
+/// as `desc_signature['fullname']` (`domains/std:130`); `GenericObject` does
+/// not, and its name is `ws_re.sub(' ', sig)` over the same text the
+/// `desc_name` holds (`:63`) — the signature is already stripped, so
+/// whitespace-normalizing that text reproduces it.
+fn object_name(signature: &Node) -> String {
+    match signature.get("fullname") {
+        Some(AttrValue::Str(name)) => name.clone(),
+        _ => ids::whitespace_normalize_name(&desc_name(signature)),
     }
 }
 
@@ -667,6 +669,83 @@ mod tests {
             );
         }
         (env, warnings)
+    }
+
+    /// `envvar`/`confval` register std objects from the `desc` anatomy;
+    /// `option` registers program options instead (and never an object);
+    /// `describe`/`object` register nothing at all, because the base
+    /// `ObjectDescription.add_target_and_index` is a no-op. Both tables
+    /// below are the `env.domaindata['std']` a sphinx 9.1.0 dummy build
+    /// produces for this exact source.
+    #[test]
+    fn object_descriptions_register_per_directive() {
+        let (env, warnings) = read(&[(
+            "a",
+            ".. envvar:: HOME_A\n\n\
+             .. confval:: my_setting\n\n\
+             .. program:: myprog\n\n\
+             .. option:: --verbose, -v\n\n\
+             .. program:: None\n\n\
+             .. option:: --global-opt\n\n\
+             .. describe:: widget\n\n\
+             .. object:: thing\n",
+        )]);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            env.std.objects,
+            [
+                (
+                    ("confval".to_string(), "my_setting".to_string()),
+                    ("a".to_string(), "confval-my_setting".to_string())
+                ),
+                (
+                    ("envvar".to_string(), "HOME_A".to_string()),
+                    ("a".to_string(), "envvar-HOME_A".to_string())
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            "`option` contributes no object, and neither `describe` nor \
+             `object` contributes anything"
+        );
+        assert_eq!(
+            env.std.progoptions,
+            [
+                (
+                    (None, "--global-opt".to_string()),
+                    ("a".to_string(), "cmdoption-global-opt".to_string())
+                ),
+                // Both spellings of one signature register against its FIRST id.
+                (
+                    (Some("myprog".to_string()), "--verbose".to_string()),
+                    ("a".to_string(), "cmdoption-myprog-verbose".to_string())
+                ),
+                (
+                    (Some("myprog".to_string()), "-v".to_string()),
+                    ("a".to_string(), "cmdoption-myprog-verbose".to_string())
+                ),
+            ]
+            .into_iter()
+            .collect()
+        );
+    }
+
+    /// `note_object`'s duplicate warning [ENV §8 #2], which the description
+    /// walk raises with the signature's own line — byte-checked against a
+    /// sphinx 9.1.0 build of the same two documents.
+    #[test]
+    fn a_duplicate_object_description_warns_with_the_sphinx_text() {
+        let (_, warnings) = read(&[
+            ("a", ".. envvar:: HOME\n"),
+            ("b", "B\n=\n\n.. envvar:: HOME\n"),
+        ]);
+        assert_eq!(
+            warnings.iter().map(|w| w.render()).collect::<Vec<_>>(),
+            vec![
+                "/src/b.rst:4: WARNING: duplicate envvar description of HOME, \
+                 other instance in a"
+            ]
+        );
     }
 
     #[test]

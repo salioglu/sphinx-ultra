@@ -556,6 +556,11 @@ CASES = [
     ('sx_std', 'option_duplicate_signature', '.. option:: --dup\n            --dup\n\n   Same name twice.\n'),
     ('sx_std', 'envvar_deprecated_noindex', '.. envvar:: HOME_C\n   :noindex:\n\n   Old spelling of the flag.\n'),
     ('sx_std', 'default_domain', '.. default-domain:: py\n\nText after the default-domain.\n'),
+    ('sx_roles', 'envvar_role', 'See :envvar:`HOME_A` for details.\n'),
+    ('sx_roles', 'envvar_role_explicit_title', 'See :envvar:`the home dir <HOME_A>` here.\n'),
+    ('sx_roles', 'option_role', 'Use :option:`--verbose` now.\n'),
+    ('sx_roles', 'option_role_in_program_scope', '.. program:: myprog\n\nUse :option:`--verbose` now.\n'),
+    ('sx_roles', 'confval_role', 'See :confval:`my_setting` here.\n'),
 ]
 
 

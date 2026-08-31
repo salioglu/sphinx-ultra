@@ -630,7 +630,30 @@ pub fn resolve_document(
         path,
         &mut out,
     );
+    propagate_desc_domain(&mut doctree.root);
     out
+}
+
+/// `PropagateDescDomain` (`post_transforms/__init__.py:382-390`, priority
+/// 200): "Add the domain name of the parent node as a class in each
+/// desc_signature node." Only descriptions that named a domain get one, so
+/// `describe`/`object` (`domain=""`) are left alone.
+fn propagate_desc_domain(node: &mut Node) {
+    if node.kind == "desc" {
+        if let Some(AttrValue::Str(domain)) = node.get("domain") {
+            if !domain.is_empty() {
+                let domain = domain.clone();
+                for child in &mut node.children {
+                    if child.kind == "desc_signature" {
+                        child.attrs.classes.push(domain.clone());
+                    }
+                }
+            }
+        }
+    }
+    for child in &mut node.children {
+        propagate_desc_domain(child);
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -684,7 +707,12 @@ fn resolve_one(
     let refdoc = attr_str(&node, "refdoc").unwrap_or(docname).to_string();
     let refexplicit = matches!(node.get("refexplicit"), Some(AttrValue::Int(1)));
     let refwarn = matches!(node.get("refwarn"), Some(AttrValue::Int(1)));
-    let program = attr_str(&node, "std:program").map(str::to_string);
+    // `OptionXRefRole.process_link` stamps this on every `:option:`, using
+    // Python None outside a `.. program::` scope — which pformat renders as
+    // the "True" sentinel (see `std_domain::is_none_sentinel`).
+    let program = attr_str(&node, "std:program")
+        .filter(|program| !crate::env::std_domain::is_none_sentinel(program))
+        .map(str::to_string);
     // `contnode = node[0].deepcopy()`.
     let contnode = node.children.into_iter().next();
     let contnode_text = contnode.as_ref().map(Node::astext).unwrap_or_default();
@@ -906,6 +934,41 @@ mod tests {
             program: None,
             contnode_text: reftarget,
         }
+    }
+
+    /// The `.. program::` in scope where an `:option:` was *written* is the
+    /// first key `_resolve_option_xref` tries — which is what
+    /// `pending_xref['std:program']` carries, and why reading that attribute
+    /// has to strip docutils' `None` rendering first (a literal `"True"`
+    /// program name would miss every registration).
+    #[test]
+    fn an_option_resolves_against_the_program_in_scope_where_it_was_written() {
+        let mut env = BuildEnvironment::default();
+        env.std
+            .add_program_option(Some("myprog"), "--verbose", "a", "cmdoption-myprog-verbose");
+        env.all_docs.insert("a".to_string(), 0);
+        let formats = BTreeMap::new();
+        let resolver = resolver(&env, &formats);
+
+        let mut scoped = request("a", "option", "--verbose");
+        scoped.program = Some("myprog");
+        assert_eq!(
+            resolver.resolve_xref(&scoped),
+            XrefOutcome::Resolved(ResolvedXref {
+                kind: kinds::REFERENCE,
+                refid: Some("cmdoption-myprog-verbose".to_string()),
+                refuri: None,
+                title: None,
+                inner: Inner::Contnode,
+            })
+        );
+
+        // Same target with no program in scope: only the word-folding
+        // fallback could save it, and `--verbose` has no leading command.
+        assert_eq!(
+            resolver.resolve_xref(&request("a", "option", "--verbose")),
+            XrefOutcome::Missing
+        );
     }
 
     #[test]
