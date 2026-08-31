@@ -3127,6 +3127,11 @@ impl<'a> BlockParser<'a> {
                 let mut term = Node::elem(kinds::TERM, term_span);
                 term.children = inline.nodes;
                 term_messages.extend(inline.messages);
+                // `termtext = term.astext()` (`domains/std:389`), taken from
+                // the PARSED term and before the index node is appended: a
+                // term written with markup registers, indexes and ids itself
+                // under its rendered text, not its source text.
+                let term_text = term.astext();
                 // `make_glossary_term` (`domains/std:375-407`):
                 // `make_id(env, document, 'term', termtext)` — sphinx's
                 // case-preserving `_make_id` fork, with a `term`-keyed

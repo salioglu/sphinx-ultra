@@ -518,6 +518,7 @@ CASES = [
     ('sx_directives', 'glossary_case_and_underscores', '.. glossary::\n\n   HTTP_Method\n      A method.\n'),
     ('sx_directives', 'glossary_unusable_term_text', '.. glossary::\n\n   !!!\n      Punctuation only.\n\n   ???\n      More punctuation.\n'),
     ('sx_directives', 'glossary_serial_is_not_the_index_serial', '.. glossary::\n\n   !!!\n      Punctuation only.\n\n.. index:: Something\n'),
+    ('sx_directives', 'glossary_term_with_markup', '.. glossary::\n\n   *emphasized* term\n      A def.\n'),
     ('sx_directives', 'glossary_sorted_classifier', '.. glossary::\n   :sorted:\n\n   zeta : key\n      Z def.\n'),
     ('sx_roles', 'pep_role', 'See :pep:`8` for style.\n'),
     ('sx_roles', 'pep_role_anchor', 'See :pep:`8#imports` here.\n'),

@@ -1634,6 +1634,12 @@
     },
     {
       "family": "sx_directives",
+      "name": "sx_directives.glossary_term_with_markup",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <glossary sorted=\"0\">\n        <definition_list classes=\"glossary\">\n            <definition_list_item>\n                <term ids=\"term-emphasized-term\">\n                    <emphasis>\n                        emphasized\n                     term\n                    <index entries=\"('single',\\ 'emphasized\\ term',\\ 'term-emphasized-term',\\ 'main',\\ None)\">\n                <definition>\n                    <paragraph>\n                        A def.\n",
+      "rst": ".. glossary::\n\n   *emphasized* term\n      A def.\n"
+    },
+    {
+      "family": "sx_directives",
       "name": "sx_directives.glossary_sorted_classifier",
       "pseudo_xml": "<document source=\"<snippet>\">\n    <glossary sorted=\"1\">\n        <definition_list classes=\"glossary\">\n            <definition_list_item>\n                <term ids=\"term-zeta\">\n                    zeta\n                    <index entries=\"('single',\\ 'zeta',\\ 'term-zeta',\\ 'main',\\ 'key')\">\n                <definition>\n                    <paragraph>\n                        Z def.\n",
       "rst": ".. glossary::\n   :sorted:\n\n   zeta : key\n      Z def.\n"
