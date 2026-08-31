@@ -648,19 +648,18 @@ impl PyLiteralParser {
 
     fn parse_value(&mut self) -> std::result::Result<serde_json::Value, String> {
         self.skip_ws();
-        match self.peek() {
-            Some('\'') | Some('"') => {
-                let mut s = self.parse_string()?;
-                // Implicit adjacent string concatenation: 'a' 'b' == 'ab'
-                loop {
-                    self.skip_ws();
-                    match self.peek() {
-                        Some('\'') | Some('"') => s.push_str(&self.parse_string()?),
-                        _ => break,
-                    }
-                }
-                Ok(serde_json::Value::String(s))
+        if let Some(raw) = self.string_prefix() {
+            let mut s = self.parse_string(raw)?;
+            // Implicit adjacent string concatenation: 'a' 'b' == 'ab'
+            while let Some(raw) = {
+                self.skip_ws();
+                self.string_prefix()
+            } {
+                s.push_str(&self.parse_string(raw)?);
             }
+            return Ok(serde_json::Value::String(s));
+        }
+        match self.peek() {
             Some('[') => self.parse_sequence('[', ']'),
             Some('(') => {
                 // Python: `(x)` is grouping, `(x,)` / `(x, y)` is a tuple.
@@ -708,7 +707,35 @@ impl PyLiteralParser {
         false
     }
 
-    fn parse_string(&mut self) -> std::result::Result<String, String> {
+    /// A string literal starts here — with an optional Python prefix, which
+    /// is consumed. `Some(true)` means the literal is *raw*: `nitpick_ignore_regex`
+    /// entries are conventionally written `r'...'`, and a raw literal's
+    /// backslashes must survive into the pattern. `f` prefixes are
+    /// deliberately not accepted: an f-string's braces are an expression
+    /// this parser cannot evaluate, so it stays an unsupported expression
+    /// (skipped) rather than being taken literally.
+    fn string_prefix(&mut self) -> Option<bool> {
+        if matches!(self.peek(), Some('\'') | Some('"')) {
+            return Some(false);
+        }
+        for len in [2usize, 1] {
+            let quote_at = self.pos + len;
+            if !matches!(self.chars.get(quote_at), Some('\'') | Some('"')) {
+                continue;
+            }
+            let prefix: String = self.chars[self.pos..quote_at]
+                .iter()
+                .collect::<String>()
+                .to_lowercase();
+            if matches!(prefix.as_str(), "r" | "u" | "b" | "rb" | "br") {
+                self.pos = quote_at;
+                return Some(prefix.contains('r'));
+            }
+        }
+        None
+    }
+
+    fn parse_string(&mut self, raw: bool) -> std::result::Result<String, String> {
         let quote = self.peek().ok_or("expected string")?;
         self.pos += 1;
         let triple = self.chars.get(self.pos) == Some(&quote)
@@ -728,6 +755,14 @@ impl PyLiteralParser {
                     .chars
                     .get(self.pos + 1)
                     .ok_or("unterminated escape sequence")?;
+                if raw {
+                    // A raw literal keeps both characters — but the escaped
+                    // quote still does not end the string.
+                    out.push('\\');
+                    out.push(next);
+                    self.pos += 2;
+                    continue;
+                }
                 let translated = match next {
                     'n' => '\n',
                     't' => '\t',
@@ -1198,6 +1233,52 @@ mod tests {
         assert_eq!(config.numfig_format["table"], "Table {number}");
         assert_eq!(config.numfig_format["section"], "Section %s");
         assert_eq!(config.numfig_format["code-block"], "Listing %s");
+    }
+
+    #[test]
+    fn nitpick_ignore_lists_reach_the_build_config() {
+        let p = parse(
+            "nitpicky = True\n\
+             nitpick_ignore = [('py:func', 'nope'), ('doc', 'missing')]\n\
+             nitpick_ignore_regex = [(r'std:.*', r'legacy-.*')]\n",
+        );
+        let config = p.extract_configuration().unwrap().to_build_config();
+
+        assert!(config.nitpicky);
+        assert_eq!(
+            config.nitpick_ignore,
+            vec![
+                ("py:func".to_string(), "nope".to_string()),
+                ("doc".to_string(), "missing".to_string()),
+            ]
+        );
+        assert_eq!(
+            config.nitpick_ignore_regex,
+            vec![("std:.*".to_string(), "legacy-.*".to_string())]
+        );
+    }
+
+    #[test]
+    fn raw_and_prefixed_string_literals_parse() {
+        // A raw Rust literal: what follows is byte-for-byte what conf.py holds.
+        let p = parse(
+            r"a = r'back\slash'
+b = R'\d+'
+c = u'plain'
+d = rb'bytes'
+e = 'esc\n'
+",
+        );
+        let ns = |key: &str| p.conf_namespace[key].as_str().unwrap().to_string();
+        assert_eq!(
+            ns("a"),
+            r"back\slash",
+            "a raw literal keeps its backslashes"
+        );
+        assert_eq!(ns("b"), r"\d+");
+        assert_eq!(ns("c"), "plain");
+        assert_eq!(ns("d"), "bytes");
+        assert_eq!(ns("e"), "esc\n", "a plain literal still translates escapes");
     }
 
     #[test]
