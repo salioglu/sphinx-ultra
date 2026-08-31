@@ -1,4 +1,3 @@
-pub mod parser;
 /// Domain System & Cross-Reference Validation
 ///
 /// This module implements a domain-based validation system inspired by Sphinx domains.

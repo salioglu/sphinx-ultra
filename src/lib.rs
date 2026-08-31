@@ -9,7 +9,7 @@ pub mod directives;
 pub mod doctree;
 pub mod document;
 pub mod domains;
-pub mod environment;
+pub mod env;
 pub mod error;
 pub mod extensions;
 pub mod html_builder;
@@ -35,7 +35,7 @@ pub use directives::{
 };
 pub use document::Document;
 pub use domains::{CrossReference, DomainObject, DomainRegistry, DomainValidator, ReferenceType};
-pub use environment::BuildEnvironment;
+pub use env::BuildEnvironment;
 pub use error::BuildError;
 pub use extensions::{ExtensionLoader, SphinxApp, SphinxExtension};
 pub use html_builder::HTMLBuilder;

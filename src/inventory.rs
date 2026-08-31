@@ -1,10 +1,6 @@
 use anyhow::{Context, Result};
-use flate2::write::ZlibEncoder;
-use flate2::Compression;
-use log::info;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::io::Write;
 use std::path::Path;
 use tokio::fs;
 
@@ -270,83 +266,10 @@ impl InventoryFile {
         Ok(decompressed)
     }
 
-    /// Dump inventory to file (mirrors Sphinx's dump method)
-    pub async fn dump<P: AsRef<Path>>(
-        filename: P,
-        env: &crate::environment::BuildEnvironment,
-        builder: &crate::html_builder::HTMLBuilder,
-    ) -> Result<()> {
-        info!("Dumping inventory to {}", filename.as_ref().display());
-
-        let mut content = Vec::new();
-
-        // Write header
-        let project = &env.config.project;
-        let version = env.config.version.as_deref().unwrap_or("");
-
-        let header = format!(
-            "# Sphinx inventory version 2\n# Project: {}\n# Version: {}\n# The remainder of this file is compressed using zlib.\n",
-            Self::escape_string(project),
-            Self::escape_string(version)
-        );
-        content.extend_from_slice(header.as_bytes());
-
-        // Prepare inventory data
-        let mut inventory_lines = Vec::new();
-
-        // Collect all objects from all domains
-        for (domain_name, domain) in &env.domains {
-            let objects = domain.get_objects();
-            for object in objects {
-                let fullname = &object.name;
-                let dispname = object.display_name.as_deref().unwrap_or(fullname);
-                let obj_type = &object.object_type;
-                let docname = &object.docname;
-                let anchor = object.anchor.as_deref().unwrap_or("");
-                let priority = object.priority;
-
-                // Build URI
-                let mut uri = builder.get_target_uri(docname);
-                if !anchor.is_empty() {
-                    if anchor.ends_with(fullname) {
-                        // Optimize by using $ suffix
-                        let prefix = &anchor[..anchor.len() - fullname.len()];
-                        uri = format!("{}{}$", uri, prefix);
-                    } else {
-                        uri = format!("{}#{}", uri, anchor);
-                    }
-                }
-
-                let final_dispname = if dispname == fullname { "-" } else { dispname };
-
-                let entry = format!(
-                    "{} {}:{} {} {} {}\n",
-                    fullname, domain_name, obj_type, priority, uri, final_dispname
-                );
-                inventory_lines.push(entry);
-            }
-        }
-
-        // Sort entries for consistency
-        inventory_lines.sort();
-
-        // Compress the inventory data
-        let inventory_data = inventory_lines.join("");
-        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::best());
-        encoder.write_all(inventory_data.as_bytes())?;
-        let compressed_data = encoder.finish()?;
-
-        content.extend_from_slice(&compressed_data);
-
-        // Write to file
-        fs::write(filename, content)
-            .await
-            .context("Failed to write inventory file")?;
-
-        Ok(())
-    }
-
-    /// Escape string for inventory header
+    /// Escape string for inventory header. Only `dump`'s caller needs this
+    /// today, and `dump` was deleted as dead code (M2 wave 4 task 4); kept
+    /// (and covered by its own tests below) for Task 11's decoupled dump.
+    #[allow(dead_code)]
     fn escape_string(s: &str) -> String {
         regex::Regex::new(r"\s+")
             .unwrap()

@@ -92,10 +92,6 @@ name = "constraint_validation"
 path = "examples/constraint_validation.rs"
 
 [[example]]
-name = "domain_validation"
-path = "examples/domain_validation.rs"
-
-[[example]]
 name = "directive_validation"
 path = "examples/directive_validation.rs"
 

@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 use crate::cache::BuildCache;
 use crate::config::BuildConfig;
 use crate::document::Document;
+use crate::env::BuildEnvironment;
 use crate::error::{BuildErrorReport, BuildWarning, ErrorType};
 use crate::extensions::{ExtensionLoader, SphinxApp};
 use crate::matching;
@@ -84,6 +85,14 @@ pub struct SphinxBuilder {
     sphinx_app: Option<SphinxApp>,
     #[allow(dead_code)]
     extension_loader: ExtensionLoader,
+    /// Persisted build state (toctree graph, section/figure numbering, std
+    /// domain data, ...). Loaded from the cache dir's `env.bin` if present
+    /// and current; otherwise a fresh, empty environment. Not yet wired
+    /// into the build loop -- that lands with the incremental-rebuild work
+    /// in a later wave-4 task -- so this field is presently write-only from
+    /// the build's point of view and does not change build output.
+    #[allow(dead_code)]
+    env: BuildEnvironment,
 }
 
 impl SphinxBuilder {
@@ -104,6 +113,12 @@ impl SphinxBuilder {
             config.cache_expiration_hours,
             &config_fingerprint,
         )?;
+
+        // Reuse whatever environment survived the fingerprint-wipe check
+        // above (BuildCache::new already discarded it if the config
+        // changed); a first build or an incompatible/corrupt env.bin both
+        // fall back to a fresh, empty environment.
+        let env = BuildEnvironment::load(cache.cache_dir()).unwrap_or_default();
 
         // Canonicalize source_dir so it matches the canonicalized absolute paths
         // returned by matching::get_matching_files; without this, relative
@@ -148,6 +163,7 @@ impl SphinxBuilder {
             errors: Arc::new(Mutex::new(Vec::new())),
             sphinx_app: Some(sphinx_app),
             extension_loader,
+            env,
         })
     }
 

@@ -70,6 +70,15 @@ impl BuildCache {
         Ok(cache)
     }
 
+    /// The cache directory this cache was constructed with (post config-
+    /// fingerprint validation/wipe). Callers that persist their own files
+    /// alongside the document cache -- e.g. `BuildEnvironment::save`'s
+    /// `env.bin` -- ride the same directory and are therefore covered by
+    /// the same fingerprint-mismatch wipe.
+    pub fn cache_dir(&self) -> &Path {
+        &self.cache_dir
+    }
+
     pub fn get_document(&self, file_path: &Path) -> Result<Document> {
         let hash = self.calculate_file_hash(file_path)?;
 
