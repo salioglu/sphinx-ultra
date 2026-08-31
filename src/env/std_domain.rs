@@ -853,6 +853,10 @@ mod tests {
         assert!(env.std.anonlabels.contains_key("fig-a"));
     }
 
+    /// The node id keeps the term's case: `make_glossary_term` goes through
+    /// sphinx's own `_make_id` fork, not docutils' lowercasing `make_id`
+    /// (the corpus case `sx_directives.glossary_case_and_underscores` pins
+    /// `term-HTTP_Method` against the oracle).
     #[test]
     fn glossary_terms_register_as_objects_and_lowercased_terms() {
         let (env, warnings) = read(&[(
@@ -864,11 +868,11 @@ mod tests {
             env.std
                 .objects
                 .get(&("term".to_string(), "Environment".to_string())),
-            Some(&("a".to_string(), "term-environment".to_string()))
+            Some(&("a".to_string(), "term-Environment".to_string()))
         );
         assert_eq!(
             env.std.terms.get("environment"),
-            Some(&("a".to_string(), "term-environment".to_string())),
+            Some(&("a".to_string(), "term-Environment".to_string())),
             "`terms` is keyed by the lowercased term, `objects` by the term as written"
         );
         assert!(env.std.terms.contains_key("template engine"));

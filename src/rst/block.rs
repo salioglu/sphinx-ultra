@@ -3127,13 +3127,12 @@ impl<'a> BlockParser<'a> {
                 let mut term = Node::elem(kinds::TERM, term_span);
                 term.children = inline.nodes;
                 term_messages.extend(inline.messages);
-                let base = ids::make_id(&format!("term-{term_text}"));
-                let node_id = if base == "term" || base.is_empty() {
-                    let id = format!("term-{}", self.registry.new_index_serialno());
-                    id
-                } else {
-                    base
-                };
+                // `make_glossary_term` (`domains/std:375-407`):
+                // `make_id(env, document, 'term', termtext)` — sphinx's
+                // case-preserving `_make_id` fork, with a `term`-keyed
+                // serial fallback of its own, then `note_explicit_target`.
+                let node_id = self.registry.sphinx_make_id("term", &term_text);
+                self.registry.note_explicit_id(&node_id);
                 term.attrs.ids.push(node_id.clone());
                 let mut index = Node::elem("index", term_span);
                 index.set(

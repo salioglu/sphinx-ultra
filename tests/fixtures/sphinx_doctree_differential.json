@@ -1616,6 +1616,24 @@
     },
     {
       "family": "sx_directives",
+      "name": "sx_directives.glossary_case_and_underscores",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <glossary sorted=\"0\">\n        <definition_list classes=\"glossary\">\n            <definition_list_item>\n                <term ids=\"term-HTTP_Method\">\n                    HTTP_Method\n                    <index entries=\"('single',\\ 'HTTP_Method',\\ 'term-HTTP_Method',\\ 'main',\\ None)\">\n                <definition>\n                    <paragraph>\n                        A method.\n",
+      "rst": ".. glossary::\n\n   HTTP_Method\n      A method.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.glossary_unusable_term_text",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <glossary sorted=\"0\">\n        <definition_list classes=\"glossary\">\n            <definition_list_item>\n                <term ids=\"term-0\">\n                    !!!\n                    <index entries=\"('single',\\ '!!!',\\ 'term-0',\\ 'main',\\ None)\">\n                <definition>\n                    <paragraph>\n                        Punctuation only.\n            <definition_list_item>\n                <term ids=\"term-1\">\n                    ???\n                    <index entries=\"('single',\\ '???',\\ 'term-1',\\ 'main',\\ None)\">\n                <definition>\n                    <paragraph>\n                        More punctuation.\n",
+      "rst": ".. glossary::\n\n   !!!\n      Punctuation only.\n\n   ???\n      More punctuation.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.glossary_serial_is_not_the_index_serial",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <glossary sorted=\"0\">\n        <definition_list classes=\"glossary\">\n            <definition_list_item>\n                <term ids=\"term-0\">\n                    !!!\n                    <index entries=\"('single',\\ '!!!',\\ 'term-0',\\ 'main',\\ None)\">\n                <definition>\n                    <paragraph>\n                        Punctuation only.\n    <index entries=\"('single',\\ 'Something',\\ 'index-0',\\ '',\\ None)\" inline=\"0\">\n    <target ids=\"index-0\">\n",
+      "rst": ".. glossary::\n\n   !!!\n      Punctuation only.\n\n.. index:: Something\n"
+    },
+    {
+      "family": "sx_directives",
       "name": "sx_directives.glossary_sorted_classifier",
       "pseudo_xml": "<document source=\"<snippet>\">\n    <glossary sorted=\"1\">\n        <definition_list classes=\"glossary\">\n            <definition_list_item>\n                <term ids=\"term-zeta\">\n                    zeta\n                    <index entries=\"('single',\\ 'zeta',\\ 'term-zeta',\\ 'main',\\ 'key')\">\n                <definition>\n                    <paragraph>\n                        Z def.\n",
       "rst": ".. glossary::\n   :sorted:\n\n   zeta : key\n      Z def.\n"
