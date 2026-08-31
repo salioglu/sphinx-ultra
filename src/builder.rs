@@ -11,6 +11,7 @@ use crate::config::BuildConfig;
 use crate::doctree::Doctree;
 use crate::document::Document;
 use crate::env::metadata as env_metadata;
+use crate::env::numbers as env_numbers;
 use crate::env::toctree as env_toctree;
 use crate::env::toctree::{ConsistencyLevel, ToctreeWarningKind};
 use crate::env::BuildEnvironment;
@@ -624,14 +625,13 @@ impl SphinxBuilder {
     /// Resolve phase: whole-project state that only exists once every
     /// document has been read, then persist the environment.
     ///
-    /// Runs Sphinx's post-read consistency checks over the finished toctree
-    /// graph (`env.check_consistency()`, called from
-    /// `Builder.read()`/`builders/__init__.py` right after the read phase),
-    /// then saves the environment — Sphinx's own end-of-read-phase step
-    /// (`builders/__init__.py:420`).
+    /// Runs the numbering passes (`TocTreeCollector.get_updated_docs`, which
+    /// Sphinx dispatches through `env-get-updated` right after the read
+    /// phase) and Sphinx's post-read consistency checks over the finished
+    /// toctree graph (`env.check_consistency()`), then saves the environment
+    /// — Sphinx's own end-of-read-phase step (`builders/__init__.py:420`).
     ///
-    /// Section/figure numbering and domain cross-reference resolution land
-    /// in later wave-4 tasks.
+    /// Domain cross-reference resolution lands in later wave-4 tasks.
     fn resolve_phase(&self, env: &mut BuildEnvironment, results: &[ReadResult]) -> Result<()> {
         info!("Resolving build environment");
 
@@ -644,6 +644,8 @@ impl SphinxBuilder {
                 )
             })
             .collect();
+
+        self.number_phase(env, results);
         for message in env_toctree::check_consistency(env) {
             // Sphinx logs these with `location=docname`, which renders as
             // the document's source path with no line number.
@@ -663,6 +665,78 @@ impl SphinxBuilder {
         }
 
         env.save(self.cache.cache_dir())
+    }
+
+    /// Section and figure numbering (`TocTreeCollector.get_updated_docs`,
+    /// `collectors/toctree.py:194`), run in that order: figure numbers are
+    /// scoped by the section numbers the first pass assigns.
+    ///
+    /// The doctree loader hands the walks whatever this build already has in
+    /// memory — every read result carries its doctree, including the ones a
+    /// warm cache hit loaded from disk — and falls back to the persisted
+    /// doctree for anything else.
+    ///
+    /// The returned docnames (Sphinx's `rewrite_needed`) widen the write set
+    /// on an incremental build; nothing consumes them yet, so they are only
+    /// logged. Note that this build re-reads every document, and the merge
+    /// phase clears each one's environment state first — so today every
+    /// numbered document reports as changed.
+    fn number_phase(&self, env: &mut BuildEnvironment, results: &[ReadResult]) {
+        let in_memory: HashMap<&str, &Doctree> = results
+            .iter()
+            .map(|result| (result.docname.as_str(), &result.doctree))
+            .collect();
+        let load_doctree = |docname: &str| -> Option<std::borrow::Cow<'_, Doctree>> {
+            match in_memory.get(docname) {
+                Some(doctree) => Some(std::borrow::Cow::Borrowed(*doctree)),
+                None => self.load_doctree(docname).map(std::borrow::Cow::Owned),
+            }
+        };
+
+        let sections = env_numbers::assign_section_numbers(env, &load_doctree);
+        for warning in sections.warnings {
+            self.report_numbering_warning(&warning, results);
+        }
+        let figures = env_numbers::assign_figure_numbers(
+            env,
+            self.config.numfig,
+            self.config.numfig_secnum_depth,
+            &load_doctree,
+        );
+        debug!(
+            "Numbering: {} document(s) with changed section numbers, {} with changed figure numbers",
+            sections.changed.len(),
+            figures.len()
+        );
+    }
+
+    /// Surface one numbering diagnostic at the location Sphinx logs it —
+    /// the source line of the `toctree` node it names, which the parse
+    /// record for that document's Nth toctree carries.
+    fn report_numbering_warning(
+        &self,
+        warning: &env_numbers::NumberingWarning,
+        results: &[ReadResult],
+    ) {
+        let document = results
+            .iter()
+            .find(|result| result.docname == warning.docname)
+            .map(|result| &result.document);
+        let source = document
+            .map(|document| document.source_path.clone())
+            .unwrap_or_else(|| PathBuf::from(&warning.docname));
+        let line = document
+            .and_then(|document| document.toctrees.get(warning.toctree_index))
+            .map(|toctree| toctree.line as usize);
+        self.warnings.lock().unwrap().push(
+            BuildWarning::new(
+                source,
+                line,
+                warning.message.clone(),
+                WarningType::MissingToctreeRef,
+            )
+            .with_category(warning.category.clone()),
+        );
     }
 
     /// Write phase: emit every document's rendered output.

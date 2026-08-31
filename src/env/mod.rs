@@ -18,6 +18,7 @@
 //! output are deterministic across runs and processes.
 
 pub mod metadata;
+pub mod numbers;
 pub mod toctree;
 
 use std::collections::{BTreeMap, BTreeSet};

@@ -44,7 +44,7 @@ use crate::matching;
 
 /// Sphinx's `StandardDomain._virtual_doc_names` (`domains/std/__init__.py:784`):
 /// docnames that resolve even though no source file produces them.
-const VIRTUAL_DOC_NAMES: [&str; 3] = ["genindex", "py-modindex", "search"];
+pub(crate) const VIRTUAL_DOC_NAMES: [&str; 3] = ["genindex", "py-modindex", "search"];
 
 // ---------------------------------------------------------------------------
 // 1. Entry resolution (sphinx/directives/other.py TocTree.parse_content)

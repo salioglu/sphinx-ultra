@@ -320,6 +320,13 @@ impl PythonConfigParser {
         config.needs_sphinx = extract_string("needs_sphinx");
         config.nitpicky = extract_bool("nitpicky");
         config.numfig = extract_bool("numfig");
+        // `numfig_format` is a str -> str dict; a non-string value is not a
+        // format string sphinx could interpolate, so it is dropped here
+        // rather than carried as JSON.
+        config.numfig_format = extract_dict("numfig_format")
+            .into_iter()
+            .filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_string())))
+            .collect();
         config.numfig_secnum_depth = extract_int("numfig_secnum_depth");
         config.math_number_all = extract_bool("math_number_all");
         config.math_eqref_format = extract_string("math_eqref_format");
@@ -398,6 +405,7 @@ impl PythonConfigParser {
                 | "needs_sphinx"
                 | "nitpicky"
                 | "numfig"
+                | "numfig_format"
                 | "numfig_secnum_depth"
                 | "math_number_all"
                 | "math_eqref_format"
@@ -1026,6 +1034,19 @@ impl ConfPyConfig {
         config.nitpicky = self.nitpicky.unwrap_or(false);
         config.html_context = self.html_context.clone();
 
+        // Numbering (`numfig` family). `numfig_format` MERGES over the
+        // defaults `BuildConfig::default()` seeded — sphinx applies the
+        // user dict on top of its own at `config-inited` prio 800
+        // (`config.py:682-693`), so a conf.py naming only `figure` keeps
+        // `section`/`table`/`code-block`.
+        config.numfig = self.numfig.unwrap_or(false);
+        for (figtype, format) in &self.numfig_format {
+            config.numfig_format.insert(figtype.clone(), format.clone());
+        }
+        if let Some(depth) = self.numfig_secnum_depth {
+            config.numfig_secnum_depth = depth.max(0) as u32;
+        }
+
         config
     }
 }
@@ -1136,5 +1157,33 @@ mod tests {
             .unwrap();
         assert_eq!(python[0].as_str(), Some("https://docs.python.org/3"));
         assert!(python[1].is_null());
+    }
+
+    #[test]
+    fn numfig_family_reaches_the_build_config() {
+        let p = parse(
+            "numfig = True\nnumfig_secnum_depth = 2\n\
+             numfig_format = {'figure': 'Figure %s', 'table': 'Table {number}'}\n",
+        );
+        let config = p.extract_configuration().unwrap().to_build_config();
+
+        assert!(config.numfig);
+        assert_eq!(config.numfig_secnum_depth, 2);
+        // The user's two entries merge OVER the four defaults rather than
+        // replacing them (`config.py:682-693`).
+        assert_eq!(config.numfig_format["figure"], "Figure %s");
+        assert_eq!(config.numfig_format["table"], "Table {number}");
+        assert_eq!(config.numfig_format["section"], "Section %s");
+        assert_eq!(config.numfig_format["code-block"], "Listing %s");
+    }
+
+    #[test]
+    fn a_conf_py_without_numfig_keeps_the_defaults() {
+        let p = parse("project = 'Docs'\n");
+        let config = p.extract_configuration().unwrap().to_build_config();
+
+        assert!(!config.numfig);
+        assert_eq!(config.numfig_secnum_depth, 1);
+        assert_eq!(config.numfig_format["figure"], "Fig. %s");
     }
 }

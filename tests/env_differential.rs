@@ -11,19 +11,20 @@
 //! Each `expect` key group has exactly one test. A group whose library
 //! surface doesn't exist yet stays `#[ignore]`d with the wave-4 task that
 //! will build it; un-ignoring one is the signal that its keys are now
-//! covered. Live so far (tasks 5-6): `tocs_pformat`, `toc_num_entries`,
-//! `toctree_includes`, `files_to_rebuild`, `relations`, and `warnings` for
-//! every project whose expected diagnostics are toctree diagnostics (see
-//! [`KNOWN_WARNING_GAPS`]).
+//! covered. Live so far (tasks 5-7): `tocs_pformat`, `toc_num_entries`,
+//! `toctree_includes`, `files_to_rebuild`, `relations`, `toc_secnumbers`,
+//! `toc_fignumbers`, and `warnings` for every project whose expected
+//! diagnostics are toctree diagnostics (see [`KNOWN_WARNING_GAPS`]).
 //!
 //! Each live test materializes every fixture project into a tempdir, runs
 //! the real library build (read + merge + resolve), and diffs
 //! `SphinxBuilder::snapshot_env()` (plus the build's warnings) against the
-//! oracle. The fixture's `conf` overrides are not applied: the only ones
-//! present are inert for every live key ([`KNOWN_INERT_CONF`] pins that
-//! claim, so a future fixture project carrying a behavior-relevant key
-//! fails here instead of silently comparing against a differently
-//! configured oracle).
+//! oracle. The fixture's `conf` overrides are applied through
+//! `BuildConfig::apply_override` (sphinx-build's `-D`), except the ones
+//! [`KNOWN_INERT_CONF`] proves steer nothing this crate implements — so a
+//! future fixture project carrying a behavior-relevant key that the harness
+//! cannot express fails here instead of silently comparing against a
+//! differently configured oracle.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -179,7 +180,8 @@ fn build_project(project: &Project) -> Built {
     // root the same way so the `<project>` substitution below lands.
     let source_dir = std::fs::canonicalize(&source_dir).unwrap();
 
-    let mut builder = SphinxBuilder::new(BuildConfig::default(), source_dir.clone(), output_dir)
+    let config = config_of(project);
+    let mut builder = SphinxBuilder::new(config, source_dir.clone(), output_dir)
         .unwrap_or_else(|e| panic!("project {}: builder setup failed: {e:#}", project.name));
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -199,6 +201,51 @@ fn build_project(project: &Project) -> Built {
     Built {
         env: builder.snapshot_env(),
         warnings,
+    }
+}
+
+/// The project's `conf` overrides, applied to a default [`BuildConfig`] the
+/// way `sphinx-build -D key=value` applies them.
+///
+/// Keys listed in [`KNOWN_INERT_CONF`] are skipped (nothing in this crate
+/// reads them); every other key must be expressible as an override, so a
+/// fixture project that starts setting something the harness cannot apply
+/// fails loudly here.
+fn config_of(project: &Project) -> BuildConfig {
+    let mut config = BuildConfig::default();
+    let conf = project.conf.as_object().expect("conf is an object");
+    for (key, value) in conf {
+        if KNOWN_INERT_CONF.contains(&key.as_str()) {
+            continue;
+        }
+        // A dict-valued setting is applied key by key (`-D numfig_format.figure=...`),
+        // which is also what makes user entries merge over the defaults.
+        let overrides: Vec<(String, String)> = match value {
+            serde_json::Value::Object(map) => map
+                .iter()
+                .map(|(sub, v)| (format!("{key}.{sub}"), scalar_override(v)))
+                .collect(),
+            other => vec![(key.clone(), scalar_override(other))],
+        };
+        for (key, value) in overrides {
+            let ignored = config
+                .apply_override(&key, &value)
+                .unwrap_or_else(|e| panic!("project {}: -D {key}={value}: {e:#}", project.name));
+            assert!(
+                ignored.is_none(),
+                "project {}: -D {key}={value} was ignored: {}",
+                project.name,
+                ignored.unwrap()
+            );
+        }
+    }
+    config
+}
+
+fn scalar_override(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(s) => s.clone(),
+        other => other.to_string(),
     }
 }
 
@@ -300,36 +347,13 @@ fn known_warning_gap(project: &str) -> Option<&'static str> {
 }
 
 /// Fixture `conf` keys that provably steer no behavior this crate has
-/// implemented, which is what makes it sound to build every project with a
-/// default [`BuildConfig`] instead of applying the overrides.
+/// implemented, which is what makes it sound to leave them off the
+/// [`config_of`] override pass.
 ///
-/// `smartquotes`: no smart-quote transform exists. `numfig`,
-/// `numfig_secnum_depth`, `numfig_format`: they only steer
-/// `toc_secnumbers`/`toc_fignumbers` and the `numref` role, none of which
-/// is live. A new fixture project introducing any other key must either
-/// have its key added here (with the same kind of justification) or make
-/// the harness apply the overrides.
-const KNOWN_INERT_CONF: &[&str] = &[
-    "smartquotes",
-    "numfig",
-    "numfig_secnum_depth",
-    "numfig_format",
-];
-
-/// Drop `secnumber="..."` attributes from a toc pformat.
-///
-/// `assign_section_numbers` stamps those onto the very `reference` nodes
-/// `build_toc` creates, from the same walk that fills `toc_secnumbers` —
-/// which is a later task's `expect` key. Comparing the toc *structure*
-/// therefore means comparing it without that one attribute; the guard in
-/// [`local_tocs_match_oracle`] keeps the normalization from silently
-/// widening beyond the documents `toc_secnumbers` actually covers.
-fn strip_secnumbers(pformat: &str) -> String {
-    static RE: OnceLock<regex::Regex> = OnceLock::new();
-    RE.get_or_init(|| regex::Regex::new(r#" secnumber="[^"]*""#).unwrap())
-        .replace_all(pformat, "")
-        .into_owned()
-}
+/// `smartquotes`: no smart-quote transform exists. A new fixture project
+/// introducing another such key must either have it added here (with the
+/// same kind of justification) or be expressible as a `-D` override.
+const KNOWN_INERT_CONF: &[&str] = &["smartquotes"];
 
 fn report(divergences: &[String], keys: &str) {
     assert!(
@@ -370,23 +394,16 @@ fn fixture_loads_and_meets_floor() {
         );
     }
 
-    // The harness builds with a default `BuildConfig` rather than the
-    // project's confoverrides; that is only sound while every override is
-    // inert for the live keys.
+    // Every conf key is either applied as a `-D` override or listed as
+    // provably inert: `config_of` panics on a key that is neither (an
+    // override `apply_override` rejects or silently ignores).
     for project in &fixture.projects {
-        let conf = project
-            .conf
-            .as_object()
-            .unwrap_or_else(|| panic!("project {:?}: conf is not an object", project.name));
-        for key in conf.keys() {
-            assert!(
-                KNOWN_INERT_CONF.contains(&key.as_str()),
-                "project {:?} sets conf key {key:?}, which is not in \
-                 KNOWN_INERT_CONF — either prove it inert and list it, or \
-                 teach build_project() to apply the overrides",
-                project.name
-            );
-        }
+        assert!(
+            project.conf.is_object(),
+            "project {:?}: conf is not an object",
+            project.name
+        );
+        let _ = config_of(project);
     }
 }
 
@@ -445,26 +462,12 @@ fn local_tocs_match_oracle() {
         );
 
         for (docname, expected) in &project.expect.tocs_pformat {
-            // Guard the secnumber normalization: it may only apply to
-            // documents the oracle actually assigned section numbers to.
-            if expected.contains("secnumber=") {
-                assert!(
-                    project.expect.toc_secnumbers.contains_key(docname),
-                    "[{}] {docname}: oracle toc carries secnumber attributes but \
-                     no toc_secnumbers entry — the normalization below would be \
-                     hiding a real divergence",
-                    project.name
-                );
-            }
+            // Compared verbatim, `secnumber` attributes included: those are
+            // stamped onto these very `reference` nodes by
+            // `assign_section_numbers`, from the same walk that fills
+            // `toc_secnumbers`.
             let actual = &tocs[docname];
-            assert!(
-                !actual.contains("secnumber="),
-                "[{}] {docname}: this crate does not assign section numbers yet, \
-                 so its toc must not carry secnumber attributes",
-                project.name
-            );
-
-            let expected_toc = strip_secnumbers(expected);
+            let expected_toc = expected.clone();
             let expected_entries = project.expect.toc_num_entries[docname];
             let actual_entries = num_entries[docname];
             let matches = *actual == expected_toc && actual_entries == expected_entries;
@@ -593,22 +596,45 @@ fn warnings_match_oracle() {
 }
 
 // ---------------------------------------------------------------------------
-// Pending: later wave-4 tasks
+// Live: task 7 keys
 // ---------------------------------------------------------------------------
 
+/// `env.toc_secnumbers` and `env.toc_fignumbers` — `assign_section_numbers`
+/// and `assign_figure_numbers` (`collectors/toctree.py:197-378`), the
+/// numbering pass the resolve phase runs over the finished toc set.
 #[test]
-#[ignore = "task 6+: needs assign_section_numbers/assign_figure_numbers"]
 fn section_and_figure_numbering_matches_oracle() {
     let fixture = load_fixture();
+    let mut divergences = Vec::new();
+
     for project in &fixture.projects {
-        let _ = &project.expect.toc_secnumbers;
-        let _ = &project.expect.toc_fignumbers;
+        let env = env_of(project);
+
+        let secnumbers: BTreeMap<String, BTreeMap<String, Vec<u32>>> =
+            snapshot_field(env, "toc_secnumbers");
+        if secnumbers != project.expect.toc_secnumbers {
+            divergences.push(format!(
+                "[{}] toc_secnumbers\n  expected: {:?}\n  actual:   {secnumbers:?}",
+                project.name, project.expect.toc_secnumbers
+            ));
+        }
+
+        let fignumbers: BTreeMap<String, BTreeMap<String, BTreeMap<String, Vec<u32>>>> =
+            snapshot_field(env, "toc_fignumbers");
+        if fignumbers != project.expect.toc_fignumbers {
+            divergences.push(format!(
+                "[{}] toc_fignumbers\n  expected: {:?}\n  actual:   {fignumbers:?}",
+                project.name, project.expect.toc_fignumbers
+            ));
+        }
     }
-    todo!(
-        "diff toc_secnumbers/toc_fignumbers, and drop strip_secnumbers() from \
-         local_tocs_match_oracle once the toc references carry secnumber"
-    );
+
+    report(&divergences, "toc_secnumbers, toc_fignumbers");
 }
+
+// ---------------------------------------------------------------------------
+// Pending: later wave-4 tasks
+// ---------------------------------------------------------------------------
 
 #[test]
 #[ignore = "task 7+: needs std domain (labels/anonlabels/objects/progoptions/terms)"]

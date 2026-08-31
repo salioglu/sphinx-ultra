@@ -131,6 +131,42 @@ pub struct BuildConfig {
 
     /// Run directive/role validation during the build
     pub validate_directives: bool,
+
+    /// Number figures, tables and code blocks (`numfig`, `config.py:275`).
+    /// Off by default, exactly like Sphinx; when off,
+    /// `assign_figure_numbers` assigns nothing and `:numref:` degrades.
+    pub numfig: bool,
+
+    /// Per-figtype number format (`numfig_format`, `config.py:682-693`).
+    ///
+    /// Sphinx seeds this with `{section: 'Section %s', figure: 'Fig. %s',
+    /// table: 'Table %s', code-block: 'Listing %s'}` and **merges** the
+    /// user's dict over those defaults rather than replacing them, so a
+    /// `conf.py` that only overrides `figure` keeps the other three. That
+    /// merge lives in [`crate::python_config::PythonConfig::to_build_config`];
+    /// this field always holds the merged result, which is why
+    /// [`Default`] populates it with the four defaults.
+    pub numfig_format: std::collections::BTreeMap<String, String>,
+
+    /// How many leading section numbers a figure number is scoped by
+    /// (`numfig_secnum_depth`, `config.py:276`). 0 numbers figures
+    /// project-globally (1, 2, 3...); 1 (the default) numbers them per
+    /// top-level section (1.1, 1.2, 2.1...).
+    pub numfig_secnum_depth: u32,
+}
+
+/// Sphinx's `numfig_format` defaults (`config.py:682-693`), which user
+/// entries merge over.
+pub fn default_numfig_format() -> std::collections::BTreeMap<String, String> {
+    [
+        ("section", "Section %s"),
+        ("figure", "Fig. %s"),
+        ("table", "Table %s"),
+        ("code-block", "Listing %s"),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -244,6 +280,10 @@ impl Default for BuildConfig {
             doctree_dir: None,
             html_context: std::collections::HashMap::new(),
             validate_directives: true,
+
+            numfig: false,
+            numfig_format: default_numfig_format(),
+            numfig_secnum_depth: 1,
         }
     }
 }
@@ -701,5 +741,45 @@ output:
         assert!(warning
             .unwrap()
             .contains("cannot override dictionary config setting"));
+    }
+
+    #[test]
+    fn numfig_defaults_match_sphinx() {
+        let config = BuildConfig::default();
+        assert!(!config.numfig);
+        assert_eq!(config.numfig_secnum_depth, 1);
+        assert_eq!(config.numfig_format["section"], "Section %s");
+        assert_eq!(config.numfig_format["figure"], "Fig. %s");
+        assert_eq!(config.numfig_format["table"], "Table %s");
+        assert_eq!(config.numfig_format["code-block"], "Listing %s");
+    }
+
+    #[test]
+    fn numfig_family_is_overridable_from_the_command_line() {
+        let mut config = BuildConfig::default();
+
+        // sphinx-build spells booleans as 0/1; `true`/`True` work too.
+        assert!(config.apply_override("numfig", "1").unwrap().is_none());
+        assert!(config.numfig);
+        assert!(config.apply_override("numfig", "0").unwrap().is_none());
+        assert!(!config.numfig);
+        assert!(config.apply_override("numfig", "true").unwrap().is_none());
+        assert!(config.numfig);
+        assert!(config.apply_override("numfig", "yes").is_err());
+
+        assert!(config
+            .apply_override("numfig_secnum_depth", "2")
+            .unwrap()
+            .is_none());
+        assert_eq!(config.numfig_secnum_depth, 2);
+
+        // A dict setting is overridden key by key, which leaves the other
+        // defaults in place.
+        assert!(config
+            .apply_override("numfig_format.figure", "Figure %s")
+            .unwrap()
+            .is_none());
+        assert_eq!(config.numfig_format["figure"], "Figure %s");
+        assert_eq!(config.numfig_format["table"], "Table %s");
     }
 }
