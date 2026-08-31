@@ -117,25 +117,45 @@ fn inventory_to_table(inv: &Inventory) -> BTreeMap<String, BTreeMap<String, Expe
         .collect()
 }
 
-/// Byte offset just past the 4th `\n` in a v2 `.inv` file (i.e. the start of
-/// the raw zlib tail), found the same way `_loads_v2` frames it:
-/// `split(b'\n', maxsplit=3)`'s 4th part.
-fn compressed_tail(raw: &[u8]) -> &[u8] {
-    let mut newline_positions = Vec::with_capacity(4);
+/// Byte offsets of the first 4 `\n`s in a v2 `.inv` file, found the same way
+/// `_loads_v2` frames it: `split(b'\n', maxsplit=3)`.
+fn v2_newline_positions(raw: &[u8]) -> [usize; 4] {
+    let mut positions = [0usize; 4];
+    let mut count = 0;
     for (i, &b) in raw.iter().enumerate() {
         if b == b'\n' {
-            newline_positions.push(i);
-            if newline_positions.len() == 4 {
+            positions[count] = i;
+            count += 1;
+            if count == 4 {
                 break;
             }
         }
     }
     assert_eq!(
-        newline_positions.len(),
-        4,
+        count, 4,
         "expected a well-formed v2 header (4 newlines) in this fixture"
     );
-    &raw[newline_positions[3] + 1..]
+    positions
+}
+
+/// The four `\n`-terminated header lines of a v2 `.inv` file (excluding the
+/// newlines themselves): `["# Sphinx inventory version 2", "# Project:
+/// ...", "# Version: ...", "# The remainder ... zlib."]`.
+fn header_lines(raw: &[u8]) -> [&[u8]; 4] {
+    let p = v2_newline_positions(raw);
+    [
+        &raw[..p[0]],
+        &raw[p[0] + 1..p[1]],
+        &raw[p[1] + 1..p[2]],
+        &raw[p[2] + 1..p[3]],
+    ]
+}
+
+/// Byte offset just past the 4th `\n` in a v2 `.inv` file (i.e. the start of
+/// the raw zlib tail).
+fn compressed_tail(raw: &[u8]) -> &[u8] {
+    let p = v2_newline_positions(raw);
+    &raw[p[3] + 1..]
 }
 
 fn decompressed_lines_from_inv_bytes(raw: &[u8]) -> Vec<String> {
@@ -300,7 +320,14 @@ async fn writer_round_trip_matches_expected_table() {
             .project
             .as_deref()
             .unwrap_or_else(|| panic!("ok case {:?} has no `project` field", case.name));
-        let version = case.version.as_deref().unwrap_or("");
+        // `version` legitimately IS "" for several cases (the default,
+        // unset Sphinx `version` config) -- that's a real value, not a
+        // missing field, so it must come through the manifest explicitly
+        // rather than silently defaulting a genuinely-absent field to "".
+        let version = case
+            .version
+            .as_deref()
+            .unwrap_or_else(|| panic!("ok case {:?} has no `version` field", case.name));
 
         let by_domain = invobjects_from_expected_table(&case.expect, &manifest.uri_base);
         let domains: Vec<(&str, Vec<InvObject>)> = by_domain
@@ -387,8 +414,11 @@ async fn writer_reproduces_oracle_decompressed_lines_byte_exact() {
             .collect();
 
         let tmp = tempfile::NamedTempFile::new().expect("tempfile");
-        // The corpus is built with the plain HTML builder, whose
-        // `get_target_uri(docname)` is exactly `f'{docname}.html'`.
+        // The real HTML builder's `get_target_uri` is `quote(docname) +
+        // self.link_suffix` (urllib.parse.quote, not a bare f-string) --
+        // this closure is equivalent to it only because every docname in
+        // this ASCII-only corpus is already quote-inert and link_suffix is
+        // the default ".html". Not a general model of get_target_uri.
         InventoryFile::dump(tmp.path(), project, version, &domains, |docname: &str| {
             format!("{docname}.html")
         })
@@ -397,6 +427,21 @@ async fn writer_reproduces_oracle_decompressed_lines_byte_exact() {
 
         let written = std::fs::read(tmp.path()).expect("read back written inventory");
         let oracle_raw = load_inv_bytes(&case.inv_file);
+
+        // Byte-correctness is defined on header bytes + decompressed
+        // payload (never the compressed bytes -- flate2's backend isn't
+        // CPython zlib). The reader is deliberately lenient about the
+        // header (blind [11:] slice, `zlib` substring check), so nothing
+        // else in this file actually pins that our writer's header bytes
+        // match the oracle's -- do that here, byte-exact, per line.
+        let our_header = header_lines(&written);
+        let oracle_header = header_lines(&oracle_raw);
+        if our_header != oracle_header {
+            failures.push(format!(
+                "case {:?}: header lines differ from the oracle.\n  oracle: {:#?}\n  ours:   {:#?}",
+                case.name, oracle_header, our_header
+            ));
+        }
 
         let our_lines = decompressed_lines_from_inv_bytes(&written);
         let oracle_lines = decompressed_lines_from_inv_bytes(&oracle_raw);
