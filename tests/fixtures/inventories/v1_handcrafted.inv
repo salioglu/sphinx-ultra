@@ -1,0 +1,5 @@
+# Sphinx inventory version 1
+# Project: legacy project
+# Version: 0.9
+widget mod widget.html
+widget.Gadget class widget.html

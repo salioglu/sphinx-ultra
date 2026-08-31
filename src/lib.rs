@@ -39,7 +39,7 @@ pub use env::BuildEnvironment;
 pub use error::BuildError;
 pub use extensions::{ExtensionLoader, SphinxApp, SphinxExtension};
 pub use html_builder::HTMLBuilder;
-pub use inventory::{InventoryFile, InventoryItem};
+pub use inventory::{posix_join, InvObject, Inventory, InventoryFile, InventoryItem};
 pub use parser::Parser;
 pub use python_config::{ConfPyConfig, PythonConfigParser};
 pub use search::SearchIndex;
