@@ -26,6 +26,12 @@ jobs:
           - os: macos-latest
             rust: beta
 
+    # rust-toolchain.toml pins `stable` and outranks `rustup default` (what
+    # dtolnay/rust-toolchain sets), so without this env the beta leg silently
+    # tested stable. RUSTUP_TOOLCHAIN outranks the file.
+    env:
+      RUSTUP_TOOLCHAIN: ${{ matrix.rust }}
+
     steps:
     - uses: actions/checkout@v6
 
@@ -51,12 +57,17 @@ jobs:
       uses: actions/cache@v6
       with:
         path: target
-        key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+        key: ${{ runner.os }}-${{ matrix.rust }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
 
+    # fmt/clippy are style gates pinned to stable; the beta leg exists to
+    # catch upcoming rustc/std regressions in build+tests, not to enforce
+    # beta's shifting lint set.
     - name: Check formatting
+      if: matrix.rust == 'stable'
       run: cargo fmt --all -- --check
 
     - name: Run clippy
+      if: matrix.rust == 'stable'
       run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
     - name: Run tests
@@ -95,6 +106,10 @@ jobs:
   msrv:
     name: MSRV (1.85)
     runs-on: ubuntu-latest
+    # Outranks rust-toolchain.toml (which pins stable); without this the job
+    # silently checked with stable and the MSRV claim was never tested.
+    env:
+      RUSTUP_TOOLCHAIN: "1.85"
     steps:
     - uses: actions/checkout@v6
 
