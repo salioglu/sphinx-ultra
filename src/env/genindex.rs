@@ -233,6 +233,11 @@ fn split_index_msg(entry_type: &str, value: &str) -> Result<Vec<String>, String>
 /// `_split_into` (`util/index_entries.py:21-27`): split at the first `n-1`
 /// semicolons, strip each part, and reject unless **every** part is
 /// non-empty (`len(list(filter(None, parts))) < n`).
+///
+/// `trim` stands in for Python's `str.strip()`. The two agree except on the
+/// C0 separators `U+001C`-`U+001F`, which Python's `str.isspace()` counts
+/// as whitespace and Unicode's `White_Space` property does not — so a part
+/// padded with one of those would strip in sphinx and not here.
 fn split_into(n: usize, entry_type: &str, value: &str) -> Result<Vec<String>, String> {
     let parts: Vec<String> = value
         .splitn(n, ';')
@@ -850,6 +855,33 @@ mod tests {
         assert!(
             names.contains(&"func() (in module foo)") && names.contains(&"func() (in module goo)"),
             "{names:?}"
+        );
+    }
+
+    /// Sub-entries are sorted by a *folded* key with a stable sort, so two
+    /// that fold alike keep the order they were added in. That is the one
+    /// place [`Working`]'s insertion order is load-bearing: swapping
+    /// `sub_items` for a `BTreeMap` would silently reorder this pair.
+    #[test]
+    fn sub_entries_that_fold_alike_keep_their_insertion_order() {
+        let (groups, _) = index_of(&[(
+            "a",
+            vec![
+                record("pair", "word; Beta", "b1", false, None),
+                record("pair", "word; beta", "b2", false, None),
+            ],
+        )]);
+        let word = groups
+            .iter()
+            .flat_map(|group| &group.entries)
+            .find(|entry| entry.name == "word")
+            .expect("the `word` entry");
+        assert_eq!(
+            word.subitems
+                .iter()
+                .map(|item| item.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Beta", "beta"]
         );
     }
 
