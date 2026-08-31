@@ -347,10 +347,11 @@ pub fn split_explicit_title(entry: &str) -> Option<(&str, &str)> {
     Some((title, &entry[open + 1..]))
 }
 
-/// Sphinx `url_re` (`(?P<schema>.+)://.*`, anchored with `.match`): any
-/// `://` preceded by at least one character.
+/// Sphinx `url_re` (`(?P<schema>.+)://.*`, anchored with `.match`): *some*
+/// `://` preceded by at least one character — the regex backtracks, so a
+/// leading `://` does not rule out a later one satisfying the schema part.
 fn is_url(entry: &str) -> bool {
-    entry.find("://").is_some_and(|i| i >= 1)
+    entry.match_indices("://").any(|(at, _)| at >= 1)
 }
 
 /// Sphinx `glob_re` (`.*[*?\[].*`).
@@ -789,6 +790,10 @@ pub fn check_consistency(env: &BuildEnvironment) -> Vec<ConsistencyMessage> {
         });
     }
 
+    // The parent list is interpolated verbatim, so its order is visible.
+    // Sphinx builds it from `toctree_includes` in read (insertion) order and
+    // this map iterates in docname order; both are the same order for the
+    // sorted read every build of this crate performs.
     let mut toc_parents: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     for (container, children) in &env.toctree_includes {
         for child in children {
@@ -1267,6 +1272,21 @@ mod tests {
             resolved.includefiles,
             vec!["b".to_string(), "a".to_string()]
         );
+    }
+
+    /// `url_re` is `(?P<schema>.+)://.*` matched (not fullmatched) from the
+    /// start, and `.+` backtracks: only a `://` at offset 0 with no other
+    /// occurrence fails to be a URL.
+    #[test]
+    fn url_detection_matches_the_backtracking_regex() {
+        assert!(is_url("https://example.invalid/x"));
+        assert!(is_url("a://b"));
+        assert!(!is_url("://leading"));
+        assert!(
+            is_url("://a://b"),
+            "the second `://` has a non-empty schema before it"
+        );
+        assert!(!is_url("plain/docname"));
     }
 
     #[test]
