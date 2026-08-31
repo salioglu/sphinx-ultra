@@ -10,9 +10,11 @@ use crate::cache::BuildCache;
 use crate::config::BuildConfig;
 use crate::doctree::Doctree;
 use crate::document::Document;
+use crate::env::metadata as env_metadata;
 use crate::env::toctree as env_toctree;
+use crate::env::toctree::{ConsistencyLevel, ToctreeWarningKind};
 use crate::env::BuildEnvironment;
-use crate::error::{BuildErrorReport, BuildWarning, ErrorType};
+use crate::error::{BuildErrorReport, BuildWarning, ErrorType, WarningType};
 use crate::extensions::{ExtensionLoader, SphinxApp};
 use crate::matching;
 use crate::parser::Parser;
@@ -23,21 +25,14 @@ use crate::utils;
 /// configuration change wipes these along with everything else.
 const DOCTREE_SUBDIR: &str = "doctrees";
 
-/// A single toctree entry with its real source position.
-#[derive(Debug, Clone)]
-struct ToctreeEntry {
-    /// The target as written (title stripped, angle-bracket target extracted).
-    target: String,
-    /// 1-based line number of the entry in its source file.
-    line: usize,
-    /// True when the containing toctree has `:glob:` and the target contains
-    /// glob metacharacters.
-    is_glob: bool,
-}
+/// Sphinx's `root_doc` default (`config.py`), used when the configuration
+/// leaves it unset.
+const DEFAULT_ROOT_DOC: &str = "index";
 
-/// Resolve a toctree target against the document that references it, the way
-/// Sphinx does (`docname_join`): a leading `/` means source-root-relative,
-/// anything else is relative to the referencing document's directory.
+/// Resolve a cross-reference target against the document that references
+/// it, the way Sphinx does (`docname_join`): a leading `/` means
+/// source-root-relative, anything else is relative to the referencing
+/// document's directory.
 fn resolve_docname(target: &str, referencing_doc: &str) -> String {
     env_toctree::docname_join(referencing_doc, target)
 }
@@ -250,7 +245,7 @@ impl SphinxBuilder {
 
         let mut env = std::mem::take(&mut self.env);
         self.merge_phase(&mut env, &read_results);
-        let resolved = self.resolve_phase(&mut env);
+        let resolved = self.resolve_phase(&mut env, &read_results);
         self.env = env;
         resolved?;
 
@@ -263,10 +258,6 @@ impl SphinxBuilder {
             .collect();
 
         self.write_phase(&processed_docs);
-
-        // Validate documents and collect warnings/errors
-        self.validate_documents(&processed_docs, &source_files)
-            .await?;
 
         // Directive/role validation runs in every build unless disabled
         if self.config.validate_directives {
@@ -543,6 +534,12 @@ impl SphinxBuilder {
     /// (`environment/__init__.py:421`) and the collectors it dispatches to:
     /// `all_docs`, the title collector, and the toctree collector.
     fn merge_phase(&self, env: &mut BuildEnvironment, results: &[ReadResult]) {
+        env.root_doc = self
+            .config
+            .root_doc
+            .clone()
+            .unwrap_or_else(|| DEFAULT_ROOT_DOC.to_string());
+
         // Documents that vanished since the saved environment was written
         // (Sphinx's `removed` set) must not leave stale state behind.
         let present: HashSet<&str> = results.iter().map(|r| r.docname.as_str()).collect();
@@ -577,6 +574,11 @@ impl SphinxBuilder {
             env.longtitles.insert(docname.to_string(), title.clone());
             env.titles.insert(docname.to_string(), title);
 
+            env.metadata.insert(
+                docname.to_string(),
+                env_metadata::document_metadata(&result.doctree),
+            );
+
             let (toc, num_entries) = env_toctree::build_toc(&result.doctree, docname);
             // Each toctree node copied into the toc is noted, in the order
             // it was copied (which is the order Sphinx notes them in).
@@ -585,19 +587,81 @@ impl SphinxBuilder {
             }
             env.tocs.insert(docname.to_string(), toc);
             env.toc_num_entries.insert(docname.to_string(), num_entries);
+
+            // The document's toctree diagnostics, produced when its entries
+            // were resolved. Sphinx logs them during the read phase, which
+            // walks documents in this same sorted order.
+            self.report_toctree_warnings(&result.document);
+        }
+    }
+
+    /// Surface one document's toctree diagnostics
+    /// (`TocTree.parse_content`'s warnings, carried on the parse records).
+    fn report_toctree_warnings(&self, document: &Document) {
+        let mut warnings = self.warnings.lock().unwrap();
+        for toctree in &document.toctrees {
+            for warning in &toctree.warnings {
+                let warning_type = match warning.kind {
+                    ToctreeWarningKind::MissingDocument => WarningType::MissingToctreeRef,
+                    ToctreeWarningKind::EmptyGlob | ToctreeWarningKind::PatternError => {
+                        WarningType::EmptyToctree
+                    }
+                    ToctreeWarningKind::DuplicateEntry => WarningType::Other,
+                };
+                warnings.push(
+                    BuildWarning::new(
+                        document.source_path.clone(),
+                        Some(warning.line as usize),
+                        warning.message.clone(),
+                        warning_type,
+                    )
+                    .with_category(warning.category.clone()),
+                );
+            }
         }
     }
 
     /// Resolve phase: whole-project state that only exists once every
     /// document has been read, then persist the environment.
     ///
-    /// Sphinx computes document relations, section/figure numbering and
-    /// domain cross-references here; those land in later wave-4 tasks. What
-    /// this phase does today is save the environment the merge phase built,
-    /// which is Sphinx's own end-of-read-phase step
+    /// Runs Sphinx's post-read consistency checks over the finished toctree
+    /// graph (`env.check_consistency()`, called from
+    /// `Builder.read()`/`builders/__init__.py` right after the read phase),
+    /// then saves the environment — Sphinx's own end-of-read-phase step
     /// (`builders/__init__.py:420`).
-    fn resolve_phase(&self, env: &mut BuildEnvironment) -> Result<()> {
+    ///
+    /// Section/figure numbering and domain cross-reference resolution land
+    /// in later wave-4 tasks.
+    fn resolve_phase(&self, env: &mut BuildEnvironment, results: &[ReadResult]) -> Result<()> {
         info!("Resolving build environment");
+
+        let sources: HashMap<&str, &Path> = results
+            .iter()
+            .map(|result| {
+                (
+                    result.docname.as_str(),
+                    result.document.source_path.as_path(),
+                )
+            })
+            .collect();
+        for message in env_toctree::check_consistency(env) {
+            // Sphinx logs these with `location=docname`, which renders as
+            // the document's source path with no line number.
+            let source = sources
+                .get(message.docname.as_str())
+                .map(|path| path.to_path_buf())
+                .unwrap_or_else(|| PathBuf::from(&message.docname));
+            match message.level {
+                ConsistencyLevel::Warning => self.warnings.lock().unwrap().push(
+                    BuildWarning::new(source, None, message.message, WarningType::OrphanedDocument)
+                        .with_category(message.category),
+                ),
+                // Sphinx uses `logger.info` for the multiple-parents note,
+                // so it must stay out of the warning count (and out of -W).
+                ConsistencyLevel::Info => info!("{}: {}", source.display(), message.message),
+            }
+        }
+
         env.save(self.cache.cache_dir())
     }
 
@@ -786,79 +850,6 @@ impl SphinxBuilder {
             .with_extension("")
             .to_string_lossy()
             .replace('\\', "/")
-    }
-
-    async fn validate_documents(
-        &self,
-        processed_docs: &[Document],
-        _source_files: &[PathBuf],
-    ) -> Result<()> {
-        info!("Validating documents and checking for warnings...");
-
-        let mut all_documents = HashSet::new();
-        let mut toctree_refs: Vec<(PathBuf, String, ToctreeEntry)> = Vec::new();
-
-        for doc in processed_docs {
-            let docname = self.docname_of(doc);
-            for entry in self.extract_toctree_references(doc) {
-                toctree_refs.push((doc.source_path.clone(), docname.clone(), entry));
-            }
-            all_documents.insert(docname);
-        }
-
-        // Resolve every entry the way Sphinx does and warn on the misses.
-        let mut referenced: HashSet<String> = HashSet::new();
-        for (source_file, referencing_doc, entry) in &toctree_refs {
-            let resolved = resolve_docname(&entry.target, referencing_doc);
-
-            if entry.is_glob {
-                let matches: Vec<String> = all_documents
-                    .iter()
-                    .filter(|d| matching::pattern_match(d, &resolved).unwrap_or(false))
-                    .cloned()
-                    .collect();
-                if matches.is_empty() {
-                    self.warnings
-                        .lock()
-                        .unwrap()
-                        .push(BuildWarning::toctree_glob_no_match(
-                            source_file.clone(),
-                            Some(entry.line),
-                            &entry.target,
-                        ));
-                } else {
-                    referenced.extend(matches);
-                }
-            } else if all_documents.contains(&resolved) {
-                referenced.insert(resolved);
-            } else {
-                self.warnings
-                    .lock()
-                    .unwrap()
-                    .push(BuildWarning::missing_toctree_ref(
-                        source_file.clone(),
-                        Some(entry.line),
-                        &resolved,
-                    ));
-            }
-        }
-
-        // Orphan check: exact membership of the resolved reference set.
-        for doc in processed_docs {
-            let docname = self.docname_of(doc);
-            if docname == "index" {
-                continue;
-            }
-            if !referenced.contains(&docname) {
-                let warning = BuildWarning::orphaned_document(doc.source_path.clone());
-                self.warnings.lock().unwrap().push(warning);
-            }
-        }
-
-        let warning_count = self.warnings.lock().unwrap().len();
-        info!("Validation completed. Found {} warnings", warning_count);
-
-        Ok(())
     }
 
     /// Run the directive/role validation system over every RST document.
@@ -1155,30 +1146,6 @@ impl SphinxBuilder {
         }
 
         Ok(())
-    }
-
-    /// Toctree entries from the parse-time records (wave 3: authored
-    /// entries with their real per-entry line numbers; no raw re-scan).
-    fn extract_toctree_references(&self, doc: &Document) -> Vec<ToctreeEntry> {
-        let mut entries = Vec::new();
-        for toctree in &doc.toctrees {
-            for entry in &toctree.entries {
-                // External URLs and the `self` keyword are valid entries
-                // that do not reference source documents.
-                if entry.target.starts_with("http://")
-                    || entry.target.starts_with("https://")
-                    || entry.target == "self"
-                {
-                    continue;
-                }
-                entries.push(ToctreeEntry {
-                    target: entry.target.clone(),
-                    line: entry.line as usize,
-                    is_glob: toctree.glob && entry.target.contains(['*', '?', '[']),
-                });
-            }
-        }
-        entries
     }
 
     async fn generate_search_index(&self, _documents: &[Document]) -> Result<()> {

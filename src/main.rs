@@ -366,13 +366,7 @@ async fn run_build(args: RunArgs) -> Result<i32> {
 
     // Print warnings in Sphinx-like format
     for warning in &stats.warning_details {
-        let file_path = warning.file.display();
-        let line_info = if let Some(line) = warning.line {
-            format!(":{}", line)
-        } else {
-            String::new()
-        };
-        let warning_msg = format!("{}{}: WARNING: {}", file_path, line_info, warning.message);
+        let warning_msg = warning.render();
 
         // Write to warning file if specified
         if let Some(ref mut file) = warning_file_handle {

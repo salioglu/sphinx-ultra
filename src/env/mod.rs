@@ -17,6 +17,7 @@
 //! `Hash*` equivalent so that bincode bytes and [`BuildEnvironment::snapshot`]
 //! output are deterministic across runs and processes.
 
+pub mod metadata;
 pub mod toctree;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -52,7 +53,7 @@ use crate::doctree::Node;
 /// stored `version` doesn't match current — mirroring Sphinx's own
 /// `ENV_VERSION` check, where a stale environment is simply rebuilt from
 /// scratch rather than partially trusted.
-pub const ENV_VERSION: u32 = 1;
+pub const ENV_VERSION: u32 = 2;
 
 /// The `env.bin` filename inside a build's cache directory.
 const ENV_FILENAME: &str = "env.bin";
@@ -104,6 +105,12 @@ pub struct BuildEnvironment {
     /// always stamps [`ENV_VERSION`] here; [`BuildEnvironment::load`]
     /// discards (returns `None` for) anything else.
     pub version: u32,
+    /// Sphinx's `config.root_doc`: the document every whole-project walk of
+    /// the toctree graph starts from ([`toctree::collect_relations`]) and
+    /// the one document [`toctree::check_consistency`] never calls an
+    /// orphan. Empty in a [`BuildEnvironment::default`]; the build stamps
+    /// it from the configuration.
+    pub root_doc: String,
     /// docname -> read time, in microseconds since the Unix epoch.
     pub all_docs: BTreeMap<String, u64>,
     /// docname -> absolute paths the document depends on (via `include`,
@@ -113,6 +120,9 @@ pub struct BuildEnvironment {
     pub included: BTreeMap<String, BTreeSet<String>>,
     /// docnames that must always be re-read (e.g. they use `today`/`now`).
     pub reread_always: BTreeSet<String>,
+    /// docname -> its bibliographic field list (`:orphan:`, `:tocdepth:`,
+    /// ...), per [`metadata::document_metadata`].
+    pub metadata: BTreeMap<String, BTreeMap<String, String>>,
     pub titles: BTreeMap<String, Node>,
     pub longtitles: BTreeMap<String, Node>,
     /// docname -> that document's local table of contents, doctree-shaped
@@ -188,6 +198,7 @@ impl BuildEnvironment {
     /// toctree.py:30` (toctree fields + `files_to_rebuild`),
     /// `environment/collectors/title.py:23` (titles/longtitles),
     /// `environment/collectors/dependencies.py:24` (dependencies),
+    /// `environment/collectors/metadata.py:22` (metadata),
     /// `domains/std/__init__.py:896` (std domain), `domains/index.py:41`
     /// (index entries).
     pub fn clear_doc(&mut self, docname: &str) {
@@ -195,6 +206,7 @@ impl BuildEnvironment {
         self.included.remove(docname);
         self.reread_always.remove(docname);
         self.dependencies.remove(docname);
+        self.metadata.remove(docname);
 
         self.titles.remove(docname);
         self.longtitles.remove(docname);
@@ -285,9 +297,20 @@ impl BuildEnvironment {
             index_entries.insert(docname.clone(), JsonValue::Array(arr));
         }
 
+        // `relations` is derived, not stored — exactly like Sphinx's
+        // `collect_relations()`, which recomputes it from the toctree graph
+        // on demand.
+        let relations: JsonMap<String, JsonValue> = toctree::collect_relations(self)
+            .into_iter()
+            .map(|(docname, (parent, prev, next))| (docname, json!([parent, prev, next])))
+            .collect();
+
         json!({
             "version": self.version,
+            "root_doc": self.root_doc,
             "all_docs": self.all_docs,
+            "relations": JsonValue::Object(relations),
+            "metadata": self.metadata,
             "dependencies": self.dependencies,
             "included": self.included,
             "reread_always": self.reread_always,
@@ -340,9 +363,14 @@ mod tests {
     fn populated_env() -> BuildEnvironment {
         let mut env = BuildEnvironment {
             version: ENV_VERSION,
+            root_doc: "index".to_string(),
             ..Default::default()
         };
         env.all_docs.insert("index".to_string(), 1_700_000_000);
+        env.metadata.insert(
+            "index".to_string(),
+            BTreeMap::from([("orphan".to_string(), String::new())]),
+        );
         env.dependencies.insert(
             "index".to_string(),
             BTreeSet::from([PathBuf::from("/src/index.rst")]),
@@ -512,6 +540,7 @@ mod tests {
         assert!(!env.included.contains_key("index"));
         assert!(!env.reread_always.contains("index"));
         assert!(!env.dependencies.contains_key("index"));
+        assert!(!env.metadata.contains_key("index"));
         assert!(!env.titles.contains_key("index"));
         assert!(!env.longtitles.contains_key("index"));
         assert!(!env.tocs.contains_key("index"));

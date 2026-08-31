@@ -24,7 +24,12 @@ use crate::document::{
 use crate::rst;
 use crate::utils;
 
-pub struct Parser {}
+pub struct Parser {
+    /// `exclude_patterns` from the build configuration, which the `toctree`
+    /// directive consults to tell an excluded target from a nonexisting one
+    /// (sphinx `TocTree.parse_content` reads `self.config.exclude_patterns`).
+    exclude_patterns: Vec<String>,
+}
 
 /// Everything one source file's parse produces: the pipeline's [`Document`]
 /// and the doctree it was derived from. The build's read phase keeps both —
@@ -36,8 +41,10 @@ pub struct ParsedFile {
 }
 
 impl Parser {
-    pub fn new(_config: &BuildConfig) -> Result<Self> {
-        Ok(Self {})
+    pub fn new(config: &BuildConfig) -> Result<Self> {
+        Ok(Self {
+            exclude_patterns: config.exclude_patterns.clone(),
+        })
     }
 
     pub fn parse(&self, file_path: &Path, content: &str, docname: &str) -> Result<Document> {
@@ -109,6 +116,7 @@ impl Parser {
                 sphinx: true,
                 docname: docname.to_string(),
                 found_docs,
+                exclude_patterns: self.exclude_patterns.clone(),
             },
         );
         let line_starts = line_start_offsets(content);
@@ -396,6 +404,7 @@ mod tests {
                 source_path: "<snippet>".to_string(),
                 sphinx: true,
                 docname: "index".to_string(),
+                exclude_patterns: Vec::new(),
                 found_docs: None,
             },
         );

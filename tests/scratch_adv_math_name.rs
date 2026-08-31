@@ -20,6 +20,7 @@ fn sphinx_math_name_variants() {
                 source_path: "<snippet>".into(),
                 sphinx: true,
                 docname: "index".into(),
+                exclude_patterns: Vec::new(),
                 found_docs: None,
             },
         );

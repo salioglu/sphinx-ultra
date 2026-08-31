@@ -86,10 +86,16 @@ fn missing_toctree_ref_warns_and_exits_zero() {
 
     // Without -W, warnings do not fail the build.
     assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    // Sphinx logs this with `location=toctree` — the *directive* node, whose
+    // source info is the `.. toctree::` marker line (4 here), not the entry's
+    // own line. Verified against the environment oracle
+    // (`toctree_self_ref`: "index.rst:4: ... nonexisting document 'index'"),
+    // and the `[toc.not_readable]` suffix is what `show_warning_types`
+    // appends.
     assert!(
         stderr_of(&result)
-            .contains("index.rst:6: WARNING: toctree contains reference to nonexisting document 'nonexistent_page'"),
-        "expected toctree warning with the entry's real line number, stderr: {}",
+            .contains("index.rst:4: WARNING: toctree contains reference to nonexisting document 'nonexistent_page' [toc.not_readable]"),
+        "expected the Sphinx-exact toctree warning, stderr: {}",
         stderr_of(&result)
     );
 }
@@ -120,11 +126,15 @@ fn toctree_glob_matches_and_warns_on_dead_pattern() {
         !stderr.contains("nonexisting document"),
         "glob patterns must not be treated as literal references, stderr: {stderr}"
     );
+    // As above: sphinx locates this at the toctree directive (line 4). It
+    // passes `subtype='empty_glob'` but no `type`, so — unlike the
+    // missing-document warning — no `[...]` suffix is appended
+    // (`util/logging.py:545-549`).
     assert!(
         stderr.contains(
-            "index.rst:8: WARNING: toctree glob pattern 'missing*' didn't match any documents"
+            "index.rst:4: WARNING: toctree glob pattern 'missing*' didn't match any documents"
         ),
-        "dead glob pattern must warn with its line, stderr: {stderr}"
+        "dead glob pattern must warn at the directive, stderr: {stderr}"
     );
     assert!(
         !stderr.contains("isn't included in any toctree"),
@@ -179,6 +189,36 @@ fn fail_on_warning_exits_one() {
         result.status.code(),
         Some(1),
         "-W must turn warnings into a failing exit"
+    );
+}
+
+/// A document reachable from two toctrees is an *information* notice in
+/// Sphinx (`logger.info`, `environment/__init__.py:950-959`), not a
+/// warning — so `-W` must not turn it into a failing build.
+#[test]
+fn multiple_toctree_parents_do_not_fail_under_fail_on_warning() {
+    let src = out_dir("multi-parent-src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(
+        src.join("index.rst"),
+        "Index\n=====\n\n.. toctree::\n\n   a\n   b\n",
+    )
+    .unwrap();
+    std::fs::write(src.join("a.rst"), "A\n=\n\n.. toctree::\n\n   c\n").unwrap();
+    std::fs::write(src.join("b.rst"), "B\n=\n\n.. toctree::\n\n   c\n").unwrap();
+    std::fs::write(src.join("c.rst"), "C\n=\n\nShared leaf.\n").unwrap();
+
+    let out = out_dir("multi-parent-out");
+    let result = build(&src, &out, &["-W"]);
+
+    let stderr = stderr_of(&result);
+    assert!(
+        result.status.success(),
+        "the multiple-parents notice must not count as a warning, stderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("WARNING"),
+        "no warnings expected for a shared toctree leaf, stderr: {stderr}"
     );
 }
 

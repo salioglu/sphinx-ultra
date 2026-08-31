@@ -54,6 +54,15 @@ pub struct BuildWarning {
     pub message: String,
     #[allow(dead_code)]
     pub warning_type: WarningType,
+    /// Sphinx's `type.subtype` warning category (`toc.not_readable`,
+    /// `toc.not_included`, ...), which `show_warning_types` — on by default
+    /// since Sphinx 8.3 — appends to the rendered message as ` [category]`.
+    ///
+    /// `None` for warnings Sphinx logs without a `type` (its
+    /// `SphinxLoggerAdapter` only appends the suffix when `type` is set, so
+    /// a `subtype`-only warning such as the toctree `empty_glob` one prints
+    /// bare). See `util/logging.py:545-549`.
+    pub category: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -100,39 +109,36 @@ impl BuildWarning {
             line,
             message,
             warning_type,
+            category: None,
         }
     }
 
-    pub fn missing_toctree_ref(file: PathBuf, line: Option<usize>, reference: &str) -> Self {
-        Self::new(
-            file,
-            line,
-            format!(
-                "toctree contains reference to nonexisting document '{}'",
-                reference
-            ),
-            WarningType::MissingToctreeRef,
-        )
+    /// Attach Sphinx's `type.subtype` category (see [`BuildWarning::category`]).
+    #[must_use]
+    pub fn with_category(mut self, category: Option<String>) -> Self {
+        self.category = category;
+        self
     }
 
-    pub fn toctree_glob_no_match(file: PathBuf, line: Option<usize>, pattern: &str) -> Self {
-        Self::new(
-            file,
-            line,
-            format!(
-                "toctree glob pattern '{}' didn't match any documents",
-                pattern
-            ),
-            WarningType::EmptyToctree,
-        )
-    }
-
-    pub fn orphaned_document(file: PathBuf) -> Self {
-        Self::new(
-            file,
-            None,
-            "document isn't included in any toctree".to_string(),
-            WarningType::OrphanedDocument,
+    /// The warning as `sphinx-build` prints it:
+    /// `path[:line]: WARNING: message[ [type.subtype]]`.
+    ///
+    /// One renderer for every sink (stderr, `-w` warning file, the
+    /// environment-oracle differential) so a message can only ever be
+    /// formatted one way.
+    pub fn render(&self) -> String {
+        let line = match self.line {
+            Some(line) => format!(":{line}"),
+            None => String::new(),
+        };
+        let category = match &self.category {
+            Some(category) => format!(" [{category}]"),
+            None => String::new(),
+        };
+        format!(
+            "{}{line}: WARNING: {}{category}",
+            self.file.display(),
+            self.message
         )
     }
 

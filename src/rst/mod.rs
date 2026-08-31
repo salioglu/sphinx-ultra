@@ -37,6 +37,10 @@ pub struct ParseOptions {
     /// `includefiles` stay empty. Shared by `Arc` because the build clones
     /// these options once per source file.
     pub found_docs: Option<std::sync::Arc<std::collections::BTreeSet<String>>>,
+    /// `exclude_patterns`, which `TocTree.parse_content` consults to tell an
+    /// *excluded* toctree target from a *nonexisting* one. Empty for a parse
+    /// without an environment, where no entry resolves anyway.
+    pub exclude_patterns: Vec<String>,
 }
 
 impl Default for ParseOptions {
@@ -46,6 +50,7 @@ impl Default for ParseOptions {
             sphinx: false,
             docname: "index".to_string(),
             found_docs: None,
+            exclude_patterns: Vec::new(),
         }
     }
 }
@@ -82,6 +87,11 @@ pub struct ToctreeRecord {
     pub glob: bool,
     pub entries: Vec<ToctreeEntryRecord>,
     pub line: u32,
+    /// Diagnostics `TocTree.parse_content` produced while resolving this
+    /// directive's entries. They ride the record (and therefore the
+    /// document cache) because the parser has no warning sink, and because
+    /// a cache hit that skipped the parse must still reproduce them.
+    pub warnings: Vec<crate::env::toctree::ToctreeWarning>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -130,5 +140,6 @@ pub fn parse_rst_full(source: &str, opts: &ParseOptions) -> ParseOutput {
     parser.sphinx = opts.sphinx;
     parser.docname = opts.docname.clone();
     parser.found_docs = opts.found_docs.clone();
+    parser.exclude_patterns = opts.exclude_patterns.clone();
     parser.parse_document_full()
 }

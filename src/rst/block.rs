@@ -146,6 +146,8 @@ pub(crate) struct BlockParser<'a> {
     /// resolution; `None` outside a build (see
     /// [`super::ParseOptions::found_docs`]).
     pub(crate) found_docs: Option<std::sync::Arc<std::collections::BTreeSet<String>>>,
+    /// `exclude_patterns` (see [`super::ParseOptions::exclude_patterns`]).
+    pub(crate) exclude_patterns: Vec<String>,
     /// `.. highlight::` state consumed by later code-blocks in the same
     /// document (sphinx env.temp_data\['highlight_language'\]).
     highlight_language: Option<String>,
@@ -195,6 +197,7 @@ impl<'a> BlockParser<'a> {
             sphinx: false,
             docname: "index".to_string(),
             found_docs: None,
+            exclude_patterns: Vec::new(),
             highlight_language: None,
             pending_classes: None,
             equation_serial: 0,
@@ -342,6 +345,7 @@ impl<'a> BlockParser<'a> {
         sub.sphinx = self.sphinx;
         sub.docname = self.docname.clone();
         sub.found_docs = self.found_docs.clone();
+        sub.exclude_patterns = self.exclude_patterns.clone();
         sub.highlight_language = self.highlight_language.clone();
         let top = std::mem::take(&mut sub.top);
         let nodes = sub.parse_elements(&top);
@@ -3321,26 +3325,32 @@ impl<'a> BlockParser<'a> {
                 line: l.lineno,
             });
         }
+        // Full sphinx attr set (oracle-pinned). entries/includefiles are
+        // resolved against the environment's document set the way
+        // `TocTree.parse_content` does — including its warnings, which ride
+        // the record to the builder; a parse with no environment
+        // (`found_docs: None`) resolves nothing and leaves both empty.
+        let resolved = match &self.found_docs {
+            Some(found) => {
+                crate::env::toctree::resolve_entries(&crate::env::toctree::ToctreeContent {
+                    content: &raw_entries,
+                    docname: &self.docname,
+                    glob,
+                    reversed: opt_get(&input.options, "reversed").is_some(),
+                    line: input.lineno,
+                    found_docs: found,
+                    source_suffixes: SOURCE_SUFFIXES,
+                    exclude_patterns: &self.exclude_patterns,
+                })
+            }
+            None => crate::env::toctree::ResolvedEntries::default(),
+        };
         self.toctree_records.push(super::ToctreeRecord {
             glob,
             entries: entries.clone(),
             line: input.lineno,
+            warnings: resolved.warnings.clone(),
         });
-        // Full sphinx attr set (oracle-pinned). entries/includefiles are
-        // resolved against the environment's document set the way
-        // `TocTree.parse_content` does; a parse with no environment
-        // (`found_docs: None`) resolves nothing and leaves both empty.
-        let resolved = match &self.found_docs {
-            Some(found) => crate::env::toctree::resolve_entries(
-                &raw_entries,
-                &self.docname,
-                glob,
-                opt_get(&input.options, "reversed").is_some(),
-                found,
-                SOURCE_SUFFIXES,
-            ),
-            None => crate::env::toctree::ResolvedEntries::default(),
-        };
         let mut toctree = Node::elem("toctree", input.span);
         match opt_get(&input.options, "caption") {
             // pformat renders a Python None attr value as "True".
@@ -7459,6 +7469,7 @@ mod tests {
                 source_path: "<snippet>".into(),
                 sphinx: false,
                 docname: "index".into(),
+                exclude_patterns: Vec::new(),
                 found_docs: None,
             },
         )
@@ -7507,6 +7518,7 @@ mod tests {
                 source_path: "<snippet>".into(),
                 sphinx: false,
                 docname: "index".into(),
+                exclude_patterns: Vec::new(),
                 found_docs: None,
             },
         );
