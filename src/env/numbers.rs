@@ -434,20 +434,35 @@ impl FignumWalker<'_, '_, '_> {
     }
 }
 
-/// `get_figtype` (`collectors/toctree.py:296-308`) over the only domain
-/// that registers enumerable nodes today.
+/// `get_figtype` (`collectors/toctree.py:296-308`) over the two domains
+/// that register enumerable nodes (`Domain.enumerable_nodes` is empty for
+/// every other one, `domains/__init__.py:99`).
 ///
-/// Sphinx asks every domain in `env.domains.sorted()` (alphabetical) and
-/// takes the first answer, with one twist: a `StandardDomain` whose
-/// `get_numfig_title` comes back empty is skipped *before* its figtype is
-/// considered, which is how an uncaptioned figure/table/container ends up
-/// unnumbered. With `std` the only domain, that twist is the whole
-/// function.
+/// Sphinx asks every domain in `env.domains.sorted()` — **alphabetical**,
+/// so `math` is asked before `std` — and takes the first answer, with one
+/// twist: a `StandardDomain` whose `get_numfig_title` comes back empty is
+/// `continue`d past *before* its figtype is considered, which is how an
+/// uncaptioned figure/table/container ends up unnumbered. Only the std
+/// domain gets that treatment, so a labelled equation is numbered with no
+/// caption of any kind.
 fn figtype_of(node: &Node) -> Option<&'static str> {
+    if let Some(figtype) = math_enumerable_node_type(node) {
+        return Some(figtype);
+    }
+    let figtype = std_enumerable_node_type(node);
     if clean_astext(std_numfig_title(node)?).is_empty() {
         return None;
     }
-    std_enumerable_node_type(node)
+    figtype
+}
+
+/// `MathDomain.enumerable_nodes` (`domains/math.py:58-60`): a `math_block`
+/// is a `displaymath`, which is where `:eq:` picks an equation's number up
+/// (`domains/math.py:115-121`) when `numfig` and `math_numfig` are both on.
+/// Note there is no `math_numfig` gate *here*: Sphinx numbers display math
+/// whenever `numfig` is on, and only consults `math_numfig` when rendering.
+fn math_enumerable_node_type(node: &Node) -> Option<&'static str> {
+    (node.kind == "math_block").then_some("displaymath")
 }
 
 /// `StandardDomain.get_enumerable_node_type` (`domains/std/__init__.py:1380-1393`)
@@ -830,6 +845,27 @@ mod tests {
 
         assert_eq!(env.toc_fignumbers["a"]["table"]["tab-a"], vec![1]);
         assert_eq!(env.toc_fignumbers["a"]["code-block"]["code-a"], vec![1]);
+    }
+
+    /// The `math` domain also registers an enumerable node, and sorts
+    /// *before* `std`: a labelled equation is numbered as `displaymath`
+    /// with no caption requirement, while an unlabelled one has no ids and
+    /// is therefore never registered.
+    #[test]
+    fn labelled_display_math_is_numbered_as_displaymath() {
+        let (mut env, doctrees) = read(&[
+            ("index", "Index\n=====\n\n.. toctree::\n\n   a\n"),
+            (
+                "a",
+                "A\n=\n\n.. math::\n   :label: eq-one\n\n   x = 1\n\n.. math::\n\n   y = 2\n",
+            ),
+        ]);
+        let load = loader(&doctrees);
+        assign_figure_numbers(&mut env, true, 1, &load);
+
+        let equations = &env.toc_fignumbers["a"]["displaymath"];
+        assert_eq!(equations["equation-eq-one"], vec![1]);
+        assert_eq!(equations.len(), 1, "{equations:?}");
     }
 
     #[test]
