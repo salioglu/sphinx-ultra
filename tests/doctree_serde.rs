@@ -6,7 +6,7 @@
 //! `pformat()` output is unchanged. Clones the collect-all-mismatches shape
 //! from tests/doctree_differential.rs and tests/sphinx_doctree_differential.rs.
 
-use sphinx_ultra::doctree::{from_bincode, intern, to_bincode};
+use sphinx_ultra::doctree::{from_bincode, to_bincode};
 use sphinx_ultra::rst::{parse_rst, ParseOptions};
 
 #[derive(serde::Deserialize)]
@@ -73,15 +73,4 @@ fn sphinx_doctree_differential_round_trips_through_bincode() {
         "/tests/fixtures/sphinx_doctree_differential.json"
     ));
     round_trip_fixture(raw, true, "sphinx_doctree_differential");
-}
-
-#[test]
-fn intern_returns_pointer_equal_str_on_repeat_calls() {
-    let a = intern("paragraph");
-    let b = intern("paragraph");
-    assert_eq!(a, "paragraph");
-    assert!(
-        std::ptr::eq(a, b),
-        "intern should return the same pointer for repeat calls with equal content"
-    );
 }

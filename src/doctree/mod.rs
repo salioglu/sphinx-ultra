@@ -16,7 +16,7 @@ pub mod kinds;
 pub mod messages;
 pub mod pformat;
 
-pub use intern::intern;
+pub(crate) use intern::intern;
 
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -100,8 +100,9 @@ impl<'de> Deserialize<'de> for Node {
         D: Deserializer<'de>,
     {
         let shadow = NodeShadow::deserialize(deserializer)?;
+        let kind = intern(&shadow.kind).map_err(serde::de::Error::custom)?;
         Ok(Node {
-            kind: intern(&shadow.kind),
+            kind,
             span: shadow.span,
             text: shadow.text,
             attrs: shadow.attrs,
@@ -197,7 +198,11 @@ pub fn to_bincode(doctree: &Doctree) -> Vec<u8> {
         .expect("Doctree encoding is infallible")
 }
 
-/// Decode a doctree previously written by [`to_bincode`].
+/// Decode a doctree previously written by [`to_bincode`]. Also the entry
+/// point for bytes that *weren't* — a corrupted file, or a stale/foreign
+/// blob from a version-skewed cache — which can fail for the usual decode
+/// reasons and additionally once decoding would intern more than
+/// `intern`'s bounded table allows (see `src/doctree/intern.rs`).
 pub fn from_bincode(bytes: &[u8]) -> anyhow::Result<Doctree> {
     let (doctree, _consumed): (Doctree, usize) =
         bincode::serde::decode_from_slice(bytes, bincode::config::standard())?;

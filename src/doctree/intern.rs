@@ -2,15 +2,24 @@
 //!
 //! `Node::kind` and `Attrs::extra` keys are `&'static str` in memory (see
 //! `mod.rs`), but deserializing produces owned bytes with no `'static`
-//! lifetime. The vocabulary they draw from is closed — `kinds.rs` consts
-//! plus a bounded set of attribute-key literals — so leaking each distinct
-//! string once, the first time it is seen, is a fixed, small cost, not a
-//! growing leak: the interner never leaks more than that vocabulary size,
-//! no matter how many doctrees are decoded.
+//! lifetime. For a doctree bincode produced by this crate's own
+//! [`super::to_bincode`], the strings that flow through here are always
+//! `kinds.rs` consts or the closed set of attribute-key literals — a small,
+//! fixed vocabulary — so leaking each distinct string once is a fixed, tiny
+//! cost.
 //!
-//! `intern` is also `pub` (not just `pub(crate)`) so callers can pre-seed or
-//! inspect the process-wide table if wave 5+ needs it; today only this
-//! module's serde glue calls it.
+//! Nothing here checks that, though: `intern` leaks and caches whatever
+//! `&str` it's handed, unconditionally. That's harmless for this crate's
+//! own well-formed output, but `from_bincode` (and, transitively, `intern`)
+//! also has to accept bytes it did *not* produce — a corrupted file, or one
+//! written by a future/older version of this crate with a different
+//! vocabulary, landing in the wipe-on-fingerprint-mismatch doctree cache.
+//! `MAX_INTERNED` bounds the damage from that case: once the table would
+//! grow past it, `intern` refuses instead of leaking further, and
+//! deserialization fails with an error instead of the process quietly
+//! accumulating unbounded leaked memory. `intern` is `pub(crate)`, not
+//! `pub` — nothing outside this crate needs it; widen deliberately if that
+//! changes.
 
 use serde::de::{MapAccess, Visitor};
 use serde::ser::SerializeMap;
@@ -21,19 +30,50 @@ use std::sync::Mutex;
 
 use super::AttrValue;
 
+/// Generous upper bound on distinct interned strings. The real vocabulary
+/// (node kinds + attribute keys) is well under a few hundred entries and
+/// fixed at compile time, so legitimate input never comes close; this
+/// exists only to cap growth from input that didn't come from this crate's
+/// own encoder.
+const MAX_INTERNED: usize = 4096;
+
 static INTERNED: Mutex<BTreeSet<&'static str>> = Mutex::new(BTreeSet::new());
+
+/// `intern` refused to leak another string: the process-wide table already
+/// holds [`MAX_INTERNED`] distinct entries, far more than this crate's own
+/// output ever produces — a sign the bytes being decoded didn't come from
+/// this crate's encoder.
+#[derive(Debug)]
+pub(crate) struct InternLimitExceeded;
+
+impl fmt::Display for InternLimitExceeded {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "doctree interner exceeded {MAX_INTERNED} distinct strings; \
+             refusing to intern more (this input likely wasn't produced by \
+             this crate's own encoder)"
+        )
+    }
+}
+
+impl std::error::Error for InternLimitExceeded {}
 
 /// Return the process-wide `&'static str` for `s`, leaking a fresh
 /// allocation only the first time this exact string is interned. Repeat
-/// calls with equal content return the same pointer.
-pub fn intern(s: &str) -> &'static str {
+/// calls with equal content return the same pointer. Fails once the table
+/// would grow past [`MAX_INTERNED`] — see the module docs.
+pub(crate) fn intern(s: &str) -> Result<&'static str, InternLimitExceeded> {
     let mut interned = INTERNED.lock().unwrap();
     if let Some(&existing) = interned.get(s) {
-        return existing;
+        return Ok(existing);
+    }
+    if interned.len() >= MAX_INTERNED {
+        return Err(InternLimitExceeded);
     }
     let leaked: &'static str = Box::leak(s.to_owned().into_boxed_str());
     interned.insert(leaked);
-    leaked
+    Ok(leaked)
 }
 
 /// `serialize_with` for `&'static str` fields (e.g. `Node::kind`): plain
@@ -80,7 +120,8 @@ impl<'de> Visitor<'de> for ExtraVisitor {
     {
         let mut out = Vec::with_capacity(map.size_hint().unwrap_or(0));
         while let Some((key, value)) = map.next_entry::<String, AttrValue>()? {
-            out.push((intern(&key), value));
+            let key = intern(&key).map_err(serde::de::Error::custom)?;
+            out.push((key, value));
         }
         Ok(out)
     }
@@ -101,16 +142,16 @@ mod tests {
 
     #[test]
     fn intern_returns_pointer_equal_str_on_repeat_calls() {
-        let a = intern("paragraph");
-        let b = intern("paragraph");
+        let a = intern("paragraph").unwrap();
+        let b = intern("paragraph").unwrap();
         assert_eq!(a, "paragraph");
         assert!(std::ptr::eq(a, b));
     }
 
     #[test]
     fn intern_distinguishes_different_strings() {
-        let a = intern("section");
-        let b = intern("title");
+        let a = intern("section").unwrap();
+        let b = intern("title").unwrap();
         assert_ne!(a, b);
     }
 }
