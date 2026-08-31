@@ -19,7 +19,10 @@
 //!   docutils' `note_explicit_target` gives the *named* target
 //!   (`domains/index.py:78-83`), and consume no `index-N` serial. This
 //!   crate's `:name:`-optioned targets carry a name but no id throughout
-//!   the parse layer, so those entries anchor on `index-N` instead.
+//!   the parse layer, so those entries anchor on `index-N` instead — and
+//!   because the serial *is* consumed, every later `index-N` in the same
+//!   document is shifted up by one as well, so the divergence is not
+//!   confined to the named directive's own entries.
 //!
 //! **Unicode caveat.** The sort and grouping keys normalize to NFD and
 //! lowercase exactly where Sphinx does, but two primitives are Rust's rather
@@ -41,6 +44,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use log::warn;
 use serde::Serialize;
 use unicode_normalization::UnicodeNormalization;
 
@@ -84,17 +88,22 @@ pub fn process_doc(
     warnings: &mut Vec<BuildWarning>,
 ) {
     let mut collected: Vec<IndexEntryRecord> = Vec::new();
-    visit(&mut doctree.root, &mut collected, &mut |message, node| {
-        warnings.push(
-            BuildWarning::new(
-                path.to_path_buf(),
-                Some(node_line(node, text)),
-                message,
-                WarningType::Other,
-            )
-            .with_category(Some(INDEX_CATEGORY.to_string())),
-        );
-    });
+    visit(
+        &mut doctree.root,
+        docname,
+        &mut collected,
+        &mut |message, node| {
+            warnings.push(
+                BuildWarning::new(
+                    path.to_path_buf(),
+                    Some(node_line(node, text)),
+                    message,
+                    WarningType::Other,
+                )
+                .with_category(Some(INDEX_CATEGORY.to_string())),
+            );
+        },
+    );
     env.index_entries
         .entry(docname.to_string())
         .or_default()
@@ -103,11 +112,16 @@ pub fn process_doc(
 
 /// Pre-order walk mirroring `document.findall(addnodes.index)`, with the
 /// `node.parent.remove(node)` an invalid entry triggers applied in place.
-fn visit<F: FnMut(String, &Node)>(node: &mut Node, out: &mut Vec<IndexEntryRecord>, warn: &mut F) {
+fn visit<F: FnMut(String, &Node)>(
+    node: &mut Node,
+    docname: &str,
+    out: &mut Vec<IndexEntryRecord>,
+    warn: &mut F,
+) {
     let mut i = 0;
     while i < node.children.len() {
         if node.children[i].kind == INDEX {
-            let entries = index_node_entries(&node.children[i]);
+            let entries = index_node_entries(&node.children[i], docname);
             match entries
                 .iter()
                 .try_for_each(|entry| split_index_msg(&entry.entry_type, &entry.value).map(|_| ()))
@@ -120,17 +134,36 @@ fn visit<F: FnMut(String, &Node)>(node: &mut Node, out: &mut Vec<IndexEntryRecor
                 }
             }
         } else {
-            visit(&mut node.children[i], out, warn);
+            visit(&mut node.children[i], docname, out, warn);
         }
         i += 1;
     }
 }
 
 /// One `index` node's `entries` attribute, parsed back into records.
-fn index_node_entries(node: &Node) -> Vec<IndexEntryRecord> {
+///
+/// The three ways this can yield nothing are *not* the same, so they do not
+/// share an arm: an empty list is ordinary (an object description that
+/// indexes nothing writes one), an absent attribute loses no data because
+/// there was none, and a non-list attribute means entries that exist are
+/// being thrown away — the one case worth a log line.
+fn index_node_entries(node: &Node, docname: &str) -> Vec<IndexEntryRecord> {
     match node.get("entries") {
-        Some(AttrValue::List(items)) => parse_index_entries(items),
-        _ => Vec::new(),
+        Some(AttrValue::List(items)) => parse_index_entries(items, docname),
+        // Every producer writes a list (see
+        // [`crate::rst::block::index_entry_tuple`]), so a scalar here is a
+        // doctree cached before that was true. The harvest reads it as "no
+        // entries" and this document silently drops out of the general
+        // index; say so once rather than leaving it undiagnosable.
+        Some(_) => {
+            warn!(
+                "{docname}: an `index` node's `entries` is not a list attribute, so its \
+                 index entries were dropped. This is a doctree cached before the \
+                 list-attribute format; delete the cache directory to re-read it."
+            );
+            Vec::new()
+        }
+        None => Vec::new(),
     }
 }
 
@@ -141,9 +174,19 @@ fn index_node_entries(node: &Node) -> Vec<IndexEntryRecord> {
 /// An item that does not parse is dropped rather than panicking: only this
 /// crate writes these strings, so a malformed one is a bug here, not
 /// attacker-controlled input, and losing one index entry beats failing the
-/// build.
-pub(crate) fn parse_index_entries(items: &[String]) -> Vec<IndexEntryRecord> {
-    items.iter().filter_map(|item| parse_tuple(item)).collect()
+/// build. It is logged for the same reason the non-list attribute above is:
+/// a dropped entry is invisible in the finished index.
+pub(crate) fn parse_index_entries(items: &[String], docname: &str) -> Vec<IndexEntryRecord> {
+    items
+        .iter()
+        .filter_map(|item| {
+            let parsed = parse_tuple(item);
+            if parsed.is_none() {
+                warn!("{docname}: unparsable `index` entry {item:?} was dropped");
+            }
+            parsed
+        })
+        .collect()
 }
 
 /// `('single', 'Alpha', 'index-0', '', None)` -> one record.
@@ -310,6 +353,14 @@ pub fn create_index(
 ) -> Vec<IndexGroup> {
     let mut new = Working::default();
 
+    // Sphinx iterates `index_domain.entries` — a dict, so in the order the
+    // documents were *read*. For a full build that is `sorted(docnames)`
+    // (`Builder.read`), which is the order this `BTreeMap` gives. A real
+    // incremental rebuild re-reads only the outdated documents and their
+    // entries move to the end of the dict, so the two orders part ways
+    // there; nothing downstream depends on it except the sub-entry ties
+    // `sub_entries_that_fold_alike_keep_their_insertion_order` pins, and
+    // the outdated computation that would expose it is task 13's.
     for (docname, entries) in &env.index_entries {
         let rel = rel_uri(docname);
         for entry in entries {
@@ -685,7 +736,7 @@ mod tests {
         ];
         for (entry_type, value, target_id, main, key) in cases {
             let rendered = index_entry_tuple(entry_type, value, target_id, main, key);
-            let parsed = parse_index_entries(std::slice::from_ref(&rendered));
+            let parsed = parse_index_entries(std::slice::from_ref(&rendered), "a");
             assert_eq!(
                 parsed,
                 vec![record(entry_type, value, target_id, !main.is_empty(), key)],
@@ -694,11 +745,52 @@ mod tests {
         }
     }
 
+    /// A doctree cached before `entries` became a list attribute holds a
+    /// `Str` there. The harvest must read it as "no entries" — never as one
+    /// entry whose value is the whole blob — and must not manufacture a
+    /// *build* warning for it: the diagnosis is a `log::warn!` line, which
+    /// is deliberately outside the sphinx-fidelity warning stream the
+    /// environment oracle diffs. (The log line itself is not asserted:
+    /// capturing `log` output needs a process-global logger, which is racy
+    /// under the parallel test harness.)
+    #[test]
+    fn a_stale_string_shaped_entries_attribute_harvests_nothing() {
+        let mut index = Node::elem(INDEX, crate::doctree::Span::ZERO);
+        index.set(
+            "entries",
+            AttrValue::Str("('single',\\ 'Alpha',\\ 'index-0',\\ '',\\ None)".to_string()),
+        );
+        let mut root = Node::elem(crate::doctree::kinds::DOCUMENT, crate::doctree::Span::ZERO);
+        root.children.push(index);
+        let mut doctree = Doctree {
+            root,
+            sources: vec!["<document>".to_string()],
+        };
+
+        let mut env = BuildEnvironment::default();
+        let mut warnings = Vec::new();
+        process_doc(
+            &mut env,
+            "a",
+            &mut doctree,
+            Path::new("a.rst"),
+            "",
+            &mut warnings,
+        );
+
+        assert_eq!(env.index_entries["a"], Vec::new());
+        assert!(warnings.is_empty(), "{warnings:?}");
+        // The node itself stays: nothing was *rejected*, only unreadable.
+        assert_eq!(doctree.root.children.len(), 1);
+    }
+
     #[test]
     fn a_malformed_entries_item_is_dropped_not_panicked_on() {
-        assert!(parse_index_entries(&["('single', 'x'".to_string()]).is_empty());
-        assert!(parse_index_entries(&["('a', 'b', 'c', 'd', 'e', 'f')".to_string()]).is_empty());
-        assert!(parse_index_entries(&[String::new()]).is_empty());
+        assert!(parse_index_entries(&["('single', 'x'".to_string()], "a").is_empty());
+        assert!(
+            parse_index_entries(&["('a', 'b', 'c', 'd', 'e', 'f')".to_string()], "a").is_empty()
+        );
+        assert!(parse_index_entries(&[String::new()], "a").is_empty());
     }
 
     /// `_split_into` rejects a value with too few parts *and* one with an
