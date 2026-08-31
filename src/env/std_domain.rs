@@ -494,6 +494,10 @@ fn is_propagating_target(node: &Node, parent: &'static str) -> bool {
             parent,
             kinds::PARAGRAPH | kinds::TITLE | kinds::TERM | kinds::FIELD_NAME | "caption"
         )
+        // `assert len(target) == 0` — docutils only ever propagates a
+        // childless target, so an inline one (which carries its own text)
+        // is excluded whatever its parent element happens to be.
+        && node.children.is_empty()
         && node.get("refid").is_none()
         && node.get("refuri").is_none()
         && node.get("refname").is_none()

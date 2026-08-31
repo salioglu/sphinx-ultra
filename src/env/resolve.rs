@@ -212,8 +212,13 @@ impl Resolver<'_> {
         let fignum: Vec<String> = fignumber.iter().map(u32::to_string).collect();
         let fignum = fignum.join(".");
         let newtitle = if title.contains("{name}") || title.contains("number") {
-            // New style (`Fig.{number}`).
-            match format_new_style(&title, figname.as_deref(), &fignum) {
+            // New style (`Fig.{number}`). Sphinx passes `name` to `format`
+            // only `if figname:` — a *truthiness* test, so an empty caption
+            // is formatted without it, and a `{name}` in the title then
+            // raises the KeyError below (the `figname is None` guard above
+            // is the only None-ness test in this algorithm).
+            let named = figname.as_deref().filter(|figname| !figname.is_empty());
+            match format_new_style(&title, named, &fignum) {
                 Ok(newtitle) => newtitle,
                 Err(KeyError(key)) => {
                     return XrefOutcome::Kept {
@@ -511,8 +516,13 @@ fn format_new_style(title: &str, figname: Option<&str>, fignum: &str) -> Result<
     Ok(out)
 }
 
-/// `title % fignum` for a single string argument: exactly one `%s`-style
-/// conversion, or Python raises `TypeError`.
+/// `title % fignum` for a single string argument: exactly one `%s`
+/// conversion, or Python raises `TypeError` — too few ("not enough
+/// arguments") and too many ("not all arguments converted") both land on
+/// the same warning. Any other conversion is reported as an invalid format
+/// too; `%r` would in fact work in Python, but no `numfig_format` uses it
+/// and guessing at the rest of `%`-formatting would be worse than saying
+/// the format is unusable.
 fn format_old_style(title: &str, fignum: &str) -> Result<String, TypeError> {
     let mut out = String::with_capacity(title.len());
     let mut rest = title;
@@ -1078,6 +1088,67 @@ mod tests {
             XrefOutcome::Kept {
                 warning: Some("numfig is disabled. :numref: is ignored.".to_string())
             }
+        );
+    }
+
+    /// The two ways a `{name}` can have nothing to fill it: no label entry
+    /// at all (`figname is None` — "the link has no caption"), and a label
+    /// whose section name is empty, which Sphinx's truthiness test sends
+    /// down the `format(number=...)` path and straight into a `KeyError`.
+    #[test]
+    fn a_nameless_numref_target_reports_the_format_it_could_not_fill() {
+        let mut env = BuildEnvironment::default();
+        env.std.labels.insert(
+            "captionless".to_string(),
+            ("a".to_string(), "captionless".to_string(), String::new()),
+        );
+        env.std
+            .anonlabels
+            .insert("anon".to_string(), ("a".to_string(), "anon".to_string()));
+        env.toc_fignumbers.insert(
+            "a".to_string(),
+            BTreeMap::from([(
+                "figure".to_string(),
+                BTreeMap::from([
+                    ("captionless".to_string(), vec![1]),
+                    ("anon".to_string(), vec![2]),
+                ]),
+            )]),
+        );
+        let mut root = Node::elem(kinds::DOCUMENT, crate::doctree::Span::ZERO);
+        for id in ["captionless", "anon"] {
+            let mut figure = Node::elem("figure", crate::doctree::Span::ZERO);
+            figure.attrs.ids.push(id.to_string());
+            root.children.push(figure);
+        }
+        let doctree = Doctree {
+            root,
+            sources: vec!["<test>".to_string()],
+        };
+        let formats = BTreeMap::from([("figure".to_string(), "Fig. {name} {number}".to_string())]);
+        let resolver = Resolver {
+            env: &env,
+            numfig: true,
+            numfig_format: &formats,
+            doctree: &|_| Some(Cow::Borrowed(&doctree)),
+            relative_uri: &|_, _| String::new(),
+        };
+
+        assert_eq!(
+            resolver.resolve_xref(&request("b", "numref", "anon")),
+            XrefOutcome::Kept {
+                warning: Some("the link has no caption: Fig. {name} {number}".to_string())
+            },
+            "an anonymous-only label has no caption to name"
+        );
+        assert_eq!(
+            resolver.resolve_xref(&request("b", "numref", "captionless")),
+            XrefOutcome::Kept {
+                warning: Some(
+                    "invalid numfig_format: Fig. {name} {number} (KeyError('name'))".to_string()
+                )
+            },
+            "an empty caption is falsy, so `name` is never passed to format()"
         );
     }
 
