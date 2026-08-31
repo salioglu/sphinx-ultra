@@ -223,9 +223,13 @@ fn config_of(project: &Project) -> BuildConfig {
         let overrides: Vec<(String, String)> = match value {
             serde_json::Value::Object(map) => map
                 .iter()
-                .map(|(sub, v)| (format!("{key}.{sub}"), scalar_override(v)))
+                .map(|(sub, v)| {
+                    let key = format!("{key}.{sub}");
+                    let value = scalar_override(&project.name, &key, v);
+                    (key, value)
+                })
                 .collect(),
-            other => vec![(key.clone(), scalar_override(other))],
+            other => vec![(key.clone(), scalar_override(&project.name, key, other))],
         };
         for (key, value) in overrides {
             let ignored = config
@@ -242,10 +246,24 @@ fn config_of(project: &Project) -> BuildConfig {
     config
 }
 
-fn scalar_override(value: &serde_json::Value) -> String {
+/// One conf value rendered as the string a `-D` override carries.
+///
+/// A `-D` value is a single scalar, so a list-valued (or nested, or null)
+/// conf entry has no faithful spelling here: stringifying it would hand
+/// `apply_override` something like `["a","b"]`, which its `Value::Array`
+/// arm cheerfully splits on commas into `["[\"a\"", "\"b\"]"]` and stores
+/// — a silently *differently* configured build compared against the
+/// oracle. Rejected outright instead, naming the key, so a future fixture
+/// project carrying such a value fails here rather than diverging quietly.
+fn scalar_override(project: &str, key: &str, value: &serde_json::Value) -> String {
     match value {
-        serde_json::Value::String(s) => s.clone(),
-        other => other.to_string(),
+        serde_json::Value::String(text) => text.clone(),
+        serde_json::Value::Bool(_) | serde_json::Value::Number(_) => value.to_string(),
+        other => panic!(
+            "project {project:?}: conf key {key:?} has the non-scalar value {other}, which \
+             -D cannot express — teach the harness to apply it (or prove it inert and add \
+             it to KNOWN_INERT_CONF) rather than letting it stringify into garbage"
+        ),
     }
 }
 
@@ -467,10 +485,9 @@ fn local_tocs_match_oracle() {
             // `assign_section_numbers`, from the same walk that fills
             // `toc_secnumbers`.
             let actual = &tocs[docname];
-            let expected_toc = expected.clone();
             let expected_entries = project.expect.toc_num_entries[docname];
             let actual_entries = num_entries[docname];
-            let matches = *actual == expected_toc && actual_entries == expected_entries;
+            let matches = actual == expected && actual_entries == expected_entries;
 
             match known_toc_gap(&project.name, docname) {
                 Some(why) => {
@@ -484,7 +501,7 @@ fn local_tocs_match_oracle() {
                 }
                 None if !matches => divergences.push(format!(
                     "[{}] {docname}: toc_num_entries {expected_entries} vs {actual_entries}\n\
-                     --- oracle ---\n{expected_toc}--- ours ---\n{actual}",
+                     --- oracle ---\n{expected}--- ours ---\n{actual}",
                     project.name
                 )),
                 None => {}

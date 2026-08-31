@@ -42,9 +42,17 @@ use crate::doctree::{kinds, AttrValue, Doctree, Node, Span};
 use crate::env::BuildEnvironment;
 use crate::matching;
 
-/// Sphinx's `StandardDomain._virtual_doc_names` (`domains/std/__init__.py:784`):
+/// Sphinx's `StandardDomain._virtual_doc_names` (`domains/std/__init__.py:784-788`):
 /// docnames that resolve even though no source file produces them.
-pub(crate) const VIRTUAL_DOC_NAMES: [&str; 3] = ["genindex", "py-modindex", "search"];
+///
+/// Careful: `_virtual_doc_names` is a **dict**, and every consumer that
+/// treats it as a name set takes `frozenset(...)` of it — i.e. its *keys*
+/// (`directives/other.py:91`, `collectors/toctree.py:287`,
+/// `adapters/toctree.py:330`). The middle entry is therefore `modindex`,
+/// the label authors write in a toctree; `py-modindex` is that key's
+/// *value*, the docname the page is finally written to, and is not itself
+/// a virtual name.
+pub(crate) const VIRTUAL_DOC_NAMES: [&str; 3] = ["genindex", "modindex", "search"];
 
 // ---------------------------------------------------------------------------
 // 1. Entry resolution (sphinx/directives/other.py TocTree.parse_content)
@@ -1169,6 +1177,39 @@ mod tests {
         assert_eq!(
             resolved.warnings[0].category.as_deref(),
             Some("toc.duplicate_entry")
+        );
+    }
+
+    /// `_virtual_doc_names` is a dict, and `parse_content` unions
+    /// `frozenset(...)` of it into the candidate set — so the virtual names
+    /// are its **keys**. `modindex` is the one an author writes in a
+    /// toctree; `py-modindex` is that key's value (the docname the module
+    /// index is finally written to) and is not itself a virtual name.
+    #[test]
+    fn the_virtual_docnames_are_the_dict_keys_not_its_values() {
+        let found = docs(&["index"]);
+        let entries = lines(&["genindex", "modindex", "search"]);
+        let resolved = resolve_entries(&content(&entries, "index", &found));
+        assert_eq!(
+            resolved.includefiles,
+            vec![
+                "genindex".to_string(),
+                "modindex".to_string(),
+                "search".to_string()
+            ]
+        );
+        assert!(resolved.warnings.is_empty(), "{:?}", resolved.warnings);
+
+        let entries = lines(&["py-modindex"]);
+        let resolved = resolve_entries(&content(&entries, "index", &found));
+        assert!(resolved.includefiles.is_empty());
+        assert_eq!(
+            resolved
+                .warnings
+                .iter()
+                .map(|w| w.message.as_str())
+                .collect::<Vec<_>>(),
+            vec!["toctree contains reference to nonexisting document 'py-modindex'"]
         );
     }
 
