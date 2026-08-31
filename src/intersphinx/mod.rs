@@ -75,6 +75,11 @@ pub type IntersphinxMapping = BTreeMap<String, (String, Vec<Option<String>>)>;
 /// * `%r` of a sequence renders with list brackets, since a `conf.py` tuple
 ///   and list both arrive as a JSON array. Checks 2, 3 and 6 can therefore
 ///   print `['a', 'b', 'c']` where Sphinx prints `('a', 'b', 'c')`.
+///
+/// Check 1 is also narrower here than in Sphinx: a *non-string* key cannot
+/// reach this function, because the conf.py literal parser rejects the whole
+/// dict (with its own dropped-value warning) before it gets here. The empty
+/// string is the only identifier this check can still fire on.
 pub fn validate_mapping(raw: &JsonValue) -> (IntersphinxMapping, Vec<String>) {
     let mut mapping = IntersphinxMapping::new();
     let mut errors = Vec::new();
@@ -273,6 +278,14 @@ pub struct LoadOutcome {
 /// non-`serde`-shaped field that would have to version-lock with `env.bin`.
 /// The in-memory map below is per-call, and exists so the merge order and
 /// the cache-hit checks stay byte-faithful to Sphinx's.
+///
+/// The one thing Sphinx's memory cache does that a disk cache cannot is
+/// *prune*: it drops a cached entry whose project changed target URI
+/// (`_load.py:164-173`), where the disk file — keyed by project name alone —
+/// would otherwise serve bytes fetched from somewhere else. Here that is
+/// covered a layer up: changing a target URI changes `intersphinx_mapping`,
+/// which changes the configuration fingerprint, which wipes the whole cache
+/// directory this file lives in.
 pub fn load_mappings(request: &LoadRequest<'_>, fetcher: &dyn InventoryFetcher) -> LoadOutcome {
     let mut outcome = LoadOutcome::default();
     if request.mapping.is_empty() {

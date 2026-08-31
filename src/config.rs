@@ -591,10 +591,14 @@ impl BuildConfig {
                     .collect(),
             ),
             // Null slots are Option<...> fields: prefer a number if the value
-            // parses as one (parallel_jobs), otherwise store the string.
+            // parses as one (parallel_jobs, intersphinx_timeout), otherwise
+            // store the string. A wrong numeric guess is retried as a string
+            // by the caller, so trying the fractional form costs nothing and
+            // is the only way to reach an `Option<f64>` setting.
             Value::Null => value
                 .parse::<i64>()
                 .map(Value::from)
+                .or_else(|_| value.parse::<f64>().map(Value::from))
                 .unwrap_or_else(|_| Value::String(value.to_string())),
             _ => Value::String(value.to_string()),
         })
@@ -857,6 +861,19 @@ output:
 
         assert!(config.apply_override("tls_verify", "0").unwrap().is_none());
         assert!(!config.tls_verify);
+
+        // An unset `Option<f64>`: the slot carries no type information, so
+        // the fractional form has to be guessed at.
+        assert!(config
+            .apply_override("intersphinx_timeout", "2.5")
+            .unwrap()
+            .is_none());
+        assert_eq!(config.intersphinx_timeout, Some(2.5));
+        assert!(config
+            .apply_override("intersphinx_timeout", "5")
+            .unwrap()
+            .is_none());
+        assert_eq!(config.intersphinx_timeout, Some(5.0));
     }
 
     #[test]

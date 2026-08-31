@@ -39,7 +39,7 @@ pub enum TlsCacerts {
 
 /// Sphinx's shared HTTP configuration group plus `intersphinx_timeout`
 /// (`ext/intersphinx/_load.py:211-227`, `_InvConfig`).
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct HttpConfig {
     pub tls_verify: bool,
     pub tls_cacerts: Option<TlsCacerts>,
@@ -48,6 +48,21 @@ pub struct HttpConfig {
     /// value is handed to `requests` as `timeout=None`
     /// (`ext/intersphinx/__init__.py:70-72`).
     pub timeout: Option<f64>,
+}
+
+/// Hand-written rather than derived: `bool::default()` is `false`, and a
+/// default that silently turns off certificate verification is not a default
+/// anyone should be able to reach by accident. Sphinx's `tls_verify` default
+/// is `True` (`config.py:286`), and so is this one.
+impl Default for HttpConfig {
+    fn default() -> Self {
+        Self {
+            tls_verify: true,
+            tls_cacerts: None,
+            user_agent: None,
+            timeout: None,
+        }
+    }
 }
 
 impl HttpConfig {
@@ -145,6 +160,14 @@ impl InventoryFetcher for UreqFetcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_default_configuration_verifies_certificates() {
+        assert!(
+            HttpConfig::default().tls_verify,
+            "a default that skips verification would be a trap"
+        );
+    }
 
     #[test]
     fn the_default_user_agent_is_sphinx_9_1_0s_verbatim() {
