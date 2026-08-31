@@ -74,6 +74,7 @@ pathdiff = "0.2"
 
 # Binary serialization (cached doctree round-trip)
 bincode = { version = "2", features = ["serde"] }
+ureq = { version = "3.4.0", default-features = false, features = ["rustls", "gzip"] }
 
 [dev-dependencies]
 criterion = { version = "0.7", features = ["html_reports"] }

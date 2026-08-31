@@ -612,7 +612,7 @@ fn split_assignment(stmt: &str) -> Option<(&str, &str)> {
 /// Supports: strings (escapes, implicit adjacent concatenation, triple
 /// quotes), ints/floats, True/False/None, lists, tuples (as arrays), dicts
 /// with string keys, arbitrary nesting, trailing commas.
-fn parse_python_literal(src: &str) -> std::result::Result<serde_json::Value, String> {
+pub(crate) fn parse_python_literal(src: &str) -> std::result::Result<serde_json::Value, String> {
     let chars: Vec<char> = src.chars().collect();
     let mut p = PyLiteralParser {
         chars,

@@ -13,6 +13,7 @@ pub mod env;
 pub mod error;
 pub mod extensions;
 pub mod html_builder;
+pub mod intersphinx;
 pub mod inventory;
 pub mod matching;
 pub mod parser;

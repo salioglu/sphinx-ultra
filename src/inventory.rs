@@ -26,7 +26,7 @@ use flate2::write::ZlibEncoder;
 use flate2::Compression;
 use log::{debug, info};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{Read, Write};
 use std::path::Path;
 use tokio::fs;
@@ -56,16 +56,25 @@ impl InventoryItem {
     }
 }
 
-/// In-memory inventory data structure
-#[derive(Debug, Clone, Default)]
+/// In-memory inventory data structure.
+///
+/// `BTreeMap`, not `HashMap`, because intersphinx's case-insensitive
+/// `std:label`/`std:term` fallback picks the *first* key that matches
+/// case-folded (`ext/intersphinx/_resolve.py:104-127`) — in Python, dict
+/// insertion order, i.e. the order the entries appear in the file. Every
+/// inventory Sphinx writes is sorted per objtype (`inventory.py:194-196`
+/// sorts each domain's objects), so key order *is* sorted order there, and a
+/// `BTreeMap` reproduces that choice deterministically instead of leaving it
+/// to a hash seed.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Inventory {
-    pub data: HashMap<String, HashMap<String, InventoryItem>>,
+    pub data: BTreeMap<String, BTreeMap<String, InventoryItem>>,
 }
 
 impl Inventory {
     pub fn new() -> Self {
         Self {
-            data: HashMap::new(),
+            data: BTreeMap::new(),
         }
     }
 
