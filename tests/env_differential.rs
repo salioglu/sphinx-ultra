@@ -11,10 +11,12 @@
 //! Each `expect` key group has exactly one test. A group whose library
 //! surface doesn't exist yet stays `#[ignore]`d with the wave-4 task that
 //! will build it; un-ignoring one is the signal that its keys are now
-//! covered. Live so far (tasks 5-7): `tocs_pformat`, `toc_num_entries`,
+//! covered. Live so far (tasks 5-8): `tocs_pformat`, `toc_num_entries`,
 //! `toctree_includes`, `files_to_rebuild`, `relations`, `toc_secnumbers`,
-//! `toc_fignumbers`, and `warnings` for every project whose expected
-//! diagnostics are toctree diagnostics (see [`KNOWN_WARNING_GAPS`]).
+//! `toc_fignumbers`, `std`, `resolved_pformat`, and `warnings` — the last
+//! three with strict, self-cleaning exemption tables ([`KNOWN_STD_GAPS`],
+//! [`KNOWN_RESOLVED_GAPS`], [`KNOWN_WARNING_GAPS`]) naming what each
+//! remaining divergence waits on.
 //!
 //! Each live test materializes every fixture project into a tempdir, runs
 //! the real library build (read + merge + resolve), and diffs
