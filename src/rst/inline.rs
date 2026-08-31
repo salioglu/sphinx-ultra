@@ -997,7 +997,17 @@ impl<'a> Inliner<'a> {
         // name and under the same 'environment variable; %s' heading the
         // `.. envvar::` directive uses, both anchored on a fresh
         // `index-N` target placed just before the reference.
-        if domain == "std" && reftype == "envvar" {
+        // `EnvVarXRefRole.result_nodes` is gated on `is_ref`
+        // (`domains/std/__init__.py:99-102`), which `XRefRole.run` clears for
+        // a `!`-prefixed role text: `ReferenceRole.run` sets
+        // `self.disabled = text.startswith('!')` and `create_non_xref_node`
+        // then calls `result_nodes(..., is_ref=False)`, which returns the bare
+        // node — no index entries, no target, and no `index` serial consumed.
+        // (The rest of `disabled` — emitting the literal alone, without a
+        // pending_xref, and with the `!` stripped — is not modelled yet; this
+        // guard keeps the un-modelled half from also corrupting document-wide
+        // `index-N` numbering.)
+        if domain == "std" && reftype == "envvar" && !text.starts_with('!') {
             let varname = match node.get("reftarget") {
                 Some(AttrValue::Str(target)) => target.clone(),
                 _ => String::new(),

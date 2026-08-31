@@ -1179,6 +1179,90 @@ fn a_warm_rebuild_reports_the_same_std_domain_warnings() {
 /// hit skips — so they have to ride the cached parse records, not be
 /// recomputed. A rebuild that reports fewer warnings than a cold build is
 /// the failure this guards.
+/// `Cmdoption.handle_signature`'s malformed-option diagnostic goes to the
+/// logger, not the tree, so it has to ride the parse records to reach the
+/// build's warning list — and survive a cache hit that skipped the parse.
+/// Text and location are byte-checked against a sphinx 9.1.0 build of the
+/// same source, which reports:
+///
+/// ```text
+/// a.rst:4: WARNING: Malformed option description '=bad', should look like "opt", "-opt args", "--opt args", "/opt args" or "+opt args"
+/// a.rst:8: WARNING: Malformed option description '', should look like "opt", "-opt args", "--opt args", "/opt args" or "+opt args"
+/// ```
+#[test]
+fn a_malformed_option_description_warns_like_sphinx_across_a_rebuild() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let source_dir = tmp.path().join("source");
+    let output_dir = tmp.path().join("build");
+    std::fs::create_dir_all(&source_dir).unwrap();
+    std::fs::write(
+        source_dir.join("index.rst"),
+        "Index\n=====\n\n.. toctree::\n\n   a\n",
+    )
+    .unwrap();
+    // The second directive is malformed in its FIRST spelling only: sphinx
+    // warns and still registers `--ok`.
+    std::fs::write(
+        source_dir.join("a.rst"),
+        "A\n=\n\n.. option:: =bad\n\n   Body.\n\n.. option:: , --ok\n\n   Body.\n",
+    )
+    .unwrap();
+    let source_dir = std::fs::canonicalize(&source_dir).unwrap();
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let build_once = || -> (Vec<String>, serde_json::Value) {
+        let mut builder = SphinxBuilder::new(
+            BuildConfig::default(),
+            source_dir.clone(),
+            output_dir.clone(),
+        )
+        .unwrap();
+        builder.enable_incremental();
+        let stats = runtime.block_on(builder.build()).unwrap();
+        let root = source_dir.to_string_lossy().into_owned();
+        (
+            stats
+                .warning_details
+                .iter()
+                .map(|warning| warning.render().replace(&root, "<project>"))
+                .collect(),
+            builder.snapshot_env(),
+        )
+    };
+
+    let expected = vec![
+        "<project>/a.rst:4: WARNING: Malformed option description '=bad', should look like \
+         \"opt\", \"-opt args\", \"--opt args\", \"/opt args\" or \"+opt args\""
+            .to_string(),
+        "<project>/a.rst:8: WARNING: Malformed option description '', should look like \
+         \"opt\", \"-opt args\", \"--opt args\", \"/opt args\" or \"+opt args\""
+            .to_string(),
+    ];
+    let (cold, cold_env) = build_once();
+    assert_eq!(cold, expected);
+    assert_eq!(
+        cold_env["std"]["progoptions"],
+        serde_json::json!([{
+            "program": null,
+            "name": "--ok",
+            "docname": "a",
+            "labelid": "cmdoption-ok",
+        }]),
+        "the surviving spelling still registers"
+    );
+
+    let (warm, warm_env) = build_once();
+    assert_eq!(
+        warm, expected,
+        "a cache hit skips the parse, so the diagnostic has to come back off \
+         the cached document's records"
+    );
+    assert_eq!(warm_env["std"], cold_env["std"]);
+}
+
 #[test]
 fn a_warm_rebuild_reports_the_same_toctree_warnings() {
     let tmp = tempfile::TempDir::new().unwrap();

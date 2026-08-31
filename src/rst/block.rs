@@ -169,6 +169,9 @@ pub(crate) struct BlockParser<'a> {
     /// doctree cannot carry them).
     program_option_records: Vec<super::ProgramOptionRecord>,
     std_object_records: Vec<super::ObjectRegistration>,
+    /// `logger.warning` diagnostics raised while running directives (see
+    /// [`super::ParseLogWarning`]).
+    log_warnings: Vec<super::ParseLogWarning>,
     /// Set while running a substitution-embedded directive (docutils
     /// SubstitutionDef state): replace/unicode/date require it, image
     /// flips its align validation, unicode's trim flags land here.
@@ -216,6 +219,7 @@ impl<'a> BlockParser<'a> {
             toctree_records: Vec::new(),
             program_option_records: Vec::new(),
             std_object_records: Vec::new(),
+            log_warnings: Vec::new(),
             substitution_ctx: None,
             substitution_names_seen: Vec::new(),
             substitution_dupnames: Vec::new(),
@@ -233,6 +237,7 @@ impl<'a> BlockParser<'a> {
             index_serial: self.registry.index_serial(),
             program_options: std::mem::take(&mut self.program_option_records),
             std_objects: std::mem::take(&mut self.std_object_records),
+            log_warnings: std::mem::take(&mut self.log_warnings),
         };
         super::ParseOutput {
             doctree: crate::doctree::Doctree {
@@ -372,6 +377,7 @@ impl<'a> BlockParser<'a> {
         self.program_option_records
             .append(&mut sub.program_option_records);
         self.std_object_records.append(&mut sub.std_object_records);
+        self.log_warnings.append(&mut sub.log_warnings);
         nodes
     }
 
@@ -3228,7 +3234,7 @@ impl<'a> BlockParser<'a> {
                 .attrs
                 .classes
                 .extend(["sig".to_string(), "sig-object".to_string()]);
-            let name = self.handle_object_signature(kind, &sig, &mut signode);
+            let name = self.handle_object_signature(kind, &sig, input.lineno, &mut signode);
             // `_toc_parts`/`_toc_name` are assigned in a `finally` (`:264-272`),
             // so the ValueError path carries them too. Only
             // `ConfigurationValue` overrides the two empty defaults.
@@ -3296,6 +3302,7 @@ impl<'a> BlockParser<'a> {
         &mut self,
         kind: ObjectDescKind,
         sig: &str,
+        lineno: u32,
         signode: &mut Node,
     ) -> Option<String> {
         let span = signode.span;
@@ -3320,23 +3327,37 @@ impl<'a> BlockParser<'a> {
                 signode.set("fullname", AttrValue::Str(name.clone()));
                 Some(name)
             }
-            ObjectDescKind::Cmdoption => self.handle_option_signature(sig, signode),
+            ObjectDescKind::Cmdoption => self.handle_option_signature(sig, lineno, signode),
         }
     }
 
     /// `Cmdoption.handle_signature` (`domains/std/__init__.py:229-290`) with
     /// `option_emphasise_placeholders` at its default False, which is the
     /// plain `desc_name` + `desc_addname` pair per spelling.
-    fn handle_option_signature(&mut self, sig: &str, signode: &mut Node) -> Option<String> {
+    fn handle_option_signature(
+        &mut self,
+        sig: &str,
+        lineno: u32,
+        signode: &mut Node,
+    ) -> Option<String> {
         let span = signode.span;
         let mut firstname: Option<String> = None;
         let mut allnames: Vec<String> = Vec::new();
         for potential in sig.split(", ") {
-            let Some((optname, args)) = option_desc_match(potential.trim()) else {
-                // `logger.warning('Malformed option description %r, should
-                // look like "opt", "-opt args", ...')` goes to the warning
-                // stream, which the parse layer has no sink for; the tree
-                // effect is that this spelling contributes nothing.
+            let potential = potential.trim();
+            let Some((optname, args)) = option_desc_match(potential) else {
+                // This diagnostic goes to the logger, not the tree
+                // (`domains/std/__init__.py:237-245`), located on the
+                // signature node — which carries the directive's own line.
+                // The spelling contributes nothing either way.
+                self.log_warnings.push(super::ParseLogWarning {
+                    message: format!(
+                        "Malformed option description {}, should look like \"opt\", \
+                         \"-opt args\", \"--opt args\", \"/opt args\" or \"+opt args\"",
+                        py_repr(Some(potential))
+                    ),
+                    line: lineno,
+                });
                 continue;
             };
             // "optional value surrounded by brackets (ex. foo[=bar])".
@@ -8143,6 +8164,35 @@ mod tests {
         assert!(!sphinx.contains(r#"ids="fig-bad""#), "{sphinx}");
         assert!(sphinx.contains("<figure>\n"), "{sphinx}");
         assert!(sphinx.contains("<system_message"), "{sphinx}");
+    }
+
+    /// `EnvVarXRefRole.result_nodes` runs only when `is_ref`, which
+    /// `XRefRole` clears for a `!`-prefixed role text. The index entries and
+    /// the `index-N` target are the visible half; the invisible half is the
+    /// serial, which is document-wide — burning one on a suppressed
+    /// reference would renumber every later `index-N` id in the file.
+    #[test]
+    fn a_suppressed_envvar_reference_consumes_no_index_serial() {
+        let live = pf_sphinx("See :envvar:`HOME_A` here.\n\n.. index:: Something\n");
+        assert!(live.contains(r#"<target ids="index-0">"#), "{live}");
+        assert!(
+            live.contains(
+                r#"<index entries="('single',\ 'Something',\ 'index-1',\ '',\ None)" inline="0">"#
+            ),
+            "a live :envvar: takes index-0, so the directive gets index-1:\n{live}"
+        );
+
+        let suppressed = pf_sphinx("See :envvar:`!HOME_A` here.\n\n.. index:: Something\n");
+        assert!(
+            !suppressed.contains("environment variable;"),
+            "a suppressed reference emits no index entries:\n{suppressed}"
+        );
+        assert!(
+            suppressed.contains(
+                r#"<index entries="('single',\ 'Something',\ 'index-0',\ '',\ None)" inline="0">"#
+            ),
+            "and no serial, so the directive still gets index-0:\n{suppressed}"
+        );
     }
 
     // ----- task 7: document + paragraphs -----

@@ -607,7 +607,7 @@ impl SphinxBuilder {
             // The document's toctree diagnostics, produced when its entries
             // were resolved. Sphinx logs them during the read phase, which
             // walks documents in this same sorted order.
-            self.report_toctree_warnings(&result.document);
+            self.report_parse_warnings(&result.document);
 
             // The std domain's own read-phase hook (`process_doc`), which
             // Sphinx dispatches through `doctree-read` — after the parse
@@ -632,10 +632,17 @@ impl SphinxBuilder {
         }
     }
 
-    /// Surface one document's toctree diagnostics
-    /// (`TocTree.parse_content`'s warnings, carried on the parse records).
-    fn report_toctree_warnings(&self, document: &Document) {
-        let mut warnings = self.warnings.lock().unwrap();
+    /// Surface one document's parse-time diagnostics: `TocTree.parse_content`'s
+    /// warnings and the `logger.warning` calls other directives make
+    /// (`RegistryExport::log_warnings`). Both are carried on the parse
+    /// records rather than raised as they happen, so that a cache hit — which
+    /// skips the parse entirely — still reproduces them.
+    ///
+    /// Sphinx logs both as the parse reaches them, so they interleave by
+    /// source position; the two record streams are each in document order,
+    /// and a stable sort by line merges them back into that one order.
+    fn report_parse_warnings(&self, document: &Document) {
+        let mut ordered: Vec<(u32, BuildWarning)> = Vec::new();
         for toctree in &document.toctrees {
             for warning in &toctree.warnings {
                 let warning_type = match warning.kind {
@@ -645,7 +652,8 @@ impl SphinxBuilder {
                     }
                     ToctreeWarningKind::DuplicateEntry => WarningType::Other,
                 };
-                warnings.push(
+                ordered.push((
+                    warning.line,
                     BuildWarning::new(
                         document.source_path.clone(),
                         Some(warning.line as usize),
@@ -653,9 +661,25 @@ impl SphinxBuilder {
                         warning_type,
                     )
                     .with_category(warning.category.clone()),
-                );
+                ));
             }
         }
+        for warning in &document.registry.log_warnings {
+            // Sphinx logs these with no `type`/`subtype`, so they render
+            // with no `[category]` suffix.
+            ordered.push((
+                warning.line,
+                BuildWarning::new(
+                    document.source_path.clone(),
+                    Some(warning.line as usize),
+                    warning.message.clone(),
+                    WarningType::Other,
+                ),
+            ));
+        }
+        ordered.sort_by_key(|(line, _)| *line);
+        let mut warnings = self.warnings.lock().unwrap();
+        warnings.extend(ordered.into_iter().map(|(_, warning)| warning));
     }
 
     /// Resolve phase: whole-project state that only exists once every

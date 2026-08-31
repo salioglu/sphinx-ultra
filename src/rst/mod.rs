@@ -159,11 +159,38 @@ pub struct RegistryExport {
     /// target** — so a doctree walk can neither recover the program nor see
     /// that the object existed. Recording the calls keeps the env layer
     /// exact for both.
-    #[serde(default)]
+    ///
+    /// Deliberately *not* `#[serde(default)]`, for the reason
+    /// [`crate::document::Document::registry`] gives: a cache entry written
+    /// before this field existed must FAIL to decode so the document is
+    /// re-parsed. Defaulting it to an empty vector would let a pre-desc
+    /// cache decode cleanly, and every `:option:`/`:envvar:`/`:confval:`
+    /// in the project would then dangle against an empty registry.
     pub program_options: Vec<ProgramOptionRecord>,
-    /// See [`Self::program_options`].
-    #[serde(default)]
+    /// See [`Self::program_options`] — including why this is not
+    /// `#[serde(default)]` either.
     pub std_objects: Vec<ObjectRegistration>,
+    /// Diagnostics the parse raised through Sphinx's *logger* rather than
+    /// into the tree, which have nowhere else to go: docutils turns a
+    /// directive error into a `system_message` node, but a Sphinx directive
+    /// calling `logger.warning` produces no node at all. They ride the
+    /// export (and therefore the document cache) for the same reason
+    /// [`ToctreeRecord::warnings`] does — a cache hit that skipped the parse
+    /// must still reproduce them.
+    pub log_warnings: Vec<ParseLogWarning>,
+}
+
+/// One `logger.warning` a directive raised during the parse.
+///
+/// Today the only producer is `Cmdoption.handle_signature`'s malformed
+/// option description (`domains/std/__init__.py:237-245`), which is logged
+/// with no `type`/`subtype` and so renders with no `[category]` suffix.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ParseLogWarning {
+    /// The warning text, already formatted exactly as Sphinx renders it.
+    pub message: String,
+    /// 1-based line of the `location=` node Sphinx passes.
+    pub line: u32,
 }
 
 /// Everything a parse produces: the doctree plus the flat records the
@@ -190,4 +217,35 @@ pub fn parse_rst_full(source: &str, opts: &ParseOptions) -> ParseOutput {
     parser.found_docs = opts.found_docs.clone();
     parser.exclude_patterns = opts.exclude_patterns.clone();
     parser.parse_document_full()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// [`RegistryExport`]'s newer fields carry state that cannot be recovered
+    /// from a cached doctree, so a cache entry written before they existed
+    /// must MISS rather than decode with empty vectors — decoding it would
+    /// reuse a doctree still full of unknown-directive errors and leave every
+    /// `:option:`/`:envvar:`/`:confval:` in the project dangling. Guards the
+    /// `#[serde(default)]` off these fields, which nothing else would catch:
+    /// the warm-rebuild tests round-trip the current shape only.
+    #[test]
+    fn a_registry_written_before_the_std_records_existed_fails_to_decode() {
+        let complete = r#"{"nameids":[],"index_serial":0,"program_options":[],
+            "std_objects":[],"log_warnings":[]}"#;
+        serde_json::from_str::<RegistryExport>(complete).expect("the current shape decodes");
+
+        for missing in [
+            r#"{"nameids":[],"index_serial":0,"std_objects":[],"log_warnings":[]}"#,
+            r#"{"nameids":[],"index_serial":0,"program_options":[],"log_warnings":[]}"#,
+            r#"{"nameids":[],"index_serial":0,"program_options":[],"std_objects":[]}"#,
+            r#"{"nameids":[],"index_serial":0}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<RegistryExport>(missing).is_err(),
+                "a registry missing a std-record field must fail to decode: {missing}"
+            );
+        }
+    }
 }
