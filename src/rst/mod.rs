@@ -9,7 +9,7 @@
 //! later waves. Behavior sources: the committed differential fixture and the
 //! probe notes in docs/superpowers/plans/2026-08-07-m2-wave1-probes.md.
 
-mod block;
+pub(crate) mod block;
 mod digits;
 pub mod inline;
 pub mod lines;

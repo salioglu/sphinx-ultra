@@ -842,13 +842,13 @@ impl<'a> Inliner<'a> {
         let mut index = Node::elem("index", self.span);
         index.set(
             "entries",
-            AttrValue::Str(super::block::index_entry_tuple(
+            AttrValue::List(vec![super::block::index_entry_tuple(
                 "single",
                 &index_text,
                 &target_id,
                 "",
                 None,
-            )),
+            )]),
         );
         self.nodes.push(index);
         let mut tnode = Node::elem(kinds::TARGET, self.span);
@@ -1016,19 +1016,16 @@ impl<'a> Inliner<'a> {
             let mut index = Node::elem("index", self.span);
             index.set(
                 "entries",
-                AttrValue::Str(
-                    [
-                        super::block::index_entry_tuple("single", &varname, &target_id, "", None),
-                        super::block::index_entry_tuple(
-                            "single",
-                            &format!("environment variable; {varname}"),
-                            &target_id,
-                            "",
-                            None,
-                        ),
-                    ]
-                    .join(" "),
-                ),
+                AttrValue::List(vec![
+                    super::block::index_entry_tuple("single", &varname, &target_id, "", None),
+                    super::block::index_entry_tuple(
+                        "single",
+                        &format!("environment variable; {varname}"),
+                        &target_id,
+                        "",
+                        None,
+                    ),
+                ]),
             );
             self.nodes.push(index);
             let mut tnode = Node::elem(kinds::TARGET, self.span);

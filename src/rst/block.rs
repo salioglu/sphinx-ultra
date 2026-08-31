@@ -3010,7 +3010,7 @@ impl<'a> BlockParser<'a> {
             entries.extend(process_index_entry(line, &target_id));
         }
         let mut index = Node::elem("index", input.span);
-        index.set("entries", AttrValue::Str(entries.join(" ")));
+        index.set("entries", AttrValue::List(entries));
         index.set("inline", AttrValue::Int(0));
         let mut target = Node::elem(kinds::TARGET, input.span);
         match opt_get(&input.options, "name") {
@@ -3148,13 +3148,13 @@ impl<'a> BlockParser<'a> {
                 let mut index = Node::elem("index", term_span);
                 index.set(
                     "entries",
-                    AttrValue::Str(index_entry_tuple(
+                    AttrValue::List(vec![index_entry_tuple(
                         "single",
                         &term_text,
                         &node_id,
                         "main",
                         index_key.as_deref(),
-                    )),
+                    )]),
                 );
                 term.children.push(index);
                 item.children.push(term);
@@ -3274,7 +3274,7 @@ impl<'a> BlockParser<'a> {
         desc.children.push(content);
 
         let mut index = Node::elem("index", span);
-        index.set("entries", AttrValue::Str(index_entries.join(" ")));
+        index.set("entries", AttrValue::List(index_entries));
         out.push(index);
 
         if no_typesetting {
@@ -6260,9 +6260,15 @@ const CONFVAL_OPTS: &[(&str, Conv)] = &[
     ("default", Conv::UnchangedRequired),
 ];
 
-/// One serialized 5-tuple for the index `entries` attr: docutils pformat
-/// renders list items via serial_escape (spaces backslash-escaped inside
-/// each item, items space-joined).
+/// One `index['entries']` 5-tuple, rendered the way `str(tuple)` renders it
+/// in Python — the *unescaped* item docutils then puts through
+/// `serial_escape` when it prints the list attribute, which is why the
+/// `entries` attribute is an [`AttrValue::List`] rather than a pre-joined
+/// string: only the list form doubles a backslash inside a value, as
+/// docutils does.
+///
+/// [`crate::env::genindex::parse_index_entries`] is the exact inverse, and
+/// is what lifts these back out of a doctree for the index domain.
 pub(crate) fn index_entry_tuple(
     entrytype: &str,
     value: &str,
@@ -6270,52 +6276,58 @@ pub(crate) fn index_entry_tuple(
     main: &str,
     key: Option<&str>,
 ) -> String {
-    let key_repr = match key {
-        Some(k) => py_repr(Some(k)),
-        None => "None".to_string(),
-    };
-    let tuple = format!(
+    format!(
         "({}, {}, {}, {}, {})",
         py_repr(Some(entrytype)),
         py_repr(Some(value)),
         py_repr(Some(target_id)),
         py_repr(Some(main)),
-        key_repr
-    );
-    tuple.replace(' ', "\\ ")
+        py_repr(key)
+    )
 }
 
-/// process_index_entry (sphinx/util/nodes.py:431-482): returns serialized
-/// 5-tuples. Legacy types raise in sphinx; here they fall through to the
-/// single form (hardening note — the oracle corpus avoids them).
+/// `process_index_entry` (`sphinx/util/nodes.py:431-482`): one `.. index::`
+/// line as serialized 5-tuples.
+///
+/// Two details the shape of this function turns on: the `!` main marker is
+/// stripped *with the whitespace behind it* (`entry[1:].lstrip()`), and the
+/// comma shorthand re-splits `oentry` — the line *before* that strip — so
+/// each comma-separated value re-reads its own `!`.
+///
+/// The legacy `module:`/`keyword:`/... prefixes raise `ValueError` in
+/// sphinx; here they fall through to the shorthand branch (hardening note —
+/// the oracle corpus avoids them).
 fn process_index_entry(entry: &str, target_id: &str) -> Vec<String> {
     const TYPES: &[&str] = &["single", "pair", "double", "triple", "see", "seealso"];
-    let (main, entry) = match entry.strip_prefix('!') {
-        Some(rest) => ("main", rest),
-        None => ("", entry),
+    let oentry = entry.trim();
+    let stripped = match oentry.strip_prefix('!') {
+        Some(rest) => rest.trim_start(),
+        None => oentry,
     };
+    let main = if oentry.starts_with('!') { "main" } else { "" };
     for t in TYPES {
-        if let Some(value) = entry.strip_prefix(&format!("{t}:")) {
+        if let Some(value) = stripped.strip_prefix(&format!("{t}:")) {
             let value = value.trim();
             let ty = if *t == "double" { "pair" } else { t };
             return vec![index_entry_tuple(ty, value, target_id, main, None)];
         }
     }
-    // Comma shorthand with per-item '!'.
-    if entry.contains(',') {
-        return entry
-            .split(',')
-            .map(|part| {
-                let part = part.trim();
-                let (m, p) = match part.strip_prefix('!') {
-                    Some(rest) => ("main", rest),
-                    None => (main, part),
-                };
-                index_entry_tuple("single", p, target_id, m, None)
-            })
-            .collect();
-    }
-    vec![index_entry_tuple("single", entry, target_id, main, None)]
+    // Shorthand notation for single entries: every comma-separated value of
+    // the *original* line, each carrying its own `!` marker.
+    oentry
+        .split(',')
+        .filter_map(|value| {
+            let value = value.trim();
+            let (main, value) = match value.strip_prefix('!') {
+                Some(rest) => ("main", rest.trim_start()),
+                None => ("", value),
+            };
+            if value.is_empty() {
+                return None;
+            }
+            Some(index_entry_tuple("single", value, target_id, main, None))
+        })
+        .collect()
 }
 
 const SPHINX_MATH_OPTS: &[(&str, Conv)] = &[
@@ -7278,7 +7290,7 @@ fn py_int(s: &str) -> Option<i64> {
 }
 
 /// Python repr() for option-value error messages (strings and None).
-fn py_repr(value: Option<&str>) -> String {
+pub(crate) fn py_repr(value: Option<&str>) -> String {
     match value {
         None => "None".to_string(),
         Some(s) => {
