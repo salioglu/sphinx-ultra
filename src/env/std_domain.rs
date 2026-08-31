@@ -254,12 +254,37 @@ fn section_name(node: &Node) -> Option<String> {
     if matches!(node.kind, kinds::TERM | kinds::FIELD_NAME) {
         return Some(clean_astext(node));
     }
-    // `next(node.findall(addnodes.toctree), None)` with a caption.
+    // `next(node.findall(addnodes.toctree), None)` with a caption —
+    // `if toctree and toctree.get('caption')`, so a captionless toctree
+    // leaves the label anonymous-only.
     let toctree = find_first(node, kinds::TOCTREE)?;
     match toctree.get("caption") {
-        Some(AttrValue::Str(caption)) if !caption.is_empty() => Some(caption.clone()),
+        Some(AttrValue::Str(caption)) if !caption.is_empty() && !is_none_sentinel(caption) => {
+            Some(caption.clone())
+        }
         _ => None,
     }
+}
+
+/// docutils renders a `None` attribute value as the string `True`
+/// (`nodes.Element.starttag`: a value of `None` prints as `name="True"`),
+/// and our parse layer stores that rendering directly — `toctree[caption]`,
+/// `math_block[label]`/`[number]`, `pending_xref[py:class]`/`[py:module]`.
+/// A consumer testing such an attribute for Python truthiness has to treat
+/// the sentinel as absent, or a captionless toctree ends up named "True".
+///
+/// The other attributes this module reads are not affected: `refuri`,
+/// `refid` and `refname` are presence-tested on `target` nodes, which never
+/// carry the sentinel (our parser sets them only to real values), and the
+/// `desc` attributes are string-valued by construction. Any *new* read of a
+/// possibly-`None` attribute belongs behind this test.
+///
+/// The encoding cannot tell a missing value from the literal string
+/// `"True"`, so `:caption: True` is read as no caption. Fixing that means
+/// giving the parse layer an optional attribute value rather than the
+/// rendered sentinel — a doctree-wide change, not one this module can make.
+fn is_none_sentinel(value: &str) -> bool {
+    value == "True"
 }
 
 /// `StandardDomain.is_enumerable_node` over `enumerable_nodes` (`:798-803`).
@@ -295,7 +320,13 @@ fn collect_glossary_terms(
         // appended; an `index` node contributes no text either way.
         let text = term.astext();
         if let Some(other) = env.std.note_term(&text, doc.docname, node_id) {
-            warnings.push(duplicate_object_warning(doc, term, "term", &text, &other));
+            warnings.push(duplicate_object_warning(
+                doc,
+                glossary_term_line(term, doc.text),
+                "term",
+                &text,
+                &other,
+            ));
         }
     }
 }
@@ -370,7 +401,11 @@ fn collect_descriptions(
             };
             if let Some(other) = env.std.note_object(objtype, &name, doc.docname, node_id) {
                 warnings.push(duplicate_object_warning(
-                    doc, signature, objtype, &name, &other,
+                    doc,
+                    node_line(signature, doc.text),
+                    objtype,
+                    &name,
+                    &other,
                 ));
             }
         }
@@ -406,17 +441,28 @@ fn desc_name(signature: &Node) -> String {
         .unwrap_or_default()
 }
 
+/// The line Sphinx reports for a glossary term, which is one *less* than
+/// the term's own: `make_glossary_term` is handed the linenos of
+/// `self.content.items`, and a directive's content items carry docutils'
+/// **0-based** line offsets (`content_offset` comes from
+/// `abs_line_offset()`), while everything else in a warning location is
+/// 1-based. Verified against sphinx 9.1.0: a term on source line 8 reports
+/// `b.rst:7`, one on line 11 reports `b.rst:10`.
+fn glossary_term_line(term: &Node, text: &str) -> usize {
+    node_line(term, text).saturating_sub(1)
+}
+
 /// Warning [ENV §8 #2]: `duplicate %s description of %s, other instance in %s`.
 fn duplicate_object_warning(
     doc: &DocumentSource<'_>,
-    node: &Node,
+    line: usize,
     objtype: &str,
     name: &str,
     other: &str,
 ) -> BuildWarning {
     BuildWarning::new(
         doc.path.to_path_buf(),
-        Some(node_line(node, doc.text)),
+        Some(line),
         format!("duplicate {objtype} description of {name}, other instance in {other}"),
         WarningType::DuplicateLabel,
     )
@@ -440,28 +486,28 @@ pub(crate) struct DocumentIds<'a> {
 
 impl<'a> DocumentIds<'a> {
     pub(crate) fn of(doctree: &'a Doctree) -> Self {
-        // Document (pre-order) order, with each node's parent kind, exactly
-        // the sequence `Node.next_node(ascend=True)` walks.
-        let mut flat: Vec<(&Node, &'static str)> = Vec::new();
+        // Document (pre-order) order, exactly the sequence
+        // `Node.next_node(ascend=True)` walks.
+        let mut flat: Vec<FlatNode<'a>> = Vec::new();
         flatten(&doctree.root, kinds::DOCUMENT, &mut flat);
 
         let mut map: HashMap<&str, (usize, &Node)> = HashMap::new();
-        for (order, (node, _)) in flat.iter().enumerate() {
-            for id in &node.attrs.ids {
-                map.insert(id.as_str(), (order, *node));
+        for (order, entry) in flat.iter().enumerate() {
+            for id in &entry.node.attrs.ids {
+                map.insert(id.as_str(), (order, entry.node));
             }
         }
 
         // PropagateTargets, in document order so that chained targets
         // collapse onto the same final node.
-        for (index, (node, parent)) in flat.iter().enumerate() {
-            if !is_propagating_target(node, parent) {
+        for (index, entry) in flat.iter().enumerate() {
+            if !is_propagating_target(entry.node, entry.parent) {
                 continue;
             }
             let Some((order, target)) = next_propagation_target(&flat, index) else {
                 continue;
             };
-            for id in &node.attrs.ids {
+            for id in &entry.node.attrs.ids {
                 map.insert(id.as_str(), (order, target));
             }
         }
@@ -478,11 +524,26 @@ impl<'a> DocumentIds<'a> {
     }
 }
 
-fn flatten<'a>(node: &'a Node, parent: &'static str, out: &mut Vec<(&'a Node, &'static str)>) {
-    out.push((node, parent));
+/// One node in the pre-order walk, with what it hangs off and where its
+/// own subtree ends — the index a `descend=False` step jumps to.
+struct FlatNode<'a> {
+    node: &'a Node,
+    parent: &'static str,
+    subtree_end: usize,
+}
+
+fn flatten<'a>(node: &'a Node, parent: &'static str, out: &mut Vec<FlatNode<'a>>) {
+    let index = out.len();
+    out.push(FlatNode {
+        node,
+        parent,
+        // Patched below, once the subtree is laid out.
+        subtree_end: 0,
+    });
     for child in &node.children {
         flatten(child, node.kind, out);
     }
+    out[index].subtree_end = out.len();
 }
 
 /// "Only block-level targets without reference (like `.. _target:`)"
@@ -506,18 +567,21 @@ fn is_propagating_target(node: &Node, parent: &'static str) -> bool {
 /// The node a target donates its ids to: the next node in document order,
 /// skipping `system_message`s, and never an `Invisible`/`Targetable` other
 /// than a `target` (`references.py:50-59`).
-fn next_propagation_target<'a>(
-    flat: &[(&'a Node, &'static str)],
-    index: usize,
-) -> Option<(usize, &'a Node)> {
+///
+/// The skip is `next_node(ascend=True, descend=False)` — the message's
+/// *sibling*, so its whole subtree is jumped over, not its first child. A
+/// `system_message` always has children (the problem text), so descending
+/// into one would hand the target's ids to a `paragraph` inside a warning
+/// and leave the section behind it unlabelled.
+fn next_propagation_target<'a>(flat: &[FlatNode<'a>], index: usize) -> Option<(usize, &'a Node)> {
     let mut next = index + 1;
-    while flat
-        .get(next)
-        .is_some_and(|(node, _)| node.kind == kinds::SYSTEM_MESSAGE)
-    {
-        next += 1;
+    while let Some(entry) = flat.get(next) {
+        if entry.node.kind != kinds::SYSTEM_MESSAGE {
+            break;
+        }
+        next = entry.subtree_end;
     }
-    let (node, _) = flat.get(next)?;
+    let node = flat.get(next)?.node;
     let blocked = matches!(
         node.kind,
         kinds::COMMENT
@@ -527,7 +591,7 @@ fn next_propagation_target<'a>(
             | kinds::CITATION
             | kinds::TEXT
     );
-    (!blocked).then_some((next, *node))
+    (!blocked).then_some((next, node))
 }
 
 /// The first descendant of `node` with the given kind, in document order.
@@ -744,6 +808,15 @@ mod tests {
         assert_eq!(env.std.labels.len(), PRESEEDED_LABELS.len());
     }
 
+    /// The location is pinned to what sphinx 9.1.0 actually prints for this
+    /// exact source, checked by building it with `sphinx -b dummy`:
+    ///
+    /// ```text
+    /// b.rst:5: WARNING: duplicate term description of environment, other instance in a
+    /// ```
+    ///
+    /// The term is on line 6 — see [`glossary_term_line`] for why Sphinx
+    /// says 5 (the same run reports 7 and 10 for terms on lines 8 and 11).
     #[test]
     fn a_term_defined_twice_warns_naming_the_other_document() {
         let glossary = "A\n=\n\n.. glossary::\n\n   environment\n      A thing.\n";
@@ -752,7 +825,7 @@ mod tests {
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert_eq!(
             warnings[0].render(),
-            "/src/b.rst:4: WARNING: duplicate term description of environment, \
+            "/src/b.rst:5: WARNING: duplicate term description of environment, \
              other instance in a",
             "an object duplicate names the other *docname*, not its path — \
              and offers no `:no-index:` hint, unlike the py domain's"
@@ -761,6 +834,46 @@ mod tests {
             env.std.terms["environment"],
             ("b".to_string(), "term-environment".to_string())
         );
+    }
+
+    /// A `system_message` between the target and the section it labels —
+    /// an unknown directive, say — must be stepped *over*, not into:
+    /// docutils skips it with `next_node(ascend=True, descend=False)`, so
+    /// the ids land on the section, not on a paragraph inside the warning.
+    #[test]
+    fn a_system_message_between_a_target_and_its_section_is_stepped_over() {
+        let (env, _) = read(&[(
+            "a",
+            "A\n=\n\n.. _lbl:\n\n.. nosuchdirective::\n\n   body\n\nSection\n-------\n\nText.\n",
+        )]);
+
+        assert_eq!(
+            env.std.labels.get("lbl"),
+            Some(&("a".to_string(), "lbl".to_string(), "Section".to_string())),
+            "the label belongs to the section behind the message"
+        );
+    }
+
+    /// A captionless `toctree` stores docutils' `None` rendering (`"True"`)
+    /// in its caption attribute; Sphinx tests the real value's truthiness,
+    /// so the label stays anonymous-only rather than being named "True".
+    #[test]
+    fn a_label_on_a_captionless_toctree_is_not_named_by_the_none_sentinel() {
+        let (env, _) = read(&[("a", "A\n=\n\n.. _lbl:\n\n.. toctree::\n\n   other\n")]);
+
+        assert!(
+            !env.std.labels.contains_key("lbl"),
+            "got {:?}",
+            env.std.labels.get("lbl")
+        );
+        assert!(env.std.anonlabels.contains_key("lbl"));
+
+        // A real caption still names it.
+        let (env, _) = read(&[(
+            "a",
+            "A\n=\n\n.. _lbl:\n\n.. toctree::\n   :caption: Real Caption\n\n   other\n",
+        )]);
+        assert_eq!(env.std.labels["lbl"].2, "Real Caption".to_string());
     }
 
     #[test]

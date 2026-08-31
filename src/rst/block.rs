@@ -3070,8 +3070,19 @@ impl<'a> BlockParser<'a> {
                 let index_key = parts
                     .next()
                     .map(|c| c.split(" : ").next().unwrap_or(c).trim().to_string());
-                let inline = self.inline(&term_text, input.span, tl.lineno);
-                let mut term = Node::elem(kinds::TERM, input.span);
+                // Sphinx's `make_glossary_term` stamps the term node with
+                // the *term line's* own source info, not the directive's
+                // (`domains/std/__init__.py:386-388`), and the index node it
+                // appends inherits it. Everything that reports a term's
+                // location — the duplicate-object warning, above all — reads
+                // that, so each term carries its own span here.
+                let term_span = Span {
+                    source: input.span.source,
+                    start: tl.src_start,
+                    end: tl.src_end,
+                };
+                let inline = self.inline(&term_text, term_span, tl.lineno);
+                let mut term = Node::elem(kinds::TERM, term_span);
                 term.children = inline.nodes;
                 term_messages.extend(inline.messages);
                 let base = ids::make_id(&format!("term-{term_text}"));
@@ -3082,7 +3093,7 @@ impl<'a> BlockParser<'a> {
                     base
                 };
                 term.attrs.ids.push(node_id.clone());
-                let mut index = Node::elem("index", input.span);
+                let mut index = Node::elem("index", term_span);
                 index.set(
                     "entries",
                     AttrValue::Str(index_entry_tuple(

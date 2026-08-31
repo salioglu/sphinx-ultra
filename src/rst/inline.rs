@@ -892,14 +892,21 @@ impl<'a> Inliner<'a> {
             ),
             _ => (text.clone(), text.clone(), false),
         };
-        // std :ref: targets are whitespace-normalized + lowercased
-        // (std domain process_link); py targets drop a leading `~` from
-        // the target while the title keeps only the last dotted segment.
+        // `XRefRole.lowercase` (`roles.py:122-124`): the target — never the
+        // title — is lowercased, for `:ref:` *and* `:numref:`
+        // (`domains/std/__init__.py:752-760`, both `lowercase=True`).
+        // `XRefRole.process_link` then collapses whitespace runs in the
+        // target (`roles.py:165`, `ws_re.sub(' ', target)`), which is what
+        // `fully_normalize_name` does on top of lowercasing — bar the
+        // leading/trailing strip, and docutils cannot produce an
+        // interpreted-text target with either (a space after the opening
+        // backtick is "start-string without end-string", verified against
+        // docutils 0.22.4). py targets drop a leading `~` from the target
+        // while the title keeps only the last dotted segment.
         let (target, display) = match (domain.as_str(), reftype.as_str()) {
-            ("std", "ref") if !explicit => {
+            ("std", "ref" | "numref") => {
                 (crate::doctree::ids::fully_normalize_name(&target), display)
             }
-            ("std", "ref") => (crate::doctree::ids::fully_normalize_name(&target), display),
             ("py", _) if target.starts_with('~') && !explicit => {
                 let full = target[1..].to_string();
                 let short = full.rsplit('.').next().unwrap_or(&full).to_string();
@@ -921,17 +928,24 @@ impl<'a> Inliner<'a> {
         node.set("reftarget", AttrValue::Str(target));
         node.set("reftype", AttrValue::Str(reftype.clone()));
         // `XRefRole.warn_dangling` (`roles.py:134`), which is what makes a
-        // role report a dangling reference outside nitpicky mode. The std
-        // domain sets it for every role but `envvar` and `token`
-        // (`domains/std/__init__.py:748-766`); no py role sets it. A role
-        // this crate does not know is a hard error in real Sphinx, which we
-        // cannot raise from here — warning about the dangling reference is
-        // the closest signal available, so those keep it set.
-        let warn_dangling = match (domain.as_str(), reftype.as_str()) {
-            ("std", "envvar" | "token") => false,
-            ("std", _) => true,
-            _ => false,
-        };
+        // role report a dangling reference outside nitpicky mode. Only these
+        // seven std roles carry it (`domains/std/__init__.py:748-766`); no py
+        // role does.
+        //
+        // The list is exhaustive on purpose. Everything else that lands here
+        // is a role this crate has no implementation for — including
+        // Sphinx's own non-xref roles (`:kbd:`, `:file:`, `:guilabel:`,
+        // `:command:`, `:abbr:`, `:program:`, ..., `roles.py:28-36` and
+        // `:608-626`), which produce plain inline nodes in real Sphinx and
+        // resolve nothing. Defaulting those to `warn_dangling` made every
+        // document that used one warn `'kbd' reference target not found`.
+        let warn_dangling = matches!(
+            (domain.as_str(), reftype.as_str()),
+            (
+                "std",
+                "ref" | "numref" | "doc" | "term" | "keyword" | "option" | "confval"
+            )
+        );
         node.set("refwarn", AttrValue::Int(i64::from(warn_dangling)));
         // py xrefs wrap in a literal (code-styled); callables display
         // with parens.

@@ -1004,6 +1004,82 @@ fn an_orphan_marked_after_a_raw_block_is_still_exempt() {
     );
 }
 
+/// Build one inline project and return its warnings, rendered.
+fn warnings_of(files: &[(&str, &str)], config: BuildConfig) -> Vec<String> {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let source_dir = tmp.path().join("source");
+    std::fs::create_dir_all(&source_dir).unwrap();
+    for (docname, body) in files {
+        std::fs::write(source_dir.join(format!("{docname}.rst")), body).unwrap();
+    }
+    let mut builder = SphinxBuilder::new(config, source_dir, tmp.path().join("build")).unwrap();
+    let stats = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(builder.build())
+        .unwrap();
+    stats
+        .warning_details
+        .iter()
+        .map(|warning| warning.render())
+        .collect()
+}
+
+/// Sphinx's non-xref roles (`roles.py:28-36` generic_docroles and
+/// `:608-626` specific_docroles) produce plain inline nodes and resolve
+/// nothing. This crate still parses them as `pending_xref` — a recorded
+/// wave-3 gap — so what keeps them quiet is that they are not
+/// `warn_dangling`. Treating every unknown std role as one made a document
+/// that merely mentioned a keystroke warn `'kbd' reference target not
+/// found`.
+#[test]
+fn sphinxs_non_xref_roles_do_not_report_missing_references() {
+    let warnings = warnings_of(
+        &[(
+            "index",
+            "Index\n=====\n\nPress :kbd:`Ctrl-C`, open :file:`~/.bashrc`, click \
+             :guilabel:`Save`,\nrun :command:`ls`, mind the :abbr:`LIFO (last in, \
+             first out)` order,\nand see :program:`rm`, :samp:`print {x}`, \
+             :menuselection:`File --> Open`,\n:dfn:`a defined term`, \
+             :mimetype:`text/plain`, :regexp:`^a.*z$`, :manpage:`ls(1)`.\n",
+        )],
+        BuildConfig::default(),
+    );
+
+    assert!(
+        warnings.is_empty(),
+        "no non-xref role may report a missing reference: {warnings:?}"
+    );
+}
+
+/// `:numref:` is registered with `lowercase=True`, so a `:name:` that was
+/// written in mixed case still resolves (docutils lowercases the label it
+/// registers, and the role has to match).
+#[test]
+fn a_numref_target_is_lowercased_like_the_label_it_names() {
+    let config = BuildConfig {
+        numfig: true,
+        ..BuildConfig::default()
+    };
+    let warnings = warnings_of(
+        &[
+            ("index", "Index\n=====\n\n.. toctree::\n\n   a\n   b\n"),
+            (
+                "a",
+                "A\n=\n\n.. figure:: pic.png\n   :name: Fig-A\n\n   The Caption\n",
+            ),
+            ("b", "B\n=\n\nSee :numref:`FIG-A` and :ref:`Fig-A`.\n"),
+        ],
+        config,
+    );
+
+    assert!(
+        warnings.is_empty(),
+        "a mixed-case numref/ref target must resolve: {warnings:?}"
+    );
+}
+
 /// Label collection and reference resolution both read parse output that a
 /// warm cache hit does not recompute — the id/name registry and the source
 /// text (for warning line numbers) ride the cached `Document`, the doctree
