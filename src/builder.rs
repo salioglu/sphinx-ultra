@@ -11,6 +11,7 @@ use crate::cache::BuildCache;
 use crate::config::BuildConfig;
 use crate::doctree::Doctree;
 use crate::document::Document;
+use crate::env::genindex as env_genindex;
 use crate::env::metadata as env_metadata;
 use crate::env::numbers as env_numbers;
 use crate::env::resolve as env_resolve;
@@ -94,6 +95,11 @@ pub struct SphinxBuilder {
     /// environment-oracle differential diffs; the write phase does not
     /// consume doctrees yet.
     resolved: Mutex<BTreeMap<String, String>>,
+    /// The general index this build assembled (`IndexEntries.create_index`),
+    /// kept beside [`Self::resolved`] for the same reason: it is build
+    /// output derived from the environment plus the builder's own uri
+    /// scheme, not environment state.
+    genindex: Mutex<Vec<env_genindex::IndexGroup>>,
 }
 
 impl SphinxBuilder {
@@ -166,6 +172,7 @@ impl SphinxBuilder {
             extension_loader,
             env,
             resolved: Mutex::new(BTreeMap::new()),
+            genindex: Mutex::new(Vec::new()),
         })
     }
 
@@ -244,10 +251,10 @@ impl SphinxBuilder {
             dependency_graph.len()
         );
 
-        let read_results = self.read_phase(&source_files, &dependency_graph)?;
+        let mut read_results = self.read_phase(&source_files, &dependency_graph)?;
 
         let mut env = std::mem::take(&mut self.env);
-        self.merge_phase(&mut env, &read_results);
+        self.merge_phase(&mut env, &mut read_results);
         let resolved = self.resolve_phase(&mut env, &read_results);
         self.env = env;
         resolved?;
@@ -529,7 +536,7 @@ impl SphinxBuilder {
     /// Sequential and deterministic, mirroring Sphinx's `merge_info_from`
     /// (`environment/__init__.py:421`) and the collectors it dispatches to:
     /// `all_docs`, the title collector, and the toctree collector.
-    fn merge_phase(&self, env: &mut BuildEnvironment, results: &[ReadResult]) {
+    fn merge_phase(&self, env: &mut BuildEnvironment, results: &mut [ReadResult]) {
         env.root_doc = self
             .config
             .root_doc
@@ -549,31 +556,32 @@ impl SphinxBuilder {
             env.clear_doc(&docname);
         }
 
-        let mut ordered: Vec<&ReadResult> = results.iter().collect();
-        ordered.sort_by(|a, b| a.docname.cmp(&b.docname));
+        let mut ordered: Vec<usize> = (0..results.len()).collect();
+        ordered.sort_by(|a, b| results[*a].docname.cmp(&results[*b].docname));
 
         // Sphinx's `env.doc2path`: the source file a docname was read from.
         // Documents this build did not read fall back to the conventional
         // `<srcdir>/<docname>.rst`, the same shape `doc2path` synthesizes
         // from `source_suffix`.
-        let paths: HashMap<&str, &Path> = results
+        //
+        // Owned rather than borrowed from `results`, which this loop holds
+        // mutably: the index domain *removes* an `index` node whose entries
+        // do not validate.
+        let paths: HashMap<String, PathBuf> = results
             .iter()
-            .map(|result| {
-                (
-                    result.docname.as_str(),
-                    result.document.source_path.as_path(),
-                )
-            })
+            .map(|result| (result.docname.clone(), result.document.source_path.clone()))
             .collect();
         let doc2path = |docname: &str| -> PathBuf {
             paths
                 .get(docname)
-                .map(|path| path.to_path_buf())
+                .cloned()
                 .unwrap_or_else(|| self.source_dir.join(format!("{docname}.rst")))
         };
 
-        for result in ordered {
-            let docname = result.docname.as_str();
+        for index in ordered {
+            let result = &mut results[index];
+            let docname = result.docname.clone();
+            let docname = docname.as_str();
             // Every document is re-read on every build today, so each one's
             // environment state is rebuilt from scratch — without this, the
             // `extend`-shaped fields (toctree_includes) would accumulate
@@ -609,10 +617,24 @@ impl SphinxBuilder {
             // walks documents in this same sorted order.
             self.report_parse_warnings(&result.document);
 
-            // The std domain's own read-phase hook (`process_doc`), which
-            // Sphinx dispatches through `doctree-read` — after the parse
-            // that produced the toctree diagnostics above, hence the order
-            // here.
+            // The domains' read-phase hooks, dispatched in the order
+            // `_DomainsContainer._process_doc` walks them — `index` before
+            // `std` — and after the parse diagnostics above, which Sphinx
+            // logs while reading.
+            let text = result.document.content.to_string();
+            let mut index_warnings = Vec::new();
+            env_genindex::process_doc(
+                env,
+                docname,
+                &mut result.doctree,
+                &result.document.source_path,
+                &text,
+                &mut index_warnings,
+            );
+            for warning in index_warnings {
+                self.add_warning(warning);
+            }
+
             let mut std_warnings = Vec::new();
             env_std::process_doc(
                 env,
@@ -620,7 +642,7 @@ impl SphinxBuilder {
                     docname,
                     doctree: &result.doctree,
                     registry: &result.document.registry,
-                    text: &result.document.content.to_string(),
+                    text: &text,
                     path: &result.document.source_path,
                 },
                 &doc2path,
@@ -725,8 +747,35 @@ impl SphinxBuilder {
         }
 
         self.xref_phase(env, results);
+        self.genindex_phase(env, &sources);
 
         env.save(self.cache.cache_dir())
+    }
+
+    /// Assemble the general index (`IndexEntries.create_index`).
+    ///
+    /// Sphinx runs this from the HTML builder's `write_genindex`, so a
+    /// `dummy` build never reaches it — but the environment oracle calls it
+    /// explicitly, right after the build and before snapshotting warnings
+    /// (see `tools/gen_env_fixture.py`), which is why this runs last and
+    /// unconditionally rather than from the writer.
+    fn genindex_phase(&self, env: &BuildEnvironment, sources: &HashMap<&str, &Path>) {
+        // The oracle's dummy builder answers `get_relative_uri('genindex',
+        // docname)` with `''` for every document, making each target a bare
+        // `#<target_id>` — the same honest answer [`Self::xref_phase`] gives
+        // until the HTML writer supplies its own uri scheme.
+        let rel_uri = |_docname: &str| Some(String::new());
+        let mut messages = Vec::new();
+        let groups = env_genindex::create_index(env, &rel_uri, &mut messages);
+        for message in messages {
+            // `location=docname`: the document's source path, no line.
+            let source = sources
+                .get(message.docname.as_str())
+                .map(|path| path.to_path_buf())
+                .unwrap_or_else(|| PathBuf::from(&message.docname));
+            self.add_warning(message.into_warning(&source));
+        }
+        *self.genindex.lock().unwrap() = groups;
     }
 
     /// Cross-reference resolution (`ReferencesResolver`, run per document as
@@ -1191,6 +1240,10 @@ impl SphinxBuilder {
             object.insert(
                 "resolved_pformat".to_string(),
                 serde_json::Value::Object(resolved),
+            );
+            object.insert(
+                "genindex".to_string(),
+                env_genindex::snapshot(&self.genindex.lock().unwrap()),
             );
         }
         snapshot

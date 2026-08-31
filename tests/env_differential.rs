@@ -11,12 +11,13 @@
 //! Each `expect` key group has exactly one test. A group whose library
 //! surface doesn't exist yet stays `#[ignore]`d with the wave-4 task that
 //! will build it; un-ignoring one is the signal that its keys are now
-//! covered. Live so far (tasks 5-8): `tocs_pformat`, `toc_num_entries`,
-//! `toctree_includes`, `files_to_rebuild`, `relations`, `toc_secnumbers`,
-//! `toc_fignumbers`, `std`, `resolved_pformat`, and `warnings` — the last
-//! three with strict, self-cleaning exemption tables ([`KNOWN_STD_GAPS`],
-//! [`KNOWN_RESOLVED_GAPS`], [`KNOWN_WARNING_GAPS`]) naming what each
-//! remaining divergence waits on.
+//! covered. **Every** `expect` key is now live (tasks 5-10):
+//! `tocs_pformat`, `toc_num_entries`, `toctree_includes`,
+//! `files_to_rebuild`, `relations`, `toc_secnumbers`, `toc_fignumbers`,
+//! `std`, `index_entries`, `genindex`, `resolved_pformat` and `warnings` —
+//! the last three with strict, self-cleaning exemption tables
+//! ([`KNOWN_STD_GAPS`], [`KNOWN_RESOLVED_GAPS`], [`KNOWN_WARNING_GAPS`])
+//! naming what each remaining divergence waits on.
 //!
 //! Each live test materializes every fixture project into a tempdir, runs
 //! the real library build (read + merge + resolve), and diffs
@@ -120,13 +121,13 @@ pub struct StdProgOptionEntry {
     pub labelid: String,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Debug, PartialEq, Eq)]
 pub struct GenIndexGroup {
     pub group: String,
     pub entries: Vec<GenIndexEntry>,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Debug, PartialEq, Eq)]
 pub struct GenIndexEntry {
     pub name: String,
     /// (main_flag, uri) pairs; main_flag is the literal sphinx string
@@ -136,7 +137,7 @@ pub struct GenIndexEntry {
     pub category_key: Option<String>,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, Debug, PartialEq, Eq)]
 pub struct GenIndexSubItem {
     pub name: String,
     pub targets: Vec<(String, String)>,
@@ -415,12 +416,7 @@ const KNOWN_RESOLVED_GAPS: &[(&str, &str, &str)] = &[
     ),
     ("labels_dups", "a", PROPAGATE_TARGETS),
     ("labels_dups", "b", PROPAGATE_TARGETS),
-    (
-        "index_entries",
-        "a",
-        "PROPAGATE_TARGETS, plus the `! Important` index entry keeping the \
-         space the `!` marker left behind",
-    ),
+    ("index_entries", "a", PROPAGATE_TARGETS),
 ];
 
 fn known_resolved_gap(project: &str, docname: &str) -> Option<&'static str> {
@@ -820,15 +816,43 @@ fn std_domain_matches_oracle() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// Live: task 10 keys
+// ---------------------------------------------------------------------------
+
+/// `env.domaindata['index']['entries']` — every `index` node's 5-tuples,
+/// harvested per document by `IndexDomain.process_doc` — and the finished
+/// general index `IndexEntries.create_index()` assembles from them.
+///
+/// The oracle builds with sphinx's dummy builder, whose
+/// `get_relative_uri('genindex', docname)` is `''`, so every genindex target
+/// uri is a bare `#<target_id>`.
 #[test]
-#[ignore = "task 8+: needs index domain entries + genindex adapter"]
 fn index_and_genindex_match_oracle() {
     let fixture = load_fixture();
+    let mut divergences = Vec::new();
+
     for project in &fixture.projects {
-        let _ = &project.expect.index_entries;
-        let _ = &project.expect.genindex;
+        let env = env_of(project);
+
+        let entries: BTreeMap<String, Vec<IndexEntryTuple>> = snapshot_field(env, "index_entries");
+        if entries != project.expect.index_entries {
+            divergences.push(format!(
+                "[{}] index_entries\n  expected: {:#?}\n  actual:   {entries:#?}",
+                project.name, project.expect.index_entries
+            ));
+        }
+
+        let genindex: Vec<GenIndexGroup> = snapshot_field(env, "genindex");
+        if genindex != project.expect.genindex {
+            divergences.push(format!(
+                "[{}] genindex\n  expected: {:#?}\n  actual:   {genindex:#?}",
+                project.name, project.expect.genindex
+            ));
+        }
     }
-    todo!("diff index_entries and IndexEntries(env).create_index() equivalent");
+
+    report(&divergences, "index_entries, genindex");
 }
 
 /// `env.get_and_resolve_doctree(docname, builder)` as pseudo-XML — every
@@ -1261,6 +1285,105 @@ fn a_malformed_option_description_warns_like_sphinx_across_a_rebuild() {
          the cached document's records"
     );
     assert_eq!(warm_env["std"], cold_env["std"]);
+}
+
+/// `IndexDomain.process_doc` rejects a whole `index` node when *any* of its
+/// entries fails `split_index_msg`: the good entries beside the bad one are
+/// lost with it, the node leaves the doctree (its `target` stays), and the
+/// diagnostic rides the cached parse across a rebuild.
+///
+/// The oracle corpus contains no invalid index entry, so the text, location
+/// and `[index]` category are pinned here against a sphinx 9.1.0 build of
+/// the same source, which reports:
+///
+/// ```text
+/// a.rst:4: WARNING: invalid pair index entry 'lonely' [index]
+/// ```
+///
+/// and leaves `env.domaindata['index']['entries']['a']` holding only the
+/// `('single', 'Fine', 'index-1', '', None)` entry of the *second* node.
+#[test]
+fn an_invalid_index_entry_drops_its_whole_node_like_sphinx() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let source_dir = tmp.path().join("source");
+    let output_dir = tmp.path().join("build");
+    std::fs::create_dir_all(&source_dir).unwrap();
+    std::fs::write(
+        source_dir.join("index.rst"),
+        "Index\n=====\n\n.. toctree::\n\n   a\n",
+    )
+    .unwrap();
+    std::fs::write(
+        source_dir.join("a.rst"),
+        "A\n=\n\n.. index::\n   single: Good\n   pair: lonely\n\nBody.\n\n\
+         .. index::\n   single: Fine\n\nMore.\n",
+    )
+    .unwrap();
+    let source_dir = std::fs::canonicalize(&source_dir).unwrap();
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let build_once = || -> (Vec<String>, serde_json::Value) {
+        let mut builder = SphinxBuilder::new(
+            BuildConfig::default(),
+            source_dir.clone(),
+            output_dir.clone(),
+        )
+        .unwrap();
+        builder.enable_incremental();
+        let stats = runtime.block_on(builder.build()).unwrap();
+        let root = source_dir.to_string_lossy().into_owned();
+        (
+            stats
+                .warning_details
+                .iter()
+                .map(|warning| warning.render().replace(&root, "<project>"))
+                .collect(),
+            builder.snapshot_env(),
+        )
+    };
+
+    let expected_warnings =
+        vec!["<project>/a.rst:4: WARNING: invalid pair index entry 'lonely' [index]".to_string()];
+    let expected_entries = serde_json::json!({
+        "a": [["single", "Fine", "index-1", "", null]],
+        "index": [],
+    });
+    let expected_genindex = serde_json::json!([{
+        "group": "F",
+        "entries": [{
+            "name": "Fine",
+            "targets": [["", "#index-1"]],
+            "subitems": [],
+            "category_key": null,
+        }],
+    }]);
+
+    let (cold, cold_env) = build_once();
+    assert_eq!(cold, expected_warnings);
+    assert_eq!(cold_env["index_entries"], expected_entries);
+    assert_eq!(cold_env["genindex"], expected_genindex);
+    // The rejected node is gone from the resolved doctree; the `target` the
+    // directive emitted beside it is not.
+    let resolved = cold_env["resolved_pformat"]["a"].as_str().unwrap();
+    assert_eq!(
+        resolved.matches("<index ").count(),
+        1,
+        "only the surviving index node may remain:\n{resolved}"
+    );
+    assert!(resolved.contains("'Fine'"), "{resolved}");
+    assert!(!resolved.contains("'Good'"), "{resolved}");
+
+    let (warm, warm_env) = build_once();
+    assert_eq!(
+        warm, expected_warnings,
+        "a cache hit skips the parse, so the diagnostic has to come back off \
+         the cached doctree's entries"
+    );
+    assert_eq!(warm_env["index_entries"], expected_entries);
+    assert_eq!(warm_env["genindex"], expected_genindex);
 }
 
 #[test]

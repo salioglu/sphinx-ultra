@@ -17,6 +17,7 @@
 //! `Hash*` equivalent so that bincode bytes and [`BuildEnvironment::snapshot`]
 //! output are deterministic across runs and processes.
 
+pub mod genindex;
 pub mod metadata;
 pub mod numbers;
 pub mod resolve;
@@ -63,13 +64,13 @@ const ENV_FILENAME: &str = "env.bin";
 
 pub use std_domain::StdDomainData;
 
-/// One entry from a document's `.. index::` directives, as recorded in
+/// One entry harvested from a document's `index` nodes, as recorded in
 /// Sphinx's `env.domaindata['index']['entries'][docname]`. `main` mirrors
 /// Sphinx's literal `'main'`/`''` marker string as a bool; [`BuildEnvironment::snapshot`]
 /// converts it back to that string form to match the oracle fixture shape.
 ///
-/// Minimal stub for this task: Task 10 gives index-entry collection real
-/// behavior. Here it only needs to exist and round-trip through serde.
+/// Collected by [`genindex::process_doc`]; consumed by
+/// [`genindex::create_index`].
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct IndexEntryRecord {
     pub entry_type: String,
