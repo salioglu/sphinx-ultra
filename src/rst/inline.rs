@@ -920,14 +920,40 @@ impl<'a> Inliner<'a> {
         node.set("refexplicit", AttrValue::Int(i64::from(explicit)));
         node.set("reftarget", AttrValue::Str(target));
         node.set("reftype", AttrValue::Str(reftype.clone()));
-        node.set("refwarn", AttrValue::Int(i64::from(!py)));
+        // `XRefRole.warn_dangling` (`roles.py:134`), which is what makes a
+        // role report a dangling reference outside nitpicky mode. The std
+        // domain sets it for every role but `envvar` and `token`
+        // (`domains/std/__init__.py:748-766`); no py role sets it. A role
+        // this crate does not know is a hard error in real Sphinx, which we
+        // cannot raise from here — warning about the dangling reference is
+        // the closest signal available, so those keep it set.
+        let warn_dangling = match (domain.as_str(), reftype.as_str()) {
+            ("std", "envvar" | "token") => false,
+            ("std", _) => true,
+            _ => false,
+        };
+        node.set("refwarn", AttrValue::Int(i64::from(warn_dangling)));
         // py xrefs wrap in a literal (code-styled); callables display
         // with parens.
         let mut display = display;
         if py && matches!(reftype.as_str(), "func" | "meth") && !explicit {
             display.push_str("()");
         }
-        let mut inner = Node::elem(if py { kinds::LITERAL } else { "inline" }, self.span);
+        // `XRefRole.innernodeclass` (`roles.py:67`): `literal` unless the
+        // role overrides it, which in the std domain only `ref`, `term` and
+        // `doc` do (`domains/std/__init__.py:752-765`).
+        let inline_inner = matches!(
+            (domain.as_str(), reftype.as_str()),
+            ("std", "ref" | "term" | "doc")
+        );
+        let mut inner = Node::elem(
+            if inline_inner {
+                "inline"
+            } else {
+                kinds::LITERAL
+            },
+            self.span,
+        );
         inner.attrs.classes = vec![
             "xref".to_string(),
             domain.clone(),

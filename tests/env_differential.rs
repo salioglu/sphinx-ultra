@@ -198,10 +198,17 @@ fn build_project(project: &Project) -> Built {
         .map(|warning| warning.render().replace(&root, "<project>"))
         .collect();
 
-    Built {
-        env: builder.snapshot_env(),
-        warnings,
-    }
+    // Doctrees carry their absolute source path on the `document` node, and
+    // `dependencies` holds absolute paths: the oracle records both with the
+    // srcdir replaced by `<project>` (see tools/gen_env_fixture.py), so the
+    // whole snapshot goes through the same substitution.
+    let env = builder
+        .snapshot_env()
+        .to_string()
+        .replace(&root, "<project>");
+    let env = serde_json::from_str(&env).expect("the snapshot survives path normalization");
+
+    Built { env, warnings }
 }
 
 /// The project's `conf` overrides, applied to a default [`BuildConfig`] the
@@ -356,6 +363,90 @@ const KNOWN_STD_GAPS: &[(&str, &str)] = &[(
      anatomy their directives build; nothing in this crate produces desc \
      nodes yet (the std-directives task lands them, and flips this)",
 )];
+
+/// The one normalization this harness applies to the oracle's
+/// `resolved_pformat`: docutils' i18n totaliser stamps every `document` node
+/// with a `translation_progress` attribute, which `tools/gen_sphinx_fixture.py`
+/// already strips from *its* oracle as a harness artifact (see that file's
+/// `TP_ATTR`) and which nothing in this crate models. Stripping it here keeps
+/// the two fixtures' document lines comparable to the same parse output.
+const TRANSLATION_PROGRESS_ATTR: &str = " translation_progress=\"{'total': 0, 'translated': 0}\"";
+
+/// Reasons shared by several [`KNOWN_RESOLVED_GAPS`] entries.
+const TOCTREE_RESOLUTION: &str = "the write-phase toctree resolution that turns a \
+     `toctree` node into a `compact_paragraph` entry tree is not ported yet";
+const IMAGE_CANDIDATES: &str = "`ImageCollector.process_doc` stamps `candidates` onto \
+     every `image`; no image collection exists yet";
+const PROPAGATE_TARGETS: &str = "docutils' `PropagateTargets` transform (which moves a \
+     block-level target's ids and names onto the node after it) is replayed for label \
+     collection but not applied to the tree itself";
+const DESC_ANATOMY: &str = "the std object directives (`option`/`envvar`/`confval`/\
+     `describe`) produce no `desc` anatomy yet";
+
+/// Per-document `resolved_pformat` divergences this task deliberately does
+/// not close, each pinned to what would close it. Checked **strictly**,
+/// exactly like [`KNOWN_TOC_GAPS`].
+const KNOWN_RESOLVED_GAPS: &[(&str, &str, &str)] = &[
+    // Write-phase toctree resolution (`adapters/toctree.py`'s
+    // `_resolve_toctree`), which replaces a `toctree` node with the
+    // `compact_paragraph`/`bullet_list` tree of entry references. Not part
+    // of this task; every document below carries a `toctree` and nothing
+    // else it needs.
+    ("toctree_nested", "a", TOCTREE_RESOLUTION),
+    ("toctree_nested", "index", TOCTREE_RESOLUTION),
+    ("toctree_glob", "index", TOCTREE_RESOLUTION),
+    ("toctree_numbered", "index", TOCTREE_RESOLUTION),
+    ("toctree_numbered_depth2", "index", TOCTREE_RESOLUTION),
+    ("toctree_self_ref", "index", TOCTREE_RESOLUTION),
+    ("toctree_circular", "a", TOCTREE_RESOLUTION),
+    ("toctree_circular", "b", TOCTREE_RESOLUTION),
+    ("toctree_circular", "index", TOCTREE_RESOLUTION),
+    ("toctree_multi_parent", "a", TOCTREE_RESOLUTION),
+    ("toctree_multi_parent", "b", TOCTREE_RESOLUTION),
+    ("toctree_multi_parent", "index", TOCTREE_RESOLUTION),
+    ("orphan_doc", "index", TOCTREE_RESOLUTION),
+    ("numfig_on", "index", TOCTREE_RESOLUTION),
+    ("numfig_off_numref", "index", TOCTREE_RESOLUTION),
+    ("labels_dups", "index", TOCTREE_RESOLUTION),
+    ("glossary_terms", "index", TOCTREE_RESOLUTION),
+    ("index_entries", "index", TOCTREE_RESOLUTION),
+    ("doc_refs", "index", TOCTREE_RESOLUTION),
+    ("std_objects", "index", TOCTREE_RESOLUTION),
+    // Read-phase gaps of other subsystems, each already tracked by the
+    // task that owns it.
+    ("toctree_numbered_depth2", "a", IMAGE_CANDIDATES),
+    ("numfig_off_numref", "a", IMAGE_CANDIDATES),
+    (
+        "numfig_on",
+        "a",
+        "`image[candidates]` (see IMAGE_CANDIDATES) plus the `linenos` flag \
+         a captioned `code-block` stamps onto its `literal_block`",
+    ),
+    (
+        "orphan_doc",
+        "orphan",
+        "`MetadataCollector.process_doc` *removes* the docinfo field list \
+         from the doctree after reading it (`collectors/metadata.py:40`); \
+         ours reads it and leaves the node in place",
+    ),
+    ("labels_dups", "a", PROPAGATE_TARGETS),
+    ("labels_dups", "b", PROPAGATE_TARGETS),
+    (
+        "index_entries",
+        "a",
+        "PROPAGATE_TARGETS, plus the `! Important` index entry keeping the \
+         space the `!` marker left behind",
+    ),
+    ("std_objects", "a", DESC_ANATOMY),
+    ("std_objects", "b", DESC_ANATOMY),
+];
+
+fn known_resolved_gap(project: &str, docname: &str) -> Option<&'static str> {
+    KNOWN_RESOLVED_GAPS
+        .iter()
+        .find(|(p, d, _)| *p == project && *d == docname)
+        .map(|(_, _, why)| *why)
+}
 
 fn known_std_gap(project: &str) -> Option<&'static str> {
     KNOWN_STD_GAPS
@@ -758,14 +849,66 @@ fn index_and_genindex_match_oracle() {
     todo!("diff index_entries and IndexEntries(env).create_index() equivalent");
 }
 
+/// `env.get_and_resolve_doctree(docname, builder)` as pseudo-XML — every
+/// document's doctree after cross-reference resolution.
+///
+/// Compared per document, because only part of that pass exists: the
+/// `pending_xref` resolution this task ports is live, while the write-phase
+/// *toctree* resolution (`adapters/toctree.py`) that turns a `toctree` node
+/// into a `compact_paragraph` tree is not — so every document carrying a
+/// toctree, plus the handful with read-phase gaps of their own, is pinned in
+/// [`KNOWN_RESOLVED_GAPS`] rather than compared.
 #[test]
-#[ignore = "task 9+: needs get_and_resolve_doctree equivalent (post-transforms + toctree resolution)"]
 fn resolved_doctrees_match_oracle() {
     let fixture = load_fixture();
+    let mut divergences = Vec::new();
+    let mut visited_gaps: Vec<(&str, &str)> = Vec::new();
+
     for project in &fixture.projects {
-        let _ = &project.expect.resolved_pformat;
+        let env = env_of(project);
+        let resolved: BTreeMap<String, String> = snapshot_field(env, "resolved_pformat");
+
+        assert_eq!(
+            resolved.keys().collect::<Vec<_>>(),
+            project.expect.resolved_pformat.keys().collect::<Vec<_>>(),
+            "[{}] the build resolved a different document set than the oracle",
+            project.name
+        );
+
+        for (docname, expected) in &project.expect.resolved_pformat {
+            let expected = expected.replace(TRANSLATION_PROGRESS_ATTR, "");
+            let actual = &resolved[docname];
+            let matches = *actual == expected;
+
+            match known_resolved_gap(&project.name, docname) {
+                Some(why) => {
+                    visited_gaps.push((project.name.as_str(), docname.as_str()));
+                    assert!(
+                        !matches,
+                        "[{}] {docname}: listed in KNOWN_RESOLVED_GAPS ({why}) but \
+                         the resolved doctree now matches the oracle — delete the \
+                         exemption",
+                        project.name
+                    );
+                }
+                None if !matches => divergences.push(format!(
+                    "[{}] {docname}\n--- oracle ---\n{expected}--- ours ---\n{actual}",
+                    project.name
+                )),
+                None => {}
+            }
+        }
     }
-    todo!("diff resolved_pformat per docname");
+
+    for (project, docname, why) in KNOWN_RESOLVED_GAPS {
+        assert!(
+            visited_gaps.contains(&(*project, *docname)),
+            "KNOWN_RESOLVED_GAPS entry ({project}, {docname}) — {why} — was \
+             never visited: no such project/document in the fixture. Delete it."
+        );
+    }
+
+    report(&divergences, "resolved_pformat");
 }
 
 /// The build must not leave the environment's per-document state doubled up
