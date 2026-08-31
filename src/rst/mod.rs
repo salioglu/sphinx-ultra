@@ -104,15 +104,6 @@ pub struct ToctreeEntryRecord {
 
 /// One `Cmdoption.add_target_and_index` call the parse layer made
 /// (`sphinx/domains/std/__init__.py:308-315`).
-///
-/// This is the single registration the env layer cannot replay from the
-/// finished doctree: the program an option belongs to comes from
-/// `env.ref_context['std:program']`, which Sphinx reads while the directive
-/// runs and stamps on **no** node — `desc`/`desc_signature` carry the
-/// derived ids and the option spellings, but not the program. Deriving it
-/// back out of `cmdoption-<program>-<name>` is not sound (the id goes
-/// through `make_id`, and collides fall back to a serial), so the parse
-/// layer records the call instead.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ProgramOptionRecord {
     /// The `.. program::` in scope, `None` outside one.
@@ -122,6 +113,22 @@ pub struct ProgramOptionRecord {
     /// `signode['ids'][0]` — the *first* id of the signature, which is what
     /// Sphinx registers for every spelling in it.
     pub node_id: String,
+}
+
+/// One `StandardDomain.note_object` call the parse layer made
+/// (`GenericObject`/`ConfigurationValue.add_target_and_index`).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ObjectRegistration {
+    /// `self.objtype` — `envvar`, `confval`, ... `describe`/`object` never
+    /// reach here: the base `add_target_and_index` is a no-op.
+    pub objtype: String,
+    /// The name `handle_signature` returned, which is what the matching
+    /// `:envvar:`/`:confval:` role resolves against.
+    pub name: String,
+    pub node_id: String,
+    /// 1-based line of the signature node (`location=signode`), for the
+    /// duplicate-description warning.
+    pub line: u32,
 }
 
 /// What the parse layer hands the environment besides the doctree itself:
@@ -141,10 +148,22 @@ pub struct RegistryExport {
     /// sphinx `env.new_serialno('index')` counter value at the end of the
     /// parse (shared by the index directive and index-entry-emitting roles).
     pub index_serial: u32,
-    /// `.. option::` registrations in document order — see
-    /// [`ProgramOptionRecord`].
+    /// The std-domain registrations the object-description directives made
+    /// while running, in document order.
+    ///
+    /// Sphinx performs these from inside `add_target_and_index`, against
+    /// state the finished doctree does not carry: the program an option
+    /// belongs to comes from `env.ref_context['std:program']` and is
+    /// stamped on no node, and a `:no-typesetting:` description registers
+    /// itself and then **replaces its whole `desc` node with a bare
+    /// target** — so a doctree walk can neither recover the program nor see
+    /// that the object existed. Recording the calls keeps the env layer
+    /// exact for both.
     #[serde(default)]
     pub program_options: Vec<ProgramOptionRecord>,
+    /// See [`Self::program_options`].
+    #[serde(default)]
+    pub std_objects: Vec<ObjectRegistration>,
 }
 
 /// Everything a parse produces: the doctree plus the flat records the

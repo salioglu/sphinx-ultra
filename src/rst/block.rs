@@ -163,11 +163,12 @@ pub(crate) struct BlockParser<'a> {
     directive_records: Vec<super::DirectiveRecord>,
     role_records: Vec<super::RoleRecord>,
     toctree_records: Vec<super::ToctreeRecord>,
-    /// `.. option::` registrations, in document order — the one piece of
-    /// `Cmdoption.add_target_and_index` the finished `desc` anatomy cannot
-    /// carry, because the program in scope comes from `env.ref_context` and
-    /// is stamped on no node (see [`super::ProgramOptionRecord`]).
+    /// The std-domain registrations the object-description directives made
+    /// while running, in document order (see
+    /// [`super::RegistryExport::program_options`] for why the finished
+    /// doctree cannot carry them).
     program_option_records: Vec<super::ProgramOptionRecord>,
+    std_object_records: Vec<super::ObjectRegistration>,
     /// Set while running a substitution-embedded directive (docutils
     /// SubstitutionDef state): replace/unicode/date require it, image
     /// flips its align validation, unicode's trim flags land here.
@@ -214,6 +215,7 @@ impl<'a> BlockParser<'a> {
             role_records: Vec::new(),
             toctree_records: Vec::new(),
             program_option_records: Vec::new(),
+            std_object_records: Vec::new(),
             substitution_ctx: None,
             substitution_names_seen: Vec::new(),
             substitution_dupnames: Vec::new(),
@@ -230,6 +232,7 @@ impl<'a> BlockParser<'a> {
             nameids: self.registry.nameids_snapshot(),
             index_serial: self.registry.index_serial(),
             program_options: std::mem::take(&mut self.program_option_records),
+            std_objects: std::mem::take(&mut self.std_object_records),
         };
         super::ParseOutput {
             doctree: crate::doctree::Doctree {
@@ -368,6 +371,7 @@ impl<'a> BlockParser<'a> {
         self.toctree_records.append(&mut sub.toctree_records);
         self.program_option_records
             .append(&mut sub.program_option_records);
+        self.std_object_records.append(&mut sub.std_object_records);
         nodes
     }
 
@@ -2925,7 +2929,10 @@ impl<'a> BlockParser<'a> {
     /// `env.ref_context` state, no nodes. The literal argument `None` pops
     /// the scope rather than naming a program called "None".
     fn run_program(&mut self, input: DirectiveInput<'a, '_>) {
-        let program = ws_collapse(input.arguments[0].trim(), "-");
+        let Some(argument) = input.arguments.first() else {
+            return;
+        };
+        let program = ws_collapse(argument.trim(), "-");
         if program == "None" {
             self.program = None;
         } else {
@@ -3239,6 +3246,7 @@ impl<'a> BlockParser<'a> {
                             kind,
                             &objtype,
                             &name,
+                            input.lineno,
                             &mut signode,
                             &mut index_entries,
                         );
@@ -3328,6 +3336,10 @@ impl<'a> BlockParser<'a> {
                 continue;
             };
             // "optional value surrounded by brackets (ex. foo[=bar])".
+            // Sphinx tests `args[-1] == ']'` unguarded, so `.. option:: foo[`
+            // raises IndexError out of the whole parse; leaving the
+            // signature unchanged is the hardening deviation (a crash is not
+            // a contract, and there is no tree to be byte-identical to).
             let (optname, args) = match (optname.strip_suffix('['), args.strip_suffix(']')) {
                 (Some(trimmed), Some(_)) => (trimmed.to_string(), format!("[{args}")),
                 _ => (optname, args),
@@ -3360,6 +3372,7 @@ impl<'a> BlockParser<'a> {
         kind: ObjectDescKind,
         objtype: &str,
         name: &str,
+        line: u32,
         signode: &mut Node,
         entries: &mut Vec<String>,
     ) {
@@ -3372,7 +3385,7 @@ impl<'a> BlockParser<'a> {
             // `EnvVar.indextemplate` has no ':' separator, so the whole
             // template is a 'single' entry value.
             ObjectDescKind::EnvVar => {
-                let node_id = self.note_object_id(objtype, name, signode);
+                let node_id = self.note_object_id(objtype, name, line, signode);
                 entries.push(index_entry_tuple(
                     "single",
                     &format!("environment variable; {name}"),
@@ -3383,7 +3396,7 @@ impl<'a> BlockParser<'a> {
             }
             // `ConfigurationValue.add_target_and_index` (`domains/std:142-151`).
             ObjectDescKind::Confval => {
-                let node_id = self.note_object_id(objtype, name, signode);
+                let node_id = self.note_object_id(objtype, name, line, signode);
                 entries.push(index_entry_tuple(
                     "pair",
                     &format!("{name}; configuration value"),
@@ -3444,12 +3457,25 @@ impl<'a> BlockParser<'a> {
         }
     }
 
-    /// The `make_id` + `note_explicit_target` pair the single-id
-    /// `add_target_and_index` implementations share.
-    fn note_object_id(&mut self, prefix: &str, name: &str, signode: &mut Node) -> String {
-        let node_id = self.registry.sphinx_make_id(prefix, name);
+    /// The `make_id` + `note_explicit_target` + `note_object` trio the
+    /// single-id `add_target_and_index` implementations share.
+    fn note_object_id(
+        &mut self,
+        objtype: &str,
+        name: &str,
+        line: u32,
+        signode: &mut Node,
+    ) -> String {
+        // Both callers pass `self.objtype` as the make_id prefix.
+        let node_id = self.registry.sphinx_make_id(objtype, name);
         signode.attrs.ids.push(node_id.clone());
         self.registry.note_explicit_id(&node_id);
+        self.std_object_records.push(super::ObjectRegistration {
+            objtype: objtype.to_string(),
+            name: name.to_string(),
+            node_id: node_id.clone(),
+            line,
+        });
         node_id
     }
 

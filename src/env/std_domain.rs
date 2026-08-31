@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::doctree::{ids, kinds, AttrValue, Doctree, Node};
+use crate::doctree::{kinds, AttrValue, Doctree, Node};
 use crate::env::numbers::{clean_astext, std_numfig_title};
 use crate::env::BuildEnvironment;
 use crate::error::{BuildWarning, WarningType};
@@ -133,11 +133,13 @@ pub struct DocumentSource<'a> {
 }
 
 /// `StandardDomain.process_doc` (`domains/std/__init__.py:937-993`) plus the
-/// registrations Sphinx performs from directives at parse time (glossary
-/// terms via `make_glossary_term`, `option`/`envvar`/`confval` objects via
-/// `ObjectDescription.add_target_and_index`) — which this port harvests
-/// from the finished doctree instead, since our parse layer has no domain
-/// callbacks to run.
+/// registrations Sphinx performs from directives at parse time, which our
+/// parse layer has no domain callbacks to run: glossary terms
+/// (`make_glossary_term`) are replayed from the finished doctree, and the
+/// `option`/`envvar`/`confval` registrations
+/// (`ObjectDescription.add_target_and_index`) from the records the parse
+/// layer kept — see [`RegistryExport::program_options`] for why the doctree
+/// cannot carry those.
 ///
 /// `doc2path` renders another document's source path for the duplicate-label
 /// warning [ENV §8 #1], which names the *path*, not the docname.
@@ -351,15 +353,16 @@ fn collect_glossary_term_nodes<'a>(node: &'a Node, out: &mut Vec<&'a Node>) {
     }
 }
 
-/// Object descriptions: Sphinx registers these while the directive runs
+/// Object descriptions: Sphinx registers these from inside the directive
 /// (`ObjectDescription.add_target_and_index` → `note_object` /
-/// `add_program_option`, `domains/std/__init__.py:226-330`), so this replays
-/// the registration from the finished `desc` anatomy instead.
+/// `add_program_option`, `domains/std/__init__.py:226-330`), against state
+/// the finished doctree does not carry — see
+/// [`RegistryExport::program_options`] — so the parse layer records the
+/// calls and this replays them.
 ///
-/// Program options are the one registration the anatomy cannot carry — the
-/// program in scope comes from `env.ref_context`, which is stamped on no
-/// node — so the parse layer records those calls directly (see
-/// [`crate::rst::ProgramOptionRecord`]).
+/// `describe`/`object` produce no records at all: the base
+/// `add_target_and_index` is a no-op, so they contribute neither an object
+/// nor an id.
 fn collect_descriptions(
     env: &mut BuildEnvironment,
     doc: &DocumentSource<'_>,
@@ -373,74 +376,20 @@ fn collect_descriptions(
             &record.node_id,
         );
     }
-    let mut descs: Vec<&Node> = Vec::new();
-    collect_desc_nodes(&doc.doctree.root, &mut descs);
-    for desc in descs {
-        // `describe`/`object` (the bare `ObjectDescription`) deliberately
-        // register nothing: `add_target_and_index` is a no-op unless a
-        // domain overrides it, and they carry `domain=""`.
-        let Some(AttrValue::Str(domain)) = desc.get("domain") else {
-            continue;
-        };
-        if domain != "std" {
-            continue;
-        }
-        let Some(AttrValue::Str(objtype)) = desc.get("objtype") else {
-            continue;
-        };
-        // `Cmdoption` REPLACES `add_target_and_index` (`:292-330`): it calls
-        // `add_program_option`, never `note_object`, so its two directive
-        // names contribute no std objects. Handled above.
-        if objtype == "option" || objtype == "cmdoption" {
-            continue;
-        }
-        for signature in desc.children.iter().filter(|c| c.kind == "desc_signature") {
-            let Some(node_id) = signature.attrs.ids.first() else {
-                continue;
-            };
-            let name = object_name(signature);
-            if let Some(other) = env.std.note_object(objtype, &name, doc.docname, node_id) {
-                warnings.push(duplicate_object_warning(
-                    doc,
-                    node_line(signature, doc.text),
-                    objtype,
-                    &name,
-                    &other,
-                ));
-            }
+    for record in &doc.registry.std_objects {
+        if let Some(other) =
+            env.std
+                .note_object(&record.objtype, &record.name, doc.docname, &record.node_id)
+        {
+            warnings.push(duplicate_object_warning(
+                doc,
+                record.line as usize,
+                &record.objtype,
+                &record.name,
+                &other,
+            ));
         }
     }
-}
-
-fn collect_desc_nodes<'a>(node: &'a Node, out: &mut Vec<&'a Node>) {
-    if node.kind == "desc" {
-        out.push(node);
-        return;
-    }
-    for child in &node.children {
-        collect_desc_nodes(child, out);
-    }
-}
-
-/// The name `note_object` was called with. `ConfigurationValue` publishes it
-/// as `desc_signature['fullname']` (`domains/std:130`); `GenericObject` does
-/// not, and its name is `ws_re.sub(' ', sig)` over the same text the
-/// `desc_name` holds (`:63`) — the signature is already stripped, so
-/// whitespace-normalizing that text reproduces it.
-fn object_name(signature: &Node) -> String {
-    match signature.get("fullname") {
-        Some(AttrValue::Str(name)) => name.clone(),
-        _ => ids::whitespace_normalize_name(&desc_name(signature)),
-    }
-}
-
-fn desc_name(signature: &Node) -> String {
-    signature
-        .children
-        .iter()
-        .find(|child| child.kind == "desc_name")
-        .map(clean_astext)
-        .unwrap_or_default()
 }
 
 /// The line Sphinx reports for a glossary term, which is one *less* than
@@ -725,6 +674,46 @@ mod tests {
                     ("a".to_string(), "cmdoption-myprog-verbose".to_string())
                 ),
             ]
+            .into_iter()
+            .collect()
+        );
+    }
+
+    /// `:no-typesetting:` registers the object and then throws the whole
+    /// `desc` node away, leaving only an `index` node and a bare target
+    /// (`ObjectDescription.run:299-313`) — so nothing about the object is
+    /// left in the doctree to harvest. Verified against a sphinx 9.1.0
+    /// build of this source, which registers all three.
+    #[test]
+    fn no_typesetting_registers_the_object_it_refuses_to_render() {
+        let (env, warnings) = read(&[(
+            "a",
+            ".. confval:: hidden_setting\n   :no-typesetting:\n\n\
+             .. envvar:: HIDDEN\n   :no-typesetting:\n\n\
+             .. option:: --hidden\n   :no-typesetting:\n",
+        )]);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            env.std.objects,
+            [
+                (
+                    ("confval".to_string(), "hidden_setting".to_string()),
+                    ("a".to_string(), "confval-hidden_setting".to_string())
+                ),
+                (
+                    ("envvar".to_string(), "HIDDEN".to_string()),
+                    ("a".to_string(), "envvar-HIDDEN".to_string())
+                ),
+            ]
+            .into_iter()
+            .collect()
+        );
+        assert_eq!(
+            env.std.progoptions,
+            [(
+                (None, "--hidden".to_string()),
+                ("a".to_string(), "cmdoption-hidden".to_string())
+            )]
             .into_iter()
             .collect()
         );
