@@ -1072,3 +1072,99 @@ fn nitpicky_resolves_real_refs() {
         "resolvable refs must not warn under -n, stderr: {stderr}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// intersphinx (tests/fixtures/intersphinx): a project whose conf.py maps one
+// other project to a *local* inventory file, so the whole feature is
+// exercised end to end without ever touching the network.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn intersphinx_resolves_a_cross_project_ref_and_reports_a_missing_external() {
+    let out = out_dir("intersphinx");
+    let src = fixture("intersphinx");
+    let result = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap()]);
+
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    let stderr = stderr_of(&result);
+
+    // `:ref:`example`` names a label that exists only in the other
+    // project's inventory: resolving it through intersphinx is what stops
+    // the dangling-reference warning.
+    assert!(
+        !stderr.contains("undefined label"),
+        "the cross-project label must resolve, stderr: {stderr}"
+    );
+    // `:external:std:ref:`whatever`` matches nothing anywhere, and reports
+    // it in Sphinx's exact words — `type='ref', subtype=reftype` is what
+    // makes the category `ref.ref`.
+    assert!(
+        stderr.contains(
+            "index.rst:6: WARNING: external std:ref reference target not found: whatever [ref.ref]"
+        ),
+        "stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("build succeeded, 1 warning."),
+        "the external miss is the only warning, stderr: {stderr}"
+    );
+}
+
+#[test]
+fn disabling_the_labels_objtype_takes_the_cross_project_ref_away_again() {
+    // The control for the test above: with `std:label` disabled, the very
+    // same bare `:ref:` stops resolving and the dangling warning comes back
+    // — which is what proves intersphinx (and not something else) resolved
+    // it.
+    let out = out_dir("intersphinx-disabled");
+    let src = fixture("intersphinx");
+    let result = sphinx_build(&[
+        src.to_str().unwrap(),
+        out.to_str().unwrap(),
+        "-D",
+        "intersphinx_disabled_reftypes=std:label",
+    ]);
+
+    let stderr = stderr_of(&result);
+    assert!(
+        stderr.contains("index.rst:4: WARNING: undefined label: 'example' [ref.ref]"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn an_invalid_intersphinx_mapping_exits_two_with_sphinxs_config_error() {
+    // Sphinx raises ConfigError from `validate_intersphinx_mapping`, which
+    // aborts the build; sphinx-build reports an exception with exit code 2.
+    let src = temp_source(
+        "intersphinx-bad-mapping",
+        &[
+            ("index.rst", "Title\n=====\n\nText.\n"),
+            (
+                "conf.py",
+                "project = 'Bad'\nintersphinx_mapping = {'p': 'https://x/'}\n",
+            ),
+        ],
+    );
+    let out = out_dir("intersphinx-bad-mapping");
+    let result = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap()]);
+
+    assert_eq!(
+        result.status.code(),
+        Some(2),
+        "stderr: {}",
+        stderr_of(&result)
+    );
+    let stderr = stderr_of(&result);
+    assert!(
+        stderr.contains("Invalid `intersphinx_mapping` configuration (1 error)."),
+        "stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains(
+            "Invalid value `'https://x/'` in intersphinx_mapping['p']. \
+             Expected a two-element tuple or list."
+        ),
+        "the per-entry error is logged before the abort, stderr: {stderr}"
+    );
+}

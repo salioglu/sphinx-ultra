@@ -19,6 +19,7 @@ use crate::env::std_domain::{node_line, DocumentIds};
 use crate::env::toctree::{docname_join, py_repr_str};
 use crate::env::BuildEnvironment;
 use crate::error::{BuildWarning, WarningType};
+use crate::intersphinx::{self, Diagnostic, HookOutcome, Intersphinx, XrefQuery};
 
 /// One `pending_xref` to resolve — the attributes Sphinx's resolvers read
 /// off the node.
@@ -91,6 +92,11 @@ pub struct Resolver<'a> {
     pub doctree: &'a dyn Fn(&str) -> Option<Cow<'a, Doctree>>,
     /// `builder.get_relative_uri(from, to)`.
     pub relative_uri: &'a dyn Fn(&str, &str) -> String,
+    /// The loaded cross-project inventories. An [`Intersphinx::default`]
+    /// (no mapping configured) makes every hook below inert, which is what
+    /// keeps a project without `intersphinx_mapping` byte-identical to what
+    /// it produced before this existed.
+    pub intersphinx: &'a Intersphinx,
 }
 
 impl Resolver<'_> {
@@ -713,14 +719,59 @@ fn resolve_one(
     let program = attr_str(&node, "std:program")
         .filter(|program| !crate::env::std_domain::is_none_sentinel(program))
         .map(str::to_string);
+    // `node['intersphinx']`: the stamp `:external:` leaves, which sends the
+    // node through `IntersphinxRoleResolver` instead of ordinary resolution.
+    let external = matches!(node.get("intersphinx"), Some(AttrValue::Int(1)));
+    let inventory = attr_str(&node, "inventory").map(str::to_string);
+    let role_error = attr_str(&node, "intersphinx_role_error").map(str::to_string);
     // `contnode = node[0].deepcopy()`.
     let contnode = node.children.into_iter().next();
     let contnode_text = contnode.as_ref().map(Node::astext).unwrap_or_default();
 
+    let query = XrefQuery {
+        refdomain: &refdomain,
+        reftype: &reftype,
+        reftarget: &reftarget,
+        refexplicit,
+        refdoc: &refdoc,
+        contnode_text: &contnode_text,
+    };
+
+    // `:external:` first, exactly like the post-transform that runs one
+    // priority ahead of the reference resolver — except when the inventory
+    // it names is this project, which Sphinx's role never stamps at all.
+    let self_referential = inventory.as_deref().is_some_and(|inventory| {
+        !resolver.intersphinx.resolve_self.is_empty()
+            && resolver.intersphinx.resolve_self == inventory
+    });
+    if external && !self_referential {
+        return resolve_external(
+            resolver,
+            &query,
+            inventory.as_deref(),
+            role_error.as_deref(),
+            contnode,
+            span,
+            line,
+            path,
+            out,
+        );
+    }
+
     // Domains this build cannot resolve are left alone: warning about them
     // would report every python reference in every project as broken. The
-    // count feeds the build's one-line notice.
+    // count feeds the build's one-line notice. Intersphinx still gets a
+    // look first — a python reference into another project's inventory is
+    // exactly what it is for.
     if refdomain != "std" && !refdomain.is_empty() {
+        let mut diagnostics = Vec::new();
+        let outcome = resolver
+            .intersphinx
+            .resolve_detect(&query, &mut diagnostics);
+        report(out, diagnostics, line, path);
+        if let HookOutcome::Resolved(resolution) = outcome {
+            return vec![intersphinx_node(resolution, contnode, span)];
+        }
         out.unresolvable_domain_refs += 1;
         return contnode.into_iter().collect();
     }
@@ -732,7 +783,7 @@ fn resolve_one(
         return contnode.into_iter().collect();
     }
 
-    let outcome = resolver.resolve_xref(&XrefRequest {
+    let req = XrefRequest {
         fromdoc: docname,
         refdoc: &refdoc,
         reftype: &reftype,
@@ -740,7 +791,8 @@ fn resolve_one(
         refexplicit,
         program: program.as_deref(),
         contnode_text: &contnode_text,
-    });
+    };
+    let outcome = resolver.resolve_xref(&req);
 
     match outcome {
         XrefOutcome::Resolved(resolved) => {
@@ -761,6 +813,31 @@ fn resolve_one(
             contnode.into_iter().collect()
         }
         XrefOutcome::Missing => {
+            // The `missing-reference` event, which is where intersphinx
+            // hooks in: after the domain, before the warning.
+            let mut diagnostics = Vec::new();
+            let outcome = resolver
+                .intersphinx
+                .resolve_detect(&query, &mut diagnostics);
+            report(out, diagnostics, line, path);
+            match outcome {
+                HookOutcome::Resolved(resolution) => {
+                    return vec![intersphinx_node(resolution, contnode, span)];
+                }
+                // The target named this project: retry the local domain
+                // with the prefix stripped. The warning below still reports
+                // the target as written, because Sphinx never rewrote it.
+                HookOutcome::SelfReferential(stripped) => {
+                    let retry = resolver.resolve_xref(&XrefRequest {
+                        reftarget: &stripped,
+                        ..req
+                    });
+                    if let XrefOutcome::Resolved(resolved) = retry {
+                        return vec![reference_node(resolved, contnode, span)];
+                    }
+                }
+                HookOutcome::Missing => {}
+            }
             if let Some(message) =
                 missing_reference_warning(resolver.env, nitpick, &reftype, &reftarget, refwarn)
             {
@@ -778,6 +855,117 @@ fn resolve_one(
             contnode.into_iter().collect()
         }
     }
+}
+
+/// `IntersphinxRoleResolver.run` (`ext/intersphinx/_resolve.py:543-565`),
+/// plus the two checks Sphinx's `:external:` role makes at parse time and
+/// this port defers to here (see
+/// [`crate::rst::inline`]'s `emit_external_xref`): the inventory-existence
+/// test comes first, then the role-name failure.
+#[allow(clippy::too_many_arguments)]
+fn resolve_external(
+    resolver: &Resolver<'_>,
+    query: &XrefQuery<'_>,
+    inventory: Option<&str>,
+    role_error: Option<&str>,
+    contnode: Option<Node>,
+    span: crate::doctree::Span,
+    line: usize,
+    path: &Path,
+    out: &mut DocumentResolution,
+) -> Vec<Node> {
+    if let Some(inventory) = inventory {
+        if let Some(diagnostic) =
+            intersphinx::external_inventory_missing(resolver.intersphinx, inventory)
+        {
+            report(out, vec![diagnostic], line, path);
+            // Sphinx's role returns `([], [])`: no reference, and no
+            // content either.
+            return Vec::new();
+        }
+    }
+    if let Some(message) = role_error {
+        report(
+            out,
+            vec![Diagnostic {
+                message: message.to_string(),
+                category: Some("intersphinx.external".to_string()),
+            }],
+            line,
+            path,
+        );
+        return Vec::new();
+    }
+
+    let mut diagnostics = Vec::new();
+    let resolution = match inventory {
+        Some(inventory) => {
+            resolver
+                .intersphinx
+                .resolve_in_inventory(inventory, query, &mut diagnostics)
+        }
+        // `resolve_reference_any_inventory(env, False, ...)`: an
+        // `:external:` reference never honours the disabled reftypes.
+        None => resolver
+            .intersphinx
+            .resolve_any(false, query, &mut diagnostics),
+    };
+    report(out, diagnostics, line, path);
+
+    match resolution {
+        Some(resolution) => vec![intersphinx_node(resolution, contnode, span)],
+        None => {
+            report(
+                out,
+                vec![intersphinx::external_not_found(query)],
+                line,
+                path,
+            );
+            contnode.into_iter().collect()
+        }
+    }
+}
+
+/// Turn intersphinx diagnostics into build warnings at the reference's line.
+fn report(out: &mut DocumentResolution, diagnostics: Vec<Diagnostic>, line: usize, path: &Path) {
+    for diagnostic in diagnostics {
+        out.warnings.push(
+            BuildWarning::new(
+                path.to_path_buf(),
+                Some(line),
+                diagnostic.message,
+                WarningType::BrokenCrossReference,
+            )
+            .with_category(diagnostic.category),
+        );
+    }
+}
+
+/// `_create_element_from_result`'s node (`_resolve.py:71-77`): an *external*
+/// reference carrying the inventory's hover title, whose child is either the
+/// content node as parsed or a fresh one of the same kind holding the
+/// inventory's display name.
+fn intersphinx_node(
+    resolution: crate::intersphinx::Resolution,
+    contnode: Option<Node>,
+    span: crate::doctree::Span,
+) -> Node {
+    let mut node = Node::elem(kinds::REFERENCE, span);
+    node.set("internal", AttrValue::Int(0));
+    node.set("refuri", AttrValue::Str(resolution.refuri));
+    node.set("reftitle", AttrValue::Str(resolution.reftitle));
+    match resolution.title {
+        // `contnode.__class__(title, title)` — the same node kind, with the
+        // new text and none of the original's classes.
+        Some(title) => {
+            let kind = contnode.as_ref().map_or(kinds::LITERAL, |node| node.kind);
+            let mut inner = Node::elem(kind, span);
+            inner.children.push(Node::text_node(title, span));
+            node.children.push(inner);
+        }
+        None => node.children.extend(contnode),
+    }
+    node
 }
 
 /// `ReferencesResolver.warn_missing_reference` (`:255-298`) plus the std
@@ -889,8 +1077,25 @@ fn reference_node(
 }
 
 #[cfg(test)]
+mod intersphinx_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    /// No `intersphinx_mapping`: every hook is a no-op, which is the state
+    /// every one of these tests (and every environment-oracle project) is
+    /// in.
+    static INERT: Intersphinx = Intersphinx {
+        data: crate::intersphinx::IntersphinxData {
+            main: crate::inventory::Inventory {
+                data: BTreeMap::new(),
+            },
+            named: BTreeMap::new(),
+        },
+        disabled_reftypes: std::collections::BTreeSet::new(),
+        resolve_self: String::new(),
+    };
 
     fn env_with_label() -> BuildEnvironment {
         let mut env = BuildEnvironment::default();
@@ -921,6 +1126,7 @@ mod tests {
             numfig_format,
             doctree: &|_| None,
             relative_uri: &|_, _| String::new(),
+            intersphinx: &INERT,
         }
     }
 
@@ -1144,6 +1350,7 @@ mod tests {
             numfig_format: &formats,
             doctree: &|_| Some(Cow::Borrowed(&doctree)),
             relative_uri: &|_, _| String::new(),
+            intersphinx: &INERT,
         };
 
         assert_eq!(
@@ -1195,6 +1402,7 @@ mod tests {
             numfig_format: &formats,
             doctree: &|_| Some(Cow::Borrowed(&doctree)),
             relative_uri: &|_, _| String::new(),
+            intersphinx: &INERT,
         };
 
         assert_eq!(
@@ -1239,6 +1447,7 @@ mod tests {
             numfig_format: &formats,
             doctree: &|_| Some(Cow::Borrowed(&doctree)),
             relative_uri: &|_, _| String::new(),
+            intersphinx: &INERT,
         };
 
         assert_eq!(

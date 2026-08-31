@@ -21,6 +21,7 @@ use crate::env::toctree::{ConsistencyLevel, ToctreeWarningKind};
 use crate::env::BuildEnvironment;
 use crate::error::{BuildErrorReport, BuildWarning, ErrorType, WarningType};
 use crate::extensions::{ExtensionLoader, SphinxApp};
+use crate::intersphinx::{self, HttpConfig, Intersphinx, LoadRequest, UreqFetcher};
 use crate::matching;
 use crate::parser::Parser;
 use crate::utils;
@@ -100,6 +101,9 @@ pub struct SphinxBuilder {
     /// output derived from the environment plus the builder's own uri
     /// scheme, not environment state.
     genindex: Mutex<Vec<env_genindex::IndexGroup>>,
+    /// The cross-project inventories `intersphinx_mapping` names, loaded
+    /// once per build. Empty (and inert) unless a mapping is configured.
+    intersphinx: Intersphinx,
 }
 
 impl SphinxBuilder {
@@ -173,7 +177,67 @@ impl SphinxBuilder {
             env,
             resolved: Mutex::new(BTreeMap::new()),
             genindex: Mutex::new(Vec::new()),
+            intersphinx: Intersphinx::default(),
         })
+    }
+
+    /// Read every inventory `intersphinx_mapping` names — Sphinx's
+    /// `load_mappings`, which it runs at `builder-inited`, before the read
+    /// phase (`ext/intersphinx/__init__.py:80`).
+    ///
+    /// Local inventory locations are resolved against the source directory
+    /// and re-read on every build; remote ones go through [`UreqFetcher`]
+    /// and are cached under the (fingerprint-wiped) cache directory, so a
+    /// configuration change discards them along with everything else.
+    fn load_intersphinx_inventories(&mut self) {
+        if self.config.intersphinx_mapping.is_empty() {
+            return;
+        }
+        let http = HttpConfig {
+            tls_verify: self.config.tls_verify,
+            tls_cacerts: self.config.tls_cacerts.clone(),
+            user_agent: self.config.user_agent.clone(),
+            timeout: self.config.intersphinx_timeout,
+        };
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|since| since.as_secs() as i64)
+            .unwrap_or(0);
+        let outcome = intersphinx::load_mappings(
+            &LoadRequest {
+                mapping: &self.config.intersphinx_mapping,
+                srcdir: &self.source_dir,
+                cache_dir: Some(self.cache.cache_dir().join(intersphinx::CACHE_DIR_NAME)),
+                cache_limit: self.config.intersphinx_cache_limit,
+                now,
+                http: &http,
+            },
+            &UreqFetcher,
+        );
+        for message in outcome.infos {
+            info!("{message}");
+        }
+        for message in outcome.warnings {
+            // Sphinx logs these without a location and without a type, so
+            // they render as a bare `WARNING: ...` — but they still count
+            // toward the build's warning total and toward `-W`.
+            self.add_warning(BuildWarning::new(
+                PathBuf::new(),
+                None,
+                message,
+                WarningType::Other,
+            ));
+        }
+        self.intersphinx = Intersphinx {
+            data: outcome.data,
+            disabled_reftypes: self
+                .config
+                .intersphinx_disabled_reftypes
+                .iter()
+                .cloned()
+                .collect(),
+            resolve_self: self.config.intersphinx_resolve_self.clone(),
+        };
     }
 
     pub fn set_parallel_jobs(&mut self, jobs: usize) {
@@ -250,6 +314,8 @@ impl SphinxBuilder {
             "Built dependency graph with {} nodes",
             dependency_graph.len()
         );
+
+        self.load_intersphinx_inventories();
 
         let mut read_results = self.read_phase(&source_files, &dependency_graph)?;
 
@@ -808,6 +874,7 @@ impl SphinxBuilder {
             numfig_format: &self.config.numfig_format,
             doctree: &load_doctree,
             relative_uri: &relative_uri,
+            intersphinx: &self.intersphinx,
         };
         let nitpick = env_resolve::NitpickConfig {
             nitpicky: self.config.nitpicky,

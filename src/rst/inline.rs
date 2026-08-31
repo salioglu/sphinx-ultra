@@ -876,7 +876,6 @@ impl<'a> Inliner<'a> {
     /// {domain} {domain}-{type}"` child. Role→domain mapping covers the
     /// std and py domains; explicit `domain:role` names pass through.
     fn emit_sphinx_xref(&mut self, lower: &str, raw: &str) {
-        let text = unescape(raw, false);
         let (domain, reftype) = match lower.rsplit_once(':') {
             Some((d, t)) => (d.to_string(), t.to_string()),
             None => {
@@ -890,6 +889,56 @@ impl<'a> Inliner<'a> {
                 (d.to_string(), lower.to_string())
             }
         };
+        self.emit_xref_node(&domain, &reftype, raw, None);
+    }
+
+    /// The `:external:`/`:external+inv:` roles, which
+    /// `IntersphinxDispatcher` claims *before* docutils' own role lookup
+    /// (`ext/intersphinx/_resolve.py:350-366`) — and therefore before the
+    /// generic `domain:role` split above, which would otherwise read
+    /// `external:py:func` as domain `external:py`.
+    ///
+    /// The name is the one the author wrote, not the lowercased one: the
+    /// inventory name inside it is case-sensitive
+    /// (`IntersphinxRole.orig_name`).
+    ///
+    /// A name that does not name a usable role produces no content at all in
+    /// Sphinx, and a warning located at the role. Here the warning text is
+    /// parked on a marker node instead: the parse layer knows the role
+    /// grammar but not which inventories loaded, and Sphinx checks the
+    /// inventory *first* — so deferring the whole report to resolution is
+    /// what keeps the precedence between the two right.
+    fn emit_external_xref(&mut self, given_name: &str, raw: &str) {
+        match crate::intersphinx::external_role(given_name) {
+            crate::intersphinx::ExternalRole::Xref {
+                inventory,
+                domain,
+                role,
+            } => self.emit_xref_node(&domain, &role, raw, Some(inventory)),
+            crate::intersphinx::ExternalRole::Failed(diagnostic) => {
+                self.flush_text();
+                let mut node = Node::elem("pending_xref", self.span);
+                node.set("refdoc", AttrValue::Str(self.docname.to_string()));
+                node.set("intersphinx", AttrValue::Int(1));
+                node.set("intersphinx_role_error", AttrValue::Str(diagnostic.message));
+                self.nodes.push(node);
+            }
+        }
+    }
+
+    /// The body of [`Self::emit_sphinx_xref`], with the domain and role
+    /// already decided. `external` is `Some(inventory)` for a node the
+    /// `:external:` role produced — `Some(None)` when that role named no
+    /// inventory.
+    fn emit_xref_node(
+        &mut self,
+        domain: &str,
+        reftype: &str,
+        raw: &str,
+        external: Option<Option<String>>,
+    ) {
+        let text = unescape(raw, false);
+        let (domain, reftype) = (domain.to_string(), reftype.to_string());
         // `Title <target>` explicit form.
         let (target, display, explicit) = match (text.rfind('<'), text.ends_with('>')) {
             (Some(lt), true) => (
@@ -931,6 +980,15 @@ impl<'a> Inliner<'a> {
         }
         node.set("refdoc", AttrValue::Str(self.docname.to_string()));
         node.set("refdomain", AttrValue::Str(domain.clone()));
+        // `node['intersphinx'] = True; node['inventory'] = inv_name`
+        // (`_resolve.py:474-483`) — the stamp that sends this node through
+        // `IntersphinxRoleResolver` instead of ordinary domain resolution.
+        if let Some(inventory) = external {
+            node.set("intersphinx", AttrValue::Int(1));
+            if let Some(inventory) = inventory {
+                node.set("inventory", AttrValue::Str(inventory));
+            }
+        }
         node.set("refexplicit", AttrValue::Int(i64::from(explicit)));
         node.set("reftarget", AttrValue::Str(target));
         node.set("reftype", AttrValue::Str(reftype.clone()));
@@ -1082,6 +1140,10 @@ impl<'a> Inliner<'a> {
             "substitution-reference" => "substitution-reference",
             "target" => "target",
             "uri-reference" | "uri" | "url" => "uri-reference",
+            _ if self.sphinx && crate::intersphinx::is_external_role(given_name) => {
+                self.emit_external_xref(given_name, raw);
+                return;
+            }
             _ if self.sphinx && matches!(lower.as_str(), "cve" | "cwe") => {
                 self.emit_sphinx_extlink(&lower, raw);
                 return;
@@ -1751,5 +1813,108 @@ mod tests {
         let (nodes, _) = pi("\\*not markup\\*");
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].text.as_deref(), Some("*not markup*"));
+    }
+
+    /// Sphinx-mode inline parse, for the roles that only exist there.
+    fn sphinx_nodes(text: &str) -> Vec<Node> {
+        let mut reg = IdRegistry::new();
+        parse_inline_ext(
+            text,
+            Span::ZERO,
+            1,
+            &mut reg,
+            "<snippet>",
+            true,
+            "index",
+            None,
+        )
+        .nodes
+    }
+
+    fn attr<'a>(node: &'a Node, key: &'static str) -> Option<&'a AttrValue> {
+        node.get(key)
+    }
+
+    /// `:external:py:func:` must not be split by the generic
+    /// `rsplit_once(':')` domain rule, which would read it as domain
+    /// `external:py` and role `func`.
+    #[test]
+    fn an_external_role_is_intercepted_before_the_generic_domain_split() {
+        let nodes = sphinx_nodes(":external:py:func:`os.path.join`");
+        assert_eq!(nodes.len(), 1);
+        let xref = &nodes[0];
+        assert_eq!(xref.kind, "pending_xref");
+        assert_eq!(attr(xref, "refdomain"), Some(&AttrValue::Str("py".into())));
+        assert_eq!(attr(xref, "reftype"), Some(&AttrValue::Str("func".into())));
+        assert_eq!(
+            attr(xref, "reftarget"),
+            Some(&AttrValue::Str("os.path.join".into()))
+        );
+        assert_eq!(
+            attr(xref, "intersphinx"),
+            Some(&AttrValue::Int(1)),
+            "the node must be stamped so the resolver treats it as external"
+        );
+        assert_eq!(
+            attr(xref, "inventory"),
+            None,
+            "`external:` names no inventory"
+        );
+    }
+
+    #[test]
+    fn an_external_role_can_name_its_inventory_and_omit_the_domain() {
+        let nodes = sphinx_nodes(":external+other:ref:`some-label`");
+        let xref = &nodes[0];
+        assert_eq!(xref.kind, "pending_xref");
+        assert_eq!(attr(xref, "refdomain"), Some(&AttrValue::Str("std".into())));
+        assert_eq!(attr(xref, "reftype"), Some(&AttrValue::Str("ref".into())));
+        assert_eq!(
+            attr(xref, "inventory"),
+            Some(&AttrValue::Str("other".into())),
+            "the inventory name keeps its case"
+        );
+    }
+
+    /// Sphinx's role emits no nodes at all for a name it cannot use; the
+    /// warning is carried on a marker the resolver reports and drops, since
+    /// only the resolver knows where the document was and what loaded.
+    #[test]
+    fn a_malformed_external_role_carries_its_warning_to_resolution() {
+        for (text, expected) in [
+            (
+                ":external:a:b:c:`x`",
+                "invalid external cross-reference suffix: 'a:b:c'",
+            ),
+            (
+                ":external:py:function:`x`",
+                "role for external cross-reference not found in domain 'py': 'function' \
+                 (perhaps you meant one of: 'func', 'obj')",
+            ),
+        ] {
+            let nodes = sphinx_nodes(text);
+            assert_eq!(nodes.len(), 1, "{text}");
+            assert_eq!(
+                attr(&nodes[0], "intersphinx_role_error"),
+                Some(&AttrValue::Str(expected.to_string())),
+                "{text}"
+            );
+            assert!(
+                nodes[0].children.is_empty(),
+                "a failed role contributes no content: {text}"
+            );
+        }
+    }
+
+    /// The interception is by name, so an ordinary role whose name merely
+    /// starts with the same letters is untouched.
+    #[test]
+    fn a_role_named_like_external_is_still_an_ordinary_xref() {
+        let nodes = sphinx_nodes(":externally:`x`");
+        assert_eq!(
+            attr(&nodes[0], "reftype"),
+            Some(&AttrValue::Str("externally".into()))
+        );
+        assert_eq!(attr(&nodes[0], "intersphinx"), None);
     }
 }

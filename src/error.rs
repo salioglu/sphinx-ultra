@@ -126,13 +126,21 @@ impl BuildWarning {
     /// One renderer for every sink (stderr, `-w` warning file, the
     /// environment-oracle differential) so a message can only ever be
     /// formatted one way.
+    ///
+    /// An empty `file` is a warning Sphinx logs with no `location` at all
+    /// (the intersphinx "failed to reach any of the inventories" report, for
+    /// one): those print as a bare `WARNING: ...`, with no location prefix
+    /// and no stray colon.
     pub fn render(&self) -> String {
-        let line = match self.line {
-            Some(line) => format!(":{line}"),
-            None => String::new(),
-        };
         let category = match &self.category {
             Some(category) => format!(" [{category}]"),
+            None => String::new(),
+        };
+        if self.file.as_os_str().is_empty() {
+            return format!("WARNING: {}{category}", self.message);
+        }
+        let line = match self.line {
+            Some(line) => format!(":{line}"),
             None => String::new(),
         };
         format!(
