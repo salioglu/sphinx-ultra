@@ -745,6 +745,25 @@ mod tests {
     }
 
     #[test]
+    fn a_term_defined_twice_warns_naming_the_other_document() {
+        let glossary = "A\n=\n\n.. glossary::\n\n   environment\n      A thing.\n";
+        let (env, warnings) = read(&[("a", glossary), ("b", glossary)]);
+
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert_eq!(
+            warnings[0].render(),
+            "/src/b.rst:4: WARNING: duplicate term description of environment, \
+             other instance in a",
+            "an object duplicate names the other *docname*, not its path — \
+             and offers no `:no-index:` hint, unlike the py domain's"
+        );
+        assert_eq!(
+            env.std.terms["environment"],
+            ("b".to_string(), "term-environment".to_string())
+        );
+    }
+
+    #[test]
     fn a_label_pointing_at_a_link_target_is_skipped() {
         // `.. _elsewhere: https://example.com/` — an external target, which
         // Sphinx skips ("labels automatically generated from a link").

@@ -1152,6 +1152,43 @@ mod tests {
         );
     }
 
+    /// A label on a real figure that numbering never reached — an orphaned
+    /// document's, say — is `get_fignumber`'s `ValueError`.
+    #[test]
+    fn a_numref_target_with_no_number_names_the_label_it_could_not_number() {
+        let mut env = BuildEnvironment::default();
+        env.std.labels.insert(
+            "fig-a".to_string(),
+            ("a".to_string(), "fig-a".to_string(), "A Figure".to_string()),
+        );
+        let mut figure = Node::elem("figure", crate::doctree::Span::ZERO);
+        figure.attrs.ids.push("fig-a".to_string());
+        let mut root = Node::elem(kinds::DOCUMENT, crate::doctree::Span::ZERO);
+        root.children.push(figure);
+        let doctree = Doctree {
+            root,
+            sources: vec!["<test>".to_string()],
+        };
+        let formats = BTreeMap::from([("figure".to_string(), "Fig. %s".to_string())]);
+        let resolver = Resolver {
+            env: &env,
+            numfig: true,
+            numfig_format: &formats,
+            doctree: &|_| Some(Cow::Borrowed(&doctree)),
+            relative_uri: &|_, _| String::new(),
+        };
+
+        assert_eq!(
+            resolver.resolve_xref(&request("b", "numref", "fig-a")),
+            XrefOutcome::Kept {
+                warning: Some(
+                    "Failed to create a cross reference. Any number is not assigned: fig-a"
+                        .to_string()
+                )
+            }
+        );
+    }
+
     #[test]
     fn numref_renders_both_format_styles_and_reports_broken_ones() {
         assert_eq!(format_old_style("Fig. %s", "1.2").unwrap(), "Fig. 1.2");
