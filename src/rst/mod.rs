@@ -102,12 +102,37 @@ pub struct ToctreeEntryRecord {
     pub line: u32,
 }
 
-/// Snapshot of the parser's id/name registry (docutils `document.nameids`),
-/// harvested from [`crate::doctree::ids::IdRegistry`] right before it drops
-/// at the end of the parse. Downstream consumers — e.g. wave 4's std-domain
-/// label harvest — need name -> (id, explicit) data the registry itself
-/// doesn't survive to hand out. Intended to eventually ride the document
-/// cache, so it stays serde-serializable and cheap to clone.
+/// One `Cmdoption.add_target_and_index` call the parse layer made
+/// (`sphinx/domains/std/__init__.py:308-315`).
+///
+/// This is the single registration the env layer cannot replay from the
+/// finished doctree: the program an option belongs to comes from
+/// `env.ref_context['std:program']`, which Sphinx reads while the directive
+/// runs and stamps on **no** node — `desc`/`desc_signature` carry the
+/// derived ids and the option spellings, but not the program. Deriving it
+/// back out of `cmdoption-<program>-<name>` is not sound (the id goes
+/// through `make_id`, and collides fall back to a serial), so the parse
+/// layer records the call instead.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ProgramOptionRecord {
+    /// The `.. program::` in scope, `None` outside one.
+    pub program: Option<String>,
+    /// One `desc_signature['allnames']` spelling (`--file`, `-f`, ...).
+    pub name: String,
+    /// `signode['ids'][0]` — the *first* id of the signature, which is what
+    /// Sphinx registers for every spelling in it.
+    pub node_id: String,
+}
+
+/// What the parse layer hands the environment besides the doctree itself:
+/// state that lives in the parser (the docutils id/name registry, Sphinx's
+/// `env.ref_context`) and dies with it, but that env collectors need.
+///
+/// Named for its original single job — the `document.nameids` snapshot
+/// harvested from [`crate::doctree::ids::IdRegistry`] right before it drops,
+/// which wave 4's std-domain label harvest reads. Intended to eventually
+/// ride the document cache, so it stays serde-serializable and cheap to
+/// clone.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct RegistryExport {
     /// `(name, id, explicit)`, one entry per registered name. `id` is
@@ -116,6 +141,10 @@ pub struct RegistryExport {
     /// sphinx `env.new_serialno('index')` counter value at the end of the
     /// parse (shared by the index directive and index-entry-emitting roles).
     pub index_serial: u32,
+    /// `.. option::` registrations in document order — see
+    /// [`ProgramOptionRecord`].
+    #[serde(default)]
+    pub program_options: Vec<ProgramOptionRecord>,
 }
 
 /// Everything a parse produces: the doctree plus the flat records the

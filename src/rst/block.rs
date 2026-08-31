@@ -151,6 +151,9 @@ pub(crate) struct BlockParser<'a> {
     /// `.. highlight::` state consumed by later code-blocks in the same
     /// document (sphinx env.temp_data\['highlight_language'\]).
     highlight_language: Option<String>,
+    /// `.. program::` state consumed by later `.. option::` directives in
+    /// the same document (sphinx `env.ref_context['std:program']`).
+    program: Option<String>,
     /// Sphinx-mode class/rst-class pending classes (the ClassAttribute
     /// transform effect applied inline).
     pending_classes: Option<Vec<String>>,
@@ -160,6 +163,11 @@ pub(crate) struct BlockParser<'a> {
     directive_records: Vec<super::DirectiveRecord>,
     role_records: Vec<super::RoleRecord>,
     toctree_records: Vec<super::ToctreeRecord>,
+    /// `.. option::` registrations, in document order — the one piece of
+    /// `Cmdoption.add_target_and_index` the finished `desc` anatomy cannot
+    /// carry, because the program in scope comes from `env.ref_context` and
+    /// is stamped on no node (see [`super::ProgramOptionRecord`]).
+    program_option_records: Vec<super::ProgramOptionRecord>,
     /// Set while running a substitution-embedded directive (docutils
     /// SubstitutionDef state): replace/unicode/date require it, image
     /// flips its align validation, unicode's trim flags land here.
@@ -199,11 +207,13 @@ impl<'a> BlockParser<'a> {
             found_docs: None,
             exclude_patterns: Vec::new(),
             highlight_language: None,
+            program: None,
             pending_classes: None,
             equation_serial: 0,
             directive_records: Vec::new(),
             role_records: Vec::new(),
             toctree_records: Vec::new(),
+            program_option_records: Vec::new(),
             substitution_ctx: None,
             substitution_names_seen: Vec::new(),
             substitution_dupnames: Vec::new(),
@@ -219,6 +229,7 @@ impl<'a> BlockParser<'a> {
         let registry = super::RegistryExport {
             nameids: self.registry.nameids_snapshot(),
             index_serial: self.registry.index_serial(),
+            program_options: std::mem::take(&mut self.program_option_records),
         };
         super::ParseOutput {
             doctree: crate::doctree::Doctree {
@@ -347,12 +358,15 @@ impl<'a> BlockParser<'a> {
         sub.found_docs = self.found_docs.clone();
         sub.exclude_patterns = self.exclude_patterns.clone();
         sub.highlight_language = self.highlight_language.clone();
+        sub.program = self.program.clone();
         let top = std::mem::take(&mut sub.top);
         let nodes = sub.parse_elements(&top);
         self.registry = sub.registry;
         self.directive_records.append(&mut sub.directive_records);
         self.role_records.append(&mut sub.role_records);
         self.toctree_records.append(&mut sub.toctree_records);
+        self.program_option_records
+            .append(&mut sub.program_option_records);
         nodes
     }
 
@@ -2895,6 +2909,26 @@ impl<'a> BlockParser<'a> {
             DirectiveKind::IndexDir => self.run_index(input, out),
             DirectiveKind::HList => self.run_hlist(input, out),
             DirectiveKind::Glossary => self.run_glossary(input, out),
+            DirectiveKind::ObjectDesc(kind) => self.run_object_description(kind, input, out),
+            DirectiveKind::ProgramDir => self.run_program(input),
+            // `DefaultDomain.run` sets `env.current_document.default_domain`
+            // and returns []. This crate implements no domain whose
+            // directives/roles the default would route to (the std domain is
+            // always consulted last anyway), so the state has nothing to
+            // steer — the node-level effect, an empty return, is all of it.
+            DirectiveKind::DefaultDomainDir => {}
+        }
+    }
+
+    /// `.. program::` (`domains/std/__init__.py:333-348`): pure
+    /// `env.ref_context` state, no nodes. The literal argument `None` pops
+    /// the scope rather than naming a program called "None".
+    fn run_program(&mut self, input: DirectiveInput<'a, '_>) {
+        let program = ws_collapse(input.arguments[0].trim(), "-");
+        if program == "None" {
+            self.program = None;
+        } else {
+            self.program = Some(program);
         }
     }
 
@@ -3116,6 +3150,331 @@ impl<'a> BlockParser<'a> {
         }
         glossary.children.push(dl);
         out.push(glossary);
+    }
+
+    /// sphinx `ObjectDescription.run` (`directives/__init__.py:183-314`):
+    /// the `index` + `desc` anatomy every object-describing directive
+    /// shares, with each subclass's `handle_signature` /
+    /// `add_target_and_index` / `transform_content` inlined by
+    /// [`ObjectDescKind`].
+    fn run_object_description(
+        &mut self,
+        kind: ObjectDescKind,
+        input: DirectiveInput<'a, '_>,
+        out: &mut Vec<Node>,
+    ) {
+        let Some(argument) = input.arguments.first() else {
+            return;
+        };
+        // `self.name` is the directive name as written for the bare
+        // docutils registration, but `'{domain}:{name}'` for a domain
+        // directive (`Domain.directive`'s adapter, `domains/__init__.py`),
+        // which is why `describe` reports `domain=""` and `option` reports
+        // `domain="std"` / `objtype="option"`.
+        let (domain, objtype) = match kind {
+            ObjectDescKind::Describe => ("", input.name.to_string()),
+            _ => ("std", input.name.to_lowercase()),
+        };
+        let span = input.span;
+
+        // Deprecated-alias merge (`:226-241`): the old spelling feeds the
+        // new one, and BOTH attributes end up carrying the merged value.
+        let has = |name: &'static str| opt_get(&input.options, name).is_some();
+        let no_index = has("no-index") || has("noindex");
+        let no_index_entry = has("no-index-entry") || has("noindexentry");
+        let no_contents_entry = has("no-contents-entry") || has("nocontentsentry");
+        let no_typesetting = has("no-typesetting");
+
+        let mut desc = Node::elem("desc", span);
+        desc.set("domain", AttrValue::Str(domain.to_string()));
+        desc.set("objtype", AttrValue::Str(objtype.clone()));
+        // 'desctype' is sphinx's backwards-compatible alias of 'objtype'.
+        desc.set("desctype", AttrValue::Str(objtype.clone()));
+        desc.set("no-index", AttrValue::Int(i64::from(no_index)));
+        desc.set("noindex", AttrValue::Int(i64::from(no_index)));
+        desc.set("no-index-entry", AttrValue::Int(i64::from(no_index_entry)));
+        desc.set("noindexentry", AttrValue::Int(i64::from(no_index_entry)));
+        desc.set(
+            "no-contents-entry",
+            AttrValue::Int(i64::from(no_contents_entry)),
+        );
+        desc.set(
+            "nocontentsentry",
+            AttrValue::Int(i64::from(no_contents_entry)),
+        );
+        desc.set("no-typesetting", AttrValue::Int(i64::from(no_typesetting)));
+        if !domain.is_empty() {
+            desc.attrs.classes.push(domain.to_string());
+        }
+        desc.attrs.classes.push(objtype.clone());
+
+        let mut index_entries: Vec<String> = Vec::new();
+        let mut names: Vec<String> = Vec::new();
+        for sig in object_signatures(argument) {
+            let mut signode = Node::elem("desc_signature", span);
+            signode
+                .attrs
+                .classes
+                .extend(["sig".to_string(), "sig-object".to_string()]);
+            let name = self.handle_object_signature(kind, &sig, &mut signode);
+            // `_toc_parts`/`_toc_name` are assigned in a `finally` (`:264-272`),
+            // so the ValueError path carries them too. Only
+            // `ConfigurationValue` overrides the two empty defaults.
+            let (toc_parts, toc_name) = match (kind, &name) {
+                (ObjectDescKind::Confval, Some(n)) => {
+                    (format!("({},)", py_repr(Some(n))), n.clone())
+                }
+                _ => ("()".to_string(), String::new()),
+            };
+            signode.set("_toc_parts", AttrValue::Str(toc_parts));
+            signode.set("_toc_name", AttrValue::Str(toc_name));
+            // "only add target and index entry if this is the first
+            // description of the object with this name in this desc block".
+            if let Some(name) = name {
+                if !names.contains(&name) {
+                    names.push(name.clone());
+                    if !no_index {
+                        self.object_target_and_index(
+                            kind,
+                            &objtype,
+                            &name,
+                            &mut signode,
+                            &mut index_entries,
+                        );
+                    }
+                }
+            }
+            desc.children.push(signode);
+        }
+
+        let mut content = Node::elem("desc_content", span);
+        content.children = self.parse_nested(&input.content, "desc_content");
+        if kind == ObjectDescKind::Confval {
+            self.confval_transform_content(&input, &mut content);
+        }
+        desc.children.push(content);
+
+        let mut index = Node::elem("index", span);
+        index.set("entries", AttrValue::Str(index_entries.join(" ")));
+        out.push(index);
+
+        if no_typesetting {
+            // `:299-313`: the description is replaced by a bare target
+            // carrying every id it and its children had — and dropped
+            // entirely when there are none (docutils rejects an id-less
+            // target).
+            let mut ids = Vec::new();
+            collect_element_ids(&desc, &mut ids);
+            if !ids.is_empty() {
+                let mut target = Node::elem(kinds::TARGET, span);
+                target.attrs.ids = ids;
+                out.push(target);
+            }
+            return;
+        }
+        out.push(desc);
+    }
+
+    /// The per-subclass `handle_signature`. Returns the object name, or
+    /// `None` for the ValueError path — where `run` clears the signature
+    /// node and drops the whole signature into one `desc_name` (`:259-263`),
+    /// which each arm does itself.
+    fn handle_object_signature(
+        &mut self,
+        kind: ObjectDescKind,
+        sig: &str,
+        signode: &mut Node,
+    ) -> Option<String> {
+        let span = signode.span;
+        match kind {
+            // The base `handle_signature` raises unconditionally (`:100-111`).
+            ObjectDescKind::Describe => {
+                signode.children.clear();
+                signode.children.push(desc_name_node(sig, span));
+                None
+            }
+            // `GenericObject.handle_signature` (`domains/std:56-64`).
+            ObjectDescKind::EnvVar => {
+                signode.children.clear();
+                signode.children.push(desc_name_node(sig, span));
+                Some(ws_collapse(sig, " "))
+            }
+            // `ConfigurationValue.handle_signature` (`domains/std:126-131`).
+            ObjectDescKind::Confval => {
+                signode.children.clear();
+                signode.children.push(desc_name_node(sig, span));
+                let name = ws_collapse(sig, " ");
+                signode.set("fullname", AttrValue::Str(name.clone()));
+                Some(name)
+            }
+            ObjectDescKind::Cmdoption => self.handle_option_signature(sig, signode),
+        }
+    }
+
+    /// `Cmdoption.handle_signature` (`domains/std/__init__.py:229-290`) with
+    /// `option_emphasise_placeholders` at its default False, which is the
+    /// plain `desc_name` + `desc_addname` pair per spelling.
+    fn handle_option_signature(&mut self, sig: &str, signode: &mut Node) -> Option<String> {
+        let span = signode.span;
+        let mut firstname: Option<String> = None;
+        let mut allnames: Vec<String> = Vec::new();
+        for potential in sig.split(", ") {
+            let Some((optname, args)) = option_desc_match(potential.trim()) else {
+                // `logger.warning('Malformed option description %r, should
+                // look like "opt", "-opt args", ...')` goes to the warning
+                // stream, which the parse layer has no sink for; the tree
+                // effect is that this spelling contributes nothing.
+                continue;
+            };
+            // "optional value surrounded by brackets (ex. foo[=bar])".
+            let (optname, args) = match (optname.strip_suffix('['), args.strip_suffix(']')) {
+                (Some(trimmed), Some(_)) => (trimmed.to_string(), format!("[{args}")),
+                _ => (optname, args),
+            };
+            if firstname.is_some() {
+                signode.children.push(desc_addname_node(", ", span));
+            }
+            signode.children.push(desc_name_node(&optname, span));
+            signode.children.push(desc_addname_node(&args, span));
+            firstname.get_or_insert_with(|| optname.clone());
+            allnames.push(optname);
+        }
+        let firstname = match firstname {
+            Some(name) => name,
+            None => {
+                signode.children.clear();
+                signode.children.push(desc_name_node(sig, span));
+                return None;
+            }
+        };
+        signode.set("allnames", AttrValue::List(allnames));
+        Some(firstname)
+    }
+
+    /// The per-subclass `add_target_and_index`: node ids through sphinx's
+    /// `make_id`, the index entries, and (for options) the program-scoped
+    /// registration the env layer replays.
+    fn object_target_and_index(
+        &mut self,
+        kind: ObjectDescKind,
+        objtype: &str,
+        name: &str,
+        signode: &mut Node,
+        entries: &mut Vec<String>,
+    ) {
+        match kind {
+            // `ObjectDescription.add_target_and_index` is `pass` (`:113-120`)
+            // — no id, no index entry, no std object. (Unreachable in
+            // practice: `Describe`'s handle_signature never returns a name.)
+            ObjectDescKind::Describe => {}
+            // `GenericObject.add_target_and_index` (`domains/std:66-84`).
+            // `EnvVar.indextemplate` has no ':' separator, so the whole
+            // template is a 'single' entry value.
+            ObjectDescKind::EnvVar => {
+                let node_id = self.note_object_id(objtype, name, signode);
+                entries.push(index_entry_tuple(
+                    "single",
+                    &format!("environment variable; {name}"),
+                    &node_id,
+                    "",
+                    None,
+                ));
+            }
+            // `ConfigurationValue.add_target_and_index` (`domains/std:142-151`).
+            ObjectDescKind::Confval => {
+                let node_id = self.note_object_id(objtype, name, signode);
+                entries.push(index_entry_tuple(
+                    "pair",
+                    &format!("{name}; configuration value"),
+                    &node_id,
+                    "",
+                    None,
+                ));
+            }
+            // `Cmdoption.add_target_and_index` (`domains/std:292-330`).
+            ObjectDescKind::Cmdoption => {
+                let program = self.program.clone();
+                let allnames = match signode.get("allnames") {
+                    Some(AttrValue::List(names)) => names.clone(),
+                    _ => Vec::new(),
+                };
+                for optname in &allnames {
+                    let mut prefix = String::from("cmdoption");
+                    if let Some(program) = &program {
+                        prefix.push('-');
+                        prefix.push_str(program);
+                    }
+                    if !optname.starts_with(['-', '/']) {
+                        prefix.push_str("-arg");
+                    }
+                    let node_id = self.registry.sphinx_make_id(&prefix, optname);
+                    signode.attrs.ids.push(node_id);
+                }
+                // `note_explicit_target` runs once, AFTER every id is
+                // chosen, so the ids of one signature never see each other
+                // in `document.ids`.
+                for node_id in signode.attrs.ids.clone() {
+                    self.registry.note_explicit_id(&node_id);
+                }
+                // Every spelling registers against `signode['ids'][0]`.
+                let first_id = signode.attrs.ids.first().cloned().unwrap_or_default();
+                for optname in &allnames {
+                    self.program_option_records
+                        .push(super::ProgramOptionRecord {
+                            program: program.clone(),
+                            name: optname.clone(),
+                            node_id: first_id.clone(),
+                        });
+                }
+                let descr = match &program {
+                    Some(program) => format!("{program} command line option"),
+                    None => "command line option".to_string(),
+                };
+                for optname in &allnames {
+                    entries.push(index_entry_tuple(
+                        "pair",
+                        &format!("{descr}; {optname}"),
+                        &first_id,
+                        "",
+                        None,
+                    ));
+                }
+            }
+        }
+    }
+
+    /// The `make_id` + `note_explicit_target` pair the single-id
+    /// `add_target_and_index` implementations share.
+    fn note_object_id(&mut self, prefix: &str, name: &str, signode: &mut Node) -> String {
+        let node_id = self.registry.sphinx_make_id(prefix, name);
+        signode.attrs.ids.push(node_id.clone());
+        self.registry.note_explicit_id(&node_id);
+        node_id
+    }
+
+    /// `ConfigurationValue.transform_content` (`domains/std:153-185`):
+    /// `:type:` and `:default:` render as a field list prepended to the
+    /// description content, each field followed by its own inline messages.
+    fn confval_transform_content(&mut self, input: &DirectiveInput<'a, '_>, content: &mut Node) {
+        let mut field_list = Node::elem(kinds::FIELD_LIST, input.span);
+        for (option, label) in [("type", "Type"), ("default", "Default")] {
+            let Some(OptVal::Str(value)) = opt_get(&input.options, option) else {
+                continue;
+            };
+            let parsed = self.inline(&value.clone(), input.span, input.lineno);
+            let mut field_name = Node::elem(kinds::FIELD_NAME, input.span);
+            field_name.children.push(Node::text_node(label, input.span));
+            let mut field_body = Node::elem(kinds::FIELD_BODY, input.span);
+            field_body.children = parsed.nodes;
+            let mut field = Node::elem(kinds::FIELD, input.span);
+            field.children.push(field_name);
+            field.children.push(field_body);
+            field_list.children.push(field);
+            field_list.children.extend(parsed.messages);
+        }
+        if !field_list.children.is_empty() {
+            content.children.insert(0, field_list);
+        }
     }
 
     /// versionadded family (sphinx/domains/changeset.py VersionChange):
@@ -5475,6 +5834,33 @@ enum DirectiveKind {
     IndexDir,
     HList,
     Glossary,
+    /// `.. describe::`/`.. object::`, `.. envvar::`, `.. confval::`,
+    /// `.. option::`/`.. cmdoption::` — sphinx `ObjectDescription.run`
+    /// (`directives/__init__.py:183-314`) with a per-directive
+    /// `handle_signature`/`add_target_and_index`.
+    ObjectDesc(ObjectDescKind),
+    /// `.. program::` (`domains/std/__init__.py:333-348`).
+    ProgramDir,
+    /// `.. default-domain::` (`directives/__init__.py:353-366`).
+    DefaultDomainDir,
+}
+
+/// Which `ObjectDescription` subclass a `desc`-producing directive is.
+#[derive(Clone, Copy, PartialEq)]
+enum ObjectDescKind {
+    /// The bare `ObjectDescription`, registered with docutils under
+    /// `describe`/`object` (`directives/__init__.py:375-377`): its
+    /// `handle_signature` always raises and its `add_target_and_index` is a
+    /// no-op, so it emits desc anatomy with no ids, no index entries and no
+    /// std-domain registration.
+    Describe,
+    /// `GenericObject` (`domains/std/__init__.py:50-88`) — `envvar` is the
+    /// only one this crate registers.
+    EnvVar,
+    /// `ConfigurationValue` (`domains/std/__init__.py:115-185`).
+    Confval,
+    /// `Cmdoption` (`domains/std/__init__.py:226-330`).
+    Cmdoption,
 }
 
 /// Sphinx-mode registry: overlays/extends the docutils-native table.
@@ -5654,9 +6040,173 @@ fn sphinx_directive_spec(lower: &str) -> Option<DirectiveSpec> {
             option_spec: GLOSSARY_OPTS,
             kind: DirectiveKind::Glossary,
         }),
+        "describe" | "object" => Some(object_desc_spec(ObjectDescKind::Describe)),
+        "envvar" => Some(object_desc_spec(ObjectDescKind::EnvVar)),
+        "confval" => Some(object_desc_spec(ObjectDescKind::Confval)),
+        "option" | "cmdoption" => Some(object_desc_spec(ObjectDescKind::Cmdoption)),
+        "program" => Some(DirectiveSpec {
+            required_arguments: 1,
+            optional_arguments: 0,
+            final_argument_whitespace: true,
+            has_content: false,
+            option_spec: &[],
+            kind: DirectiveKind::ProgramDir,
+        }),
+        "default-domain" => Some(DirectiveSpec {
+            required_arguments: 1,
+            optional_arguments: 0,
+            final_argument_whitespace: false,
+            has_content: false,
+            option_spec: &[],
+            kind: DirectiveKind::DefaultDomainDir,
+        }),
         _ => None,
     }
 }
+
+/// `ObjectDescription`'s class-level directive shape
+/// (`directives/__init__.py:51-63`): one whitespace-joined argument
+/// (multiple signatures arrive as its embedded newlines) and content.
+fn object_desc_spec(kind: ObjectDescKind) -> DirectiveSpec {
+    DirectiveSpec {
+        required_arguments: 1,
+        optional_arguments: 0,
+        final_argument_whitespace: true,
+        has_content: true,
+        // `ConfigurationValue` REPLACES the inherited option_spec: it adds
+        // `:type:`/`:default:` and drops the three deprecated aliases
+        // (`domains/std/__init__.py:117-124`).
+        option_spec: match kind {
+            ObjectDescKind::Confval => CONFVAL_OPTS,
+            _ => OBJECT_DESCRIPTION_OPTS,
+        },
+        kind: DirectiveKind::ObjectDesc(kind),
+    }
+}
+
+/// sphinx `ws_re.sub(repl, s)` (`util/__init__.py`, `ws_re = re.compile(r'\s+')`).
+fn ws_collapse(s: &str, repl: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut in_ws = false;
+    for c in s.chars() {
+        if c.is_whitespace() {
+            if !in_ws {
+                out.push_str(repl);
+                in_ws = true;
+            }
+        } else {
+            out.push(c);
+            in_ws = false;
+        }
+    }
+    out
+}
+
+/// `ObjectDescription.get_signatures` (`directives/__init__.py:88-98`) with
+/// `strip_signature_backslash` at its default False: backslash-newline pairs
+/// vanish (`nl_escape_re`), then one stripped signature per line.
+fn object_signatures(argument: &str) -> Vec<String> {
+    argument
+        .replace("\\\n", "")
+        .split('\n')
+        .map(|line| line.trim().to_string())
+        .collect()
+}
+
+/// `option_desc_re = r'((?:/|--|-|\+)?[^\s=]+)(=?\s*.*)'` matched with
+/// `re.match` (anchored at the start only). The optional prefix backtracks:
+/// `--` is tried before `-`, and both before the empty alternative, so a
+/// bare `--` matches as prefix `-` + name `-`.
+fn option_desc_match(s: &str) -> Option<(String, String)> {
+    let mut prefixes: Vec<usize> = Vec::new();
+    if s.starts_with('/') {
+        prefixes.push(1);
+    }
+    if s.starts_with("--") {
+        prefixes.push(2);
+    }
+    if s.starts_with('-') {
+        prefixes.push(1);
+    }
+    if s.starts_with('+') {
+        prefixes.push(1);
+    }
+    prefixes.push(0);
+    for prefix in prefixes {
+        // `[^\s=]+`, greedy and at least one character long.
+        let taken: usize = s[prefix..]
+            .chars()
+            .take_while(|c| !c.is_whitespace() && *c != '=')
+            .map(char::len_utf8)
+            .sum();
+        if taken > 0 {
+            return Some((
+                s[..prefix + taken].to_string(),
+                s[prefix + taken..].to_string(),
+            ));
+        }
+    }
+    None
+}
+
+/// `addnodes.desc_name` — `_DescClassesInjector` stamps the two classes and
+/// `FixedTextElement` the `xml:space` (`sphinx/addnodes.py`).
+fn desc_name_node(text: &str, span: Span) -> Node {
+    sig_text_node("desc_name", ["sig-name", "descname"], text, span)
+}
+
+/// `addnodes.desc_addname`.
+fn desc_addname_node(text: &str, span: Span) -> Node {
+    sig_text_node("desc_addname", ["sig-prename", "descclassname"], text, span)
+}
+
+fn sig_text_node(kind: &'static str, classes: [&str; 2], text: &str, span: Span) -> Node {
+    let mut node = Node::elem(kind, span);
+    node.attrs
+        .classes
+        .extend(classes.iter().map(|c| c.to_string()));
+    node.set("xml:space", AttrValue::Str("preserve".to_string()));
+    // `TextElement(rawsource, text)` adds no child for an empty text — the
+    // `desc_addname` of an argument-less option is an empty element.
+    if !text.is_empty() {
+        node.children.push(Node::text_node(text, span));
+    }
+    node
+}
+
+/// `[node_id for el in node.findall(nodes.Element) for node_id in el['ids']]`
+/// — `findall` yields the node itself first, then its descendants in
+/// document order, and skips Text nodes (they are not Elements).
+fn collect_element_ids(node: &Node, out: &mut Vec<String>) {
+    if node.kind == kinds::TEXT {
+        return;
+    }
+    out.extend(node.attrs.ids.iter().cloned());
+    for child in &node.children {
+        collect_element_ids(child, out);
+    }
+}
+
+/// `ObjectDescription.option_spec` (`directives/__init__.py:55-63`).
+const OBJECT_DESCRIPTION_OPTS: &[(&str, Conv)] = &[
+    ("no-index", Conv::Flag),
+    ("no-index-entry", Conv::Flag),
+    ("no-contents-entry", Conv::Flag),
+    ("no-typesetting", Conv::Flag),
+    ("noindex", Conv::Flag),
+    ("noindexentry", Conv::Flag),
+    ("nocontentsentry", Conv::Flag),
+];
+
+/// `ConfigurationValue.option_spec` (`domains/std/__init__.py:117-124`).
+const CONFVAL_OPTS: &[(&str, Conv)] = &[
+    ("no-index", Conv::Flag),
+    ("no-index-entry", Conv::Flag),
+    ("no-contents-entry", Conv::Flag),
+    ("no-typesetting", Conv::Flag),
+    ("type", Conv::UnchangedRequired),
+    ("default", Conv::UnchangedRequired),
+];
 
 /// One serialized 5-tuple for the index `entries` attr: docutils pformat
 /// renders list items via serial_escape (spaces backslash-escaped inside
@@ -7523,6 +8073,15 @@ mod tests {
     /// it to the figure instead (`directives/patches.py:33-56`). The
     /// difference is load-bearing: `numfig` keys figure numbers off
     /// `figure['ids'][0]`, and `:ref:`/`:numref:` resolve to that node.
+    ///
+    /// The sphinx half was re-verified against the 9.1.0 oracle in wave-4
+    /// task 9 (`.. figure:: pic.png` + `:name: myfig` →
+    /// `<figure ids="myfig" names="myfig">` over `<image ...>`), but the
+    /// case cannot join `tests/fixtures/sphinx_doctree_differential.json`:
+    /// a figure needs an `image`, and `ImageCollector.process_doc` stamps
+    /// every image with `candidates="{'*': 'pic.png'}"`, one of that
+    /// corpus's enumerated excluded divergences. This assertion is the
+    /// standing pin until image collection lands.
     #[test]
     fn a_figure_name_lands_on_the_image_in_docutils_and_the_figure_in_sphinx() {
         let src = ".. figure:: pic.png\n   :name: fig one\n\n   Caption.\n";

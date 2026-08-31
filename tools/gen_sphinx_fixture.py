@@ -81,6 +81,19 @@ this corpus with Sphinx-specific directives (toctree, code-block, versionadded/
 versionchanged/deprecated, seealso, only, highlight, math, index, rst-class,
 ...) once the Rust side grows the sphinx registry + env surface.
 
+Wave-4 task 9 tried to add a sphinx-mode `.. figure::` case (to pin where the
+`:name:` id lands, which the docutils-mode fixture already covers as
+`dir_media.figure_name_option`). It is EXCLUDED by the policy above: a figure
+must contain an `image`, and `ImageCollector.process_doc` stamps every image
+with `candidates="{'*': 'pic.png'}"` — one of the enumerated excluded
+divergences. Verified by hand against the oracle in that task: sphinx-mode
+output for `.. figure:: pic.png` + `:name: myfig` is `<figure ids="myfig"
+names="myfig">`, byte-identical to ours apart from that one attribute (an
+unnamed figure additionally picks up `ids="id1"` from Sphinx's `AutoNumbering`
+transform, which this crate does not run). src/rst/block.rs's
+`a_figure_name_lands_on_the_image_in_docutils_and_the_figure_in_sphinx` pins
+the id placement until the image-collection task can fold the case in here.
+
 Provenance: cases whose (family, name) mirror a case of
 tests/fixtures/doctree_differential.json reuse that case's exact rst input;
 three inputs are new (marked). Never remove or rename existing cases; later
@@ -219,6 +232,12 @@ SUPPORTED_KINDS = {
     "hlist",
     "hlistcol",
     "glossary",
+    # wave-4 task 9: std-domain object directives + generic desc anatomy
+    "desc",
+    "desc_signature",
+    "desc_name",
+    "desc_addname",
+    "desc_content",
 }
 
 CASES = [
@@ -508,6 +527,35 @@ CASES = [
     ('sx_directives', 'code_block_emphasize_open_range', '.. code-block:: python\n   :emphasize-lines: 2-\n\n   a\n   b\n   c\n'),
     ('sx_directives', 'code_block_emphasize_out_of_range', '.. code-block:: python\n   :emphasize-lines: 1,99\n\n   a\n   b\n'),
     ('sx_directives', 'toctree_bare_angle_entry', '.. toctree::\n\n   <foo>\n'),
+    # ----- wave-4 task 9: std-domain object directives -----
+    # `describe`/`object` are registered with the BASE ObjectDescription
+    # (sphinx/directives/__init__.py:375-377), whose handle_signature raises
+    # and whose add_target_and_index is `pass`: desc anatomy but no ids, no
+    # index entries, no std objects.
+    ('sx_std', 'describe_plain', '.. describe:: widget\n\n   A generic described object.\n'),
+    ('sx_std', 'describe_no_content', '.. describe:: widget\n'),
+    ('sx_std', 'object_plain', '.. object:: thing\n\n   Body of the object.\n'),
+    ('sx_std', 'envvar_plain', '.. envvar:: HOME_A\n\n   Home directory variable.\n'),
+    ('sx_std', 'envvar_no_index', '.. envvar:: HOME_B\n   :no-index:\n\n   Not registered.\n'),
+    ('sx_std', 'confval_plain', '.. confval:: my_setting\n\n   A config value.\n'),
+    ('sx_std', 'confval_typed', '.. confval:: my_setting\n   :type: ``str``\n   :default: ``\'x\'``\n\n   A config value.\n'),
+    ('sx_std', 'confval_type_only', '.. confval:: other_setting\n   :type: text with *emphasis*\n'),
+    ('sx_std', 'option_no_program', '.. option:: --global-opt\n\n   A global (unscoped) option.\n'),
+    ('sx_std', 'option_with_program', '.. program:: myprog\n\n.. option:: --verbose\n\n   Enables verbose output.\n'),
+    ('sx_std', 'program_none_pop', '.. program:: myprog\n\n.. option:: --scoped\n\n.. program:: None\n\n.. option:: --unscoped\n'),
+    ('sx_std', 'program_whitespace_name', '.. program:: my prog\n\n.. option:: --opt\n'),
+    ('sx_std', 'option_malformed', '.. option:: =bad\n\n   Body.\n'),
+    ('sx_std', 'option_multiple_names', '.. option:: -f, --file\n\n   Two spellings.\n'),
+    ('sx_std', 'option_with_args', '.. option:: --output=FILE\n\n   Writes to FILE.\n'),
+    ('sx_std', 'option_positional_arg', '.. option:: filename\n\n   A positional argument.\n'),
+    ('sx_std', 'option_bracketed_value', '.. option:: --color[=WHEN]\n'),
+    ('sx_std', 'option_multi_signature', '.. option:: --one\n            --two\n\n   Two signatures.\n'),
+    ('sx_std', 'confval_no_typesetting', '.. confval:: quiet_setting\n   :no-typesetting:\n\n   Body.\n'),
+    ('sx_std', 'describe_no_typesetting', '.. describe:: widget\n   :no-typesetting:\n\n   Body.\n'),
+    ('sx_std', 'cmdoption_alias', '.. cmdoption:: --legacy\n\n   The old directive name.\n'),
+    ('sx_std', 'option_duplicate_signature', '.. option:: --dup\n            --dup\n\n   Same name twice.\n'),
+    ('sx_std', 'envvar_deprecated_noindex', '.. envvar:: HOME_C\n   :noindex:\n\n   Old spelling of the flag.\n'),
+    ('sx_std', 'default_domain', '.. default-domain:: py\n\nText after the default-domain.\n'),
 ]
 
 
@@ -610,6 +658,7 @@ def main() -> int:
         "sx_image": 6,
         "sx_directives": 18,
         "sx_roles": 6,
+        "sx_std": 12,
     }
     counts: dict = {}
     for family, _, _ in CASES:
