@@ -1002,6 +1002,105 @@ fn an_orphan_marked_after_a_raw_block_is_still_exempt() {
     );
 }
 
+/// Label collection and reference resolution both read parse output that a
+/// warm cache hit does not recompute — the id/name registry and the source
+/// text (for warning line numbers) ride the cached `Document`, the doctree
+/// comes off disk. A rebuild that loses either reports different warnings,
+/// or none.
+#[test]
+fn a_warm_rebuild_reports_the_same_std_domain_warnings() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let source_dir = tmp.path().join("source");
+    let output_dir = tmp.path().join("build");
+    std::fs::create_dir_all(&source_dir).unwrap();
+    std::fs::write(
+        source_dir.join("index.rst"),
+        "Index\n=====\n\n.. toctree::\n\n   a\n   b\n",
+    )
+    .unwrap();
+    std::fs::write(
+        source_dir.join("a.rst"),
+        "A\n=\n\n.. _dup:\n\nOne\n---\n\nSee :doc:`nope`.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        source_dir.join("b.rst"),
+        "B\n=\n\n.. _dup:\n\nTwo\n---\n\nSee :ref:`dup` and :term:`nothing`.\n",
+    )
+    .unwrap();
+    // Warning locations come from the canonicalized source tree (macOS
+    // resolves `/var/...` to `/private/var/...`).
+    let source_dir = std::fs::canonicalize(&source_dir).unwrap();
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let build_once = || -> (Vec<String>, serde_json::Value) {
+        let mut builder = SphinxBuilder::new(
+            BuildConfig::default(),
+            source_dir.clone(),
+            output_dir.clone(),
+        )
+        .unwrap();
+        builder.enable_incremental();
+        let stats = runtime.block_on(builder.build()).unwrap();
+        let root = source_dir.to_string_lossy().into_owned();
+        (
+            stats
+                .warning_details
+                .iter()
+                .map(|warning| warning.render().replace(&root, "<project>"))
+                .collect(),
+            builder.snapshot_env(),
+        )
+    };
+
+    let (cold, cold_env) = build_once();
+    assert_eq!(
+        cold,
+        vec![
+            "<project>/b.rst:7: WARNING: duplicate label dup, other instance in <project>/a.rst"
+                .to_string(),
+            "<project>/a.rst:9: WARNING: unknown document: 'nope' [ref.doc]".to_string(),
+            "<project>/b.rst:9: WARNING: term not in glossary: 'nothing' [ref.term]".to_string(),
+        ],
+        "collection warnings come out with the document that raised them, \
+         resolution warnings after every document has been read"
+    );
+
+    let (warm, warm_env) = build_once();
+    assert_eq!(
+        warm_env["std"], cold_env["std"],
+        "a warm rebuild must reproduce the std-domain registries, not \
+         accumulate them"
+    );
+    assert_eq!(
+        warm,
+        vec![
+            // Sphinx purges a document's domain data immediately before
+            // re-reading *that* document (`Builder._read_serial`:
+            // `env.clear_doc(docname)` then `env.read_doc(docname)`), so
+            // while `a` is being re-read, `dup` is still the *previous*
+            // build's entry — owned by `b`. Reading `b` then finds the entry
+            // `a` just wrote. Sphinx reports the same pair whenever both
+            // documents are re-read against a warm environment; what keeps
+            // it out of a real rebuild is that an unchanged document is not
+            // re-read at all, which is the outdated computation this crate
+            // has yet to port.
+            "<project>/a.rst:7: WARNING: duplicate label dup, other instance in <project>/b.rst"
+                .to_string(),
+            "<project>/b.rst:7: WARNING: duplicate label dup, other instance in <project>/a.rst"
+                .to_string(),
+            "<project>/a.rst:9: WARNING: unknown document: 'nope' [ref.doc]".to_string(),
+            "<project>/b.rst:9: WARNING: term not in glossary: 'nothing' [ref.term]".to_string(),
+        ],
+        "the resolution warnings must survive a warm rebuild unchanged: they \
+         are recomputed from the cached document's registry, source text and \
+         persisted doctree"
+    );
+}
+
 /// Toctree diagnostics are produced during the parse, which a warm cache
 /// hit skips — so they have to ride the cached parse records, not be
 /// recomputed. A rebuild that reports fewer warnings than a cold build is

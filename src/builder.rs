@@ -745,6 +745,9 @@ impl SphinxBuilder {
         let mut ordered: Vec<&ReadResult> = results.iter().collect();
         ordered.sort_by(|a, b| a.docname.cmp(&b.docname));
 
+        // A second `build()` on the same builder must not keep the previous
+        // one's documents (one of them may since have been deleted).
+        self.resolved.lock().unwrap().clear();
         let mut unresolvable_domain_refs = 0usize;
         for result in ordered {
             let mut doctree = result.doctree.clone();
