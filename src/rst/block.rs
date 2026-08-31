@@ -206,7 +206,10 @@ impl<'a> BlockParser<'a> {
     pub(crate) fn parse_document_full(mut self) -> super::ParseOutput {
         let root = self.parse_document_impl();
         super::ParseOutput {
-            doctree: crate::doctree::Doctree { root },
+            doctree: crate::doctree::Doctree {
+                root,
+                sources: vec![self.source_path.to_string()],
+            },
             directive_records: std::mem::take(&mut self.directive_records),
             role_records: std::mem::take(&mut self.role_records),
             toctrees: std::mem::take(&mut self.toctree_records),

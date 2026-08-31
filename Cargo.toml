@@ -75,6 +75,9 @@ base64 = "0.23"
 # Path utilities
 pathdiff = "0.2"
 
+# Binary serialization (cached doctree round-trip)
+bincode = { version = "2", features = ["serde"] }
+
 [dev-dependencies]
 criterion = { version = "0.7", features = ["html_reports"] }
 proptest = "1.0"
