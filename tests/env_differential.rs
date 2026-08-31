@@ -694,6 +694,44 @@ fn rebuilding_a_project_does_not_accumulate_environment_state() {
     );
 }
 
+/// `:orphan:` exempts a document from the orphan warning even when a
+/// `PreBibliographic` node precedes the field list — `raw` being the one
+/// such node a document can produce before any transform runs. Getting the
+/// skip set wrong turns every `.. raw::`-led orphan into a false
+/// `toc.not_included` warning, and into a failing build under `-W`.
+#[test]
+fn an_orphan_marked_after_a_raw_block_is_still_exempt() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let source_dir = tmp.path().join("source");
+    std::fs::create_dir_all(&source_dir).unwrap();
+    std::fs::write(source_dir.join("index.rst"), "Index\n=====\n\nRoot.\n").unwrap();
+    std::fs::write(
+        source_dir.join("aside.rst"),
+        ".. raw:: html\n\n   <hr>\n\n:orphan:\n\nAside\n=====\n\nBody.\n",
+    )
+    .unwrap();
+
+    let mut builder =
+        SphinxBuilder::new(BuildConfig::default(), source_dir, tmp.path().join("build")).unwrap();
+    let stats = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(builder.build())
+        .unwrap();
+
+    let warnings: Vec<String> = stats
+        .warning_details
+        .iter()
+        .map(|warning| warning.render())
+        .collect();
+    assert!(
+        warnings.is_empty(),
+        "an `:orphan:` document must not warn, whatever precedes its field \
+         list: {warnings:?}"
+    );
+}
+
 /// Toctree diagnostics are produced during the parse, which a warm cache
 /// hit skips — so they have to ride the cached parse records, not be
 /// recomputed. A rebuild that reports fewer warnings than a cold build is

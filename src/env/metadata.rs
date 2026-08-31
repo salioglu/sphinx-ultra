@@ -10,14 +10,26 @@
 //! `field_name.astext()` -> `field_body.astext()` — which is all the
 //! consumers need (`orphan`, `nocomments`, `tocdepth`).
 //!
-//! Two deliberate omissions, neither observable in anything that reads
-//! metadata today:
+//! Deliberate omissions:
 //!
 //! * Sphinx pops the `docinfo` node out of the doctree; this leaves the
 //!   `field_list` in place, because removing it is a doctree-shape change
 //!   that belongs with the `DocInfo` transform itself.
 //! * The bibliographic special cases (`authors`, and the `tocdepth`
 //!   int-coercion) are not applied: nothing reads them yet.
+//!
+//! **Known gap — a field list below a promoted document title is not seen.**
+//! docutils runs `DocTitle` before `DocInfo`, so in a single-section
+//! document the section title is promoted to a document `title` and the
+//! field list that follows it still becomes `docinfo`. This crate applies no
+//! transforms at parse time (`crate::rst`, module header: "Transforms
+//! (doctitle promotion, ...) are explicitly NOT applied here"), so such a
+//! document keeps its `section` wrapper and the field list never sits at
+//! document level for this port to find. Consequence: a document whose
+//! `:orphan:` marker follows its title is not exempted from the
+//! `document isn't included in any toctree` warning. `title`/`subtitle` are
+//! already in [`is_pre_bibliographic`], so this closes by itself the moment
+//! doctitle promotion lands — nothing here needs to change.
 
 use std::collections::BTreeMap;
 
@@ -26,13 +38,26 @@ use crate::doctree::{kinds, Doctree, Node};
 /// docutils' `PreBibliographic` node classes — what
 /// `first_child_not_matching_class(nodes.PreBibliographic)` skips over
 /// before deciding whether the document opens with bibliographic fields.
+///
+/// The complete set, enumerated from docutils 0.22.4 by walking
+/// `nodes.PreBibliographic`'s element subclasses: the four `Invisible` ones
+/// (`comment`, `substitution_definition`, `target`, `pending`,
+/// `nodes.py:2477-2522`) plus `title`, `subtitle`, `meta`, `decoration`,
+/// `system_message` and `raw` (`nodes.py:1561-2600`).
+///
+/// `raw` is the one of these a document can hit today — `.. raw:: html`
+/// ahead of the field list. The rest are transform output this crate does
+/// not produce yet (see the module header), but skipping them is correct
+/// and free.
 fn is_pre_bibliographic(node: &Node) -> bool {
     matches!(
         node.kind,
-        kinds::COMMENT | kinds::TARGET | kinds::SYSTEM_MESSAGE
+        kinds::COMMENT | kinds::TARGET | kinds::SYSTEM_MESSAGE | kinds::TITLE | kinds::SUBTITLE
     ) || node.kind == "substitution_definition"
-        || node.kind == "meta"
         || node.kind == "pending"
+        || node.kind == "raw"
+        || node.kind == "meta"
+        || node.kind == "decoration"
 }
 
 /// The document's metadata: field name -> field body text, empty when the
@@ -98,6 +123,17 @@ mod tests {
         // docutils skips PreBibliographic nodes before looking for docinfo.
         let metadata = document_metadata(&parse(".. a comment\n\n:orphan:\n\nBody.\n"));
         assert!(metadata.contains_key("orphan"), "{metadata:?}");
+    }
+
+    /// `raw` is `PreBibliographic` too (`docutils/nodes.py:2600`), and it is
+    /// the one member of that set a document can produce before any
+    /// transform runs. Verified against docutils 0.22.4: the same source
+    /// yields `<document><docinfo><field classes="orphan">…` — the field
+    /// list is still bibliographic with a `.. raw::` block ahead of it.
+    #[test]
+    fn a_leading_raw_block_does_not_hide_the_field_list() {
+        let metadata = document_metadata(&parse(".. raw:: html\n\n   <hr>\n\n:orphan:\n\nBody.\n"));
+        assert_eq!(metadata.get("orphan").map(String::as_str), Some(""));
     }
 
     #[test]
