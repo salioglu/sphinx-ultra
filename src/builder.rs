@@ -31,6 +31,33 @@ use crate::utils;
 /// configuration change wipes these along with everything else.
 const DOCTREE_SUBDIR: &str = "doctrees";
 
+/// Magic prefix identifying a persisted doctree file ("sphinx-ultra
+/// doctree"). Together with [`DOCTREE_FORMAT_VERSION`] it forms the 8-byte
+/// header [`SphinxBuilder::store_doctree`] writes ahead of the bincode blob.
+const DOCTREE_MAGIC: &[u8; 4] = b"SUDT";
+
+/// Format version of the per-document doctree files.
+///
+/// The blob itself is bincode, which has no field-presence framing and no
+/// self-description: bytes written by an older build decode *successfully*
+/// into a plausible-looking doctree and are then silently mis-read. This
+/// word is what turns that into an honest cache miss
+/// ([`SphinxBuilder::load_doctree`] returns `None` for a missing or
+/// mismatched version, and the document is re-read).
+///
+/// Bump it whenever previously written blobs would be misread, namely:
+/// - the serialized shape changes — a field added to or removed from
+///   `Doctree`/`Node`/`Attrs`, a different `AttrValue` variant set, or a
+///   different bincode configuration;
+/// - the *meaning* of what the parser stores changes while the shape does
+///   not. Wave 4's index-entry attribute moving from `AttrValue::Str` to
+///   `AttrValue::List` is the worked example: both variants decode, and an
+///   old blob then harvests the wrong index entries.
+const DOCTREE_FORMAT_VERSION: u32 = 1;
+
+/// Bytes of the [`DOCTREE_MAGIC`] + [`DOCTREE_FORMAT_VERSION`] header.
+const DOCTREE_HEADER_LEN: usize = DOCTREE_MAGIC.len() + std::mem::size_of::<u32>();
+
 /// Sphinx's `root_doc` default (`config.py`), used when the configuration
 /// leaves it unset.
 const DEFAULT_ROOT_DOC: &str = "index";
@@ -1035,22 +1062,40 @@ impl SphinxBuilder {
             .join(format!("{}.doctree", hash.to_hex()))
     }
 
+    /// Persist one document's doctree, behind the
+    /// [`DOCTREE_MAGIC`]/[`DOCTREE_FORMAT_VERSION`] header that lets a later
+    /// build tell whether the bytes are still readable *by meaning*, not
+    /// just by bincode.
     fn store_doctree(&self, docname: &str, doctree: &Doctree) -> Result<()> {
         let path = self.doctree_path(docname);
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(path, crate::doctree::to_bincode(doctree))?;
+        let blob = crate::doctree::to_bincode(doctree);
+        let mut bytes = Vec::with_capacity(DOCTREE_HEADER_LEN + blob.len());
+        bytes.extend_from_slice(DOCTREE_MAGIC);
+        bytes.extend_from_slice(&DOCTREE_FORMAT_VERSION.to_le_bytes());
+        bytes.extend_from_slice(&blob);
+        std::fs::write(path, bytes)?;
         Ok(())
     }
 
-    /// The persisted doctree for `docname`, or `None` if it is missing or
-    /// cannot be decoded (a truncated write, or a blob from another version
-    /// of this crate).
+    /// The persisted doctree for `docname`, or `None` if it is missing,
+    /// carries another format version (including none at all — a file
+    /// written before the header existed), or cannot be decoded (a
+    /// truncated write). Every `None` means the same thing to callers: this
+    /// document has to be read again.
     fn load_doctree(&self, docname: &str) -> Option<Doctree> {
         let path = self.doctree_path(docname);
         let bytes = std::fs::read(&path).ok()?;
-        match crate::doctree::from_bincode(&bytes) {
+        let Some(blob) = current_format_doctree(&bytes) else {
+            debug!(
+                "Ignoring doctree {} written in another format (re-reading {docname})",
+                path.display()
+            );
+            return None;
+        };
+        match crate::doctree::from_bincode(blob) {
             Ok(doctree) => Some(doctree),
             Err(e) => {
                 debug!(
@@ -1322,6 +1367,18 @@ impl SphinxBuilder {
     }
 }
 
+/// The bincode blob inside a persisted doctree file, or `None` if the file
+/// does not start with this build's [`DOCTREE_MAGIC`] +
+/// [`DOCTREE_FORMAT_VERSION`] header.
+fn current_format_doctree(bytes: &[u8]) -> Option<&[u8]> {
+    let (header, blob) = bytes.split_at_checked(DOCTREE_HEADER_LEN)?;
+    if &header[..DOCTREE_MAGIC.len()] != DOCTREE_MAGIC {
+        return None;
+    }
+    let version = u32::from_le_bytes(header[DOCTREE_MAGIC.len()..].try_into().ok()?);
+    (version == DOCTREE_FORMAT_VERSION).then_some(blob)
+}
+
 /// Wall-clock microseconds since the Unix epoch, the unit Sphinx stores in
 /// `env.all_docs` (`time.time_ns() // 1_000`). A pre-epoch clock yields 0
 /// rather than wrapping.
@@ -1421,6 +1478,85 @@ mod tests {
         let env = rebuilt.env();
         assert_eq!(env.all_docs.len(), 2);
         assert!(env.tocs.contains_key("a"));
+    }
+
+    #[test]
+    fn persisted_doctrees_carry_the_format_version_header() {
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("source");
+        let output_dir = tmp.path().join("build");
+        write_project(&source_dir);
+
+        let (_stats, builder) = build_incrementally(&source_dir, &output_dir);
+
+        let bytes = std::fs::read(builder.doctree_path("index")).unwrap();
+        assert_eq!(
+            &bytes[..DOCTREE_MAGIC.len()],
+            DOCTREE_MAGIC,
+            "a persisted doctree must be self-identifying"
+        );
+        let version = u32::from_le_bytes(
+            bytes[DOCTREE_MAGIC.len()..DOCTREE_MAGIC.len() + 4]
+                .try_into()
+                .unwrap(),
+        );
+        assert_eq!(version, DOCTREE_FORMAT_VERSION);
+        assert_eq!(
+            builder.load_doctree("index").unwrap().root.kind,
+            crate::doctree::kinds::DOCUMENT,
+            "the header must not disturb the round trip"
+        );
+    }
+
+    #[test]
+    fn a_doctree_written_in_the_unversioned_format_is_treated_as_a_miss() {
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("source");
+        let output_dir = tmp.path().join("build");
+        write_project(&source_dir);
+
+        let (_cold, builder) = build_incrementally(&source_dir, &output_dir);
+
+        // Exactly what the pre-versioning builder wrote: a bare bincode
+        // blob. It still *decodes* — which is the trap: an old blob whose
+        // attribute shapes have since changed decodes into a plausible
+        // doctree and then mis-harvests. The version word is what makes it
+        // a miss instead.
+        let doctree = builder.load_doctree("index").expect("doctree decodes");
+        std::fs::write(
+            builder.doctree_path("index"),
+            crate::doctree::to_bincode(&doctree),
+        )
+        .unwrap();
+        assert!(
+            builder.load_doctree("index").is_none(),
+            "an unversioned blob must not be trusted"
+        );
+
+        let (stats, rebuilt) = build_incrementally(&source_dir, &output_dir);
+        assert_eq!(
+            stats.cache_hits, 1,
+            "the document whose doctree is stale must be re-read"
+        );
+        assert!(rebuilt.load_doctree("index").is_some());
+    }
+
+    #[test]
+    fn a_doctree_from_a_future_format_version_is_treated_as_a_miss() {
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("source");
+        let output_dir = tmp.path().join("build");
+        write_project(&source_dir);
+
+        let (_cold, builder) = build_incrementally(&source_dir, &output_dir);
+        let doctree = builder.load_doctree("index").expect("doctree decodes");
+
+        let mut bytes = Vec::from(DOCTREE_MAGIC);
+        bytes.extend_from_slice(&(DOCTREE_FORMAT_VERSION + 1).to_le_bytes());
+        bytes.extend_from_slice(&crate::doctree::to_bincode(&doctree));
+        std::fs::write(builder.doctree_path("index"), bytes).unwrap();
+
+        assert!(builder.load_doctree("index").is_none());
     }
 
     #[test]
