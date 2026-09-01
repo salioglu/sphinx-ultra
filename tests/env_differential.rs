@@ -33,6 +33,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::OnceLock;
 
+use sphinx_ultra::error::BuildWarning;
 use sphinx_ultra::{BuildConfig, SphinxBuilder};
 
 /// `[parent, prev, next]` as recorded by `env.collect_relations()`.
@@ -163,6 +164,95 @@ struct Built {
     warnings: Vec<String>,
 }
 
+/// The fixture's stand-in for a project's source root.
+const PROJECT: &str = "<project>";
+
+/// Rewrite `root`-rooted absolute paths in `rendered` to [`PROJECT`], and
+/// spell what follows the placeholder with forward slashes.
+///
+/// The oracle is generated on POSIX, so its expected strings read
+/// `<project>/sub/page.rst`. On Windows the *product* renders the same
+/// warning with native separators — `<project>\sub\page.rst` — and that is
+/// correct: `sphinx-build` on Windows prints native separators too. The
+/// difference is a property of the comparison, not of the build, so it is
+/// normalized here.
+///
+/// Only placeholder-rooted segments are rewritten, and each segment stops
+/// at the first character that cannot continue a path here: the `:` before
+/// a line number, whitespace, a quote, or a comma. A blanket backslash
+/// replacement would corrupt warning *text*, which legitimately carries
+/// backslashes (RST escapes, a repr'd index entry, …).
+///
+/// Operates on decoded strings only — a rendered warning, or one string
+/// *inside* a parsed snapshot. Never run it over JSON text: there a `\`
+/// may open an escape sequence rather than separate two path components.
+fn normalize_source_paths(rendered: &str, root: &str) -> String {
+    let replaced = rendered.replace(root, PROJECT);
+
+    let mut out = String::with_capacity(replaced.len());
+    let mut rest = replaced.as_str();
+    while let Some(start) = rest.find(PROJECT) {
+        let (before, at_placeholder) = rest.split_at(start);
+        out.push_str(before);
+        out.push_str(PROJECT);
+
+        let tail = &at_placeholder[PROJECT.len()..];
+        let end = tail
+            .find(|c: char| c.is_whitespace() || matches!(c, ':' | '\'' | '"' | ','))
+            .unwrap_or(tail.len());
+        out.push_str(&tail[..end].replace('\\', "/"));
+        rest = &tail[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// [`normalize_source_paths`] over a build's rendered warnings.
+fn normalize_warnings(warnings: &[BuildWarning], root: &str) -> Vec<String> {
+    warnings
+        .iter()
+        .map(|warning| normalize_source_paths(&warning.render(), root))
+        .collect()
+}
+
+/// [`normalize_source_paths`] over every string in an environment snapshot,
+/// keys included.
+///
+/// Doctrees carry their absolute source path on the `document` node and
+/// `dependencies` holds absolute paths; the oracle records both with the
+/// srcdir replaced by [`PROJECT`] (see `tools/gen_env_fixture.py`), so the
+/// whole snapshot goes through the same substitution.
+///
+/// Deliberately a walk over the parsed value rather than a substitution on
+/// its JSON text: a serialized doctree escapes the quotes around
+/// `source="…"`, so text-level rewriting cannot tell a path separator from
+/// the backslash opening an escape sequence.
+fn normalize_snapshot(snapshot: &serde_json::Value, root: &str) -> serde_json::Value {
+    match snapshot {
+        serde_json::Value::String(text) => {
+            serde_json::Value::String(normalize_source_paths(text, root))
+        }
+        serde_json::Value::Array(items) => serde_json::Value::Array(
+            items
+                .iter()
+                .map(|item| normalize_snapshot(item, root))
+                .collect(),
+        ),
+        serde_json::Value::Object(fields) => serde_json::Value::Object(
+            fields
+                .iter()
+                .map(|(key, value)| {
+                    (
+                        normalize_source_paths(key, root),
+                        normalize_snapshot(value, root),
+                    )
+                })
+                .collect(),
+        ),
+        scalar => scalar.clone(),
+    }
+}
+
 /// Materialize one project into a tempdir, build it, and capture both
 /// halves of the oracle comparison.
 fn build_project(project: &Project) -> Built {
@@ -195,21 +285,8 @@ fn build_project(project: &Project) -> Built {
         .unwrap_or_else(|e| panic!("project {}: build failed: {e:#}", project.name));
 
     let root = source_dir.to_string_lossy().into_owned();
-    let warnings = stats
-        .warning_details
-        .iter()
-        .map(|warning| warning.render().replace(&root, "<project>"))
-        .collect();
-
-    // Doctrees carry their absolute source path on the `document` node, and
-    // `dependencies` holds absolute paths: the oracle records both with the
-    // srcdir replaced by `<project>` (see tools/gen_env_fixture.py), so the
-    // whole snapshot goes through the same substitution.
-    let env = builder
-        .snapshot_env()
-        .to_string()
-        .replace(&root, "<project>");
-    let env = serde_json::from_str(&env).expect("the snapshot survives path normalization");
+    let warnings = normalize_warnings(&stats.warning_details, &root);
+    let env = normalize_snapshot(&builder.snapshot_env(), &root);
 
     Built { env, warnings }
 }
@@ -455,6 +532,82 @@ fn report(divergences: &[String], keys: &str) {
         "{} divergence(s) vs the sphinx 9.1.0 environment oracle ({keys}):\n\n{}",
         divergences.len(),
         divergences.join("\n\n")
+    );
+}
+
+/// The oracle's expected strings are generated on POSIX; Windows renders
+/// the same warnings with native separators, which is what `sphinx-build`
+/// does there too. [`normalize_source_paths`] is what makes the comparison
+/// separator-insensitive, so it is pinned here directly — this machine
+/// cannot produce a backslash-shaped rendering to exercise it end to end.
+#[test]
+fn source_paths_normalize_across_separators() {
+    // A Windows rendering, with the root spelled the way the product would.
+    let win_root = r"C:\proj\source";
+    assert_eq!(
+        normalize_source_paths(
+            r"C:\proj\source\sub\b.rst:7: WARNING: duplicate label dup, other instance in C:\proj\source\a.rst",
+            win_root,
+        ),
+        "<project>/sub/b.rst:7: WARNING: duplicate label dup, \
+         other instance in <project>/a.rst",
+        "both the location prefix and an in-message path are rewritten"
+    );
+
+    // The POSIX rendering this machine produces is already canonical, and
+    // must come out byte-identical to the Windows one.
+    assert_eq!(
+        normalize_source_paths(
+            "/proj/source/sub/b.rst:7: WARNING: duplicate label dup, \
+             other instance in /proj/source/a.rst",
+            "/proj/source",
+        ),
+        "<project>/sub/b.rst:7: WARNING: duplicate label dup, \
+         other instance in <project>/a.rst"
+    );
+
+    // Backslashes outside a placeholder-rooted path are warning *text* and
+    // must survive untouched.
+    assert_eq!(
+        normalize_source_paths(
+            r"C:\proj\source\a.rst:4: WARNING: invalid pair index entry 'a\nb' [index]",
+            win_root,
+        ),
+        r"<project>/a.rst:4: WARNING: invalid pair index entry 'a\nb' [index]"
+    );
+
+    // A warning Sphinx logs with no location has no path to rewrite.
+    assert_eq!(
+        normalize_source_paths("WARNING: failed to reach any of the inventories", win_root),
+        "WARNING: failed to reach any of the inventories"
+    );
+
+    // The snapshot carries paths inside a serialized doctree's `source`
+    // attribute, in `dependencies`, and in object keys. Walking the parsed
+    // value normalizes all three without touching the JSON escaping that a
+    // text-level substitution would have to fight.
+    let windows_snapshot = serde_json::json!({
+        "dependencies": { "a": [r"C:\proj\source\pic.png"] },
+        "resolved": { "a": r#"<document source="C:\proj\source\a.rst">"# },
+        "by_path": { r"C:\proj\source\a.rst": 1 },
+    });
+    let posix_snapshot = serde_json::json!({
+        "dependencies": { "a": ["/proj/source/pic.png"] },
+        "resolved": { "a": r#"<document source="/proj/source/a.rst">"# },
+        "by_path": { "/proj/source/a.rst": 1 },
+    });
+    assert_eq!(
+        normalize_snapshot(&windows_snapshot, win_root),
+        normalize_snapshot(&posix_snapshot, "/proj/source"),
+        "the two platforms' snapshots must normalize to the same value"
+    );
+    assert_eq!(
+        normalize_snapshot(&windows_snapshot, win_root),
+        serde_json::json!({
+            "dependencies": { "a": ["<project>/pic.png"] },
+            "resolved": { "a": r#"<document source="<project>/a.rst">"# },
+            "by_path": { "<project>/a.rst": 1 },
+        })
     );
 }
 
@@ -996,11 +1149,11 @@ fn incremental_build(source: &Path, output: &Path) -> (usize, serde_json::Value,
         .block_on(builder.build())
         .unwrap();
     let root = source.to_string_lossy().into_owned();
-    let warnings = stats
-        .warning_details
-        .iter()
-        .map(|warning| warning.render().replace(&root, "<project>"))
-        .collect();
+    let warnings = normalize_warnings(&stats.warning_details, &root);
+    // The snapshot stays as the build produced it: its callers compare a
+    // warm build against a cold one from this same helper, so both sides
+    // carry the platform's own paths and agree by construction. Only the
+    // warnings are matched against POSIX-shaped expected strings.
     (stats.cache_hits, builder.snapshot_env(), warnings)
 }
 
@@ -1491,11 +1644,9 @@ fn a_warm_rebuild_reports_the_same_std_domain_warnings() {
         let stats = runtime.block_on(builder.build()).unwrap();
         let root = source_dir.to_string_lossy().into_owned();
         (
-            stats
-                .warning_details
-                .iter()
-                .map(|warning| warning.render().replace(&root, "<project>"))
-                .collect(),
+            normalize_warnings(&stats.warning_details, &root),
+            // Raw, for the same reason as in `incremental_build`: this
+            // snapshot is only ever compared with another from this closure.
             builder.snapshot_env(),
         )
     };
@@ -1595,11 +1746,9 @@ fn a_malformed_option_description_warns_like_sphinx_across_a_rebuild() {
         let stats = runtime.block_on(builder.build()).unwrap();
         let root = source_dir.to_string_lossy().into_owned();
         (
-            stats
-                .warning_details
-                .iter()
-                .map(|warning| warning.render().replace(&root, "<project>"))
-                .collect(),
+            normalize_warnings(&stats.warning_details, &root),
+            // Raw, for the same reason as in `incremental_build`: this
+            // snapshot is only ever compared with another from this closure.
             builder.snapshot_env(),
         )
     };
@@ -1696,11 +1845,9 @@ fn an_invalid_index_entry_drops_its_whole_node_like_sphinx() {
         let stats = runtime.block_on(builder.build()).unwrap();
         let root = source_dir.to_string_lossy().into_owned();
         (
-            stats
-                .warning_details
-                .iter()
-                .map(|warning| warning.render().replace(&root, "<project>"))
-                .collect(),
+            normalize_warnings(&stats.warning_details, &root),
+            // Raw, for the same reason as in `incremental_build`: this
+            // snapshot is only ever compared with another from this closure.
             builder.snapshot_env(),
         )
     };
