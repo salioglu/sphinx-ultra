@@ -455,6 +455,99 @@ fn config_change_invalidates_cache() {
     );
 }
 
+/// This crate's discovery is wider than Sphinx's — it admits `.md` and
+/// `.txt` where Sphinx's default `source_suffix` is `.rst` alone — and the
+/// orphan check is where that difference reaches the user: a `README.md`
+/// must not earn a `toc.not_included` warning Sphinx never emits. An
+/// orphaned `.rst` still does.
+#[test]
+fn a_non_rst_file_is_not_reported_as_an_orphan() {
+    let src = out_dir("orphan-suffixes-src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(src.join("conf.py"), "project = 'p'\n").unwrap();
+    std::fs::write(
+        src.join("index.rst"),
+        "Index\n=====\n\n.. toctree::\n\n   page\n",
+    )
+    .unwrap();
+    std::fs::write(src.join("page.rst"), "Page\n====\n\nBody.\n").unwrap();
+    std::fs::write(src.join("README.md"), "# Readme\n").unwrap();
+    std::fs::write(src.join("notes.txt"), "Notes\n=====\n\nBody.\n").unwrap();
+    std::fs::write(src.join("stray.rst"), "Stray\n=====\n\nBody.\n").unwrap();
+
+    let out = out_dir("orphan-suffixes-out");
+    let result = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap()]);
+
+    let stderr = stderr_of(&result);
+    assert!(
+        !stderr.contains("README.md"),
+        "a .md file is not a document Sphinx reads, stderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("notes.txt"),
+        "nor is a .txt file, stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("stray.rst") && stderr.contains("isn't included in any toctree"),
+        "an orphaned .rst still warns, stderr: {stderr}"
+    );
+}
+
+/// Two files mapping to one docname are not two documents: every piece of
+/// per-document state downstream of discovery is keyed by docname alone.
+/// Sphinx warns and keeps one (`Project.discover`, `project.py:64-79`); so
+/// does this, deterministically by source-suffix precedence.
+#[test]
+fn two_files_for_one_docname_warn_and_one_deterministically_wins() {
+    let src = out_dir("duplicate-docname-src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(src.join("conf.py"), "project = 'p'\n").unwrap();
+    std::fs::write(
+        src.join("index.rst"),
+        "Index\n=====\n\n.. toctree::\n\n   page\n",
+    )
+    .unwrap();
+    std::fs::write(src.join("page.rst"), "Page RST\n========\n\nrst body.\n").unwrap();
+    std::fs::write(src.join("page.md"), "Page MD\n=======\n\nmd body.\n").unwrap();
+    std::fs::write(src.join("page.txt"), "Page TXT\n========\n\ntxt body.\n").unwrap();
+
+    let out = out_dir("duplicate-docname-out");
+    let first = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap()]);
+    let stderr = stderr_of(&first);
+
+    assert!(
+        stderr.contains(
+            "WARNING: multiple files found for the document \"page\": \
+             page.rst, page.md, page.txt"
+        ),
+        "the collision is reported the way Sphinx reports it, stderr: {stderr}"
+    );
+    // The builder canonicalizes its source dir, so compare against that.
+    let canonical = src.canonicalize().unwrap();
+    assert!(
+        stderr.contains(&format!(
+            "Use '{}' for the build.",
+            canonical.join("page.rst").display()
+        )),
+        "and names the file it kept, stderr: {stderr}"
+    );
+
+    // The winner is stable across builds, warm or cold — the defect this
+    // pins was an output page that alternated between the two files.
+    let page = out.join("page.html");
+    let cold = std::fs::read_to_string(&page).unwrap();
+    assert!(cold.contains("rst body"), "first suffix wins: {cold}");
+    for _ in 0..2 {
+        let again = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap()]);
+        assert!(again.status.success(), "stderr: {}", stderr_of(&again));
+        assert_eq!(
+            std::fs::read_to_string(&page).unwrap(),
+            cold,
+            "the rendered page must not alternate between the two sources"
+        );
+    }
+}
+
 /// `:numbered:` takes an optional depth (`int_or_nothing` in Sphinx's
 /// `TocTree.option_spec`), so `:numbered: 2` is the documented spelling of
 /// the feature, not an error. The retained M1 directive validator had it

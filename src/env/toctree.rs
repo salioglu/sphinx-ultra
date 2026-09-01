@@ -859,7 +859,21 @@ pub struct ConsistencyMessage {
 ///
 /// Not ported: the `env-check-consistency` event and the per-domain
 /// `check_consistency` hooks, neither of which exists yet.
-pub fn check_consistency(env: &BuildEnvironment) -> Vec<ConsistencyMessage> {
+///
+/// `is_sphinx_source` answers, per docname, whether the file it came from
+/// carries a suffix Sphinx's `source_suffix` covers. This crate's discovery
+/// is deliberately wider than Sphinx's — it admits `.md` and `.txt`
+/// alongside `.rst`, where Sphinx's default `source_suffix` is `{'.rst':
+/// 'restructuredtext'}` (`config.py:243`, `project.py:49-88`) — and the
+/// orphan warning is the one check where that difference is user-visible:
+/// a `README.md` sitting in the source tree would earn a
+/// `toc.not_included` warning Sphinx never emits, failing `-W` on a build
+/// Sphinx passes. Everything else keeps treating those files as documents;
+/// full `source_suffix` semantics arrive with MyST in wave 6.
+pub fn check_consistency(
+    env: &BuildEnvironment,
+    is_sphinx_source: &dyn Fn(&str) -> bool,
+) -> Vec<ConsistencyMessage> {
     let mut messages = Vec::new();
 
     let included: BTreeSet<&str> = env
@@ -873,6 +887,7 @@ pub fn check_consistency(env: &BuildEnvironment) -> Vec<ConsistencyMessage> {
     for docname in env.all_docs.keys() {
         // Reachable from some toctree, the root itself, textually included
         // by another document, or explicitly marked `:orphan:`.
+        // ...or not a document Sphinx would have read at all.
         if env.files_to_rebuild.contains_key(docname)
             || *docname == env.root_doc
             || included.contains(docname.as_str())
@@ -880,6 +895,7 @@ pub fn check_consistency(env: &BuildEnvironment) -> Vec<ConsistencyMessage> {
                 .metadata
                 .get(docname)
                 .is_some_and(|meta| meta.contains_key("orphan"))
+            || !is_sphinx_source(docname)
         {
             continue;
         }
@@ -1680,7 +1696,7 @@ mod tests {
             BTreeMap::from([("orphan".to_string(), String::new())]),
         );
 
-        let messages = check_consistency(&env);
+        let messages = check_consistency(&env, &|_| true);
         assert_eq!(
             messages
                 .iter()
@@ -1705,7 +1721,7 @@ mod tests {
             "index",
             &[("index", &["a", "b"]), ("a", &["c"]), ("b", &["c"])],
         );
-        let messages = check_consistency(&env);
+        let messages = check_consistency(&env, &|_| true);
         assert_eq!(messages.len(), 1, "{messages:?}");
         assert_eq!(messages[0].level, ConsistencyLevel::Info);
         assert_eq!(messages[0].docname, "c");
