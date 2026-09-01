@@ -59,10 +59,13 @@ full, file-and-line-level status audit lives in
 - **⚠️ Build validation**: toctree consistency (nonexisting/excluded entries,
   self-reference, circular toctrees, orphans, "isn't included in any
   toctree"); directive/role validation on every build; cross-reference
-  resolution with Sphinx's own texts and categories — a broken `:doc:`/`:ref:`
-  warns in a default build (`unknown document:` / `undefined label:`), and
-  `-n`/nitpicky widens that to the remaining reference types — all through
-  Sphinx-style warnings, `-W`, and `-w warnfile`
+  resolution with Sphinx's own texts and categories — a broken reference of
+  any of Sphinx's seven `warn_dangling` std reftypes (`:ref:`, `:numref:`,
+  `:doc:`, `:term:`, `:keyword:`, `:option:`, `:confval:`) warns in a
+  default build (`unknown document:`, `undefined label:`,
+  `term not in glossary:`, …), and `-n`/nitpicky widens that to the
+  remaining reference types — all through Sphinx-style warnings, `-W`, and
+  `-w warnfile`
 - **🔧 Config auto-detection**: conf.py (simple assignments only, for now) →
   sphinx-ultra.yaml → .yml → .json → defaults
 - **📊 Statistics**: `stats` command with project analysis
