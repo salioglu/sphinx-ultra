@@ -501,12 +501,10 @@ impl SphinxBuilder {
     /// ([`BuildEnvironment::get_outdated_files`]), and the `updating
     /// environment:` line Sphinx prints about it.
     ///
-    /// A non-incremental build reads everything: without the document cache
-    /// there is nowhere to recover an unread document's rendered output
-    /// from, so "not reading it" would mean not writing its page. That is
-    /// also what `sphinx-build -a` maps to here — it turns the cache off,
-    /// and its write set (every found document) is what this builder writes
-    /// in any case (see [`Self::write_phase`]).
+    /// A non-incremental build reads everything, `sphinx-build -a` included
+    /// — that flag turns the document cache off here (see the mapping in
+    /// `main.rs`), where sphinx would still have read incrementally. Reading
+    /// more than sphinx does is slower, never wrong.
     fn plan_read(&self, env: &BuildEnvironment, files: &[PathBuf]) -> BTreeSet<String> {
         // `env.doc2path` for the documents this build discovered, and
         // `env.found_docs` as its key set.
@@ -1834,8 +1832,7 @@ mod tests {
         assert_eq!(builder.env().all_docs.len(), 2);
     }
 
-    /// A build with the document cache off has nowhere to recover an unread
-    /// document's rendered page from, so it reads everything — which is
+    /// A build with the document cache off reads every document — which is
     /// what `sphinx-build -a` maps to here.
     #[test]
     fn a_non_incremental_build_reads_every_document() {

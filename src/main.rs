@@ -545,6 +545,17 @@ async fn run_sphinx_build_mode(sb: SphinxBuildCli) -> i32 {
 
     // sphinx-build is incremental by default; -E discards the saved
     // environment first and -a rewrites everything.
+    //
+    // Deliberate divergence, kept from M1: sphinx's `-a` only forces the
+    // *write* set to every document and still reads incrementally, while
+    // here it switches the document cache off, so the build reads
+    // everything as well (and reports `Cache hits: 0`, which
+    // `sphinx_build_incremental_by_default_and_fresh_env` pins). Reading
+    // more than sphinx would is slower, never wrong: every document read is
+    // re-derived from its own source. It stays this way until the write set
+    // is observable — the real HTML writer, which compares each output file
+    // against its sources; that is the wave that can separate "write all"
+    // from "read all" and revisit the pin.
     let incremental = !sb.write_all;
 
     let args = RunArgs {
