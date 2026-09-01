@@ -8,7 +8,6 @@ pub mod config;
 pub mod directives;
 pub mod doctree;
 pub mod document;
-pub mod domains;
 pub mod env;
 pub mod error;
 pub mod extensions;
@@ -35,7 +34,6 @@ pub use directives::{
     Directive, DirectiveRegistry,
 };
 pub use document::Document;
-pub use domains::{CrossReference, DomainObject, DomainRegistry, DomainValidator, ReferenceType};
 pub use env::BuildEnvironment;
 pub use error::BuildError;
 pub use extensions::{ExtensionLoader, SphinxApp, SphinxExtension};
