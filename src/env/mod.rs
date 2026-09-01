@@ -17,6 +17,7 @@
 //! `Hash*` equivalent so that bincode bytes and [`BuildEnvironment::snapshot`]
 //! output are deterministic across runs and processes.
 
+pub mod dependencies;
 pub mod genindex;
 pub mod metadata;
 pub mod numbers;
@@ -78,6 +79,51 @@ pub struct IndexEntryRecord {
     pub target_id: String,
     pub main: bool,
     pub category_key: Option<String>,
+}
+
+/// What [`BuildEnvironment::get_outdated_files`] needs to know about the
+/// filesystem, as the three questions it actually asks — so the computation
+/// itself stays pure and the caller decides what "the source of `docname`"
+/// and "the doctree of `docname`" mean.
+///
+/// Times are microseconds since the Unix epoch, the unit `all_docs` stores
+/// (Sphinx's `_last_modified_time`). `None` means "cannot be stated" —
+/// the file is gone, or unstat-able — which is Sphinx's `except OSError:
+/// return True`: the document is outdated.
+pub struct FileTimes<'a> {
+    /// Modification time of the document's own source file.
+    pub source_modified_us: &'a dyn Fn(&str) -> Option<u64>,
+    /// Whether the document's persisted doctree is on disk. Sphinx stats
+    /// `doctreedir/<docname>.doctree`; a doctree that exists but can no
+    /// longer be *read* is caught later, when the read phase tries to load
+    /// it, and re-read then.
+    pub doctree_exists: &'a dyn Fn(&str) -> bool,
+    /// Modification time of one of a document's `dependencies` entries.
+    pub dependency_modified_us: &'a dyn Fn(&Path) -> Option<u64>,
+}
+
+/// The three sets `env.get_outdated_files` splits the project into
+/// (`environment/__init__.py:521-554`).
+///
+/// `added` and `changed` are both read; they are kept apart because Sphinx
+/// keeps them apart — the distinction drives the glob-toctree rule below
+/// and the `%s added, %s changed, %s removed` progress line.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Outdated {
+    /// Documents the environment has never seen.
+    pub added: BTreeSet<String>,
+    /// Documents whose recorded read is no longer good enough.
+    pub changed: BTreeSet<String>,
+    /// Documents the environment knows that the project no longer has.
+    /// Each must be [`BuildEnvironment::clear_doc`]'d.
+    pub removed: BTreeSet<String>,
+}
+
+impl Outdated {
+    /// The documents this build has to read: `added | changed`.
+    pub fn to_read(&self) -> BTreeSet<String> {
+        self.added.union(&self.changed).cloned().collect()
+    }
 }
 
 /// Persistent build-state record: the subset of Sphinx's `BuildEnvironment`
@@ -171,6 +217,92 @@ impl BuildEnvironment {
                 Err(e)
             }
         }
+    }
+
+    /// Split `found` — the documents the project currently has — into what
+    /// this build must read, and what it must forget.
+    ///
+    /// Port of `BuildEnvironment.get_outdated_files`
+    /// (`environment/__init__.py:521-554`) together with the two steps
+    /// `Builder.read` wraps around it (`builders/__init__.py:477-491`): a
+    /// changed configuration re-reads everything, and adding or removing
+    /// *any* file re-reads every document with a globbed toctree, whose
+    /// entry list depends on which files exist rather than on its own text.
+    ///
+    /// Sphinx's `env-get-outdated` event — an extension's chance to add its
+    /// own outdated documents — has no counterpart here; there are no
+    /// extensions with read-phase state yet.
+    pub fn get_outdated_files(
+        &self,
+        found: &BTreeSet<String>,
+        config_changed: bool,
+        times: &FileTimes<'_>,
+    ) -> Outdated {
+        let mut outdated = Outdated {
+            removed: self
+                .all_docs
+                .keys()
+                .filter(|docname| !found.contains(docname.as_str()))
+                .cloned()
+                .collect(),
+            ..Default::default()
+        };
+
+        if config_changed {
+            // Sphinx: `added = found_docs`, `changed` left empty — every
+            // document is new as far as the old environment is concerned.
+            outdated.added = found.clone();
+            return outdated;
+        }
+
+        for docname in found {
+            if !self.all_docs.contains_key(docname) {
+                outdated.added.insert(docname.clone());
+            } else if self.has_doc_changed(docname, times) {
+                outdated.changed.insert(docname.clone());
+            }
+        }
+
+        if !outdated.added.is_empty() || !outdated.removed.is_empty() {
+            for docname in &self.glob_toctrees {
+                if found.contains(docname) && !outdated.added.contains(docname) {
+                    outdated.changed.insert(docname.clone());
+                }
+            }
+        }
+
+        outdated
+    }
+
+    /// `BuildEnvironment._has_doc_changed` (`environment/__init__.py:849-911`)
+    /// for a document the environment already knows: the first of Sphinx's
+    /// four reasons that holds wins.
+    fn has_doc_changed(&self, docname: &str, times: &FileTimes<'_>) -> bool {
+        if self.reread_always.contains(docname) {
+            return true;
+        }
+        if !(times.doctree_exists)(docname) {
+            return true;
+        }
+        let Some(&read_time) = self.all_docs.get(docname) else {
+            return true;
+        };
+        match (times.source_modified_us)(docname) {
+            None => return true,
+            Some(modified) if modified > read_time => return true,
+            Some(_) => {}
+        }
+        // Every dependency is compared against the time the *document* was
+        // read, not against the document's own mtime: a file that changed
+        // after the read invalidates it however old the document is.
+        for dependency in self.dependencies.get(docname).into_iter().flatten() {
+            match (times.dependency_modified_us)(dependency) {
+                None => return true,
+                Some(modified) if modified > read_time => return true,
+                Some(_) => {}
+            }
+        }
+        false
     }
 
     /// Remove every trace of `docname` from the environment — the Rust
@@ -572,6 +704,213 @@ mod tests {
             !env.files_to_rebuild.contains_key("chapters/intro"),
             "an emptied value-set must delete its key, not linger as an empty set"
         );
+    }
+
+    /// A synthetic filesystem for the outdated computation: every document
+    /// has a doctree and a source read one second before its recorded read
+    /// time, and no dependency exists unless the test adds one.
+    #[derive(Default)]
+    struct Fs {
+        sources: BTreeMap<String, Option<u64>>,
+        doctrees: BTreeSet<String>,
+        deps: BTreeMap<PathBuf, Option<u64>>,
+    }
+
+    const READ_TIME: u64 = 1_000_000;
+
+    /// Two documents, both read at [`READ_TIME`], both up to date.
+    fn steady_state() -> (BuildEnvironment, Fs) {
+        let mut env = BuildEnvironment {
+            root_doc: "index".to_string(),
+            ..Default::default()
+        };
+        env.all_docs.insert("index".to_string(), READ_TIME);
+        env.all_docs.insert("a".to_string(), READ_TIME);
+        let fs = Fs {
+            sources: BTreeMap::from([
+                ("index".to_string(), Some(READ_TIME - 1)),
+                ("a".to_string(), Some(READ_TIME - 1)),
+            ]),
+            doctrees: BTreeSet::from(["index".to_string(), "a".to_string()]),
+            deps: BTreeMap::new(),
+        };
+        (env, fs)
+    }
+
+    fn found(docnames: &[&str]) -> BTreeSet<String> {
+        docnames.iter().map(|d| d.to_string()).collect()
+    }
+
+    fn outdated_with(
+        env: &BuildEnvironment,
+        fs: &Fs,
+        docnames: &[&str],
+        config_changed: bool,
+    ) -> Outdated {
+        env.get_outdated_files(
+            &found(docnames),
+            config_changed,
+            &FileTimes {
+                source_modified_us: &|docname| fs.sources.get(docname).copied().flatten(),
+                doctree_exists: &|docname| fs.doctrees.contains(docname),
+                dependency_modified_us: &|path| fs.deps.get(path).copied().flatten(),
+            },
+        )
+    }
+
+    fn outdated(env: &BuildEnvironment, fs: &Fs, docnames: &[&str]) -> Outdated {
+        outdated_with(env, fs, docnames, false)
+    }
+
+    #[test]
+    fn nothing_is_outdated_in_a_steady_state() {
+        let (env, fs) = steady_state();
+        let out = outdated(&env, &fs, &["index", "a"]);
+        assert_eq!(out, Outdated::default());
+        assert!(out.to_read().is_empty());
+    }
+
+    #[test]
+    fn a_document_the_environment_has_never_seen_is_added() {
+        let (env, mut fs) = steady_state();
+        fs.sources.insert("new".to_string(), Some(READ_TIME));
+        let out = outdated(&env, &fs, &["index", "a", "new"]);
+        assert_eq!(out.added, found(&["new"]));
+        assert!(out.changed.is_empty());
+        assert!(out.removed.is_empty());
+    }
+
+    #[test]
+    fn a_document_that_is_gone_is_removed() {
+        let (env, fs) = steady_state();
+        let out = outdated(&env, &fs, &["index"]);
+        assert_eq!(out.removed, found(&["a"]));
+        assert!(out.added.is_empty());
+        // The still-present document is *not* dragged along by its
+        // neighbour's disappearance (only glob toctrees are).
+        assert!(out.changed.is_empty());
+    }
+
+    #[test]
+    fn a_changed_configuration_re_reads_everything() {
+        let (env, fs) = steady_state();
+        let out = outdated_with(&env, &fs, &["index", "a"], true);
+        assert_eq!(out.added, found(&["index", "a"]));
+        assert!(
+            out.changed.is_empty(),
+            "sphinx puts every document in `added` and leaves `changed` empty"
+        );
+    }
+
+    #[test]
+    fn a_source_newer_than_its_read_time_has_changed() {
+        let (env, mut fs) = steady_state();
+        fs.sources.insert("a".to_string(), Some(READ_TIME + 1));
+        assert_eq!(outdated(&env, &fs, &["index", "a"]).changed, found(&["a"]));
+    }
+
+    #[test]
+    fn a_source_read_within_the_same_microsecond_has_not_changed() {
+        let (env, mut fs) = steady_state();
+        fs.sources.insert("a".to_string(), Some(READ_TIME));
+        assert!(
+            outdated(&env, &fs, &["index", "a"]).changed.is_empty(),
+            "the comparison is strictly-newer, like sphinx's"
+        );
+    }
+
+    #[test]
+    fn an_unstattable_source_has_changed() {
+        let (env, mut fs) = steady_state();
+        fs.sources.insert("a".to_string(), None);
+        assert_eq!(outdated(&env, &fs, &["index", "a"]).changed, found(&["a"]));
+    }
+
+    #[test]
+    fn a_missing_doctree_file_has_changed() {
+        let (env, mut fs) = steady_state();
+        fs.doctrees.remove("a");
+        assert_eq!(outdated(&env, &fs, &["index", "a"]).changed, found(&["a"]));
+    }
+
+    #[test]
+    fn a_document_that_asked_to_be_re_read_always_has_changed() {
+        let (mut env, fs) = steady_state();
+        env.reread_always.insert("a".to_string());
+        assert_eq!(outdated(&env, &fs, &["index", "a"]).changed, found(&["a"]));
+    }
+
+    #[test]
+    fn a_dependency_newer_than_the_read_time_has_changed() {
+        let (mut env, mut fs) = steady_state();
+        let pic = PathBuf::from("/src/pic.png");
+        env.dependencies
+            .insert("a".to_string(), BTreeSet::from([pic.clone()]));
+
+        fs.deps.insert(pic.clone(), Some(READ_TIME - 1));
+        assert!(outdated(&env, &fs, &["index", "a"]).changed.is_empty());
+
+        // Note the comparison: the dependency's mtime against the time the
+        // *document* was read, not against the document's own mtime.
+        fs.deps.insert(pic, Some(READ_TIME + 1));
+        assert_eq!(outdated(&env, &fs, &["index", "a"]).changed, found(&["a"]));
+    }
+
+    #[test]
+    fn a_missing_dependency_has_changed() {
+        let (mut env, mut fs) = steady_state();
+        let pic = PathBuf::from("/src/pic.png");
+        env.dependencies
+            .insert("a".to_string(), BTreeSet::from([pic.clone()]));
+        fs.deps.insert(pic, None);
+        assert_eq!(outdated(&env, &fs, &["index", "a"]).changed, found(&["a"]));
+    }
+
+    #[test]
+    fn adding_or_removing_a_file_re_reads_every_glob_toctree() {
+        let (mut env, mut fs) = steady_state();
+        env.glob_toctrees.insert("index".to_string());
+        // A glob container that is no longer part of the project is not
+        // resurrected by the re-read.
+        env.glob_toctrees.insert("gone".to_string());
+
+        // Nothing added or removed: the container is left alone.
+        assert!(outdated(&env, &fs, &["index", "a"]).changed.is_empty());
+
+        fs.sources.insert("new".to_string(), Some(READ_TIME));
+        fs.doctrees.insert("new".to_string());
+        let added = outdated(&env, &fs, &["index", "a", "new"]);
+        assert_eq!(added.added, found(&["new"]));
+        assert_eq!(added.changed, found(&["index"]));
+
+        let removed = outdated(&env, &fs, &["index"]);
+        assert_eq!(removed.removed, found(&["a"]));
+        assert_eq!(removed.changed, found(&["index"]));
+    }
+
+    #[test]
+    fn a_glob_container_that_is_new_itself_stays_in_added() {
+        let (mut env, mut fs) = steady_state();
+        env.glob_toctrees.insert("new".to_string());
+        fs.sources.insert("new".to_string(), Some(READ_TIME));
+        let out = outdated(&env, &fs, &["index", "a", "new"]);
+        assert_eq!(out.added, found(&["new"]));
+        assert!(
+            out.changed.is_empty(),
+            "a document is read once; being added already covers it"
+        );
+    }
+
+    #[test]
+    fn the_read_set_is_the_added_and_changed_documents() {
+        let (mut env, mut fs) = steady_state();
+        fs.sources.insert("new".to_string(), Some(READ_TIME));
+        fs.doctrees.remove("a");
+        env.all_docs.insert("gone".to_string(), READ_TIME);
+
+        let out = outdated(&env, &fs, &["index", "a", "new"]);
+        assert_eq!(out.to_read(), found(&["a", "new"]));
+        assert_eq!(out.removed, found(&["gone"]));
     }
 
     #[test]
