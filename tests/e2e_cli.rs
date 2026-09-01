@@ -362,6 +362,53 @@ fn incremental_cache_hit_still_writes_output() {
     );
 }
 
+/// A document is outdated when a file it pulls in is newer than the build
+/// that read it — not only when its own source changes. The `deps_image`
+/// fixture's `page.rst` embeds `pic.png`; touching the picture must re-read
+/// that page and nothing else.
+#[test]
+fn touching_an_embedded_image_re_reads_only_the_page_that_embeds_it() {
+    let src = out_dir("deps-image-src");
+    std::fs::create_dir_all(&src).unwrap();
+    for name in ["conf.py", "index.rst", "page.rst", "pic.png"] {
+        std::fs::copy(fixture("deps_image").join(name), src.join(name)).unwrap();
+    }
+    let out = out_dir("deps-image-out");
+
+    let run1 = build(&src, &out, &["--incremental"]);
+    assert!(run1.status.success(), "stderr: {}", stderr_of(&run1));
+
+    let run2 = build(&src, &out, &["--incremental"]);
+    assert!(
+        stderr_of(&run2).contains("Cache hits: 2"),
+        "an unchanged project reads nothing, stderr: {}",
+        stderr_of(&run2)
+    );
+
+    // Touch the picture: its mtime moves past the time `page` was read.
+    let picture = src.join("pic.png");
+    let bytes = std::fs::read(&picture).unwrap();
+    std::fs::write(&picture, &bytes).unwrap();
+
+    let run3 = build(&src, &out, &["--incremental"]);
+    assert!(
+        stderr_of(&run3).contains("Cache hits: 1"),
+        "the page embedding the touched image must be re-read, stderr: {}",
+        stderr_of(&run3)
+    );
+    assert!(
+        out.join("page.html").is_file() && out.join("index.html").is_file(),
+        "both pages are still written"
+    );
+
+    let run4 = build(&src, &out, &["--incremental"]);
+    assert!(
+        stderr_of(&run4).contains("Cache hits: 2"),
+        "the re-read settled the dependency, stderr: {}",
+        stderr_of(&run4)
+    );
+}
+
 #[test]
 fn clean_incremental_build_produces_full_output() {
     let out = out_dir("clean-incremental");

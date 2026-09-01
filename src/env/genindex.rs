@@ -355,12 +355,17 @@ pub fn create_index(
 
     // Sphinx iterates `index_domain.entries` — a dict, so in the order the
     // documents were *read*. For a full build that is `sorted(docnames)`
-    // (`Builder.read`), which is the order this `BTreeMap` gives. A real
-    // incremental rebuild re-reads only the outdated documents and their
-    // entries move to the end of the dict, so the two orders part ways
-    // there; nothing downstream depends on it except the sub-entry ties
-    // `sub_entries_that_fold_alike_keep_their_insertion_order` pins, and
-    // the outdated computation that would expose it is task 13's.
+    // (`Builder.read`), which is the order this `BTreeMap` gives.
+    //
+    // Deliberate divergence on incremental rebuilds: sphinx re-reads only
+    // the outdated documents, and their entries move to the end of the
+    // dict, so its genindex depends on which documents happened to be
+    // stale. This map stays docname-sorted, so an incremental rebuild
+    // produces the *same* index a cold build would — the invariant
+    // `touching_one_document_re_reads_only_it_and_the_environment_still_matches_a_cold_build`
+    // (tests/env_differential.rs) enforces. The only thing the order
+    // decides is sub-entry ties, which
+    // `sub_entries_that_fold_alike_keep_their_insertion_order` pins.
     for (docname, entries) in &env.index_entries {
         let rel = rel_uri(docname);
         for entry in entries {

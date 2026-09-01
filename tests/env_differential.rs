@@ -970,6 +970,337 @@ fn rebuilding_a_project_does_not_accumulate_environment_state() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// Incremental rebuilds: what the build re-reads, and what that leaves the
+// environment holding
+// ---------------------------------------------------------------------------
+
+/// One incremental build of `source` into `output` — what `--incremental`
+/// (and compat-mode `sphinx-build`, which is incremental by default) runs.
+///
+/// Returns the number of documents the build did *not* have to read (its
+/// cache hits), the environment snapshot, and the warnings, rendered with
+/// the source root replaced by `<project>`.
+fn incremental_build(source: &Path, output: &Path) -> (usize, serde_json::Value, Vec<String>) {
+    let mut builder = SphinxBuilder::new(
+        BuildConfig::default(),
+        source.to_path_buf(),
+        output.to_path_buf(),
+    )
+    .unwrap();
+    builder.enable_incremental();
+    let stats = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(builder.build())
+        .unwrap();
+    let root = source.to_string_lossy().into_owned();
+    let warnings = stats
+        .warning_details
+        .iter()
+        .map(|warning| warning.render().replace(&root, "<project>"))
+        .collect();
+    (stats.cache_hits, builder.snapshot_env(), warnings)
+}
+
+/// The snapshot with `all_docs`' read timestamps blanked out.
+///
+/// An incremental rebuild deliberately keeps the timestamp written by the
+/// build that last read each document, so those values cannot match a cold
+/// build's — while *which* documents are in the map, and every other field,
+/// must.
+fn without_read_times(env: &serde_json::Value) -> serde_json::Value {
+    let mut env = env.clone();
+    let all_docs = env["all_docs"].as_object_mut().expect("all_docs is a map");
+    for value in all_docs.values_mut() {
+        *value = serde_json::Value::Null;
+    }
+    env
+}
+
+fn write(source_dir: &Path, docname: &str, body: &str) {
+    let path = source_dir.join(format!("{docname}.rst"));
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).unwrap();
+    }
+    std::fs::write(path, body).unwrap();
+}
+
+/// The heart of the incremental contract: a rebuild that re-reads only the
+/// document that changed has to leave the environment in exactly the state
+/// a build that read everything would have left it in. Anything less and
+/// "incremental" means "sometimes wrong".
+///
+/// Two documents, one touched: the untouched one is not read (it comes back
+/// as a cache hit), and the resulting environment — toctree graph,
+/// numbering, std domain, index, resolved doctrees — equals a cold build's
+/// down to the read timestamps that cannot be equal by construction.
+#[test]
+fn touching_one_document_re_reads_only_it_and_the_environment_still_matches_a_cold_build() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let source_dir = tmp.path().join("source");
+    std::fs::create_dir_all(&source_dir).unwrap();
+    write(
+        &source_dir,
+        "index",
+        "Index\n=====\n\n.. toctree::\n\n   a\n   b\n",
+    );
+    write(
+        &source_dir,
+        "a",
+        "A\n=\n\n.. _label-a:\n\nSection A\n---------\n",
+    );
+    write(&source_dir, "b", "B\n=\n\nSee :ref:`label-a`.\n");
+    let source_dir = std::fs::canonicalize(&source_dir).unwrap();
+
+    let warm_out = tmp.path().join("warm");
+    let (cold_hits, first_env, _) = incremental_build(&source_dir, &warm_out);
+    assert_eq!(cold_hits, 0, "a cold build cannot hit the cache");
+
+    let (steady_hits, steady_env, _) = incremental_build(&source_dir, &warm_out);
+    assert_eq!(
+        steady_hits, 3,
+        "an unchanged project re-reads nothing at all"
+    );
+    assert_eq!(
+        steady_env["all_docs"], first_env["all_docs"],
+        "`all_docs` records when each document was *read*: a rebuild that \
+         read nothing must not restamp it"
+    );
+
+    // Touch one document: rewriting the file moves its mtime past the read
+    // time recorded for it.
+    write(&source_dir, "b", "B\n=\n\nSee :ref:`label-a` twice.\n");
+    let (hits, incremental_env, incremental_warnings) = incremental_build(&source_dir, &warm_out);
+    assert_eq!(
+        hits, 2,
+        "only the touched document is read; the other two are hits"
+    );
+    assert_eq!(
+        incremental_env["all_docs"]["index"], first_env["all_docs"]["index"],
+        "an untouched document keeps the read time it was read at"
+    );
+    assert_eq!(incremental_env["all_docs"]["a"], first_env["all_docs"]["a"]);
+    assert_ne!(
+        incremental_env["all_docs"]["b"], first_env["all_docs"]["b"],
+        "the touched document was read again, so its read time advanced"
+    );
+
+    // The reference build: same sources, an output directory that has never
+    // been built into, so nothing is cached and everything is read.
+    let (cold_hits, cold_env, cold_warnings) =
+        incremental_build(&source_dir, &tmp.path().join("cold"));
+    assert_eq!(cold_hits, 0);
+
+    assert_eq!(
+        without_read_times(&incremental_env),
+        without_read_times(&cold_env),
+        "an incremental rebuild's environment must equal a cold build's"
+    );
+    assert_eq!(incremental_warnings, cold_warnings);
+}
+
+/// A document that disappears is cleared from the environment, and both
+/// diagnostics a cold build would now report show up: the reference into
+/// the deleted document dangles (resolution, recomputed for every document
+/// anyway) and the toctree that listed it does too (read-time, which is why
+/// its container is read again).
+#[test]
+fn deleting_a_document_clears_it_and_updates_the_warnings() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let source_dir = tmp.path().join("source");
+    let output_dir = tmp.path().join("build");
+    std::fs::create_dir_all(&source_dir).unwrap();
+    write(
+        &source_dir,
+        "index",
+        "Index\n=====\n\n.. toctree::\n\n   a\n   b\n",
+    );
+    write(&source_dir, "a", "A\n=\n\n.. _shared:\n\nAnchor\n------\n");
+    write(&source_dir, "b", "B\n=\n\nSee :ref:`shared`.\n");
+    let source_dir = std::fs::canonicalize(&source_dir).unwrap();
+
+    let (_, first_env, first_warnings) = incremental_build(&source_dir, &output_dir);
+    assert!(first_warnings.is_empty(), "{first_warnings:?}");
+    assert!(first_env["std"]["labels"].get("shared").is_some());
+
+    std::fs::remove_file(source_dir.join("a.rst")).unwrap();
+    let (hits, env, warnings) = incremental_build(&source_dir, &output_dir);
+
+    assert_eq!(
+        hits, 1,
+        "`b` is a hit; `index` listed the deleted document in its toctree, \
+         so it is read again"
+    );
+    assert_eq!(
+        env["all_docs"]["b"], first_env["all_docs"]["b"],
+        "a deletion elsewhere does not restamp the documents that stayed"
+    );
+    assert!(
+        env["all_docs"].get("a").is_none() && env["tocs_pformat"].get("a").is_none(),
+        "a deleted document must leave no trace: {env}"
+    );
+    assert!(
+        env["std"]["labels"].get("shared").is_none(),
+        "its labels go with it: {}",
+        env["std"]["labels"]
+    );
+    assert_eq!(
+        env["toctree_includes"]["index"],
+        serde_json::json!(["b"]),
+        "the re-read container no longer claims the deleted document"
+    );
+    assert_eq!(
+        warnings,
+        vec![
+            "<project>/index.rst:4: WARNING: toctree contains reference to nonexisting \
+             document 'a' [toc.not_readable]"
+                .to_string(),
+            "<project>/b.rst:4: WARNING: undefined label: 'shared' [ref.ref]".to_string(),
+        ],
+        "both the toctree entry and the reference into the deleted document \
+         now dangle — exactly what a cold build of this tree reports"
+    );
+
+    // And that claim is checked, not assumed.
+    let (_, cold_env, cold_warnings) = incremental_build(&source_dir, &tmp.path().join("cold"));
+    assert_eq!(warnings, cold_warnings);
+    assert_eq!(without_read_times(&env), without_read_times(&cold_env));
+}
+
+/// A toctree entry naming a document that does not exist puts its container
+/// in `reread_always` (sphinx's `env.note_reread()`): the container is read
+/// on every build until the missing document turns up, which is what lets
+/// the warning stop the moment it does.
+#[test]
+fn a_dangling_toctree_entry_re_reads_its_container_until_the_document_appears() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let source_dir = tmp.path().join("source");
+    let output_dir = tmp.path().join("build");
+    std::fs::create_dir_all(&source_dir).unwrap();
+    write(
+        &source_dir,
+        "index",
+        "Index\n=====\n\n.. toctree::\n\n   a\n   later\n",
+    );
+    write(&source_dir, "a", "A\n=\n\nBody.\n");
+    let source_dir = std::fs::canonicalize(&source_dir).unwrap();
+
+    let dangling = vec![
+        "<project>/index.rst:4: WARNING: toctree contains reference to \
+                         nonexisting document 'later' [toc.not_readable]"
+            .to_string(),
+    ];
+
+    let (_, env, warnings) = incremental_build(&source_dir, &output_dir);
+    assert_eq!(warnings, dangling);
+    assert_eq!(env["reread_always"], serde_json::json!(["index"]));
+
+    let (hits, _, warnings) = incremental_build(&source_dir, &output_dir);
+    assert_eq!(
+        hits, 1,
+        "`index` is read again however unchanged it is; `a` is a hit"
+    );
+    assert_eq!(warnings, dangling, "and it says the same thing");
+
+    // The missing document turns up: the container reads it, stops warning,
+    // and stops asking to be re-read.
+    write(&source_dir, "later", "Later\n=====\n\nBody.\n");
+    let (_, env, warnings) = incremental_build(&source_dir, &output_dir);
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(
+        env["toctree_includes"]["index"],
+        serde_json::json!(["a", "later"])
+    );
+    assert_eq!(env["reread_always"], serde_json::json!([]));
+
+    let (hits, _, _) = incremental_build(&source_dir, &output_dir);
+    assert_eq!(hits, 3, "nothing is outdated any more");
+}
+
+/// A globbed toctree's entries depend on which files exist, not on its own
+/// text — so a build that adds or removes any file has to re-read every
+/// document that has one, even though none of them changed.
+#[test]
+fn adding_a_file_re_reads_the_globbed_toctree_that_would_have_matched_it() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let source_dir = tmp.path().join("source");
+    let output_dir = tmp.path().join("build");
+    std::fs::create_dir_all(&source_dir).unwrap();
+    write(
+        &source_dir,
+        "index",
+        "Index\n=====\n\n.. toctree::\n   :glob:\n\n   pages/*\n",
+    );
+    write(&source_dir, "pages/a", "A\n=\n\nBody.\n");
+    let source_dir = std::fs::canonicalize(&source_dir).unwrap();
+
+    let (_, first_env, _) = incremental_build(&source_dir, &output_dir);
+    assert_eq!(
+        first_env["toctree_includes"]["index"],
+        serde_json::json!(["pages/a"])
+    );
+
+    write(&source_dir, "pages/b", "B\n=\n\nBody.\n");
+    let (hits, env, _) = incremental_build(&source_dir, &output_dir);
+
+    assert_eq!(
+        hits, 1,
+        "the new document is read and so is the glob container; only \
+         `pages/a` is a hit"
+    );
+    assert_eq!(
+        env["toctree_includes"]["index"],
+        serde_json::json!(["pages/a", "pages/b"]),
+        "the re-read container picked the new document up"
+    );
+}
+
+/// A document whose *source* never changed is still outdated when a file it
+/// pulls in has: this is what `env.dependencies` is for.
+#[test]
+fn touching_an_image_re_reads_only_the_document_that_embeds_it() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let source_dir = tmp.path().join("source");
+    let output_dir = tmp.path().join("build");
+    std::fs::create_dir_all(&source_dir).unwrap();
+    write(
+        &source_dir,
+        "index",
+        "Index\n=====\n\n.. toctree::\n\n   a\n   b\n",
+    );
+    write(&source_dir, "a", "A\n=\n\n.. image:: pic.png\n");
+    write(&source_dir, "b", "B\n=\n\nBody.\n");
+    let picture = source_dir.join("pic.png");
+    std::fs::write(&picture, b"first").unwrap();
+    let source_dir = std::fs::canonicalize(&source_dir).unwrap();
+
+    let (_, env, _) = incremental_build(&source_dir, &output_dir);
+    assert_eq!(
+        env["dependencies"]["a"],
+        serde_json::json!([source_dir.join("pic.png")]),
+        "the image is recorded as a dependency of the document that embeds it"
+    );
+
+    let (steady, _, _) = incremental_build(&source_dir, &output_dir);
+    assert_eq!(steady, 3, "nothing changed: nothing is read");
+
+    std::fs::write(&picture, b"second").unwrap();
+    let (hits, _, _) = incremental_build(&source_dir, &output_dir);
+    assert_eq!(
+        hits, 2,
+        "the document embedding the touched image is re-read; the others hit"
+    );
+
+    let (settled, _, _) = incremental_build(&source_dir, &output_dir);
+    assert_eq!(
+        settled, 3,
+        "the re-read recorded a newer read time, so the image is no longer \
+         newer than it"
+    );
+}
+
 /// `:orphan:` exempts a document from the orphan warning even when a
 /// `PreBibliographic` node precedes the field list — `raw` being the one
 /// such node a document can produce before any transform runs. Getting the
@@ -1084,11 +1415,18 @@ fn a_numref_target_is_lowercased_like_the_label_it_names() {
     );
 }
 
-/// Label collection and reference resolution both read parse output that a
-/// warm cache hit does not recompute — the id/name registry and the source
-/// text (for warning line numbers) ride the cached `Document`, the doctree
-/// comes off disk. A rebuild that loses either reports different warnings,
-/// or none.
+/// What a warm rebuild says about a project it does not have to read.
+///
+/// The two halves come apart: **collection** warnings (duplicate labels)
+/// are raised while a document is read, so a rebuild that reads nothing
+/// does not raise them again — sphinx behaves the same way, and only ever
+/// reported them twice here because this crate used to re-read everything.
+/// **Resolution** warnings are recomputed for every document on every
+/// build, because every document is written on every build: they come back
+/// unchanged, off the persisted doctree and the cached source text. The
+/// environment itself — labels, terms, the program-scoped option, which
+/// live only in the parse export — has to survive the round trip through
+/// `env.bin` intact.
 #[test]
 fn a_warm_rebuild_reports_the_same_std_domain_warnings() {
     let tmp = tempfile::TempDir::new().unwrap();
@@ -1176,36 +1514,27 @@ fn a_warm_rebuild_reports_the_same_std_domain_warnings() {
     assert_eq!(
         warm,
         vec![
-            // Sphinx purges a document's domain data immediately before
-            // re-reading *that* document (`Builder._read_serial`:
-            // `env.clear_doc(docname)` then `env.read_doc(docname)`), so
-            // while `a` is being re-read, `dup` is still the *previous*
-            // build's entry — owned by `b`. Reading `b` then finds the entry
-            // `a` just wrote. Sphinx reports the same pair whenever both
-            // documents are re-read against a warm environment; what keeps
-            // it out of a real rebuild is that an unchanged document is not
-            // re-read at all, which is the outdated computation this crate
-            // has yet to port.
-            "<project>/a.rst:7: WARNING: duplicate label dup, other instance in <project>/b.rst"
-                .to_string(),
-            "<project>/b.rst:7: WARNING: duplicate label dup, other instance in <project>/a.rst"
-                .to_string(),
+            // The duplicate-label warning is missing on purpose: it is
+            // raised *while reading* `b`, and this build read nothing. The
+            // duplicate is still recorded — `warm_env["std"]` above is the
+            // cold build's, `dup` pointing at `a` either way — it just is
+            // not news any more. Sphinx says the same thing about the same
+            // rebuild.
             "<project>/a.rst:9: WARNING: unknown document: 'nope' [ref.doc]".to_string(),
             "<project>/b.rst:9: WARNING: term not in glossary: 'nothing' [ref.term]".to_string(),
         ],
-        "the resolution warnings must survive a warm rebuild unchanged: they \
-         are recomputed from the cached document's registry, source text and \
-         persisted doctree"
+        "the resolution warnings must survive a warm rebuild unchanged: every \
+         document is resolved on every build, from the persisted doctree and \
+         the cached source text"
     );
 }
 
-/// Toctree diagnostics are produced during the parse, which a warm cache
-/// hit skips — so they have to ride the cached parse records, not be
-/// recomputed. A rebuild that reports fewer warnings than a cold build is
-/// the failure this guards.
 /// `Cmdoption.handle_signature`'s malformed-option diagnostic goes to the
 /// logger, not the tree, so it has to ride the parse records to reach the
-/// build's warning list — and survive a cache hit that skipped the parse.
+/// build's warning list. A rebuild that reads nothing does not repeat it —
+/// it is a *read*-phase diagnostic — but the registration it made survives
+/// in the environment, and re-reading the document brings the diagnostic
+/// back with it.
 /// Text and location are byte-checked against a sphinx 9.1.0 build of the
 /// same source, which reports:
 ///
@@ -1279,12 +1608,25 @@ fn a_malformed_option_description_warns_like_sphinx_across_a_rebuild() {
     );
 
     let (warm, warm_env) = build_once();
-    assert_eq!(
-        warm, expected,
-        "a cache hit skips the parse, so the diagnostic has to come back off \
-         the cached document's records"
+    assert!(
+        warm.is_empty(),
+        "a rebuild that reads nothing raises no read-phase diagnostic: {warm:?}"
     );
-    assert_eq!(warm_env["std"], cold_env["std"]);
+    assert_eq!(
+        warm_env["std"], cold_env["std"],
+        "what the diagnostic's document registered is still in the environment"
+    );
+
+    // Touch the document: it is read again, and the diagnostic comes back
+    // with the read that produces it.
+    std::fs::write(
+        source_dir.join("a.rst"),
+        "A\n=\n\n.. option:: =bad\n\n   Body.\n\n.. option:: , --ok\n\n   Body.\n",
+    )
+    .unwrap();
+    let (reread, reread_env) = build_once();
+    assert_eq!(reread, expected);
+    assert_eq!(reread_env["std"], cold_env["std"]);
 }
 
 /// `IndexDomain.process_doc` rejects a whole `index` node when *any* of its
@@ -1377,15 +1719,36 @@ fn an_invalid_index_entry_drops_its_whole_node_like_sphinx() {
     assert!(!resolved.contains("'Good'"), "{resolved}");
 
     let (warm, warm_env) = build_once();
-    assert_eq!(
-        warm, expected_warnings,
-        "a cache hit skips the parse, so the diagnostic has to come back off \
-         the cached doctree's entries"
+    assert!(
+        warm.is_empty(),
+        "the rejection happened while reading, and this build read nothing: {warm:?}"
     );
-    assert_eq!(warm_env["index_entries"], expected_entries);
-    assert_eq!(warm_env["genindex"], expected_genindex);
+    assert_eq!(
+        warm_env["index_entries"], expected_entries,
+        "the entries that survived the rejection are still recorded"
+    );
+    assert_eq!(
+        warm_env["genindex"], expected_genindex,
+        "and the index assembled from them is unchanged"
+    );
+
+    // Re-reading the document re-runs the rejection, diagnostic included.
+    std::fs::write(
+        source_dir.join("a.rst"),
+        "A\n=\n\n.. index::\n   single: Good\n   pair: lonely\n\nBody.\n\n\
+         .. index::\n   single: Fine\n\nMore.\n",
+    )
+    .unwrap();
+    let (reread, reread_env) = build_once();
+    assert_eq!(reread, expected_warnings);
+    assert_eq!(reread_env["index_entries"], expected_entries);
+    assert_eq!(reread_env["genindex"], expected_genindex);
 }
 
+/// A toctree diagnostic is produced while the document is read, so a
+/// rebuild that reads the document again has to report it again — off the
+/// same parse records. (This document *is* read again on every build: a
+/// dangling toctree entry puts its container in `reread_always`.)
 #[test]
 fn a_warm_rebuild_reports_the_same_toctree_warnings() {
     let tmp = tempfile::TempDir::new().unwrap();
@@ -1431,5 +1794,8 @@ fn a_warm_rebuild_reports_the_same_toctree_warnings() {
         ),
         "{cold:?}"
     );
+    // The dangling entry put `index` in `reread_always`, so the rebuild
+    // reads it again however unchanged it is — and the parse records the
+    // warning rides on have to come back the same.
     assert_eq!(build_once(), cold, "a warm rebuild must warn identically");
 }

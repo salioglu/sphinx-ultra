@@ -15,6 +15,8 @@ use crate::error::BuildError;
 
 pub struct BuildCache {
     cache_dir: PathBuf,
+    config_fingerprint: String,
+    config_changed: bool,
     documents: Arc<DashMap<PathBuf, CachedDocument>>,
     file_hashes: Arc<RwLock<HashMap<PathBuf, String>>>,
     hit_count: Arc<RwLock<usize>>,
@@ -45,7 +47,8 @@ impl BuildCache {
         // the configuration changed, everything in the cache is stale.
         let fingerprint_file = cache_dir.join(".config-fingerprint");
         let stored = std::fs::read_to_string(&fingerprint_file).unwrap_or_default();
-        if stored.trim() != config_fingerprint {
+        let config_changed = stored.trim() != config_fingerprint;
+        if config_changed {
             if !stored.is_empty() {
                 debug!("Configuration changed; discarding cache");
             }
@@ -56,6 +59,8 @@ impl BuildCache {
 
         let cache = Self {
             cache_dir,
+            config_fingerprint: config_fingerprint.to_string(),
+            config_changed,
             documents: Arc::new(DashMap::new()),
             file_hashes: Arc::new(RwLock::new(HashMap::new())),
             hit_count: Arc::new(RwLock::new(0)),
@@ -77,6 +82,18 @@ impl BuildCache {
     /// the same fingerprint-mismatch wipe.
     pub fn cache_dir(&self) -> &Path {
         &self.cache_dir
+    }
+
+    /// Whether this cache directory's stored fingerprint disagreed with the
+    /// configuration it was opened with — the whole directory was then
+    /// discarded, this build's documents, doctrees and `env.bin` included.
+    ///
+    /// A first build counts too (there is no stored fingerprint to agree
+    /// with), which is what Sphinx's `CONFIG_NEW` is: both mean "nothing
+    /// carried over from a previous build is usable", and both make every
+    /// document outdated.
+    pub fn config_changed(&self) -> bool {
+        self.config_changed
     }
 
     pub fn get_document(&self, file_path: &Path) -> Result<Document> {
@@ -194,6 +211,13 @@ impl BuildCache {
         debug!("Invalidated cache for {}", file_path.display());
     }
 
+    /// Empty the cache, in memory and on disk (`-E`, `--clean`).
+    ///
+    /// The fingerprint file is written back immediately: it records which
+    /// configuration the *directory* belongs to, and leaving it missing
+    /// would make the next build mistake this deliberate emptying for a
+    /// configuration change and throw away everything the build that
+    /// follows this one is about to cache.
     #[allow(dead_code)]
     pub fn clear(&self) -> Result<()> {
         self.documents.clear();
@@ -203,8 +227,12 @@ impl BuildCache {
 
         if self.cache_dir.exists() {
             std::fs::remove_dir_all(&self.cache_dir)?;
-            std::fs::create_dir_all(&self.cache_dir)?;
         }
+        std::fs::create_dir_all(&self.cache_dir)?;
+        std::fs::write(
+            self.cache_dir.join(".config-fingerprint"),
+            &self.config_fingerprint,
+        )?;
 
         debug!("Cleared all cache");
         Ok(())
@@ -479,6 +507,50 @@ mod tests {
             let cache = BuildCache::new(cache_dir, 500, 24, "fp-2").unwrap();
             assert!(cache.get_document(&source).is_err());
         }
+    }
+
+    #[test]
+    fn clearing_keeps_the_directory_claimed_by_this_configuration() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("page.rst");
+        std::fs::write(&source, "Page\n----\n").unwrap();
+        let cache_dir = tmp.path().join("cache");
+
+        {
+            let cache = BuildCache::new(cache_dir.clone(), 500, 24, "fp-1").unwrap();
+            cache.clear().unwrap();
+            // What a build after `-E`/`--clean` caches:
+            cache
+                .store_document(&source, &make_document(&source))
+                .unwrap();
+        }
+
+        let cache = BuildCache::new(cache_dir, 500, 24, "fp-1").unwrap();
+        assert!(
+            !cache.config_changed(),
+            "an emptied cache still belongs to the configuration that emptied it"
+        );
+        assert!(
+            cache.get_document(&source).is_ok(),
+            "a cleared cache that was refilled must survive to the next build"
+        );
+    }
+
+    #[test]
+    fn config_changed_reports_the_wipe() {
+        let tmp = TempDir::new().unwrap();
+        let cache_dir = tmp.path().join("cache");
+
+        // A first build has nothing to agree with: everything is new.
+        assert!(BuildCache::new(cache_dir.clone(), 500, 24, "fp-1")
+            .unwrap()
+            .config_changed());
+        assert!(!BuildCache::new(cache_dir.clone(), 500, 24, "fp-1")
+            .unwrap()
+            .config_changed());
+        assert!(BuildCache::new(cache_dir, 500, 24, "fp-2")
+            .unwrap()
+            .config_changed());
     }
 
     #[test]

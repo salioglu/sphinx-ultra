@@ -11,6 +11,8 @@ use crate::cache::BuildCache;
 use crate::config::BuildConfig;
 use crate::doctree::Doctree;
 use crate::document::Document;
+use crate::env;
+use crate::env::dependencies as env_dependencies;
 use crate::env::genindex as env_genindex;
 use crate::env::metadata as env_metadata;
 use crate::env::numbers as env_numbers;
@@ -77,7 +79,12 @@ struct ReadResult {
     doctree: Doctree,
     /// Read completion time in microseconds since the epoch — what Sphinx
     /// stores in `env.all_docs[docname]` (`builders/__init__.py:665`).
-    read_time_us: u64,
+    ///
+    /// `None` for a document this build did *not* read: its rendered output
+    /// and its doctree came back from the cache, and everything it
+    /// contributed to the environment — its read time included — is
+    /// whatever the build that did read it left behind.
+    read_time_us: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -109,13 +116,13 @@ pub struct SphinxBuilder {
     extension_loader: ExtensionLoader,
     /// Persisted build state (toctree graph, section/figure numbering, std
     /// domain data, ...). Loaded from the cache dir's `env.bin` if present
-    /// and current; otherwise a fresh, empty environment. The merge phase
-    /// fills it and the resolve phase saves it back.
+    /// and current; otherwise a fresh, empty environment.
     ///
-    /// It does not yet steer the build: every discovered document is read
-    /// on every build, so the loaded environment is fully rebuilt rather
-    /// than consulted for what is outdated. Reading it back is what a later
-    /// wave-4 task's incremental-rebuild logic needs.
+    /// It steers the build: [`BuildEnvironment::get_outdated_files`] decides
+    /// which documents this build reads, the merge phase folds those (and
+    /// only those) back in, and the resolve phase saves it again. A document
+    /// that is not read keeps every contribution the build that read it
+    /// made.
     env: BuildEnvironment,
     /// docname -> the pseudo-XML of that document's *resolved* doctree, as
     /// the resolve phase left it (Sphinx's `get_and_resolve_doctree`
@@ -281,8 +288,17 @@ impl SphinxBuilder {
     }
 
     /// Discard the saved environment before building (sphinx-build `-E`).
-    pub fn fresh_env(&self) -> Result<()> {
-        self.cache.clear()
+    ///
+    /// Sphinx's `-E` is `freshenv=True`: the pickled environment is not
+    /// loaded at all, and the fresh one it builds instead reports every
+    /// document as new. Emptying the cache directory is the same statement
+    /// about the *other* half of the persisted state (documents and
+    /// doctrees), and dropping the already-loaded environment here is what
+    /// keeps the two halves saying the same thing.
+    pub fn fresh_env(&mut self) -> Result<()> {
+        self.cache.clear()?;
+        self.env = BuildEnvironment::default();
+        Ok(())
     }
 
     /// Add a warning to the collection
@@ -303,13 +319,15 @@ impl SphinxBuilder {
         self.config.fail_on_warning
     }
 
-    pub async fn clean(&self) -> Result<()> {
+    pub async fn clean(&mut self) -> Result<()> {
         if self.output_dir.exists() {
             tokio::fs::remove_dir_all(&self.output_dir).await?;
         }
         // A clean build must not reuse documents cached before the clean
-        // (the on-disk cache lived inside the output dir we just removed).
+        // (the on-disk cache lived inside the output dir we just removed),
+        // nor the environment that was loaded from it.
         self.cache.clear()?;
+        self.env = BuildEnvironment::default();
         Ok(())
     }
 
@@ -317,10 +335,11 @@ impl SphinxBuilder {
     ///
     /// The four phases mirror Sphinx's own split (`builders/__init__.py`):
     ///
-    /// - **read** ([`Self::read_phase`], parallel): parse every source file
-    ///   into a `Document` + doctree, persisting the doctree per document.
+    /// - **read** ([`Self::read_phase`], parallel): parse every *outdated*
+    ///   source file into a `Document` + doctree, persisting the doctree per
+    ///   document, and recover the rest from the cache.
     /// - **merge** ([`Self::merge_phase`], sequential, docname-ordered):
-    ///   fold each document's read output into the [`BuildEnvironment`] —
+    ///   fold each re-read document's output into the [`BuildEnvironment`] —
     ///   Sphinx's `merge_info_from` plus the collectors it dispatches.
     /// - **resolve** ([`Self::resolve_phase`]): whole-project state that
     ///   needs every document read first, then persist the environment.
@@ -340,22 +359,20 @@ impl SphinxBuilder {
         let source_files = self.discover_source_files().await?;
         info!("Discovered {} source files", source_files.len());
 
-        // Build dependency graph
-        let dependency_graph = self.build_dependency_graph(&source_files).await?;
-        debug!(
-            "Built dependency graph with {} nodes",
-            dependency_graph.len()
-        );
-
         self.load_intersphinx_inventories()?;
 
-        let mut read_results = self.read_phase(&source_files, &dependency_graph)?;
-
         let mut env = std::mem::take(&mut self.env);
+        let to_read = self.plan_read(&env, &source_files);
+        let mut read_results = self.read_phase(&source_files, &to_read)?;
+
         self.merge_phase(&mut env, &mut read_results);
-        let resolved = self.resolve_phase(&mut env, &read_results);
+        self.resolve_phase(&mut env, &read_results);
         self.env = env;
-        resolved?;
+
+        let files_skipped = read_results
+            .iter()
+            .filter(|result| result.read_time_us.is_none())
+            .count();
 
         // Keep documents in discovery order (the merge phase iterates a
         // docname-sorted view of its own): the write and validation phases
@@ -389,7 +406,7 @@ impl SphinxBuilder {
 
         let stats = BuildStats {
             files_processed: processed_docs.len(),
-            files_skipped: 0, // TODO: Track skipped files
+            files_skipped,
             build_time,
             output_size_mb: output_size as f64 / 1024.0 / 1024.0,
             cache_hits: self.cache.hit_count(),
@@ -479,31 +496,95 @@ impl SphinxBuilder {
         }
     }
 
-    async fn build_dependency_graph(
-        &self,
-        files: &[PathBuf],
-    ) -> Result<HashMap<PathBuf, Vec<PathBuf>>> {
-        let mut graph = HashMap::new();
+    /// Which documents this build has to read
+    /// ([`BuildEnvironment::get_outdated_files`]), and the `updating
+    /// environment:` line Sphinx prints about it.
+    ///
+    /// A non-incremental build reads everything: without the document cache
+    /// there is nowhere to recover an unread document's rendered output
+    /// from, so "not reading it" would mean not writing its page. That is
+    /// also what `sphinx-build -a` maps to here — it turns the cache off,
+    /// and its write set (every found document) is what this builder writes
+    /// in any case (see [`Self::write_phase`]).
+    fn plan_read(&self, env: &BuildEnvironment, files: &[PathBuf]) -> BTreeSet<String> {
+        let found: BTreeSet<String> = files
+            .iter()
+            .map(|path| self.docname_of_path(path))
+            .collect();
 
-        // For now, simple implementation - process files in alphabetical order
-        // TODO: Parse files to find actual dependencies (includes, references, etc.)
-        for file in files {
-            graph.insert(file.clone(), Vec::new());
+        if !self.incremental {
+            debug!(
+                "Not an incremental build: reading all {} files",
+                found.len()
+            );
+            return found;
         }
 
-        Ok(graph)
+        // `env.doc2path` for the documents this build discovered.
+        let sources: BTreeMap<String, PathBuf> = files
+            .iter()
+            .map(|path| (self.docname_of_path(path), path.clone()))
+            .collect();
+
+        let outdated = env.get_outdated_files(
+            &found,
+            // A configuration change wipes the cache directory whole
+            // (`.config-fingerprint`), so it reaches this point as an empty
+            // environment as well; saying it out loud keeps the two
+            // statements from drifting apart.
+            self.cache.config_changed(),
+            &env::FileTimes {
+                source_modified_us: &|docname| {
+                    sources.get(docname).and_then(|path| modified_us(path))
+                },
+                doctree_exists: &|docname| self.doctree_path(docname).is_file(),
+                dependency_modified_us: &modified_us,
+            },
+        );
+
+        // Sphinx's `updating environment: %s added, %s changed, %s removed`
+        // (`builders/__init__.py:493-497`), minus the `[reason]` prefix: the
+        // whole-configuration fingerprint this crate uses cannot tell "new
+        // config" from "config changed".
+        info!(
+            "updating environment: {} added, {} changed, {} removed",
+            outdated.added.len(),
+            outdated.changed.len(),
+            outdated.removed.len()
+        );
+
+        let mut to_read = outdated.to_read();
+
+        // Deliberate divergence: the toctrees that pointed at a deleted
+        // document are read again.
+        //
+        // Sphinx does not do this — it resolves toctree entries a second
+        // time while *writing* each page (`adapters/toctree.py`), which is
+        // where its "toctree contains reference to nonexisting document"
+        // warning comes from on a rebuild. This crate resolves entries once,
+        // in the parser, so leaving the container unread would make the
+        // deletion silent until the next cold build. Re-reading it is how a
+        // read-time resolver keeps an incremental build's diagnostics equal
+        // to a cold one's; it costs one re-parse per container, and only
+        // when a document actually disappears.
+        for removed in &outdated.removed {
+            for container in env.files_to_rebuild.get(removed).into_iter().flatten() {
+                if found.contains(container) {
+                    to_read.insert(container.clone());
+                }
+            }
+        }
+
+        to_read
     }
 
-    /// Read phase: parse every source file in parallel.
+    /// Read phase: parse every outdated source file in parallel, and
+    /// recover the rest from the cache.
     ///
     /// One file failing must not abort the build: failures become
     /// `BuildErrorReport`s (and a non-zero exit) while the rest continue.
     /// Results keep the discovery order of `files`.
-    fn read_phase(
-        &self,
-        files: &[PathBuf],
-        _dependency_graph: &HashMap<PathBuf, Vec<PathBuf>>,
-    ) -> Result<Vec<ReadResult>> {
+    fn read_phase(&self, files: &[PathBuf], to_read: &BTreeSet<String>) -> Result<Vec<ReadResult>> {
         info!(
             "Processing {} files with {} parallel jobs",
             files.len(),
@@ -528,9 +609,10 @@ impl SphinxBuilder {
             files
                 .par_iter()
                 .map(|file_path| {
+                    let outdated = to_read.contains(&self.docname_of_path(file_path));
                     (
                         file_path.clone(),
-                        self.read_one_file(file_path, &found_docs),
+                        self.read_one_file(file_path, &found_docs, outdated),
                     )
                 })
                 .collect()
@@ -554,30 +636,39 @@ impl SphinxBuilder {
         Ok(read_results)
     }
 
+    /// One document's read-phase result.
+    ///
+    /// `outdated` decides *how*: an outdated document is parsed (its cache
+    /// entry, however valid, describes a document the environment has
+    /// already been told to forget), an up-to-date one is recovered whole
+    /// from the cache — rendered page and persisted doctree — and is not
+    /// merged into the environment again. A recovery that fails is not
+    /// fatal: the document is parsed instead, which is honest work rather
+    /// than a hit, and the cache counts it as the miss it is.
     fn read_one_file(
         &self,
         file_path: &Path,
         found_docs: &Arc<BTreeSet<String>>,
+        outdated: bool,
     ) -> Result<ReadResult> {
         let relative_path = file_path.strip_prefix(&self.source_dir)?;
         debug!("Processing file: {}", relative_path.display());
         let docname = self.docname_of_path(file_path);
 
-        // Check cache if incremental build is enabled. A cache hit skips the
-        // parse but must still produce a usable doctree, and the write phase
-        // still writes the page — skipping the write is how cached pages
-        // went missing from the output tree.
-        if self.incremental {
+        // The write phase still writes an unread document's page — skipping
+        // the write is how cached pages went missing from the output tree.
+        if !outdated && self.incremental {
             if let Ok(file_mtime) = utils::get_file_mtime(file_path) {
                 let hit = self.cache.get_document_with(file_path, |cached| {
                     if cached.source_mtime < file_mtime || cached.html.is_empty() {
                         return None;
                     }
-                    // A cached document whose doctree file is gone or
-                    // unreadable is not usable: the environment layer needs
-                    // that doctree, and inventing an empty one would quietly
-                    // drop the document's toc, titles and toctrees. Re-parse
-                    // instead — this counts as a cache miss.
+                    // A cached document whose doctree file is gone, or was
+                    // written in a format this build no longer reads, is not
+                    // usable: the resolve phase needs that doctree, and
+                    // inventing an empty one would quietly drop the
+                    // document's toc, titles and toctrees. Re-parse instead
+                    // — this counts as a cache miss.
                     self.load_doctree(&docname)
                 });
                 if let Some((document, doctree)) = hit {
@@ -586,10 +677,7 @@ impl SphinxBuilder {
                         docname,
                         document,
                         doctree,
-                        // A cache hit is hash-validated against the file on
-                        // disk, so what it holds is as current as a re-read:
-                        // this document was (re)established now.
-                        read_time_us: now_micros(),
+                        read_time_us: None,
                     });
                 }
             }
@@ -624,7 +712,7 @@ impl SphinxBuilder {
             docname,
             document,
             doctree: parsed.doctree,
-            read_time_us: now_micros(),
+            read_time_us: Some(now_micros()),
         })
     }
 
@@ -634,6 +722,12 @@ impl SphinxBuilder {
     /// Sequential and deterministic, mirroring Sphinx's `merge_info_from`
     /// (`environment/__init__.py:421`) and the collectors it dispatches to:
     /// `all_docs`, the title collector, and the toctree collector.
+    ///
+    /// Only documents this build actually **read** are merged. Sphinx's
+    /// `Builder._read_serial` clears a document immediately before reading
+    /// it and touches nothing else; a document that was not outdated keeps
+    /// every contribution the build that read it made, which is the whole
+    /// point of the environment being persistent.
     fn merge_phase(&self, env: &mut BuildEnvironment, results: &mut [ReadResult]) {
         env.root_doc = self
             .config
@@ -642,7 +736,10 @@ impl SphinxBuilder {
             .unwrap_or_else(|| DEFAULT_ROOT_DOC.to_string());
 
         // Documents that vanished since the saved environment was written
-        // (Sphinx's `removed` set) must not leave stale state behind.
+        // (Sphinx's `removed` set) must not leave stale state behind. The
+        // set is taken from what the read phase came back with rather than
+        // from `get_outdated_files`: it is the same set plus any document
+        // that failed to read, whose recorded state is equally worthless.
         let present: HashSet<&str> = results.iter().map(|r| r.docname.as_str()).collect();
         let stale: Vec<String> = env
             .all_docs
@@ -678,16 +775,20 @@ impl SphinxBuilder {
 
         for index in ordered {
             let result = &mut results[index];
+            // A document this build did not read contributes nothing: what
+            // it contributed last time is still in the environment, and
+            // still correct.
+            let Some(read_time_us) = result.read_time_us else {
+                continue;
+            };
             let docname = result.docname.clone();
             let docname = docname.as_str();
-            // Every document is re-read on every build today, so each one's
-            // environment state is rebuilt from scratch — without this, the
-            // `extend`-shaped fields (toctree_includes) would accumulate
-            // duplicates across incremental builds.
+            // A re-read replaces this document's state wholesale — without
+            // the clear, the `extend`-shaped fields (toctree_includes)
+            // would accumulate duplicates across rebuilds.
             env.clear_doc(docname);
 
-            env.all_docs
-                .insert(docname.to_string(), result.read_time_us);
+            env.all_docs.insert(docname.to_string(), read_time_us);
 
             let title = env_toctree::document_title(&result.doctree);
             // Sphinx's longtitle differs from the title only for documents
@@ -701,6 +802,10 @@ impl SphinxBuilder {
                 env_metadata::document_metadata(&result.doctree),
             );
 
+            // The files this document pulls in, which is what makes it
+            // outdated when one of *them* changes.
+            env_dependencies::process_doc(env, docname, &result.doctree, &self.source_dir);
+
             let (toc, num_entries) = env_toctree::build_toc(&result.doctree, docname);
             // Each toctree node copied into the toc is noted, in the order
             // it was copied (which is the order Sphinx notes them in).
@@ -709,6 +814,22 @@ impl SphinxBuilder {
             }
             env.tocs.insert(docname.to_string(), toc);
             env.toc_num_entries.insert(docname.to_string(), num_entries);
+
+            // `TocTree.parse_content` calls `env.note_reread()` for every
+            // entry that names a document the project does not have
+            // (`directives/other.py`): such a document is re-read on every
+            // build, so that the day the missing target appears its toctree
+            // takes it up — and stops warning about it. `clear_doc` above
+            // dropped the previous read's claim, so a document that no
+            // longer has a dangling entry is no longer re-read either.
+            if result.document.toctrees.iter().any(|toctree| {
+                toctree
+                    .warnings
+                    .iter()
+                    .any(|warning| warning.kind == ToctreeWarningKind::MissingDocument)
+            }) {
+                env.reread_always.insert(docname.to_string());
+            }
 
             // The document's toctree diagnostics, produced when its entries
             // were resolved. Sphinx logs them during the read phase, which
@@ -811,8 +932,17 @@ impl SphinxBuilder {
     /// toctree graph (`env.check_consistency()`), then saves the environment
     /// — Sphinx's own end-of-read-phase step (`builders/__init__.py:420`).
     ///
-    /// Domain cross-reference resolution lands in later wave-4 tasks.
-    fn resolve_phase(&self, env: &mut BuildEnvironment, results: &[ReadResult]) -> Result<()> {
+    /// Every document is resolved, not only the ones this build read: the
+    /// write phase emits every page (see [`Self::write_phase`]), and a page
+    /// is written from a doctree resolved against the environment as it
+    /// stands *now* — a document that was not re-read can still have gained
+    /// a section number, or lost the target of one of its references.
+    ///
+    /// Failing to save the environment is **not** a build failure: the
+    /// cache directory is optional infrastructure, the output this build
+    /// produced is valid without it, and the only consequence is that the
+    /// next build starts cold. It is reported and the build goes on.
+    fn resolve_phase(&self, env: &mut BuildEnvironment, results: &[ReadResult]) {
         info!("Resolving build environment");
 
         let sources: HashMap<&str, &Path> = results
@@ -847,7 +977,13 @@ impl SphinxBuilder {
         self.xref_phase(env, results);
         self.genindex_phase(env, &sources);
 
-        env.save(self.cache.cache_dir())
+        if let Err(e) = env.save(self.cache.cache_dir()) {
+            log::warn!(
+                "Could not save the build environment to {}: {e:#} — this build's \
+                 output is complete, but the next one will start from scratch",
+                self.cache.cache_dir().display()
+            );
+        }
     }
 
     /// Assemble the general index (`IndexEntries.create_index`).
@@ -958,11 +1094,11 @@ impl SphinxBuilder {
     /// warm cache hit loaded from disk — and falls back to the persisted
     /// doctree for anything else.
     ///
-    /// The returned docnames (Sphinx's `rewrite_needed`) widen the write set
-    /// on an incremental build; nothing consumes them yet, so they are only
-    /// logged. Note that this build re-reads every document, and the merge
-    /// phase clears each one's environment state first — so today every
-    /// numbered document reports as changed.
+    /// The returned docnames (Sphinx's `rewrite_needed`) are the documents
+    /// whose numbering moved, which Sphinx adds to its write set. They are
+    /// logged rather than consumed here because this builder's write set is
+    /// already every found document (see [`Self::write_phase`]) — a
+    /// superset — so there is nothing left for them to widen.
     fn number_phase(&self, env: &mut BuildEnvironment, results: &[ReadResult]) {
         let in_memory: HashMap<&str, &Doctree> = results
             .iter()
@@ -1021,18 +1157,25 @@ impl SphinxBuilder {
         );
     }
 
-    /// Write phase: emit every document's rendered output.
+    /// Write phase: emit every document's rendered output, in parallel and
+    /// after resolution, so that a page can be written with whole-project
+    /// knowledge (numbering, relations) once those exist.
     ///
-    /// Sequential, and after resolution, so that a page can be written with
-    /// whole-project knowledge (numbering, relations) once those exist. The
-    /// placeholder renderer only uses the `Document`, so moving the write
-    /// here leaves the bytes unchanged.
+    /// **Every found document is written, not just the ones this build
+    /// read.** Sphinx writes the read set plus the toctree containers of
+    /// what changed plus the documents whose numbering moved
+    /// (`builders/__init__.py:717-736`), because its HTML builder also
+    /// compares each output file against its sources and can tell that the
+    /// rest are already on disk and current. This builder cannot do that
+    /// yet, so it writes the superset — which is also what makes a cache
+    /// hit still produce a page, rather than leaving a hole in the output
+    /// tree where an unchanged document should be.
     ///
     /// One page failing to write must not abort the build (the same rule the
     /// read phase follows): it becomes a `BuildErrorReport`, and a non-zero
     /// exit, while the remaining pages are still written.
     fn write_phase(&self, documents: &[Document]) {
-        for document in documents {
+        documents.par_iter().for_each(|document| {
             if let Err(e) = self.write_one(document) {
                 self.errors.lock().unwrap().push(BuildErrorReport::new(
                     document.source_path.clone(),
@@ -1041,7 +1184,7 @@ impl SphinxBuilder {
                     ErrorType::Other,
                 ));
             }
-        }
+        });
     }
 
     fn write_one(&self, document: &Document) -> Result<()> {
@@ -1379,6 +1522,22 @@ fn current_format_doctree(bytes: &[u8]) -> Option<&[u8]> {
     (version == DOCTREE_FORMAT_VERSION).then_some(blob)
 }
 
+/// A file's modification time in microseconds since the Unix epoch — the
+/// unit `env.all_docs` read times are in, so the two are directly
+/// comparable (Sphinx's `_StrPath._last_modified_time`).
+///
+/// `None` when the file cannot be stat-ed, which is Sphinx's `OSError`
+/// path: the caller treats it as "this document is outdated".
+fn modified_us(path: &Path) -> Option<u64> {
+    let modified = std::fs::metadata(path).ok()?.modified().ok()?;
+    Some(
+        modified
+            .duration_since(UNIX_EPOCH)
+            .map(|since| since.as_micros() as u64)
+            .unwrap_or(0),
+    )
+}
+
 /// Wall-clock microseconds since the Unix epoch, the unit Sphinx stores in
 /// `env.all_docs` (`time.time_ns() // 1_000`). A pre-epoch clock yields 0
 /// rather than wrapping.
@@ -1573,6 +1732,108 @@ mod tests {
         assert_eq!(stats.cache_hits, 1);
         assert_eq!(stats.errors, 0);
         assert!(rebuilt.load_doctree("index").is_some());
+    }
+
+    /// The cache directory is optional infrastructure: a build whose
+    /// environment cannot be written still produced valid output, and
+    /// saying "build failed" over it would be a lie. (A directory where
+    /// `env.bin` belongs is the portable way to make exactly that one write
+    /// fail while every other cache write succeeds.)
+    #[test]
+    fn a_build_whose_environment_cannot_be_saved_still_writes_its_output() {
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("source");
+        let output_dir = tmp.path().join("build");
+        write_project(&source_dir);
+
+        let (_cold, builder) = build_incrementally(&source_dir, &output_dir);
+        let env_file = builder.cache.cache_dir().join("env.bin");
+        std::fs::remove_file(&env_file).unwrap();
+        std::fs::create_dir(&env_file).unwrap();
+
+        let (stats, rebuilt) = build_incrementally(&source_dir, &output_dir);
+
+        assert_eq!(stats.errors, 0, "an unsaveable environment is not an error");
+        assert!(
+            output_dir.join("index.html").is_file() && output_dir.join("a.html").is_file(),
+            "the pages this build produced are still written"
+        );
+        assert_eq!(
+            rebuilt.env().all_docs.len(),
+            2,
+            "the in-memory environment is complete; only its persistence failed"
+        );
+    }
+
+    /// `-E`: the persisted environment is not to be trusted, and neither is
+    /// the half of it already sitting in memory.
+    #[test]
+    fn fresh_env_discards_the_loaded_environment_and_re_reads_everything() {
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("source");
+        let output_dir = tmp.path().join("build");
+        write_project(&source_dir);
+
+        build_incrementally(&source_dir, &output_dir);
+
+        let mut builder = SphinxBuilder::new(
+            BuildConfig::default(),
+            source_dir.clone(),
+            output_dir.clone(),
+        )
+        .unwrap();
+        builder.enable_incremental();
+        assert_eq!(
+            builder.env().all_docs.len(),
+            2,
+            "the builder loads the saved environment"
+        );
+
+        builder.fresh_env().unwrap();
+        assert!(
+            builder.env().all_docs.is_empty(),
+            "-E starts from an empty environment, not the loaded one"
+        );
+
+        let stats = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(builder.build())
+            .unwrap();
+        assert_eq!(stats.cache_hits, 0, "every document is new again");
+        assert_eq!(stats.files_skipped, 0);
+        assert_eq!(builder.env().all_docs.len(), 2);
+    }
+
+    /// A build with the document cache off has nowhere to recover an unread
+    /// document's rendered page from, so it reads everything — which is
+    /// what `sphinx-build -a` maps to here.
+    #[test]
+    fn a_non_incremental_build_reads_every_document() {
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("source");
+        let output_dir = tmp.path().join("build");
+        write_project(&source_dir);
+
+        build_incrementally(&source_dir, &output_dir);
+
+        let mut builder = SphinxBuilder::new(
+            BuildConfig::default(),
+            source_dir.clone(),
+            output_dir.clone(),
+        )
+        .unwrap();
+        let stats = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(builder.build())
+            .unwrap();
+
+        assert_eq!(stats.cache_hits, 0);
+        assert_eq!(stats.files_skipped, 0, "nothing was skipped: all was read");
+        assert!(output_dir.join("index.html").is_file() && output_dir.join("a.html").is_file());
     }
 
     #[test]
