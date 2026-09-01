@@ -431,6 +431,11 @@ fn duplicate_object_warning(
 /// is therefore reachable by id; only the *serialized* doctree still shows
 /// the unpropagated shape (which is why the oracle's `resolved_pformat` for
 /// such documents is still exempted).
+///
+/// Reachability *by id* is not the whole of the transform, though: a
+/// consumer that reads `node['ids']` straight off the tree still sees the
+/// unpropagated list. [`PropagatedIds`] replays it in that direction, and
+/// is what the numbering passes and `get_fignumber` use.
 pub(crate) struct DocumentIds<'a> {
     map: HashMap<&'a str, (usize, &'a Node)>,
 }
@@ -451,15 +456,9 @@ impl<'a> DocumentIds<'a> {
 
         // PropagateTargets, in document order so that chained targets
         // collapse onto the same final node.
-        for (index, entry) in flat.iter().enumerate() {
-            if !is_propagating_target(entry.node, entry.parent) {
-                continue;
-            }
-            let Some((order, target)) = next_propagation_target(&flat, index) else {
-                continue;
-            };
-            for id in &entry.node.attrs.ids {
-                map.insert(id.as_str(), (order, target));
+        for donation in propagations(&flat) {
+            for id in donation.ids {
+                map.insert(id.as_str(), (donation.order, donation.receiver));
             }
         }
         Self { map }
@@ -473,6 +472,92 @@ impl<'a> DocumentIds<'a> {
     pub(crate) fn node(&self, id: &str) -> Option<&'a Node> {
         self.map.get(id).map(|(_, node)| *node)
     }
+}
+
+/// One id donation `PropagateTargets` would make: the node that receives
+/// the ids, where it sits in the pre-order walk, and the donor target's ids.
+struct Donation<'a> {
+    order: usize,
+    receiver: &'a Node,
+    ids: &'a [String],
+}
+
+/// Every donation docutils' `PropagateTargets` (`references.py:17-95`)
+/// would make over `flat`, in document order — so that chained targets
+/// collapse onto the same final node.
+fn propagations<'a>(flat: &[FlatNode<'a>]) -> Vec<Donation<'a>> {
+    let mut donations = Vec::new();
+    for (index, entry) in flat.iter().enumerate() {
+        if !is_propagating_target(entry.node, entry.parent) {
+            continue;
+        }
+        let Some((order, receiver)) = next_propagation_target(flat, index) else {
+            continue;
+        };
+        donations.push(Donation {
+            order,
+            receiver,
+            ids: entry.node.attrs.ids.as_slice(),
+        });
+    }
+    donations
+}
+
+/// `node['ids']` as docutils leaves it once `PropagateTargets` has run
+/// (`references.py:71-72` *extends* the receiving node's list), keyed by
+/// node identity inside one doctree.
+///
+/// [`DocumentIds`] replays the same transform the other way round — id to
+/// node — which is what a lookup by label needs. The numbering passes walk
+/// the tree instead, and both halves of a figure number key off the node's
+/// own id list: `register_fignumber` files the number under
+/// `fignode['ids'][0]` (`collectors/toctree.py:320-336`) and
+/// `get_fignumber` reads it back with `target_node['ids'][0]`
+/// (`domains/std/__init__.py:1395-1422`). Without this, a `.. _label:`
+/// written above a figure/table/code-block — the classic docutils spelling,
+/// as opposed to the `:name:` option — leaves the enumerable node with an
+/// empty `ids`, so it is never numbered and every `:numref:` to it fails.
+///
+/// Still missing, and out of scope here: Sphinx's `AutoNumbering` transform
+/// (`transforms/__init__.py:200-214`), which hands an *implicit* id to a
+/// captioned enumerable node carrying no label at all. Such a node is still
+/// skipped by the numbering walk, where Sphinx numbers it.
+pub(crate) struct PropagatedIds {
+    /// Receiving node's address -> the ids donated to it, in donation
+    /// order. Addresses are stable for as long as the doctree the map was
+    /// built from is borrowed, which is the only window a `PropagatedIds`
+    /// is used in.
+    donations: HashMap<usize, Vec<String>>,
+}
+
+impl PropagatedIds {
+    pub(crate) fn of(doctree: &Doctree) -> Self {
+        let mut flat: Vec<FlatNode<'_>> = Vec::new();
+        flatten(&doctree.root, kinds::DOCUMENT, &mut flat);
+
+        let mut donations: HashMap<usize, Vec<String>> = HashMap::new();
+        for donation in propagations(&flat) {
+            donations
+                .entry(node_identity(donation.receiver))
+                .or_default()
+                .extend(donation.ids.iter().cloned());
+        }
+        Self { donations }
+    }
+
+    /// The node's own ids first, then every id donated to it — the exact
+    /// list `next_node['ids'].extend(target['ids'])` leaves behind.
+    pub(crate) fn effective_ids(&self, node: &Node) -> Vec<String> {
+        let mut ids = node.attrs.ids.clone();
+        if let Some(donated) = self.donations.get(&node_identity(node)) {
+            ids.extend(donated.iter().cloned());
+        }
+        ids
+    }
+}
+
+fn node_identity(node: &Node) -> usize {
+    std::ptr::from_ref(node) as usize
 }
 
 /// One node in the pre-order walk, with what it hangs off and where its

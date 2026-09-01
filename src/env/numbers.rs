@@ -25,6 +25,7 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::doctree::{kinds, AttrValue, Doctree, Node};
+use crate::env::std_domain::PropagatedIds;
 use crate::env::toctree::VIRTUAL_DOC_NAMES;
 use crate::env::BuildEnvironment;
 
@@ -349,11 +350,22 @@ impl FignumWalker<'_, '_, '_> {
         let Some(doctree) = (self.load_doctree)(docname) else {
             return;
         };
-        self.walk_doctree(docname, &doctree.root.children, secnum);
+        // `PropagateTargets` has already run by the time Sphinx numbers a
+        // doctree, so a `.. _label:` written above a figure/table/code-block
+        // is part of that node's `ids` here. Our parse layer leaves the
+        // target standing, so the transform is replayed as a lookup.
+        let propagated = PropagatedIds::of(&doctree);
+        self.walk_doctree(docname, &doctree.root.children, secnum, &propagated);
     }
 
     /// `_walk_doctree` (`collectors/toctree.py:338-364`).
-    fn walk_doctree(&mut self, docname: &str, children: &[Node], secnum: &[u32]) {
+    fn walk_doctree(
+        &mut self,
+        docname: &str,
+        children: &[Node],
+        secnum: &[u32],
+        propagated: &PropagatedIds,
+    ) {
         for subnode in children {
             // docutils Text nodes are not Elements: Sphinx's isinstance
             // chain skips them entirely.
@@ -363,7 +375,7 @@ impl FignumWalker<'_, '_, '_> {
             if subnode.kind == kinds::SECTION {
                 let next = self.section_number(docname, subnode);
                 let inherited = if next.is_empty() { secnum } else { &next };
-                self.walk_doctree(docname, &subnode.children, inherited);
+                self.walk_doctree(docname, &subnode.children, inherited, propagated);
             } else if subnode.kind == kinds::TOCTREE {
                 // Document order, depth first: this is what makes figure
                 // numbers follow the reading order of the whole project.
@@ -377,12 +389,13 @@ impl FignumWalker<'_, '_, '_> {
                 }
             } else {
                 if let Some(figtype) = figtype_of(subnode) {
-                    if let Some(figure_id) = subnode.attrs.ids.first() {
+                    // `fignode['ids'][0]`, after propagation.
+                    if let Some(figure_id) = propagated.effective_ids(subnode).first() {
                         let figure_id = figure_id.clone();
                         self.register_fignumber(docname, secnum, figtype, &figure_id);
                     }
                 }
-                self.walk_doctree(docname, &subnode.children, secnum);
+                self.walk_doctree(docname, &subnode.children, secnum, propagated);
             }
         }
     }
@@ -845,6 +858,40 @@ mod tests {
 
         assert_eq!(env.toc_fignumbers["a"]["table"]["tab-a"], vec![1]);
         assert_eq!(env.toc_fignumbers["a"]["code-block"]["code-a"], vec![1]);
+    }
+
+    /// The classic docutils spelling — a `.. _label:` on its own line above
+    /// the directive — is as much a label as the `:name:` option, because
+    /// `PropagateTargets` moves the target's ids onto the node before
+    /// numbering runs. The number is filed under the propagated id, which is
+    /// what `get_fignumber` then reads back.
+    #[test]
+    fn a_label_written_above_an_enumerable_node_numbers_it() {
+        let (mut env, doctrees) = read(&[
+            ("index", "Index\n=====\n\n.. toctree::\n\n   a\n"),
+            (
+                "a",
+                "A\n=\n\n.. figure:: cap.png\n   :name: fig-named\n\n   Caption.\n\n\
+                 .. _fig-labelled:\n\n.. figure:: cap.png\n\n   Another caption.\n\n\
+                 .. _tab-labelled:\n\n.. list-table:: The Table\n\n   * - x\n\n\
+                 .. _code-labelled:\n\n.. code-block:: python\n   :caption: The Listing\n\n   x = 1\n",
+            ),
+        ]);
+        let load = loader(&doctrees);
+        assign_figure_numbers(&mut env, true, 1, &load);
+
+        let figures = &env.toc_fignumbers["a"]["figure"];
+        assert_eq!(figures["fig-named"], vec![1]);
+        assert_eq!(
+            figures["fig-labelled"],
+            vec![2],
+            "a labelled figure still advances the counter: {figures:?}"
+        );
+        assert_eq!(env.toc_fignumbers["a"]["table"]["tab-labelled"], vec![1]);
+        assert_eq!(
+            env.toc_fignumbers["a"]["code-block"]["code-labelled"],
+            vec![1]
+        );
     }
 
     /// The `math` domain also registers an enumerable node, and sorts

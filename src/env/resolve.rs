@@ -15,7 +15,7 @@ use std::path::Path;
 
 use crate::doctree::{kinds, AttrValue, Doctree, Node};
 use crate::env::numbers::clean_astext;
-use crate::env::std_domain::{node_line, DocumentIds};
+use crate::env::std_domain::{node_line, DocumentIds, PropagatedIds};
 use crate::env::toctree::{docname_join, py_repr_str};
 use crate::env::BuildEnvironment;
 use crate::error::{BuildWarning, WarningType};
@@ -174,7 +174,10 @@ impl Resolver<'_> {
             let node = ids.node(&labelid)?;
             Some((
                 enumerable_node_type(node).map(str::to_string),
-                node.attrs.ids.clone(),
+                // `target_node['ids']`, which for a `.. _label:` written
+                // above the node holds the propagated id — the same key
+                // `assign_figure_numbers` filed the number under.
+                PropagatedIds::of(&doctree).effective_ids(node),
             ))
         }) else {
             return XrefOutcome::Missing;

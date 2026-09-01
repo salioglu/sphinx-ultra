@@ -455,6 +455,41 @@ fn config_change_invalidates_cache() {
     );
 }
 
+/// A `.. _label:` written above a figure/table/code-block labels it exactly
+/// as the `:name:` option does — docutils' `PropagateTargets` moves the ids
+/// onto the node before Sphinx numbers it. Numbering and `:numref:` must
+/// agree on the propagated id, or every reference to such a node fails with
+/// "Any number is not assigned" and takes `-W` down with it. sphinx 9.1.0
+/// builds this project clean and renders `Fig. 1` / `Fig. 2`.
+#[test]
+fn a_label_above_a_figure_numbers_it_and_numref_resolves() {
+    let src = out_dir("numfig-propagated-label-src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(src.join("conf.py"), "project = 'p'\nnumfig = True\n").unwrap();
+    std::fs::write(src.join("pic.png"), b"x").unwrap();
+    std::fs::write(
+        src.join("index.rst"),
+        "Index\n=====\n\n\
+         .. figure:: pic.png\n   :name: fig1\n\n   A caption.\n\n\
+         .. _fig2:\n\n.. figure:: pic.png\n\n   Another caption.\n\n\
+         See :numref:`fig1` and :numref:`fig2`.\n",
+    )
+    .unwrap();
+
+    let out = out_dir("numfig-propagated-label-out");
+    let result = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap(), "-W"]);
+
+    let stderr = stderr_of(&result);
+    assert!(
+        !stderr.contains("Any number is not assigned"),
+        "the labelled figure must be numbered, stderr: {stderr}"
+    );
+    assert!(
+        result.status.success(),
+        "sphinx builds this clean, so -W must pass, stderr: {stderr}"
+    );
+}
+
 /// `-W` and `-n` are operational flags, not configuration: adding either
 /// must not invalidate the cache. Sphinx cannot invalidate on them
 /// (`nitpicky`'s rebuild class is `''`, `warningiserror` is not a `Config`
