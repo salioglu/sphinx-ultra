@@ -1,0 +1,21 @@
+# Sphinx inventory files are byte-exact test fixtures, never text.
+#
+# `tests/inventory_roundtrip.rs` compares this crate's writer against these
+# files byte-for-byte (header lines and the decompressed payload), and reads
+# them with `std::fs::read`. Any end-of-line conversion corrupts them.
+#
+# Without this rule the outcome depends on what each file happens to contain.
+# Six of the fixtures carry zlib payloads, so git auto-detects them as binary
+# and leaves them alone; six others are handcrafted and pure ASCII, so git
+# calls them text and a Windows checkout rewrites their LFs to CRLF. That
+# lands inside the very bytes the suite pins -- the malformed-inventory case
+# starts reporting `... compressed using LZMA.\r` -- and it fails only on
+# Windows, only for the fixtures that happen to look like text. Marking the
+# extension takes the guess out of it.
+#
+# `.inv` is the only fixture class with this hazard: it is the only committed
+# format that is simultaneously byte-exact and ASCII-shaped. The `.json`
+# fixtures are parsed rather than compared (line endings are JSON
+# whitespace), the `.rst`/`.py` project fixtures are parsed too, and `.png`
+# cannot be mistaken for text.
+*.inv -text
