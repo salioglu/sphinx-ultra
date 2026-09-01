@@ -455,6 +455,37 @@ fn config_change_invalidates_cache() {
     );
 }
 
+/// `:numbered:` takes an optional depth (`int_or_nothing` in Sphinx's
+/// `TocTree.option_spec`), so `:numbered: 2` is the documented spelling of
+/// the feature, not an error. The retained M1 directive validator had it
+/// filed as a flag option and warned on every use, failing `-W` on a
+/// project sphinx 9.1.0 builds clean.
+#[test]
+fn a_numbered_toctree_with_a_depth_builds_clean() {
+    let src = out_dir("toctree-numbered-depth-src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(src.join("conf.py"), "project = 'p'\n").unwrap();
+    std::fs::write(
+        src.join("index.rst"),
+        "Index\n=====\n\n.. toctree::\n   :numbered: 2\n   :maxdepth: 2\n\n   a\n",
+    )
+    .unwrap();
+    std::fs::write(src.join("a.rst"), "A\n=\n\nBody.\n").unwrap();
+
+    let out = out_dir("toctree-numbered-depth-out");
+    let result = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap(), "-W"]);
+
+    let stderr = stderr_of(&result);
+    assert!(
+        !stderr.contains("numbered option should not have a value"),
+        "`:numbered: 2` is valid input, stderr: {stderr}"
+    );
+    assert!(
+        result.status.success(),
+        "sphinx builds this clean, so -W must pass, stderr: {stderr}"
+    );
+}
+
 /// A `.. _label:` written above a figure/table/code-block labels it exactly
 /// as the `:name:` option does — docutils' `PropagateTargets` moves the ids
 /// onto the node before Sphinx numbers it. Numbering and `:numref:` must
