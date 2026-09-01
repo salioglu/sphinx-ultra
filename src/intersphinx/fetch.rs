@@ -10,6 +10,7 @@
 //! inject their own.
 
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -74,6 +75,34 @@ impl HttpConfig {
             Some(agent) if !agent.is_empty() => agent,
             _ => DEFAULT_USER_AGENT,
         }
+    }
+
+    /// `timeout` as a [`Duration`], or `None` for "no timeout" — which is
+    /// both Sphinx's default and what an unusable value degrades to.
+    ///
+    /// `intersphinx_timeout` arrives from `conf.py` as an unvalidated
+    /// `f64`, and `Duration::from_secs_f64` *panics* on a negative, NaN or
+    /// overflowing one. `intersphinx_timeout = -1` is a natural thing to
+    /// write (`intersphinx_cache_limit = -1` is the documented Sphinx idiom
+    /// for "never expire"), and with `panic = "abort"` in the release
+    /// profile that panic is a bare SIGABRT naming neither the config key
+    /// nor the file. Sphinx wraps the whole fetch in `except Exception`
+    /// (`ext/intersphinx/_load.py:302-313`), so a bad value there is one
+    /// entry in `failures` and the build carries on; this degrades the same
+    /// way, and says which value it rejected.
+    pub fn timeout_duration(&self) -> Option<Duration> {
+        let seconds = self.timeout?;
+        // `Duration::MAX` is `u64::MAX` seconds; anything at or beyond
+        // `2^64` seconds overflows the conversion. The `i64::MAX` bound is
+        // far below that and still ~292 billion years.
+        if !seconds.is_finite() || seconds < 0.0 || seconds > i64::MAX as f64 {
+            log::warn!(
+                "ignoring unusable intersphinx_timeout {seconds}: \
+                 the timeout must be a non-negative number of seconds"
+            );
+            return None;
+        }
+        Some(Duration::from_secs_f64(seconds))
     }
 
     /// `_get_tls_cacert(url, tls_cacerts)` (`util/requests.py:34-45`): a
@@ -167,7 +196,7 @@ impl InventoryFetcher for UreqFetcher {
         let config = ureq::Agent::config_builder()
             .user_agent(http.user_agent().to_string())
             // `timeout=None` (the default) means no timeout at all.
-            .timeout_global(http.timeout.map(std::time::Duration::from_secs_f64))
+            .timeout_global(http.timeout_duration())
             .tls_config(tls.build())
             .build();
 
@@ -185,6 +214,50 @@ impl InventoryFetcher for UreqFetcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn with_timeout(timeout: Option<f64>) -> HttpConfig {
+        HttpConfig {
+            timeout,
+            ..HttpConfig::default()
+        }
+    }
+
+    /// Every value `Duration::from_secs_f64` would panic on degrades to "no
+    /// timeout" instead of aborting the build. Sphinx turns a bad timeout
+    /// into one `failures` entry and keeps going; nothing here may be worse
+    /// than that.
+    #[test]
+    fn an_unusable_timeout_degrades_to_none() {
+        for unusable in [
+            -1.0,
+            -0.5,
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            1e30,
+            f64::MAX,
+        ] {
+            assert_eq!(
+                with_timeout(Some(unusable)).timeout_duration(),
+                None,
+                "intersphinx_timeout = {unusable}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_usable_timeout_is_kept_and_no_timeout_stays_no_timeout() {
+        assert_eq!(
+            with_timeout(Some(2.5)).timeout_duration(),
+            Some(Duration::from_millis(2500))
+        );
+        assert_eq!(
+            with_timeout(Some(0.0)).timeout_duration(),
+            Some(Duration::ZERO),
+            "zero is a legal (if useless) timeout, not an error"
+        );
+        assert_eq!(with_timeout(None).timeout_duration(), None);
+    }
 
     /// Two PEM sections, which is the shape of every real CA bundle. The
     /// bodies are arbitrary: this is the PEM *framing* under test, and the
