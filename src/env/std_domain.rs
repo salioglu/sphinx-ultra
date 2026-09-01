@@ -150,9 +150,27 @@ pub fn process_doc(
     warnings: &mut Vec<BuildWarning>,
 ) {
     let ids = DocumentIds::of(doc.doctree);
+    // Order matters, and it is Sphinx's. Glossary terms and object
+    // descriptions register *during the parse* (`make_glossary_term` ->
+    // `_note_term`, `ObjectDescription.add_target_and_index` ->
+    // `note_object`), while `StandardDomain.process_doc`'s label pass runs
+    // only once the parse has finished. So Sphinx's duplicate-term and
+    // duplicate-object warnings always precede the same document's
+    // duplicate-label warnings, and come out interleaved with each other in
+    // document order. This crate has no domain callbacks in the parse, so
+    // both registration passes run here: collected together, put back into
+    // source order, and emitted ahead of the label pass.
+    //
+    // Still not Sphinx: these warnings interleave with the document's
+    // *parse* warnings there, where the builder emits the whole parse
+    // stream before calling this. That is the cross-category ordering the
+    // ledger defers to a later wave.
+    let mut parse_time = Vec::new();
+    collect_glossary_terms(env, doc, &mut parse_time);
+    collect_descriptions(env, doc, &mut parse_time);
+    parse_time.sort_by_key(|warning| warning.line);
+    warnings.append(&mut parse_time);
     collect_labels(env, doc, &ids, doc2path, warnings);
-    collect_glossary_terms(env, doc, warnings);
-    collect_descriptions(env, doc, warnings);
 }
 
 /// The label half of `process_doc` (`:938-993`).
@@ -703,6 +721,43 @@ mod tests {
             );
         }
         (env, warnings)
+    }
+
+    /// Sphinx registers glossary terms and object descriptions during the
+    /// parse and runs the label pass afterwards, so a document carrying all
+    /// three kinds of duplicate reports them in source order with the label
+    /// last. Verified against sphinx 9.1.0 on this exact pair of documents.
+    #[test]
+    fn parse_time_diagnostics_precede_label_diagnostics() {
+        let document = ".. envvar:: MYVAR\n\n\
+                        .. glossary::\n\n   \
+                        alpha\n      \
+                        The first.\n\n\
+                        .. _dup:\n\n\
+                        Sec\n---\n\nx\n";
+        let (_, warnings) = read(&[("a", document), ("b", document)]);
+
+        assert_eq!(
+            warnings
+                .iter()
+                .map(|warning| (warning.line, warning.message.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    Some(1),
+                    "duplicate envvar description of MYVAR, other instance in a"
+                ),
+                (
+                    Some(4),
+                    "duplicate term description of alpha, other instance in a"
+                ),
+                (
+                    Some(11),
+                    "duplicate label dup, other instance in /src/a.rst"
+                ),
+            ],
+            "{warnings:?}"
+        );
     }
 
     /// `envvar`/`confval` register std objects from the `desc` anatomy;
