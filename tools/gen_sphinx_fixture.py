@@ -532,6 +532,8 @@ CASES = [
     ('sx_directives', 'glossary_serial_is_not_the_index_serial', '.. glossary::\n\n   !!!\n      Punctuation only.\n\n.. index:: Something\n'),
     ('sx_directives', 'glossary_term_with_markup', '.. glossary::\n\n   *emphasized* term\n      A def.\n'),
     ('sx_directives', 'glossary_sorted_classifier', '.. glossary::\n   :sorted:\n\n   zeta : key\n      Z def.\n'),
+    ('sx_directives', 'glossary_comment_lines', '.. glossary::\n\n   .. a comment line\n   alpha\n      The first letter.\n\n   .. a comment line\n   beta\n      The second letter.\n'),
+    ('sx_directives', 'glossary_comment_swallows_its_continuation', '.. glossary::\n\n   .. a comment line\n      continued under the comment\n\n   alpha\n      The first letter.\n'),
     ('sx_roles', 'pep_role', 'See :pep:`8` for style.\n'),
     ('sx_roles', 'pep_role_anchor', 'See :pep:`8#imports` here.\n'),
     ('sx_roles', 'pep_role_explicit', 'See :pep:`the style guide <8>` here.\n'),

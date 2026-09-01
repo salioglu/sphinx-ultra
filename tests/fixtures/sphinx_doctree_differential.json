@@ -1645,6 +1645,18 @@
       "rst": ".. glossary::\n   :sorted:\n\n   zeta : key\n      Z def.\n"
     },
     {
+      "family": "sx_directives",
+      "name": "sx_directives.glossary_comment_lines",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <glossary sorted=\"0\">\n        <definition_list classes=\"glossary\">\n            <definition_list_item>\n                <term ids=\"term-alpha\">\n                    alpha\n                    <index entries=\"('single',\\ 'alpha',\\ 'term-alpha',\\ 'main',\\ None)\">\n                <definition>\n                    <paragraph>\n                        The first letter.\n            <definition_list_item>\n                <term ids=\"term-beta\">\n                    beta\n                    <index entries=\"('single',\\ 'beta',\\ 'term-beta',\\ 'main',\\ None)\">\n                <definition>\n                    <paragraph>\n                        The second letter.\n",
+      "rst": ".. glossary::\n\n   .. a comment line\n   alpha\n      The first letter.\n\n   .. a comment line\n   beta\n      The second letter.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.glossary_comment_swallows_its_continuation",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <glossary sorted=\"0\">\n        <definition_list classes=\"glossary\">\n            <definition_list_item>\n                <term ids=\"term-alpha\">\n                    alpha\n                    <index entries=\"('single',\\ 'alpha',\\ 'term-alpha',\\ 'main',\\ None)\">\n                <definition>\n                    <paragraph>\n                        The first letter.\n",
+      "rst": ".. glossary::\n\n   .. a comment line\n      continued under the comment\n\n   alpha\n      The first letter.\n"
+    },
+    {
       "family": "sx_roles",
       "name": "sx_roles.pep_role",
       "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <index entries=\"('single',\\ 'Python\\ Enhancement\\ Proposals;\\ PEP\\ 8',\\ 'index-0',\\ '',\\ None)\">\n        <target ids=\"index-0\">\n        <reference classes=\"pep\" internal=\"0\" refuri=\"https://peps.python.org/pep-0008/\">\n            <strong>\n                PEP 8\n         for style.\n",

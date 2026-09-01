@@ -68,6 +68,13 @@ impl<'a> LineRef<'a> {
     }
 }
 
+/// A glossary comment line: unindented and opening with `.. `
+/// (`domains/std/__init__.py:452`, `line.startswith('.. ')` — the trailing
+/// space is part of the test, so a bare `..` is still a term).
+fn is_glossary_comment(line: &LineRef<'_>) -> bool {
+    line.indent() == 0 && line.text.starts_with(".. ")
+}
+
 /// Slice a marker line after `n_chars` characters (char-aware: unicode
 /// bullets are multi-byte).
 fn rest_after(text: &str, n_chars: usize) -> &str {
@@ -3062,6 +3069,14 @@ impl<'a> BlockParser<'a> {
 
     /// sphinx glossary (std domain): term lines + indented definitions;
     /// each term gets a term-<id> target and an embedded index entry.
+    ///
+    /// Comments are honoured: `Glossary.run` treats an unindented `.. `
+    /// line as a comment rather than a term
+    /// (`domains/std/__init__.py:452-455`) and swallows its indented
+    /// continuation lines with it (`:493-494`, `elif in_comment: pass`).
+    /// Sphinx's explicit `in_comment` flag has no counterpart here because
+    /// this loop already skips every indented line it meets outside a
+    /// definition block, whether or not a comment preceded it.
     fn run_glossary(&mut self, input: DirectiveInput<'a, '_>, out: &mut Vec<Node>) {
         let mut glossary = Node::elem("glossary", input.span);
         glossary.set(
@@ -3081,12 +3096,21 @@ impl<'a> BlockParser<'a> {
                 continue;
             }
             if content[i].indent() > 0 {
-                // Stray indented line without a term: log-warned, skipped.
+                // A comment's continuation lines, or a stray indented line
+                // without a term (log-warned in Sphinx); skipped either way.
+                i += 1;
+                continue;
+            }
+            if is_glossary_comment(&content[i]) {
                 i += 1;
                 continue;
             }
             let mut term_lines: Vec<LineRef<'a>> = Vec::new();
-            while i < content.len() && !content[i].is_blank() && content[i].indent() == 0 {
+            while i < content.len()
+                && !content[i].is_blank()
+                && content[i].indent() == 0
+                && !is_glossary_comment(&content[i])
+            {
                 term_lines.push(content[i]);
                 i += 1;
             }
