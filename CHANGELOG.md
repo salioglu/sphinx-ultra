@@ -13,6 +13,63 @@ everything forward is [ROADMAP.md](ROADMAP.md).
 
 ### Added
 
+- **M2 wave 4: the build has a real environment, and it warns like Sphinx.**
+  The pipeline is now read → merge → resolve → write over a serialized
+  `BuildEnvironment`, and the diagnostics that come out of it are
+  Sphinx's own — same texts, same locations, same `[category]` suffixes.
+  What that means in practice, per subsystem:
+  - **toctree**: the global graph, relations (parents/prev/next) and the
+    consistency checks — nonexisting vs excluded entries, self-referencing
+    toctrees, circular toctrees, a document reached from several toctrees
+    (an *information* notice, not a warning, so it does not fail `-W`), and
+    `document isn't included in any toctree`.
+  - **numbering**: `numfig`, `numfig_secnum_depth` and `numfig_format` are
+    honored; `:numref:` resolves to real numbers, with Sphinx's
+    `numfig is disabled. :numref: is ignored.` and `no number is assigned
+    for …` warnings.
+  - **std domain**: labels, glossary terms, `option`s (with `program`
+    scoping and unscoped fallback), `envvar`s and `confval`s are collected
+    and resolved for `:ref:`/`:numref:`/`:doc:`/`:term:`/`:option:`/
+    `:envvar:`, with `duplicate label`, `undefined label:`,
+    `unknown document:`, `term not in glossary:` and `unknown option:`
+    warnings. `nitpick_ignore` and `nitpick_ignore_regex` are honored.
+  - **std directives**: `program`, `option` (incl. `[=value]` and
+    comma-separated names), `envvar`, `confval` (`:type:`/`:default:`),
+    `describe`/`object` and `default-domain`, on a generic
+    object-description anatomy with the `:no-index:` option family.
+  - **general index**: `index` directives and roles are collected and
+    assembled into the grouped, sorted structure `genindex.html` renders —
+    single/pair/triple/see/seealso, `!main`, Symbols grouping. **No
+    `genindex.html` is written yet**; the page needs the HTML writer.
+  - **objects.inv**: a byte-correct reader and writer, verified against
+    inventories a real `sphinx-build` produced. **Nothing writes an
+    `objects.inv` into your output yet** — the writer is waiting on the
+    HTML writer's finish task. The reader is live, because:
+  - **intersphinx**: `intersphinx_mapping` (named and unnamed), inventory
+    loading with the on-disk cache, `intersphinx_disabled_reftypes`, the
+    `:external:`/`:external+inv:` roles, and the shared HTTP settings
+    (`tls_verify`, `tls_cacerts`, `user_agent`, `intersphinx_timeout`).
+    Cross-project references resolve.
+  - **incremental builds**: a document is now rebuilt when a file it
+    depends on changes, not only when its own source does. Today that
+    means images; `include`/`literalinclude` follow in wave 4.5.
+  Evidence: an environment-layer differential oracle builds 15
+  multi-document projects (47 documents) with a real `sphinx-build` 9.1.0
+  and compares the toctree graph, relations, numbering, std registries,
+  index data, the whole warning stream and every document's resolved
+  doctree — zero divergence on every compared key, cold and warm. The
+  exemptions that remain are listed in `tests/env_differential.rs` and
+  summarized in [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md).
+- New configuration knobs, readable from `conf.py`, YAML/JSON and `-D`:
+  `numfig`, `numfig_format`, `numfig_secnum_depth`, `nitpick_ignore`,
+  `nitpick_ignore_regex`, `intersphinx_mapping`,
+  `intersphinx_disabled_reftypes`, `intersphinx_resolve_self`,
+  `intersphinx_cache_limit`, `intersphinx_timeout`, `tls_verify`,
+  `tls_cacerts`, `user_agent`. Malformed `intersphinx_mapping` entries
+  fail with Sphinx's own `ConfigError` messages.
+
+### Added (continued: earlier M2 waves and M1 follow-ups)
+
 - **M2 wave 3: the docutils-fidelity parser is now THE parser.**
   `Parser::parse` runs `src/rst/` (sphinx mode) and derives the whole
   `Document` from the doctree — title, toc with docutils `make_id`
@@ -60,8 +117,59 @@ everything forward is [ROADMAP.md](ROADMAP.md).
   The binary's behavior is unchanged; the new parser replaces the
   line-scanner in M2 wave 3.
 
+### Changed
+
+- **Broken `:doc:` and `:ref:` references now warn without `-n`.**
+  Sphinx sets `warn_dangling` on exactly those two reftypes, so it reports
+  `unknown document: '…'` and `undefined label: '…'` in a default build and
+  reserves `-n`/`nitpicky` for the rest. Previous releases only reported
+  them under `-n`. **This can turn a passing `-W` build into a failing
+  one** for a project that has broken `:doc:`/`:ref:` targets and was
+  relying on the old, quieter default.
+- **Toctree warnings moved to the `.. toctree::` directive line** and now
+  carry Sphinx's warning category. Where a missing entry previously
+  reported at the entry's own line and bare, it now reports at the
+  directive's line with a ` [toc.not_readable]` suffix — matching
+  `sphinx-build`, whose toctree warnings are logged against the directive
+  node. Warning *categories* (`show_warning_types`, on by default since
+  Sphinx 8.3) are now emitted generally, so other warnings gain a
+  ` [type.subtype]` suffix too. **Anything that greps or diffs build
+  output will see different lines**, and a `-w` warning file is not
+  byte-comparable with one from 0.4.x.
+
+### Removed
+
+- The M1 domain system (`sphinx_ultra::domains`, and with it the crate-root
+  re-exports `CrossReference`, `DomainObject`, `DomainRegistry`,
+  `DomainValidator` and `ReferenceType`). It was a regex reference scanner
+  with fuzzy suggestions; the std domain and the real resolution pass
+  replaced its whole live surface, after which it had no call sites.
+  Library consumers that imported those names have no drop-in replacement
+  yet — the new API is `sphinx_ultra::env`. (`document::CrossReference` is
+  a different type and still exists.)
+
+### Internal
+
+- Persisted doctrees now carry a magic + format-version header. bincode has
+  no self-description, so a doctree written by an older build used to
+  decode *successfully* into a plausible-but-wrong tree; a mismatched
+  version is now an honest cache miss. Practical effect when upgrading:
+  the first build after this change re-reads every document once, then
+  caches normally.
+
 ### Fixed
 
+- **The `objects.inv` reader corrupted real inventories.** It converted the
+  zlib-compressed payload to a `String` lossily and then split it with
+  `str::lines`, so any inventory whose compressed bytes happened to contain
+  a bare `\r`/`\n` or a non-UTF-8 sequence — which content-rich inventories
+  routinely do — lost or mangled entries. The reader is now binary-safe end
+  to end, handles v1 and v2, expands `$` anchors and `-` display names, and
+  reproduces Sphinx's own `ValueError` texts for malformed files. This was
+  unreachable from `sphinx-ultra build` before now (nothing consumed an
+  inventory), so it bit only direct users of the `sphinx_ultra::inventory`
+  API — but intersphinx consumes it as of this release, so it had to be
+  right first.
 - `install.sh` no longer prefixes archive names with the tag's `v`
   (`sphinx-ultra-v0.4.0-...` 404'd; assets are named `sphinx-ultra-0.4.0-...`
   — broken for every release since checksums were introduced)
