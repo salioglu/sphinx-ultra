@@ -176,7 +176,7 @@ html_theme = 'sphinx_rtd_theme'
     // Parse the configuration
     let mut parser = PythonConfigParser::new().unwrap();
     let conf_config = parser.parse_conf_py(&conf_path).unwrap();
-    let build_config = conf_config.to_build_config();
+    let build_config = conf_config.to_build_config().unwrap();
 
     // Verify patterns were parsed correctly
     assert_eq!(build_config.include_patterns, vec!["docs/**", "*.rst"]);
@@ -203,7 +203,7 @@ html_theme = 'alabaster'
     // Parse the configuration
     let mut parser = PythonConfigParser::new().unwrap();
     let conf_config = parser.parse_conf_py(&conf_path).unwrap();
-    let build_config = conf_config.to_build_config();
+    let build_config = conf_config.to_build_config().unwrap();
 
     // Should have Sphinx-compatible defaults
     assert_eq!(build_config.include_patterns, vec!["**"]);

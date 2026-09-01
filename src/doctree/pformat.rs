@@ -56,6 +56,17 @@ fn write_node(node: &Node, depth: usize, out: &mut String) {
         let rendered = match value {
             AttrValue::Int(i) => i.to_string(),
             AttrValue::Str(s) => s.clone(),
+            // docutils `Element.starttag`: a list value renders as
+            // `' '.join(serial_escape('%s' % v) for v in value)` — the same
+            // treatment the five universal list attributes get above, and
+            // an empty list renders as an empty value (only the *universal*
+            // list attributes are suppressed when empty, via
+            // `is_not_default`/`list_attributes`).
+            AttrValue::List(items) => items
+                .iter()
+                .map(|v| serial_escape(v))
+                .collect::<Vec<_>>()
+                .join(" "),
         };
         attrs.push((key, rendered));
     }
@@ -187,6 +198,22 @@ mod tests {
         assert_eq!(
             lb.pformat(),
             "<literal_block xml:space=\"preserve\">\n    code here\n"
+        );
+    }
+
+    #[test]
+    fn pformat_list_attr_joins_serial_escaped_items() {
+        // sphinx toctree[entries]/[includefiles]: list values join with a
+        // space after serial_escape, and an empty list still prints.
+        let mut t = Node::elem(kinds::TOCTREE, Span::ZERO);
+        t.set(
+            "entries",
+            AttrValue::List(vec!["(None, 'a')".into(), "('T x', 'b')".into()]),
+        );
+        t.set("includefiles", AttrValue::List(vec![]));
+        assert_eq!(
+            t.pformat(),
+            "<toctree entries=\"(None,\\ 'a') ('T\\ x',\\ 'b')\" includefiles=\"\">\n"
         );
     }
 

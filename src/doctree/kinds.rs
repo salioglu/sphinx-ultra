@@ -65,6 +65,16 @@ pub const DESCRIPTION: &str = "description";
 // wave 3: directives
 pub const SUBTITLE: &str = "subtitle";
 
+pub const IMAGE: &str = "image";
+
+// sphinx-only element names (sphinx/addnodes.py). They print through the
+// same pformat path as the docutils ones; the oracle fixtures pin them.
+pub const COMPACT_PARAGRAPH: &str = "compact_paragraph";
+pub const COMPOUND: &str = "compound";
+pub const ONLY: &str = "only";
+pub const PENDING_XREF: &str = "pending_xref";
+pub const TOCTREE: &str = "toctree";
+
 pub const TABLE: &str = "table";
 pub const TGROUP: &str = "tgroup";
 pub const COLSPEC: &str = "colspec";

@@ -424,7 +424,16 @@ impl DirectiveValidator for TocTreeValidator {
                         );
                     }
                 }
-                "numbered" | "titlesonly" | "glob" | "reversed" | "hidden" | "includehidden" => {
+                // `numbered` is NOT a flag: Sphinx types it `int_or_nothing`
+                // (`directives/other.py`, `TocTree.option_spec`), so
+                // `:numbered: 2` -- the documented spelling for a numbering
+                // depth -- is valid input. Warning on it fabricated a
+                // diagnostic Sphinx never emits and failed `-W` on projects
+                // sphinx 9.1.0 builds clean. Option handling for toctree
+                // belongs to the parser's own table (`TOCTREE_OPTS`, which
+                // has always had this right); nothing is re-checked here.
+                "numbered" => {}
+                "titlesonly" | "glob" | "reversed" | "hidden" | "includehidden" => {
                     // Flag options
                     if !value.is_empty() {
                         return DirectiveValidationResult::Warning(format!(

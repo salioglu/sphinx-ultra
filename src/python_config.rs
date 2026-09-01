@@ -138,8 +138,19 @@ pub struct ConfPyConfig {
     pub math_eqref_format: Option<String>,
     pub math_numfig: Option<bool>,
     pub tls_verify: Option<bool>,
-    pub tls_cacerts: Option<String>,
+    pub tls_cacerts: Option<crate::intersphinx::TlsCacerts>,
     pub user_agent: Option<String>,
+
+    // intersphinx
+    /// The raw `intersphinx_mapping` value, exactly as `conf.py` wrote it.
+    /// Normalisation and validation happen in [`ConfPyConfig::to_build_config`],
+    /// where a failure can abort configuration the way Sphinx's `ConfigError`
+    /// aborts the build.
+    pub intersphinx_mapping: serde_json::Value,
+    pub intersphinx_disabled_reftypes: Option<Vec<String>>,
+    pub intersphinx_resolve_self: Option<String>,
+    pub intersphinx_cache_limit: Option<i64>,
+    pub intersphinx_timeout: Option<f64>,
 
     // Internationalization
     pub gettext_uuid: Option<bool>,
@@ -256,6 +267,25 @@ impl PythonConfigParser {
                 .unwrap_or_default()
         };
 
+        // Helper function to extract a list of 2-string tuples
+        // (`nitpick_ignore`'s `[('py:func', 'foo'), ...]` shape).
+        let extract_pair_list = |key: &str| -> Vec<(String, String)> {
+            self.conf_namespace
+                .get(key)
+                .and_then(|val| val.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|pair| {
+                            let pair = pair.as_array()?;
+                            let first = pair.first()?.as_str()?;
+                            let second = pair.get(1)?.as_str()?;
+                            Some((first.to_string(), second.to_string()))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+
         // Helper function to extract dictionary
         let extract_dict = |key: &str| -> HashMap<String, serde_json::Value> {
             self.conf_namespace
@@ -319,14 +349,60 @@ impl PythonConfigParser {
         // Extract build options
         config.needs_sphinx = extract_string("needs_sphinx");
         config.nitpicky = extract_bool("nitpicky");
+        config.nitpick_ignore = extract_pair_list("nitpick_ignore");
+        config.nitpick_ignore_regex = extract_pair_list("nitpick_ignore_regex");
         config.numfig = extract_bool("numfig");
+        // `numfig_format` is a str -> str dict; a non-string value is not a
+        // format string sphinx could interpolate, so it is dropped here
+        // rather than carried as JSON.
+        config.numfig_format = extract_dict("numfig_format")
+            .into_iter()
+            .filter_map(|(k, v)| v.as_str().map(|s| (k, s.to_string())))
+            .collect();
         config.numfig_secnum_depth = extract_int("numfig_secnum_depth");
         config.math_number_all = extract_bool("math_number_all");
         config.math_eqref_format = extract_string("math_eqref_format");
         config.math_numfig = extract_bool("math_numfig");
         config.tls_verify = extract_bool("tls_verify");
-        config.tls_cacerts = extract_string("tls_cacerts");
+        // `tls_cacerts` is `str | dict[str, str] | None` (`config.py:287`):
+        // one CA bundle for everything, or one per host.
+        config.tls_cacerts = self
+            .conf_namespace
+            .get("tls_cacerts")
+            .and_then(|value| match value {
+                serde_json::Value::String(path) => {
+                    Some(crate::intersphinx::TlsCacerts::Bundle(path.clone()))
+                }
+                serde_json::Value::Object(map) => Some(crate::intersphinx::TlsCacerts::PerHost(
+                    map.iter()
+                        .filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_string())))
+                        .collect(),
+                )),
+                _ => None,
+            });
         config.user_agent = extract_string("user_agent");
+
+        // Extract intersphinx configuration. The mapping is carried raw:
+        // validating it is `to_build_config`'s job, because that is where a
+        // failure can be reported as a configuration error.
+        config.intersphinx_mapping = self
+            .conf_namespace
+            .get("intersphinx_mapping")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        config.intersphinx_disabled_reftypes = self
+            .conf_namespace
+            .get("intersphinx_disabled_reftypes")
+            .map(|_| extract_string_list("intersphinx_disabled_reftypes"));
+        config.intersphinx_resolve_self = extract_string("intersphinx_resolve_self");
+        config.intersphinx_cache_limit = self
+            .conf_namespace
+            .get("intersphinx_cache_limit")
+            .and_then(serde_json::Value::as_i64);
+        config.intersphinx_timeout = self
+            .conf_namespace
+            .get("intersphinx_timeout")
+            .and_then(serde_json::Value::as_f64);
 
         // Extract internationalization
         config.gettext_uuid = extract_bool("gettext_uuid");
@@ -398,6 +474,7 @@ impl PythonConfigParser {
                 | "needs_sphinx"
                 | "nitpicky"
                 | "numfig"
+                | "numfig_format"
                 | "numfig_secnum_depth"
                 | "math_number_all"
                 | "math_eqref_format"
@@ -405,6 +482,11 @@ impl PythonConfigParser {
                 | "tls_verify"
                 | "tls_cacerts"
                 | "user_agent"
+                | "intersphinx_mapping"
+                | "intersphinx_disabled_reftypes"
+                | "intersphinx_resolve_self"
+                | "intersphinx_cache_limit"
+                | "intersphinx_timeout"
                 | "gettext_uuid"
                 | "gettext_location"
                 | "gettext_auto_build"
@@ -583,7 +665,7 @@ fn split_assignment(stmt: &str) -> Option<(&str, &str)> {
 /// Supports: strings (escapes, implicit adjacent concatenation, triple
 /// quotes), ints/floats, True/False/None, lists, tuples (as arrays), dicts
 /// with string keys, arbitrary nesting, trailing commas.
-fn parse_python_literal(src: &str) -> std::result::Result<serde_json::Value, String> {
+pub(crate) fn parse_python_literal(src: &str) -> std::result::Result<serde_json::Value, String> {
     let chars: Vec<char> = src.chars().collect();
     let mut p = PyLiteralParser {
         chars,
@@ -619,19 +701,18 @@ impl PyLiteralParser {
 
     fn parse_value(&mut self) -> std::result::Result<serde_json::Value, String> {
         self.skip_ws();
-        match self.peek() {
-            Some('\'') | Some('"') => {
-                let mut s = self.parse_string()?;
-                // Implicit adjacent string concatenation: 'a' 'b' == 'ab'
-                loop {
-                    self.skip_ws();
-                    match self.peek() {
-                        Some('\'') | Some('"') => s.push_str(&self.parse_string()?),
-                        _ => break,
-                    }
-                }
-                Ok(serde_json::Value::String(s))
+        if let Some(raw) = self.string_prefix() {
+            let mut s = self.parse_string(raw)?;
+            // Implicit adjacent string concatenation: 'a' 'b' == 'ab'
+            while let Some(raw) = {
+                self.skip_ws();
+                self.string_prefix()
+            } {
+                s.push_str(&self.parse_string(raw)?);
             }
+            return Ok(serde_json::Value::String(s));
+        }
+        match self.peek() {
             Some('[') => self.parse_sequence('[', ']'),
             Some('(') => {
                 // Python: `(x)` is grouping, `(x,)` / `(x, y)` is a tuple.
@@ -679,7 +760,35 @@ impl PyLiteralParser {
         false
     }
 
-    fn parse_string(&mut self) -> std::result::Result<String, String> {
+    /// A string literal starts here — with an optional Python prefix, which
+    /// is consumed. `Some(true)` means the literal is *raw*: `nitpick_ignore_regex`
+    /// entries are conventionally written `r'...'`, and a raw literal's
+    /// backslashes must survive into the pattern. `f` prefixes are
+    /// deliberately not accepted: an f-string's braces are an expression
+    /// this parser cannot evaluate, so it stays an unsupported expression
+    /// (skipped) rather than being taken literally.
+    fn string_prefix(&mut self) -> Option<bool> {
+        if matches!(self.peek(), Some('\'') | Some('"')) {
+            return Some(false);
+        }
+        for len in [2usize, 1] {
+            let quote_at = self.pos + len;
+            if !matches!(self.chars.get(quote_at), Some('\'') | Some('"')) {
+                continue;
+            }
+            let prefix: String = self.chars[self.pos..quote_at]
+                .iter()
+                .collect::<String>()
+                .to_lowercase();
+            if matches!(prefix.as_str(), "r" | "u" | "b" | "rb" | "br") {
+                self.pos = quote_at;
+                return Some(prefix.contains('r'));
+            }
+        }
+        None
+    }
+
+    fn parse_string(&mut self, raw: bool) -> std::result::Result<String, String> {
         let quote = self.peek().ok_or("expected string")?;
         self.pos += 1;
         let triple = self.chars.get(self.pos) == Some(&quote)
@@ -699,6 +808,14 @@ impl PyLiteralParser {
                     .chars
                     .get(self.pos + 1)
                     .ok_or("unterminated escape sequence")?;
+                if raw {
+                    // A raw literal keeps both characters — but the escaped
+                    // quote still does not end the string.
+                    out.push('\\');
+                    out.push(next);
+                    self.pos += 2;
+                    continue;
+                }
                 let translated = match next {
                     'n' => '\n',
                     't' => '\t',
@@ -922,6 +1039,11 @@ impl Default for ConfPyConfig {
             tls_verify: Some(true),
             tls_cacerts: None,
             user_agent: None,
+            intersphinx_mapping: serde_json::Value::Null,
+            intersphinx_disabled_reftypes: None,
+            intersphinx_resolve_self: None,
+            intersphinx_cache_limit: None,
+            intersphinx_timeout: None,
             gettext_uuid: Some(false),
             gettext_location: Some(true),
             gettext_auto_build: Some(true),
@@ -932,8 +1054,13 @@ impl Default for ConfPyConfig {
 }
 
 impl ConfPyConfig {
-    /// Convert conf.py configuration to BuildConfig
-    pub fn to_build_config(&self) -> BuildConfig {
+    /// Convert conf.py configuration to BuildConfig.
+    ///
+    /// Fails only where Sphinx itself raises `ConfigError` at
+    /// `config-inited` — today that is `intersphinx_mapping` validation
+    /// (`ext/intersphinx/_load.py:131-136`), which aborts the build before
+    /// it reads a single document.
+    pub fn to_build_config(&self) -> Result<BuildConfig> {
         let mut config = BuildConfig::default();
 
         // Map basic project information
@@ -1024,9 +1151,56 @@ impl ConfPyConfig {
         config.exclude_patterns = self.exclude_patterns.clone();
 
         config.nitpicky = self.nitpicky.unwrap_or(false);
-        config.html_context = self.html_context.clone();
+        config.nitpick_ignore = self.nitpick_ignore.clone();
+        config.nitpick_ignore_regex = self.nitpick_ignore_regex.clone();
+        config.html_context = self
+            .html_context
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
 
-        config
+        // Numbering (`numfig` family). `numfig_format` MERGES over the
+        // defaults `BuildConfig::default()` seeded — sphinx applies the
+        // user dict on top of its own at `config-inited` prio 800
+        // (`config.py:682-693`), so a conf.py naming only `figure` keeps
+        // `section`/`table`/`code-block`.
+        config.numfig = self.numfig.unwrap_or(false);
+        for (figtype, format) in &self.numfig_format {
+            config.numfig_format.insert(figtype.clone(), format.clone());
+        }
+        if let Some(depth) = self.numfig_secnum_depth {
+            config.numfig_secnum_depth = depth.max(0) as u32;
+        }
+
+        // intersphinx + the shared HTTP configuration group.
+        let (mapping, errors) = crate::intersphinx::validate_mapping(&self.intersphinx_mapping);
+        for error in &errors {
+            // Sphinx logs each one with `LOGGER.error` before raising.
+            log::error!("{error}");
+        }
+        if !errors.is_empty() {
+            return Err(anyhow!(crate::intersphinx::mapping_config_error(
+                errors.len()
+            )));
+        }
+        config.intersphinx_mapping = mapping;
+        if let Some(disabled) = &self.intersphinx_disabled_reftypes {
+            config.intersphinx_disabled_reftypes = disabled.clone();
+        }
+        if let Some(resolve_self) = &self.intersphinx_resolve_self {
+            config.intersphinx_resolve_self = resolve_self.clone();
+        }
+        if let Some(limit) = self.intersphinx_cache_limit {
+            config.intersphinx_cache_limit = limit;
+        }
+        config.intersphinx_timeout = self.intersphinx_timeout;
+        if let Some(tls_verify) = self.tls_verify {
+            config.tls_verify = tls_verify;
+        }
+        config.tls_cacerts = self.tls_cacerts.clone();
+        config.user_agent = self.user_agent.clone();
+
+        Ok(config)
     }
 }
 
@@ -1136,5 +1310,173 @@ mod tests {
             .unwrap();
         assert_eq!(python[0].as_str(), Some("https://docs.python.org/3"));
         assert!(python[1].is_null());
+    }
+
+    #[test]
+    fn numfig_family_reaches_the_build_config() {
+        let p = parse(
+            "numfig = True\nnumfig_secnum_depth = 2\n\
+             numfig_format = {'figure': 'Figure %s', 'table': 'Table {number}'}\n",
+        );
+        let config = p
+            .extract_configuration()
+            .unwrap()
+            .to_build_config()
+            .unwrap();
+
+        assert!(config.numfig);
+        assert_eq!(config.numfig_secnum_depth, 2);
+        // The user's two entries merge OVER the four defaults rather than
+        // replacing them (`config.py:682-693`).
+        assert_eq!(config.numfig_format["figure"], "Figure %s");
+        assert_eq!(config.numfig_format["table"], "Table {number}");
+        assert_eq!(config.numfig_format["section"], "Section %s");
+        assert_eq!(config.numfig_format["code-block"], "Listing %s");
+    }
+
+    #[test]
+    fn nitpick_ignore_lists_reach_the_build_config() {
+        let p = parse(
+            "nitpicky = True\n\
+             nitpick_ignore = [('py:func', 'nope'), ('doc', 'missing')]\n\
+             nitpick_ignore_regex = [(r'std:.*', r'legacy-.*')]\n",
+        );
+        let config = p
+            .extract_configuration()
+            .unwrap()
+            .to_build_config()
+            .unwrap();
+
+        assert!(config.nitpicky);
+        assert_eq!(
+            config.nitpick_ignore,
+            vec![
+                ("py:func".to_string(), "nope".to_string()),
+                ("doc".to_string(), "missing".to_string()),
+            ]
+        );
+        assert_eq!(
+            config.nitpick_ignore_regex,
+            vec![("std:.*".to_string(), "legacy-.*".to_string())]
+        );
+    }
+
+    #[test]
+    fn raw_and_prefixed_string_literals_parse() {
+        // A raw Rust literal: what follows is byte-for-byte what conf.py holds.
+        let p = parse(
+            r"a = r'back\slash'
+b = R'\d+'
+c = u'plain'
+d = rb'bytes'
+e = 'esc\n'
+",
+        );
+        let ns = |key: &str| p.conf_namespace[key].as_str().unwrap().to_string();
+        assert_eq!(
+            ns("a"),
+            r"back\slash",
+            "a raw literal keeps its backslashes"
+        );
+        assert_eq!(ns("b"), r"\d+");
+        assert_eq!(ns("c"), "plain");
+        assert_eq!(ns("d"), "bytes");
+        assert_eq!(ns("e"), "esc\n", "a plain literal still translates escapes");
+    }
+
+    #[test]
+    fn the_intersphinx_family_reaches_the_build_config() {
+        let p = parse(
+            "intersphinx_mapping = {\n\
+             'python': ('https://docs.python.org/3', None),\n\
+             'other': ('https://example.org/', 'local.inv'),\n\
+             }\n\
+             intersphinx_disabled_reftypes = ['std:doc', 'std:label']\n\
+             intersphinx_resolve_self = 'mine'\n\
+             intersphinx_cache_limit = 0\n\
+             intersphinx_timeout = 2.5\n\
+             tls_verify = False\n\
+             tls_cacerts = '/etc/ca.pem'\n\
+             user_agent = 'mine/1'\n",
+        );
+        let config = p
+            .extract_configuration()
+            .unwrap()
+            .to_build_config()
+            .expect("a valid mapping must not fail configuration");
+
+        assert_eq!(
+            config.intersphinx_mapping["python"],
+            ("https://docs.python.org/3".to_string(), vec![None])
+        );
+        assert_eq!(
+            config.intersphinx_mapping["other"],
+            (
+                "https://example.org/".to_string(),
+                vec![Some("local.inv".to_string())]
+            )
+        );
+        assert_eq!(
+            config.intersphinx_disabled_reftypes,
+            vec!["std:doc".to_string(), "std:label".to_string()]
+        );
+        assert_eq!(config.intersphinx_resolve_self, "mine");
+        assert_eq!(config.intersphinx_cache_limit, 0);
+        assert_eq!(config.intersphinx_timeout, Some(2.5));
+        assert!(!config.tls_verify);
+        assert_eq!(
+            config.tls_cacerts,
+            Some(crate::intersphinx::TlsCacerts::Bundle(
+                "/etc/ca.pem".to_string()
+            ))
+        );
+        assert_eq!(config.user_agent, Some("mine/1".to_string()));
+    }
+
+    #[test]
+    fn tls_cacerts_accepts_the_per_host_mapping_form() {
+        let p = parse("tls_cacerts = {'docs.example.org': '/etc/example.pem'}\n");
+        let config = p
+            .extract_configuration()
+            .unwrap()
+            .to_build_config()
+            .unwrap();
+        assert_eq!(
+            config.tls_cacerts,
+            Some(crate::intersphinx::TlsCacerts::PerHost(
+                std::collections::BTreeMap::from([(
+                    "docs.example.org".to_string(),
+                    "/etc/example.pem".to_string()
+                )])
+            ))
+        );
+    }
+
+    #[test]
+    fn an_invalid_intersphinx_mapping_stops_the_configuration() {
+        let p = parse("intersphinx_mapping = {'p': 'https://x/'}\n");
+        let err = p
+            .extract_configuration()
+            .unwrap()
+            .to_build_config()
+            .expect_err("a malformed entry must abort");
+        assert_eq!(
+            err.to_string(),
+            "Invalid `intersphinx_mapping` configuration (1 error)."
+        );
+    }
+
+    #[test]
+    fn a_conf_py_without_numfig_keeps_the_defaults() {
+        let p = parse("project = 'Docs'\n");
+        let config = p
+            .extract_configuration()
+            .unwrap()
+            .to_build_config()
+            .unwrap();
+
+        assert!(!config.numfig);
+        assert_eq!(config.numfig_secnum_depth, 1);
+        assert_eq!(config.numfig_format["figure"], "Fig. %s");
     }
 }

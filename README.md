@@ -5,7 +5,7 @@
 [![Documentation](https://github.com/salioglu/sphinx-ultra/actions/workflows/docs.yml/badge.svg)](https://salioglu.github.io/sphinx-ultra)
 [![Release](https://github.com/salioglu/sphinx-ultra/actions/workflows/release.yml/badge.svg)](https://github.com/salioglu/sphinx-ultra/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org)
 [![Sponsor](https://img.shields.io/badge/sponsor-GitHub-pink.svg)](https://github.com/sponsors/salioglu)
 
 A high-performance Rust-based Sphinx documentation builder designed for large codebases with thousands of files.
@@ -22,12 +22,16 @@ popular extensions — at 10–100× the speed. **No Sphinx or sphinx-needs feat
 excluded from scope**; features are phased, never excluded. The earlier
 validation-only scoping is retired.
 
-**Honest current state (verified by code audit, 2026-08):** today's build pipeline
-is fast and structurally sound, but the HTML it emits is a placeholder (the source
-text, escaped, without rendering, themes, or search). The RST/Markdown parsers are
-prototypes, `conf.py` support covers only simple single-line assignments, and the
-advertised validation systems exist as tested libraries that the build command does
-not yet invoke. The full, file-and-line-level status audit lives in
+**Honest current state (verified by code audit, 2026-08-31):** everything up to the
+page render is real — a docutils-fidelity RST parser, a `BuildEnvironment` with the
+toctree graph, numbering, the std domain, index data and intersphinx, and Sphinx's
+own warnings coming out of all of it, each pinned against a real `sphinx-build`
+9.1.0 by committed differential fixtures. **The HTML is still a placeholder**: the
+build writes the source text, escaped, with no rendering, themes, search index,
+`genindex.html` or `objects.inv`. That is the M2 wave-5 HTML writer. The Markdown
+parser is still a prototype (`.md` titles and TOCs come out empty), and `conf.py`
+support is a declarative subset — dynamic values need the M5 Python sidecar. The
+full, file-and-line-level status audit lives in
 [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md).
 
 ## ✨ Features
@@ -44,11 +48,24 @@ not yet invoke. The full, file-and-line-level status audit lives in
   quickstart Makefiles work unchanged
 - **🔄 Incremental cache**: cache hits write their output, `--clean
   --incremental` is safe, config changes invalidate automatically (blake3
-  fingerprint); sphinx-build mode is incremental by default
-- **⚠️ Build validation**: toctree missing-reference and orphan detection;
-  directive/role validation on every build; `-n` nitpicky cross-reference
-  checking (`unknown document:` / `undefined label:`) — all through
-  Sphinx-style warnings, `-W`, and `-w warnfile`
+  fingerprint), and a document is re-read when a file it depends on changes;
+  sphinx-build mode is incremental by default
+- **🌐 Build environment & cross-references**: a serialized `BuildEnvironment`
+  with the global toctree graph and relations, `numfig` section/figure
+  numbering, the std domain (labels, glossary terms, `option`/`envvar`/
+  `confval`), general-index data, an `objects.inv` reader/writer, and
+  **intersphinx** resolution incl. the `:external:` roles — verified against a
+  real `sphinx-build` 9.1.0 across a 15-project environment oracle
+- **⚠️ Build validation**: toctree consistency (nonexisting/excluded entries,
+  self-reference, circular toctrees, orphans, "isn't included in any
+  toctree"); directive/role validation on every build; cross-reference
+  resolution with Sphinx's own texts and categories — a broken reference of
+  any of Sphinx's seven `warn_dangling` std reftypes (`:ref:`, `:numref:`,
+  `:doc:`, `:term:`, `:keyword:`, `:option:`, `:confval:`) warns in a
+  default build (`unknown document:`, `undefined label:`,
+  `term not in glossary:`, …), and `-n`/nitpicky widens that to the
+  remaining reference types — all through Sphinx-style warnings, `-W`, and
+  `-w warnfile`
 - **🔧 Config auto-detection**: conf.py (simple assignments only, for now) →
   sphinx-ultra.yaml → .yml → .json → defaults
 - **📊 Statistics**: `stats` command with project analysis
@@ -58,8 +75,14 @@ not yet invoke. The full, file-and-line-level status audit lives in
 
 - **🔍 Constraint engine** inspired by sphinx-needs (library + examples; wiring
   waits for sphinx-needs item extraction in M4)
-- **🖥️ Sphinx-mirroring HTML builder, minijinja template engine, search index,
-  objects.inv inventory** (library code, currently bypassed by the build path)
+- **🖥️ Sphinx-mirroring HTML builder, minijinja template engine, search index**
+  (library code, currently bypassed by the build path — the M2 wave-5 HTML
+  writer revives it)
+- **📇 The `objects.inv` writer**: real and byte-verified against inventories a
+  real `sphinx-build` produced, but nothing writes one into your output tree
+  until the HTML writer lands. (The *reader* is live — intersphinx uses it.)
+  The same applies to the general index: the data is computed, the
+  `genindex.html` page is not yet rendered.
 
 ### 📋 Roadmap
 

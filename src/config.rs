@@ -119,6 +119,16 @@ pub struct BuildConfig {
     /// Warn about all missing cross-references (Sphinx `nitpicky` / `-n`)
     pub nitpicky: bool,
 
+    /// `(reftype, target)` pairs whose missing-reference warnings `nitpicky`
+    /// must not raise (`nitpick_ignore`, `config.py`). Matched exactly, with
+    /// the reftype spelled either `domain:type` or — for the std domain —
+    /// bare `type` (`post_transforms/__init__.py:266-273`).
+    pub nitpick_ignore: Vec<(String, String)>,
+
+    /// The same, with both halves matched as regular expressions that must
+    /// match in full (`nitpick_ignore_regex`, `:274-282`).
+    pub nitpick_ignore_regex: Vec<(String, String)>,
+
     /// Tags set via `-t` (consumed by `only`/`ifconfig` once M2 lands)
     pub tags: Vec<String>,
 
@@ -126,11 +136,90 @@ pub struct BuildConfig {
     /// `<output>/.sphinx-ultra-cache` when unset
     pub doctree_dir: Option<std::path::PathBuf>,
 
-    /// Extra HTML template variables (conf.py `html_context`, CLI `-A`)
-    pub html_context: std::collections::HashMap<String, serde_json::Value>,
+    /// Extra HTML template variables (conf.py `html_context`, CLI `-A`).
+    ///
+    /// Ordered, not hashed: this struct's serialization is the cache/
+    /// environment fingerprint (`builder::config_fingerprint`), and a
+    /// `HashMap` would emit its entries in `RandomState` order — a digest
+    /// that differs on every process, wiping the cache directory on every
+    /// build for any project that sets two or more `html_context` keys.
+    pub html_context: std::collections::BTreeMap<String, serde_json::Value>,
 
     /// Run directive/role validation during the build
     pub validate_directives: bool,
+
+    /// Number figures, tables and code blocks (`numfig`, `config.py:275`).
+    /// Off by default, exactly like Sphinx; when off,
+    /// `assign_figure_numbers` assigns nothing and `:numref:` degrades.
+    pub numfig: bool,
+
+    /// Per-figtype number format (`numfig_format`, `config.py:682-693`).
+    ///
+    /// Sphinx seeds this with `{section: 'Section %s', figure: 'Fig. %s',
+    /// table: 'Table %s', code-block: 'Listing %s'}` and **merges** the
+    /// user's dict over those defaults rather than replacing them, so a
+    /// `conf.py` that only overrides `figure` keeps the other three. That
+    /// merge lives in [`crate::python_config::PythonConfig::to_build_config`];
+    /// this field always holds the merged result, which is why
+    /// [`Default`] populates it with the four defaults.
+    pub numfig_format: std::collections::BTreeMap<String, String>,
+
+    /// How many leading section numbers a figure number is scoped by
+    /// (`numfig_secnum_depth`, `config.py:276`). 0 numbers figures
+    /// project-globally (1, 2, 3...); 1 (the default) numbers them per
+    /// top-level section (1.1, 1.2, 2.1...).
+    pub numfig_secnum_depth: u32,
+
+    /// `intersphinx_mapping`, already normalised and validated
+    /// (`ext/intersphinx/_load.py:38-136`): project name -> (target URI,
+    /// inventory locations). Loading a `conf.py` whose mapping fails
+    /// validation is an error, exactly as Sphinx's `ConfigError` aborts the
+    /// build — see [`crate::intersphinx::validate_mapping`].
+    pub intersphinx_mapping: crate::intersphinx::IntersphinxMapping,
+
+    /// `intersphinx_disabled_reftypes`, default `['std:doc']`
+    /// (`ext/intersphinx/__init__.py:79`). Entries are `domain:objtype`,
+    /// `domain:*` or `*`, and they only ever block a *bare* reference: the
+    /// `inv:target` and `:external:` forms bypass them.
+    pub intersphinx_disabled_reftypes: Vec<String>,
+
+    /// `intersphinx_resolve_self`, default `''` (`__init__.py:69`): the
+    /// inventory name that means "this project", so `name:target` resolves
+    /// locally instead of through an inventory.
+    pub intersphinx_resolve_self: String,
+
+    /// `intersphinx_cache_limit` in days, default 5 (`__init__.py:70`).
+    /// Negative means a cached inventory never expires.
+    pub intersphinx_cache_limit: i64,
+
+    /// `intersphinx_timeout` in seconds, default `None` — which Sphinx
+    /// passes to `requests` as no timeout at all (`__init__.py:71`).
+    pub intersphinx_timeout: Option<f64>,
+
+    /// `tls_verify`, default `True` (`config.py:286`).
+    pub tls_verify: bool,
+
+    /// `tls_cacerts`, default `None` (`config.py:287`): one CA bundle path,
+    /// or a per-host mapping of them.
+    pub tls_cacerts: Option<crate::intersphinx::TlsCacerts>,
+
+    /// `user_agent`, default `None` (`config.py:288`) — unset means
+    /// [`crate::intersphinx::DEFAULT_USER_AGENT`].
+    pub user_agent: Option<String>,
+}
+
+/// Sphinx's `numfig_format` defaults (`config.py:682-693`), which user
+/// entries merge over.
+pub fn default_numfig_format() -> std::collections::BTreeMap<String, String> {
+    [
+        ("section", "Section %s"),
+        ("figure", "Fig. %s"),
+        ("table", "Table %s"),
+        ("code-block", "Listing %s"),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k.to_string(), v.to_string()))
+    .collect()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -240,10 +329,25 @@ impl Default for BuildConfig {
             exclude_patterns: vec![],
 
             nitpicky: false,
+            nitpick_ignore: vec![],
+            nitpick_ignore_regex: vec![],
             tags: vec![],
             doctree_dir: None,
-            html_context: std::collections::HashMap::new(),
+            html_context: std::collections::BTreeMap::new(),
             validate_directives: true,
+
+            numfig: false,
+            numfig_format: default_numfig_format(),
+            numfig_secnum_depth: 1,
+
+            intersphinx_mapping: Default::default(),
+            intersphinx_disabled_reftypes: vec!["std:doc".to_string()],
+            intersphinx_resolve_self: String::new(),
+            intersphinx_cache_limit: 5,
+            intersphinx_timeout: None,
+            tls_verify: true,
+            tls_cacerts: None,
+            user_agent: None,
         }
     }
 }
@@ -325,7 +429,7 @@ impl BuildConfig {
                 warning.message
             );
         }
-        Ok(conf_py_config.to_build_config())
+        conf_py_config.to_build_config()
     }
 
     /// Try to auto-detect and load configuration from various sources
@@ -493,10 +597,14 @@ impl BuildConfig {
                     .collect(),
             ),
             // Null slots are Option<...> fields: prefer a number if the value
-            // parses as one (parallel_jobs), otherwise store the string.
+            // parses as one (parallel_jobs, intersphinx_timeout), otherwise
+            // store the string. A wrong numeric guess is retried as a string
+            // by the caller, so trying the fractional form costs nothing and
+            // is the only way to reach an `Option<f64>` setting.
             Value::Null => value
                 .parse::<i64>()
                 .map(Value::from)
+                .or_else(|_| value.parse::<f64>().map(Value::from))
                 .unwrap_or_else(|_| Value::String(value.to_string())),
             _ => Value::String(value.to_string()),
         })
@@ -701,5 +809,116 @@ output:
         assert!(warning
             .unwrap()
             .contains("cannot override dictionary config setting"));
+    }
+
+    #[test]
+    fn intersphinx_and_http_defaults_match_sphinx() {
+        let config = BuildConfig::default();
+        assert!(config.intersphinx_mapping.is_empty());
+        assert_eq!(
+            config.intersphinx_disabled_reftypes,
+            vec!["std:doc".to_string()],
+            "the one default entry is what stops a bare `:doc:` resolving externally"
+        );
+        assert_eq!(config.intersphinx_resolve_self, "");
+        assert_eq!(config.intersphinx_cache_limit, 5);
+        assert_eq!(config.intersphinx_timeout, None);
+        assert!(config.tls_verify);
+        assert_eq!(config.tls_cacerts, None);
+        assert_eq!(config.user_agent, None);
+    }
+
+    #[test]
+    fn an_invalid_intersphinx_mapping_fails_configuration_loading() {
+        // Sphinx raises ConfigError here, which aborts the build before it
+        // starts; the CLI turns a config-loading error into exit code 2.
+        let temp_dir = TempDir::new().unwrap();
+        let p = temp_dir.path().join("conf.py");
+        fs::write(
+            &p,
+            "intersphinx_mapping = {'a': ('https://x/', None), 'b': ('https://x/', None)}\n",
+        )
+        .unwrap();
+
+        let err = BuildConfig::from_file(&p).expect_err("a duplicate target URI must abort");
+        assert_eq!(
+            err.to_string(),
+            "Invalid `intersphinx_mapping` configuration (1 error)."
+        );
+    }
+
+    #[test]
+    fn intersphinx_scalars_are_overridable_from_the_command_line() {
+        let mut config = BuildConfig::default();
+        assert!(config
+            .apply_override("intersphinx_cache_limit", "-1")
+            .unwrap()
+            .is_none());
+        assert_eq!(config.intersphinx_cache_limit, -1);
+
+        assert!(config
+            .apply_override("intersphinx_disabled_reftypes", "std:doc,std:label")
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            config.intersphinx_disabled_reftypes,
+            vec!["std:doc".to_string(), "std:label".to_string()]
+        );
+
+        assert!(config.apply_override("tls_verify", "0").unwrap().is_none());
+        assert!(!config.tls_verify);
+
+        // An unset `Option<f64>`: the slot carries no type information, so
+        // the fractional form has to be guessed at.
+        assert!(config
+            .apply_override("intersphinx_timeout", "2.5")
+            .unwrap()
+            .is_none());
+        assert_eq!(config.intersphinx_timeout, Some(2.5));
+        assert!(config
+            .apply_override("intersphinx_timeout", "5")
+            .unwrap()
+            .is_none());
+        assert_eq!(config.intersphinx_timeout, Some(5.0));
+    }
+
+    #[test]
+    fn numfig_defaults_match_sphinx() {
+        let config = BuildConfig::default();
+        assert!(!config.numfig);
+        assert_eq!(config.numfig_secnum_depth, 1);
+        assert_eq!(config.numfig_format["section"], "Section %s");
+        assert_eq!(config.numfig_format["figure"], "Fig. %s");
+        assert_eq!(config.numfig_format["table"], "Table %s");
+        assert_eq!(config.numfig_format["code-block"], "Listing %s");
+    }
+
+    #[test]
+    fn numfig_family_is_overridable_from_the_command_line() {
+        let mut config = BuildConfig::default();
+
+        // sphinx-build spells booleans as 0/1; `true`/`True` work too.
+        assert!(config.apply_override("numfig", "1").unwrap().is_none());
+        assert!(config.numfig);
+        assert!(config.apply_override("numfig", "0").unwrap().is_none());
+        assert!(!config.numfig);
+        assert!(config.apply_override("numfig", "true").unwrap().is_none());
+        assert!(config.numfig);
+        assert!(config.apply_override("numfig", "yes").is_err());
+
+        assert!(config
+            .apply_override("numfig_secnum_depth", "2")
+            .unwrap()
+            .is_none());
+        assert_eq!(config.numfig_secnum_depth, 2);
+
+        // A dict setting is overridden key by key, which leaves the other
+        // defaults in place.
+        assert!(config
+            .apply_override("numfig_format.figure", "Figure %s")
+            .unwrap()
+            .is_none());
+        assert_eq!(config.numfig_format["figure"], "Figure %s");
+        assert_eq!(config.numfig_format["table"], "Table %s");
     }
 }

@@ -27,7 +27,7 @@ Pull requests are the best way to propose changes to the codebase. We actively w
 
 ### Prerequisites
 
-- Rust 1.70 or higher
+- Rust 1.85 or higher (the crate's declared `rust-version`)
 - Git
 
 ### Setup

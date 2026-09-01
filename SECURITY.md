@@ -88,6 +88,32 @@ The actual attack surface of the current binary is:
 - Output paths are derived from source paths under the configured output
   directory
 
+### Network Access
+
+As of the unreleased intersphinx support, `sphinx-ultra build` can make
+outbound network requests. It does so for exactly one purpose, and only
+when configured to:
+
+- **What**: HTTPS `GET`s of the `objects.inv` inventories named by
+  `intersphinx_mapping` in `conf.py`. Nothing else in the binary opens a
+  socket — there is no telemetry, no update check, and no fetching of
+  images, stylesheets or any other document content
+- **When**: only if `intersphinx_mapping` is non-empty. It is empty by
+  default, so a default build makes no network requests at all
+- **Where**: the URLs come from the project's own configuration. Treat an
+  untrusted `conf.py` as able to make the build contact a host of its
+  choosing
+- **TLS**: certificate verification is **on** by default (`tls_verify`).
+  Setting `tls_verify = False` turns it off for these requests;
+  `tls_cacerts` supplies a CA bundle, either one path for every host or a
+  per-host mapping. `user_agent` sets the request's User-Agent, and
+  `intersphinx_timeout` its timeout
+- **Credentials**: basic-auth credentials embedded in an inventory URL are
+  sent to that host and are stripped from any link the build publishes
+- **On disk**: fetched inventories are cached under the build's cache
+  directory (`__intersphinx_cache__`), so an inventory's contents persist
+  between builds
+
 ### Not Applicable (yet)
 
 Earlier versions of this document described a development server, WebSocket

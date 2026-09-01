@@ -8,11 +8,11 @@ pub mod config;
 pub mod directives;
 pub mod doctree;
 pub mod document;
-pub mod domains;
-pub mod environment;
+pub mod env;
 pub mod error;
 pub mod extensions;
 pub mod html_builder;
+pub mod intersphinx;
 pub mod inventory;
 pub mod matching;
 pub mod parser;
@@ -34,12 +34,11 @@ pub use directives::{
     Directive, DirectiveRegistry,
 };
 pub use document::Document;
-pub use domains::{CrossReference, DomainObject, DomainRegistry, DomainValidator, ReferenceType};
-pub use environment::BuildEnvironment;
+pub use env::BuildEnvironment;
 pub use error::BuildError;
 pub use extensions::{ExtensionLoader, SphinxApp, SphinxExtension};
 pub use html_builder::HTMLBuilder;
-pub use inventory::{InventoryFile, InventoryItem};
+pub use inventory::{posix_join, InvObject, Inventory, InventoryFile, InventoryItem};
 pub use parser::Parser;
 pub use python_config::{ConfPyConfig, PythonConfigParser};
 pub use search::SearchIndex;

@@ -109,6 +109,55 @@ pub fn make_id(s: &str) -> String {
     out[start..end].to_string()
 }
 
+/// sphinx `util.nodes._make_id` (`:537-561`) — a fork of docutils' 0.16
+/// `make_id` with two documented changes: capital letters survive, and `.`
+/// and `_` count as identifier characters (so `envvar-HOME_A` stays
+/// `envvar-HOME_A`, where docutils' would yield `envvar-home-a`). The
+/// translate tables are the same ones [`make_id`] uses; the lowercasing
+/// step is what sphinx drops, so this runs them on the raw string.
+///
+/// Result grammar: `[^-0-9._][a-zA-Z0-9._-]*` with no trailing `-`, or empty.
+pub fn sphinx_make_id(s: &str) -> String {
+    // 1. digraph + single-char translate tables (NO lowercasing first).
+    let mut translated = String::with_capacity(s.len());
+    for c in s.chars() {
+        if let Some(d) = translate_digraph(c) {
+            translated.push_str(d);
+        } else if let Some(r) = translate_single(c) {
+            translated.push(r);
+        } else {
+            translated.push(c);
+        }
+    }
+    // 2. NFKD-normalize, drop remaining non-ASCII.
+    let ascii: String = translated.nfkd().filter(char::is_ascii).collect();
+    // 3. collapse whitespace runs (' '.join(s.split())).
+    let collapsed = ascii.split_whitespace().collect::<Vec<_>>().join(" ");
+    // 4. every [^a-zA-Z0-9._]+ run -> single '-'.
+    let mut out = String::with_capacity(collapsed.len());
+    let mut in_run = false;
+    for c in collapsed.chars() {
+        if c.is_ascii_alphanumeric() || c == '.' || c == '_' {
+            out.push(c);
+            in_run = false;
+        } else if !in_run {
+            out.push('-');
+            in_run = true;
+        }
+    }
+    // 5. `^[-0-9._]+|-+$` -> '' (both ends, one re.sub pass).
+    let bytes = out.as_bytes();
+    let mut start = 0;
+    while start < bytes.len() && matches!(bytes[start], b'-' | b'.' | b'_' | b'0'..=b'9') {
+        start += 1;
+    }
+    let mut end = bytes.len();
+    while end > start && bytes[end - 1] == b'-' {
+        end -= 1;
+    }
+    out[start..end].to_string()
+}
+
 /// docutils `fully_normalize_name`: lowercase + collapse whitespace.
 pub fn fully_normalize_name(s: &str) -> String {
     s.to_lowercase()
@@ -152,6 +201,13 @@ pub struct IdRegistry {
     /// sphinx env.new_serialno('index') — shared by the index directive
     /// and the index-entry-emitting roles (pep/rfc/cve/cwe/:index:).
     index_serial: u32,
+    /// The other `env.new_serialno(category)` counters, keyed by the
+    /// `sphinx.util.nodes.make_id` prefix that asked for one
+    /// (`cmdoption-myprog`, `confval`, …). Kept apart from
+    /// [`Self::index_serial`] only because that one has a public accessor
+    /// (`index_serial`) that rides the parse export; the semantics are the
+    /// same per-document, per-category counter starting at 0.
+    serialnos: HashMap<String, u32>,
 }
 
 impl IdRegistry {
@@ -165,6 +221,41 @@ impl IdRegistry {
         let n = self.index_serial;
         self.index_serial += 1;
         n
+    }
+
+    /// sphinx `util.nodes.make_id(env, document, prefix, term)` (`:610-637`)
+    /// with `prefix` always non-empty (every caller in this crate names one):
+    /// `_make_id(f'{prefix}-{term}')`, rejected when it collapses to just the
+    /// prefix, then `f'{prefix}-{env.new_serialno(prefix)}'` until the id is
+    /// free. Sphinx does NOT register the result in `document.ids` here —
+    /// `note_explicit_target` → `document.set_id` does, which is
+    /// [`Self::note_explicit_id`].
+    pub fn sphinx_make_id(&mut self, prefix: &str, term: &str) -> String {
+        let mut node_id = if term.is_empty() {
+            None
+        } else {
+            let candidate = sphinx_make_id(&format!("{prefix}-{term}"));
+            // "*term* is not good to generate a node_id."
+            (candidate != prefix).then_some(candidate)
+        };
+        loop {
+            match &node_id {
+                Some(id) if !self.ids.contains(id) => return id.clone(),
+                _ => {}
+            }
+            let counter = self.serialnos.entry(prefix.to_string()).or_insert(0);
+            let serial = *counter;
+            *counter += 1;
+            node_id = Some(format!("{prefix}-{serial}"));
+        }
+    }
+
+    /// docutils `document.set_id` for a node that already carries ids
+    /// (`nodes.py:1832-1843`): registration only — the duplicate-id ERROR
+    /// path cannot fire for the ids [`Self::sphinx_make_id`] hands out,
+    /// which are chosen to be free.
+    pub fn note_explicit_id(&mut self, id: &str) {
+        self.ids.insert(id.to_string());
     }
 
     /// docutils `document.set_id` (id_prefix='', auto_id_prefix='id'):
@@ -359,6 +450,23 @@ impl IdRegistry {
     pub fn take_fixups(&mut self) -> Vec<DupnameFixup> {
         std::mem::take(&mut self.fixups)
     }
+
+    /// Snapshot of the name->id table for downstream consumers (wave 4's
+    /// std-domain label harvest) that need name -> (id, explicit) after
+    /// this registry itself is dropped: `(name, id, explicit)`. `id` is
+    /// `None` once a name has been duplicated away (see [`Self::register`]).
+    pub fn nameids_snapshot(&self) -> Vec<(String, Option<String>, bool)> {
+        self.nameids
+            .iter()
+            .map(|(name, entry)| (name.clone(), entry.id.clone(), entry.explicit))
+            .collect()
+    }
+
+    /// Current value of the `env.new_serialno('index')` counter (see
+    /// [`Self::new_index_serialno`]).
+    pub fn index_serial(&self) -> u32 {
+        self.index_serial
+    }
 }
 
 /// Post-parse pass: move `name` from `names` to `dupnames` on the node
@@ -401,6 +509,45 @@ mod tests {
         assert_eq!(make_id("!!!"), "");
         assert_eq!(make_id("123"), "");
         assert_eq!(make_id("..."), "");
+    }
+
+    /// sphinx's fork keeps case and treats `.`/`_` as identifier
+    /// characters, which is why `envvar-HOME_A` survives where docutils'
+    /// `make_id` would flatten it to `envvar-home-a`.
+    #[test]
+    fn sphinx_make_id_keeps_case_dots_and_underscores() {
+        assert_eq!(sphinx_make_id("envvar-HOME_A"), "envvar-HOME_A");
+        assert_eq!(sphinx_make_id("confval-my_setting"), "confval-my_setting");
+        assert_eq!(sphinx_make_id("a.b.C"), "a.b.C");
+        // `[^a-zA-Z0-9._]+` collapses to a single '-'.
+        assert_eq!(
+            sphinx_make_id("cmdoption-myprog---verbose"),
+            "cmdoption-myprog-verbose"
+        );
+        assert_eq!(
+            sphinx_make_id("term-source directory"),
+            "term-source-directory"
+        );
+        // `^[-0-9._]+` and `-+$` are stripped; docutils strips only `[-0-9]+`.
+        assert_eq!(sphinx_make_id("._-1abc--"), "abc");
+        assert_eq!(sphinx_make_id("Überblick"), "Uberblick");
+        assert_eq!(sphinx_make_id("!!!"), "");
+    }
+
+    #[test]
+    fn sphinx_registry_make_id_falls_back_to_a_per_prefix_serial() {
+        let mut reg = IdRegistry::new();
+        assert_eq!(reg.sphinx_make_id("envvar", "HOME"), "envvar-HOME");
+        // Not registered until note_explicit_id, so the same call repeats.
+        assert_eq!(reg.sphinx_make_id("envvar", "HOME"), "envvar-HOME");
+        reg.note_explicit_id("envvar-HOME");
+        assert_eq!(reg.sphinx_make_id("envvar", "HOME"), "envvar-0");
+        reg.note_explicit_id("envvar-0");
+        assert_eq!(reg.sphinx_make_id("envvar", "HOME"), "envvar-1");
+        // A term that collapses to the prefix itself is "not good to
+        // generate a node_id" and goes straight to the serial; the counter
+        // is per prefix.
+        assert_eq!(reg.sphinx_make_id("cmdoption", "!!!"), "cmdoption-0");
     }
 
     #[test]

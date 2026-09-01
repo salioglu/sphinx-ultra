@@ -9,8 +9,12 @@
 >
 > Note also that the "Implemented ✅ / Complete" claims below (domain system,
 > directive & role validation) refer to library modules with unit tests; the 2026-08
-> audit established that none of them is invoked by `sphinx-ultra build`. Wiring
-> them into the build is ROADMAP milestone M1.
+> audit established that none of them was invoked by `sphinx-ultra build`. Since
+> then: M1 wired directive & role validation into every build, and **M2 wave 4
+> deleted the domain system described below** — the std domain (`src/env/`) and a
+> port of Sphinx's own resolution pass replaced it, verified against a real
+> `sphinx-build` 9.1.0. The `DomainValidator`/`DomainRegistry` API sketched here no
+> longer exists.
 
 ## Overview
 This document outlines the upcoming validation-focused features for Sphinx Ultra based on comprehensive analysis of Sphinx and sphinx-needs. The focus is on **validation, verification, and consistency checking** rather than advanced UI features.

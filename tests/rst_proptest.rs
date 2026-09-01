@@ -10,6 +10,8 @@ fn opts() -> ParseOptions {
         source_path: "<p>".into(),
         sphinx: true,
         docname: "index".into(),
+        exclude_patterns: Vec::new(),
+        found_docs: None,
     }
 }
 

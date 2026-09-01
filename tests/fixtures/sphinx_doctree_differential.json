@@ -1616,9 +1616,45 @@
     },
     {
       "family": "sx_directives",
+      "name": "sx_directives.glossary_case_and_underscores",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <glossary sorted=\"0\">\n        <definition_list classes=\"glossary\">\n            <definition_list_item>\n                <term ids=\"term-HTTP_Method\">\n                    HTTP_Method\n                    <index entries=\"('single',\\ 'HTTP_Method',\\ 'term-HTTP_Method',\\ 'main',\\ None)\">\n                <definition>\n                    <paragraph>\n                        A method.\n",
+      "rst": ".. glossary::\n\n   HTTP_Method\n      A method.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.glossary_unusable_term_text",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <glossary sorted=\"0\">\n        <definition_list classes=\"glossary\">\n            <definition_list_item>\n                <term ids=\"term-0\">\n                    !!!\n                    <index entries=\"('single',\\ '!!!',\\ 'term-0',\\ 'main',\\ None)\">\n                <definition>\n                    <paragraph>\n                        Punctuation only.\n            <definition_list_item>\n                <term ids=\"term-1\">\n                    ???\n                    <index entries=\"('single',\\ '???',\\ 'term-1',\\ 'main',\\ None)\">\n                <definition>\n                    <paragraph>\n                        More punctuation.\n",
+      "rst": ".. glossary::\n\n   !!!\n      Punctuation only.\n\n   ???\n      More punctuation.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.glossary_serial_is_not_the_index_serial",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <glossary sorted=\"0\">\n        <definition_list classes=\"glossary\">\n            <definition_list_item>\n                <term ids=\"term-0\">\n                    !!!\n                    <index entries=\"('single',\\ '!!!',\\ 'term-0',\\ 'main',\\ None)\">\n                <definition>\n                    <paragraph>\n                        Punctuation only.\n    <index entries=\"('single',\\ 'Something',\\ 'index-0',\\ '',\\ None)\" inline=\"0\">\n    <target ids=\"index-0\">\n",
+      "rst": ".. glossary::\n\n   !!!\n      Punctuation only.\n\n.. index:: Something\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.glossary_term_with_markup",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <glossary sorted=\"0\">\n        <definition_list classes=\"glossary\">\n            <definition_list_item>\n                <term ids=\"term-emphasized-term\">\n                    <emphasis>\n                        emphasized\n                     term\n                    <index entries=\"('single',\\ 'emphasized\\ term',\\ 'term-emphasized-term',\\ 'main',\\ None)\">\n                <definition>\n                    <paragraph>\n                        A def.\n",
+      "rst": ".. glossary::\n\n   *emphasized* term\n      A def.\n"
+    },
+    {
+      "family": "sx_directives",
       "name": "sx_directives.glossary_sorted_classifier",
       "pseudo_xml": "<document source=\"<snippet>\">\n    <glossary sorted=\"1\">\n        <definition_list classes=\"glossary\">\n            <definition_list_item>\n                <term ids=\"term-zeta\">\n                    zeta\n                    <index entries=\"('single',\\ 'zeta',\\ 'term-zeta',\\ 'main',\\ 'key')\">\n                <definition>\n                    <paragraph>\n                        Z def.\n",
       "rst": ".. glossary::\n   :sorted:\n\n   zeta : key\n      Z def.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.glossary_comment_lines",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <glossary sorted=\"0\">\n        <definition_list classes=\"glossary\">\n            <definition_list_item>\n                <term ids=\"term-alpha\">\n                    alpha\n                    <index entries=\"('single',\\ 'alpha',\\ 'term-alpha',\\ 'main',\\ None)\">\n                <definition>\n                    <paragraph>\n                        The first letter.\n            <definition_list_item>\n                <term ids=\"term-beta\">\n                    beta\n                    <index entries=\"('single',\\ 'beta',\\ 'term-beta',\\ 'main',\\ None)\">\n                <definition>\n                    <paragraph>\n                        The second letter.\n",
+      "rst": ".. glossary::\n\n   .. a comment line\n   alpha\n      The first letter.\n\n   .. a comment line\n   beta\n      The second letter.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.glossary_comment_swallows_its_continuation",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <glossary sorted=\"0\">\n        <definition_list classes=\"glossary\">\n            <definition_list_item>\n                <term ids=\"term-alpha\">\n                    alpha\n                    <index entries=\"('single',\\ 'alpha',\\ 'term-alpha',\\ 'main',\\ None)\">\n                <definition>\n                    <paragraph>\n                        The first letter.\n",
+      "rst": ".. glossary::\n\n   .. a comment line\n      continued under the comment\n\n   alpha\n      The first letter.\n"
     },
     {
       "family": "sx_roles",
@@ -1685,6 +1721,180 @@
       "name": "sx_directives.toctree_bare_angle_entry",
       "pseudo_xml": "<document source=\"<snippet>\">\n    <compound classes=\"toctree-wrapper\">\n        <toctree caption=\"True\" entries=\"\" glob=\"0\" hidden=\"0\" includefiles=\"\" includehidden=\"0\" maxdepth=\"-1\" numbered=\"0\" parent=\"index\" rawentries=\"\" titlesonly=\"0\">\n",
       "rst": ".. toctree::\n\n   <foo>\n"
+    },
+    {
+      "family": "sx_std",
+      "name": "sx_std.describe_plain",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <index entries=\"\">\n    <desc classes=\"describe\" desctype=\"describe\" domain=\"\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"describe\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" classes=\"sig sig-object\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                widget\n        <desc_content>\n            <paragraph>\n                A generic described object.\n",
+      "rst": ".. describe:: widget\n\n   A generic described object.\n"
+    },
+    {
+      "family": "sx_std",
+      "name": "sx_std.describe_no_content",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <index entries=\"\">\n    <desc classes=\"describe\" desctype=\"describe\" domain=\"\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"describe\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" classes=\"sig sig-object\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                widget\n        <desc_content>\n",
+      "rst": ".. describe:: widget\n"
+    },
+    {
+      "family": "sx_std",
+      "name": "sx_std.object_plain",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <index entries=\"\">\n    <desc classes=\"object\" desctype=\"object\" domain=\"\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"object\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" classes=\"sig sig-object\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                thing\n        <desc_content>\n            <paragraph>\n                Body of the object.\n",
+      "rst": ".. object:: thing\n\n   Body of the object.\n"
+    },
+    {
+      "family": "sx_std",
+      "name": "sx_std.envvar_plain",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <index entries=\"('single',\\ 'environment\\ variable;\\ HOME_A',\\ 'envvar-HOME_A',\\ '',\\ None)\">\n    <desc classes=\"std envvar\" desctype=\"envvar\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"envvar\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" classes=\"sig sig-object\" ids=\"envvar-HOME_A\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                HOME_A\n        <desc_content>\n            <paragraph>\n                Home directory variable.\n",
+      "rst": ".. envvar:: HOME_A\n\n   Home directory variable.\n"
+    },
+    {
+      "family": "sx_std",
+      "name": "sx_std.envvar_no_index",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <index entries=\"\">\n    <desc classes=\"std envvar\" desctype=\"envvar\" domain=\"std\" no-contents-entry=\"0\" no-index=\"1\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"1\" noindexentry=\"0\" objtype=\"envvar\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" classes=\"sig sig-object\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                HOME_B\n        <desc_content>\n            <paragraph>\n                Not registered.\n",
+      "rst": ".. envvar:: HOME_B\n   :no-index:\n\n   Not registered.\n"
+    },
+    {
+      "family": "sx_std",
+      "name": "sx_std.confval_plain",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <index entries=\"('pair',\\ 'my_setting;\\ configuration\\ value',\\ 'confval-my_setting',\\ '',\\ None)\">\n    <desc classes=\"std confval\" desctype=\"confval\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"confval\">\n        <desc_signature _toc_name=\"my_setting\" _toc_parts=\"('my_setting',)\" classes=\"sig sig-object\" fullname=\"my_setting\" ids=\"confval-my_setting\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                my_setting\n        <desc_content>\n            <paragraph>\n                A config value.\n",
+      "rst": ".. confval:: my_setting\n\n   A config value.\n"
+    },
+    {
+      "family": "sx_std",
+      "name": "sx_std.confval_typed",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <index entries=\"('pair',\\ 'my_setting;\\ configuration\\ value',\\ 'confval-my_setting',\\ '',\\ None)\">\n    <desc classes=\"std confval\" desctype=\"confval\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"confval\">\n        <desc_signature _toc_name=\"my_setting\" _toc_parts=\"('my_setting',)\" classes=\"sig sig-object\" fullname=\"my_setting\" ids=\"confval-my_setting\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                my_setting\n        <desc_content>\n            <field_list>\n                <field>\n                    <field_name>\n                        Type\n                    <field_body>\n                        <literal>\n                            str\n                <field>\n                    <field_name>\n                        Default\n                    <field_body>\n                        <literal>\n                            'x'\n            <paragraph>\n                A config value.\n",
+      "rst": ".. confval:: my_setting\n   :type: ``str``\n   :default: ``'x'``\n\n   A config value.\n"
+    },
+    {
+      "family": "sx_std",
+      "name": "sx_std.confval_type_only",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <index entries=\"('pair',\\ 'other_setting;\\ configuration\\ value',\\ 'confval-other_setting',\\ '',\\ None)\">\n    <desc classes=\"std confval\" desctype=\"confval\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"confval\">\n        <desc_signature _toc_name=\"other_setting\" _toc_parts=\"('other_setting',)\" classes=\"sig sig-object\" fullname=\"other_setting\" ids=\"confval-other_setting\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                other_setting\n        <desc_content>\n            <field_list>\n                <field>\n                    <field_name>\n                        Type\n                    <field_body>\n                        text with \n                        <emphasis>\n                            emphasis\n",
+      "rst": ".. confval:: other_setting\n   :type: text with *emphasis*\n"
+    },
+    {
+      "family": "sx_std",
+      "name": "sx_std.option_no_program",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <index entries=\"('pair',\\ 'command\\ line\\ option;\\ --global-opt',\\ 'cmdoption-global-opt',\\ '',\\ None)\">\n    <desc classes=\"std option\" desctype=\"option\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"option\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" allnames=\"--global-opt\" classes=\"sig sig-object\" ids=\"cmdoption-global-opt\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                --global-opt\n            <desc_addname classes=\"sig-prename descclassname\" xml:space=\"preserve\">\n        <desc_content>\n            <paragraph>\n                A global (unscoped) option.\n",
+      "rst": ".. option:: --global-opt\n\n   A global (unscoped) option.\n"
+    },
+    {
+      "family": "sx_std",
+      "name": "sx_std.option_with_program",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <index entries=\"('pair',\\ 'myprog\\ command\\ line\\ option;\\ --verbose',\\ 'cmdoption-myprog-verbose',\\ '',\\ None)\">\n    <desc classes=\"std option\" desctype=\"option\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"option\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" allnames=\"--verbose\" classes=\"sig sig-object\" ids=\"cmdoption-myprog-verbose\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                --verbose\n            <desc_addname classes=\"sig-prename descclassname\" xml:space=\"preserve\">\n        <desc_content>\n            <paragraph>\n                Enables verbose output.\n",
+      "rst": ".. program:: myprog\n\n.. option:: --verbose\n\n   Enables verbose output.\n"
+    },
+    {
+      "family": "sx_std",
+      "name": "sx_std.program_none_pop",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <index entries=\"('pair',\\ 'myprog\\ command\\ line\\ option;\\ --scoped',\\ 'cmdoption-myprog-scoped',\\ '',\\ None)\">\n    <desc classes=\"std option\" desctype=\"option\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"option\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" allnames=\"--scoped\" classes=\"sig sig-object\" ids=\"cmdoption-myprog-scoped\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                --scoped\n            <desc_addname classes=\"sig-prename descclassname\" xml:space=\"preserve\">\n        <desc_content>\n    <index entries=\"('pair',\\ 'command\\ line\\ option;\\ --unscoped',\\ 'cmdoption-unscoped',\\ '',\\ None)\">\n    <desc classes=\"std option\" desctype=\"option\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"option\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" allnames=\"--unscoped\" classes=\"sig sig-object\" ids=\"cmdoption-unscoped\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                --unscoped\n            <desc_addname classes=\"sig-prename descclassname\" xml:space=\"preserve\">\n        <desc_content>\n",
+      "rst": ".. program:: myprog\n\n.. option:: --scoped\n\n.. program:: None\n\n.. option:: --unscoped\n"
+    },
+    {
+      "family": "sx_std",
+      "name": "sx_std.program_whitespace_name",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <index entries=\"('pair',\\ 'my-prog\\ command\\ line\\ option;\\ --opt',\\ 'cmdoption-my-prog-opt',\\ '',\\ None)\">\n    <desc classes=\"std option\" desctype=\"option\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"option\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" allnames=\"--opt\" classes=\"sig sig-object\" ids=\"cmdoption-my-prog-opt\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                --opt\n            <desc_addname classes=\"sig-prename descclassname\" xml:space=\"preserve\">\n        <desc_content>\n",
+      "rst": ".. program:: my prog\n\n.. option:: --opt\n"
+    },
+    {
+      "family": "sx_std",
+      "name": "sx_std.option_malformed",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <index entries=\"\">\n    <desc classes=\"std option\" desctype=\"option\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"option\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" classes=\"sig sig-object\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                =bad\n        <desc_content>\n            <paragraph>\n                Body.\n",
+      "rst": ".. option:: =bad\n\n   Body.\n"
+    },
+    {
+      "family": "sx_std",
+      "name": "sx_std.option_multiple_names",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <index entries=\"('pair',\\ 'command\\ line\\ option;\\ -f',\\ 'cmdoption-f',\\ '',\\ None) ('pair',\\ 'command\\ line\\ option;\\ --file',\\ 'cmdoption-f',\\ '',\\ None)\">\n    <desc classes=\"std option\" desctype=\"option\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"option\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" allnames=\"-f --file\" classes=\"sig sig-object\" ids=\"cmdoption-f cmdoption-file\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                -f\n            <desc_addname classes=\"sig-prename descclassname\" xml:space=\"preserve\">\n            <desc_addname classes=\"sig-prename descclassname\" xml:space=\"preserve\">\n                , \n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                --file\n            <desc_addname classes=\"sig-prename descclassname\" xml:space=\"preserve\">\n        <desc_content>\n            <paragraph>\n                Two spellings.\n",
+      "rst": ".. option:: -f, --file\n\n   Two spellings.\n"
+    },
+    {
+      "family": "sx_std",
+      "name": "sx_std.option_with_args",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <index entries=\"('pair',\\ 'command\\ line\\ option;\\ --output',\\ 'cmdoption-output',\\ '',\\ None)\">\n    <desc classes=\"std option\" desctype=\"option\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"option\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" allnames=\"--output\" classes=\"sig sig-object\" ids=\"cmdoption-output\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                --output\n            <desc_addname classes=\"sig-prename descclassname\" xml:space=\"preserve\">\n                =FILE\n        <desc_content>\n            <paragraph>\n                Writes to FILE.\n",
+      "rst": ".. option:: --output=FILE\n\n   Writes to FILE.\n"
+    },
+    {
+      "family": "sx_std",
+      "name": "sx_std.option_positional_arg",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <index entries=\"('pair',\\ 'command\\ line\\ option;\\ filename',\\ 'cmdoption-arg-filename',\\ '',\\ None)\">\n    <desc classes=\"std option\" desctype=\"option\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"option\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" allnames=\"filename\" classes=\"sig sig-object\" ids=\"cmdoption-arg-filename\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                filename\n            <desc_addname classes=\"sig-prename descclassname\" xml:space=\"preserve\">\n        <desc_content>\n            <paragraph>\n                A positional argument.\n",
+      "rst": ".. option:: filename\n\n   A positional argument.\n"
+    },
+    {
+      "family": "sx_std",
+      "name": "sx_std.option_bracketed_value",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <index entries=\"('pair',\\ 'command\\ line\\ option;\\ --color',\\ 'cmdoption-color',\\ '',\\ None)\">\n    <desc classes=\"std option\" desctype=\"option\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"option\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" allnames=\"--color\" classes=\"sig sig-object\" ids=\"cmdoption-color\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                --color\n            <desc_addname classes=\"sig-prename descclassname\" xml:space=\"preserve\">\n                [=WHEN]\n        <desc_content>\n",
+      "rst": ".. option:: --color[=WHEN]\n"
+    },
+    {
+      "family": "sx_std",
+      "name": "sx_std.option_multi_signature",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <index entries=\"('pair',\\ 'command\\ line\\ option;\\ --one',\\ 'cmdoption-one',\\ '',\\ None) ('pair',\\ 'command\\ line\\ option;\\ --two',\\ 'cmdoption-two',\\ '',\\ None)\">\n    <desc classes=\"std option\" desctype=\"option\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"option\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" allnames=\"--one\" classes=\"sig sig-object\" ids=\"cmdoption-one\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                --one\n            <desc_addname classes=\"sig-prename descclassname\" xml:space=\"preserve\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" allnames=\"--two\" classes=\"sig sig-object\" ids=\"cmdoption-two\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                --two\n            <desc_addname classes=\"sig-prename descclassname\" xml:space=\"preserve\">\n        <desc_content>\n            <paragraph>\n                Two signatures.\n",
+      "rst": ".. option:: --one\n            --two\n\n   Two signatures.\n"
+    },
+    {
+      "family": "sx_std",
+      "name": "sx_std.confval_no_typesetting",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <index entries=\"('pair',\\ 'quiet_setting;\\ configuration\\ value',\\ 'confval-quiet_setting',\\ '',\\ None)\">\n    <target ids=\"confval-quiet_setting\">\n",
+      "rst": ".. confval:: quiet_setting\n   :no-typesetting:\n\n   Body.\n"
+    },
+    {
+      "family": "sx_std",
+      "name": "sx_std.describe_no_typesetting",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <index entries=\"\">\n",
+      "rst": ".. describe:: widget\n   :no-typesetting:\n\n   Body.\n"
+    },
+    {
+      "family": "sx_std",
+      "name": "sx_std.cmdoption_alias",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <index entries=\"('pair',\\ 'command\\ line\\ option;\\ --legacy',\\ 'cmdoption-legacy',\\ '',\\ None)\">\n    <desc classes=\"std cmdoption\" desctype=\"cmdoption\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"cmdoption\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" allnames=\"--legacy\" classes=\"sig sig-object\" ids=\"cmdoption-legacy\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                --legacy\n            <desc_addname classes=\"sig-prename descclassname\" xml:space=\"preserve\">\n        <desc_content>\n            <paragraph>\n                The old directive name.\n",
+      "rst": ".. cmdoption:: --legacy\n\n   The old directive name.\n"
+    },
+    {
+      "family": "sx_std",
+      "name": "sx_std.option_duplicate_signature",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <index entries=\"('pair',\\ 'command\\ line\\ option;\\ --dup',\\ 'cmdoption-dup',\\ '',\\ None)\">\n    <desc classes=\"std option\" desctype=\"option\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"option\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" allnames=\"--dup\" classes=\"sig sig-object\" ids=\"cmdoption-dup\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                --dup\n            <desc_addname classes=\"sig-prename descclassname\" xml:space=\"preserve\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" allnames=\"--dup\" classes=\"sig sig-object\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                --dup\n            <desc_addname classes=\"sig-prename descclassname\" xml:space=\"preserve\">\n        <desc_content>\n            <paragraph>\n                Same name twice.\n",
+      "rst": ".. option:: --dup\n            --dup\n\n   Same name twice.\n"
+    },
+    {
+      "family": "sx_std",
+      "name": "sx_std.envvar_deprecated_noindex",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <index entries=\"\">\n    <desc classes=\"std envvar\" desctype=\"envvar\" domain=\"std\" no-contents-entry=\"0\" no-index=\"1\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"1\" noindexentry=\"0\" objtype=\"envvar\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" classes=\"sig sig-object\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                HOME_C\n        <desc_content>\n            <paragraph>\n                Old spelling of the flag.\n",
+      "rst": ".. envvar:: HOME_C\n   :noindex:\n\n   Old spelling of the flag.\n"
+    },
+    {
+      "family": "sx_std",
+      "name": "sx_std.default_domain",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Text after the default-domain.\n",
+      "rst": ".. default-domain:: py\n\nText after the default-domain.\n"
+    },
+    {
+      "family": "sx_roles",
+      "name": "sx_roles.envvar_role",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <index entries=\"('single',\\ 'HOME_A',\\ 'index-0',\\ '',\\ None) ('single',\\ 'environment\\ variable;\\ HOME_A',\\ 'index-0',\\ '',\\ None)\">\n        <target ids=\"index-0\">\n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"0\" reftarget=\"HOME_A\" reftype=\"envvar\" refwarn=\"0\">\n            <literal classes=\"xref std std-envvar\">\n                HOME_A\n         for details.\n",
+      "rst": "See :envvar:`HOME_A` for details.\n"
+    },
+    {
+      "family": "sx_roles",
+      "name": "sx_roles.envvar_role_explicit_title",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <index entries=\"('single',\\ 'HOME_A',\\ 'index-0',\\ '',\\ None) ('single',\\ 'environment\\ variable;\\ HOME_A',\\ 'index-0',\\ '',\\ None)\">\n        <target ids=\"index-0\">\n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"1\" reftarget=\"HOME_A\" reftype=\"envvar\" refwarn=\"0\">\n            <literal classes=\"xref std std-envvar\">\n                the home dir\n         here.\n",
+      "rst": "See :envvar:`the home dir <HOME_A>` here.\n"
+    },
+    {
+      "family": "sx_roles",
+      "name": "sx_roles.option_role",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Use \n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"0\" reftarget=\"--verbose\" reftype=\"option\" refwarn=\"1\" std:program=\"True\">\n            <literal classes=\"xref std std-option\">\n                --verbose\n         now.\n",
+      "rst": "Use :option:`--verbose` now.\n"
+    },
+    {
+      "family": "sx_roles",
+      "name": "sx_roles.option_role_in_program_scope",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Use \n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"0\" reftarget=\"--verbose\" reftype=\"option\" refwarn=\"1\" std:program=\"myprog\">\n            <literal classes=\"xref std std-option\">\n                --verbose\n         now.\n",
+      "rst": ".. program:: myprog\n\nUse :option:`--verbose` now.\n"
+    },
+    {
+      "family": "sx_roles",
+      "name": "sx_roles.confval_role",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"0\" reftarget=\"my_setting\" reftype=\"confval\" refwarn=\"1\">\n            <literal classes=\"xref std std-confval\">\n                my_setting\n         here.\n",
+      "rst": "See :confval:`my_setting` here.\n"
     }
   ],
   "docutils_version": "0.22.4",

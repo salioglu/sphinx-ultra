@@ -2,6 +2,12 @@
 name = "sphinx-ultra"
 version = "0.4.1"
 edition = "2021"
+# MSRV-aware dependency resolution (Cargo 1.84+). Edition 2021 defaults to
+# resolver v2, which happily picks a dependency version whose own
+# `rust-version` is newer than ours — `ureq`'s is exactly our 1.85, so a
+# future 3.x that raises it would break `cargo install` on the MSRV we
+# advertise, silently and only for other people. v3 declines those versions.
+resolver = "3"
 authors = ["Sphinx Ultra Team <sinan@alioglu.org>"]
 description = "High-performance Rust-based Sphinx documentation builder for large codebases"
 license = "MIT"
@@ -69,11 +75,12 @@ flate2 = "1.0"
 # Template engine ("loader" enables owned template storage in the Environment)
 minijinja = { version = "2.12", features = ["loader"] }
 
-# Base64 encoding
-base64 = "0.23"
-
 # Path utilities
 pathdiff = "0.2"
+
+# Binary serialization (cached doctree round-trip)
+bincode = { version = "2", features = ["serde"] }
+ureq = { version = "3.4.0", default-features = false, features = ["rustls", "gzip"] }
 
 [dev-dependencies]
 criterion = { version = "0.7", features = ["html_reports"] }
@@ -87,10 +94,6 @@ path = "src/main.rs"
 [[example]]
 name = "constraint_validation"
 path = "examples/constraint_validation.rs"
-
-[[example]]
-name = "domain_validation"
-path = "examples/domain_validation.rs"
 
 [[example]]
 name = "directive_validation"

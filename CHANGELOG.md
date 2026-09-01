@@ -13,6 +13,66 @@ everything forward is [ROADMAP.md](ROADMAP.md).
 
 ### Added
 
+- **M2 wave 4: the build has a real environment, and it warns like Sphinx.**
+  The pipeline is now read → merge → resolve → write over a serialized
+  `BuildEnvironment`, and the diagnostics that come out of it are
+  Sphinx's own — same texts, same locations, same `[category]` suffixes.
+  What that means in practice, per subsystem:
+  - **toctree**: the global graph, relations (parents/prev/next) and the
+    consistency checks — nonexisting vs excluded entries, self-referencing
+    toctrees, circular toctrees, a document reached from several toctrees
+    (an *information* notice, not a warning, so it does not fail `-W`), and
+    `document isn't included in any toctree`.
+  - **numbering**: `numfig`, `numfig_secnum_depth` and `numfig_format` are
+    honored; `:numref:` resolves to real numbers, with Sphinx's
+    `numfig is disabled. :numref: is ignored.` and `no number is assigned
+    for …` warnings.
+  - **std domain**: labels, glossary terms, `option`s (with `program`
+    scoping and unscoped fallback), `envvar`s and `confval`s are collected
+    and resolved for `:ref:`/`:numref:`/`:doc:`/`:term:`/`:option:`/
+    `:envvar:`, with `duplicate label`, `undefined label:`,
+    `unknown document:`, `term not in glossary:` and `unknown option:`
+    warnings. `nitpick_ignore` and `nitpick_ignore_regex` are honored.
+  - **std directives**: `program`, `option` (incl. `[=value]` and
+    comma-separated names), `envvar`, `confval` (`:type:`/`:default:`),
+    `describe`/`object` and `default-domain`, on a generic
+    object-description anatomy with the `:no-index:` option family.
+  - **general index**: `index` directives and roles are collected and
+    assembled into the grouped, sorted structure `genindex.html` renders —
+    single/pair/triple/see/seealso, `!main`, Symbols grouping. **No
+    `genindex.html` is written yet**; the page needs the HTML writer.
+  - **objects.inv**: a byte-correct reader and writer, verified against
+    inventories a real `sphinx-build` produced. **Nothing writes an
+    `objects.inv` into your output yet** — the writer is waiting on the
+    HTML writer's finish task. The reader is live, because:
+  - **intersphinx**: `intersphinx_mapping` (named and unnamed), inventory
+    loading with the on-disk cache, `intersphinx_disabled_reftypes`, the
+    `:external:`/`:external+inv:` roles, and the shared HTTP settings
+    (`tls_verify`, `tls_cacerts`, `user_agent`, `intersphinx_timeout`).
+    Cross-project references resolve.
+  - **incremental builds**: a document is now rebuilt when a file it
+    depends on changes, not only when its own source does. Today that
+    means images; `include`/`literalinclude` follow in wave 4.5.
+  Evidence: an environment-layer differential oracle builds 15
+  multi-document projects (47 documents) with a real `sphinx-build` 9.1.0
+  and compares the toctree graph, relations, numbering, std registries,
+  index data, the whole warning stream and every document's resolved
+  doctree — zero divergence on every compared key. Each corpus project is
+  built **once, cold**; warm-equals-cold is asserted separately, by
+  hand-written tests over their own small two- and three-document
+  projects, not over the corpus. The exemptions that remain are listed in
+  `tests/env_differential.rs` and summarized in
+  [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md).
+- New configuration knobs, readable from `conf.py`, YAML/JSON and `-D`:
+  `numfig`, `numfig_format`, `numfig_secnum_depth`, `nitpick_ignore`,
+  `nitpick_ignore_regex`, `intersphinx_mapping`,
+  `intersphinx_disabled_reftypes`, `intersphinx_resolve_self`,
+  `intersphinx_cache_limit`, `intersphinx_timeout`, `tls_verify`,
+  `tls_cacerts`, `user_agent`. Malformed `intersphinx_mapping` entries
+  fail with Sphinx's own `ConfigError` messages.
+
+### Added (continued: earlier M2 waves and M1 follow-ups)
+
 - **M2 wave 3: the docutils-fidelity parser is now THE parser.**
   `Parser::parse` runs `src/rst/` (sphinx mode) and derives the whole
   `Document` from the doctree — title, toc with docutils `make_id`
@@ -60,11 +120,118 @@ everything forward is [ROADMAP.md](ROADMAP.md).
   The binary's behavior is unchanged; the new parser replaces the
   line-scanner in M2 wave 3.
 
+### Changed
+
+- **Broken standard-domain references now warn without `-n`.**
+  Sphinx sets `warn_dangling` on seven std reftypes — `:ref:`, `:numref:`,
+  `:doc:`, `:term:`, `:keyword:`, `:option:` and `:confval:`
+  (`domains/std/__init__.py:748-766`) — and that flag alone produces the
+  warning, with no `-n` involved; `-n`/`nitpicky` only widens it to
+  everything else. This release mirrors all seven, so `unknown document:
+  '…'`, `undefined label: '…'`, `term not in glossary: '…'`,
+  `unknown option: '…'` and their siblings now appear in a default build
+  where previous releases reported them only under `-n`.
+- **Several warnings are new by default in this release.** Besides the
+  seven reftypes above, `duplicate label …, other instance in …`,
+  `invalid <type> index entry …`, and the self-referencing and circular
+  toctree warnings are all emitted now and were emitted under no flag at
+  all in 0.4.x.
+
+  **Together these can turn a passing `-W` build into a failing one**,
+  and not only for projects with broken `:doc:`/`:ref:` targets: a project
+  with a duplicate label, a malformed index entry, a circular toctree or a
+  broken `:term:`/`:option:`/`:confval:`/`:numref:`/`:keyword:` reference
+  will newly fail. Build once without `-W` before upgrading a CI job that
+  uses it.
+- **Toctree warnings moved to the `.. toctree::` directive line** and now
+  carry Sphinx's warning category. Where a missing entry previously
+  reported at the entry's own line and bare, it now reports at the
+  directive's line with a ` [toc.not_readable]` suffix — matching
+  `sphinx-build`, whose toctree warnings are logged against the directive
+  node. Warning *categories* (`show_warning_types`, on by default since
+  Sphinx 8.3) are now emitted generally, so other warnings gain a
+  ` [type.subtype]` suffix too. **Anything that greps or diffs build
+  output will see different lines**, and a `-w` warning file is not
+  byte-comparable with one from 0.4.x.
+
+### Removed
+
+This release makes four source-breaking changes to the public library
+surface. The binary's CLI is unaffected.
+
+- The M1 domain system (`sphinx_ultra::domains`, and with it the crate-root
+  re-exports `CrossReference`, `DomainObject`, `DomainRegistry`,
+  `DomainValidator` and `ReferenceType`). It was a regex reference scanner
+  with fuzzy suggestions; the std domain and the real resolution pass
+  replaced its whole live surface, after which it had no call sites.
+  Library consumers that imported those names have no drop-in replacement
+  yet — the new API is `sphinx_ultra::env`. (`document::CrossReference` is
+  a different type and still exists.)
+- `sphinx_ultra::environment` is gone, and with it the public
+  `BuildEnvironment::{new, add_document, doc2path, collect_relations,
+  doc_needs_update, update_domain_object, get_all_objects}`, `Domain`,
+  `ObjectType`, `DomainObject`, `DomainIndex`, `IndexEntry` and
+  `create_standard_domains`. The module was never constructed by the
+  binary; `sphinx_ultra::env` is the replacement, and it is a different
+  design rather than a renamed one.
+- **The crate-root `BuildEnvironment` re-export now names a different
+  type.** `pub use environment::BuildEnvironment` became
+  `pub use env::BuildEnvironment`, which shares no method name with the
+  old type. `use sphinx_ultra::BuildEnvironment;` therefore keeps
+  compiling while every call against it breaks — the same name-collision
+  trap flagged for `CrossReference` above, and the one most likely to
+  read as a mysterious error rather than a rename.
+- `InventoryFile::dump`'s signature changed from
+  `(filename, &BuildEnvironment, &HTMLBuilder)` to
+  `(path, project, version, domains, get_target_uri)`, and the public
+  field `Inventory.data` changed from `HashMap<..>` to `BTreeMap<..>`
+  (the writer's output has to be deterministic).
+
+### Internal
+
+- Persisted doctrees now carry a magic + format-version header. bincode has
+  no self-description, so a doctree written by an older build used to
+  decode *successfully* into a plausible-but-wrong tree; a mismatched
+  version is now an honest cache miss. Practical effect when upgrading:
+  the first build after this change re-reads every document once, then
+  caches normally.
+
 ### Fixed
 
+- **The `objects.inv` reader corrupted real inventories.** It converted the
+  zlib-compressed payload to a `String` lossily and then split it with
+  `str::lines`, so any inventory whose compressed bytes happened to contain
+  a bare `\r`/`\n` or a non-UTF-8 sequence — which content-rich inventories
+  routinely do — lost or mangled entries. The reader is now binary-safe end
+  to end, handles v1 and v2, expands `$` anchors and `-` display names, and
+  reproduces Sphinx's own `ValueError` texts for malformed files. This was
+  unreachable from `sphinx-ultra build` before now (nothing consumed an
+  inventory), so it bit only direct users of the `sphinx_ultra::inventory`
+  API — but intersphinx consumes it as of this release, so it had to be
+  right first.
 - `install.sh` no longer prefixes archive names with the tag's `v`
   (`sphinx-ultra-v0.4.0-...` 404'd; assets are named `sphinx-ultra-0.4.0-...`
   — broken for every release since checksums were introduced)
+- **`.. toctree::` with `:numbered: 2` no longer warns.** `:numbered:`
+  takes an optional depth, and the directive validator had it filed as a
+  valueless flag, so the documented spelling produced
+  `numbered option should not have a value` on every build and failed `-W`.
+- **Comment lines inside a `glossary` are no longer parsed as terms.** An
+  unindented `.. ` line is a comment, as it is for Sphinx; previously each
+  one became a glossary term with its own index entry, and a comment
+  repeated in one glossary raised a spurious `duplicate term description`.
+- **`-W` and `-n` no longer invalidate the build cache**, and a `conf.py`
+  that sets two or more `html_context` keys no longer invalidates it on
+  every run. Both were consequences of what the cache fingerprint covered.
+- **Two source files that map to one document name are resolved
+  deterministically**, keeping the one whose suffix comes first (previously
+  both were built, to one output path, from one shared doctree). This is
+  silent for a collision Sphinx's default `source_suffix` cannot see — a
+  `page.rst` beside a `page.md` builds clean, as it does under Sphinx.
+  Sphinx's `multiple files found for the document "…"` warning is reserved
+  for a collision between two files Sphinx would both have read.
+- **An `intersphinx_timeout` that is negative, NaN or absurdly large is
+  ignored with a warning** rather than aborting the process.
 
 ## [0.4.0] - 2026-08-07
 

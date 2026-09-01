@@ -15,6 +15,8 @@ use crate::error::BuildError;
 
 pub struct BuildCache {
     cache_dir: PathBuf,
+    config_fingerprint: String,
+    config_changed: bool,
     documents: Arc<DashMap<PathBuf, CachedDocument>>,
     file_hashes: Arc<RwLock<HashMap<PathBuf, String>>>,
     hit_count: Arc<RwLock<usize>>,
@@ -45,7 +47,8 @@ impl BuildCache {
         // the configuration changed, everything in the cache is stale.
         let fingerprint_file = cache_dir.join(".config-fingerprint");
         let stored = std::fs::read_to_string(&fingerprint_file).unwrap_or_default();
-        if stored.trim() != config_fingerprint {
+        let config_changed = stored.trim() != config_fingerprint;
+        if config_changed {
             if !stored.is_empty() {
                 debug!("Configuration changed; discarding cache");
             }
@@ -56,6 +59,8 @@ impl BuildCache {
 
         let cache = Self {
             cache_dir,
+            config_fingerprint: config_fingerprint.to_string(),
+            config_changed,
             documents: Arc::new(DashMap::new()),
             file_hashes: Arc::new(RwLock::new(HashMap::new())),
             hit_count: Arc::new(RwLock::new(0)),
@@ -70,8 +75,65 @@ impl BuildCache {
         Ok(cache)
     }
 
+    /// The cache directory this cache was constructed with (post config-
+    /// fingerprint validation/wipe). Callers that persist their own files
+    /// alongside the document cache -- e.g. `BuildEnvironment::save`'s
+    /// `env.bin` -- ride the same directory and are therefore covered by
+    /// the same fingerprint-mismatch wipe.
+    pub fn cache_dir(&self) -> &Path {
+        &self.cache_dir
+    }
+
+    /// Whether this cache directory's stored fingerprint disagreed with the
+    /// configuration it was opened with — the whole directory was then
+    /// discarded, this build's documents, doctrees and `env.bin` included.
+    ///
+    /// A first build counts too (there is no stored fingerprint to agree
+    /// with), and in that case the effect matches Sphinx's `CONFIG_NEW`:
+    /// nothing carried over from a previous build is usable, so every
+    /// document is outdated.
+    ///
+    /// The resemblance stops there, and deliberately so. Sphinx's
+    /// `CONFIG_CHANGED` (`environment/__init__.py:366-369`) fires only for
+    /// config values whose rebuild class is `'env'` and never deletes
+    /// doctrees, the environment or the intersphinx cache; this crate
+    /// compares one whole-configuration digest and wipes the directory. The
+    /// digest is therefore taken over a *filtered* configuration — see
+    /// `builder::EXCLUDED_FROM_FINGERPRINT` — so that operational flags
+    /// (`-W`, `-n`), which Sphinx cannot invalidate on, cannot invalidate
+    /// here either.
+    pub fn config_changed(&self) -> bool {
+        self.config_changed
+    }
+
     pub fn get_document(&self, file_path: &Path) -> Result<Document> {
-        let hash = self.calculate_file_hash(file_path)?;
+        self.get_document_with(file_path, |_| Some(()))
+            .map(|(document, ())| document)
+            .ok_or_else(|| BuildError::Cache("Document not found in cache".to_string()).into())
+    }
+
+    /// Look up a cached document, letting the caller have the final say.
+    ///
+    /// `accept` runs only after the entry passed the cache's own checks
+    /// (content+mtime hash, expiry). Returning `None` from it means the
+    /// caller cannot actually use the entry — because some companion state
+    /// it needs is missing, say — and the lookup is then counted and
+    /// reported as a **miss**, not a hit: a "hit" the build has to redo
+    /// anyway is not a hit. Anything `accept` computes from the document
+    /// (loading that companion state) comes back alongside it, so callers
+    /// don't have to do the work twice.
+    pub fn get_document_with<T>(
+        &self,
+        file_path: &Path,
+        accept: impl FnOnce(&Document) -> Option<T>,
+    ) -> Option<(Document, T)> {
+        let hash = match self.calculate_file_hash(file_path) {
+            Ok(hash) => hash,
+            Err(_) => {
+                *self.miss_count.write() += 1;
+                return None;
+            }
+        };
 
         // Clone what we need out of the `get` guard before touching the map
         // again: holding a DashMap `Ref` while calling `alter` on the same
@@ -83,23 +145,28 @@ impl BuildCache {
 
         if let Some((cached_hash, cached_at, document)) = cached {
             if cached_hash == hash && !self.is_expired(&cached_at) {
-                // Update access count
-                self.documents.alter(file_path, |_, mut cached| {
-                    cached.access_count += 1;
-                    cached
-                });
+                if let Some(extra) = accept(&document) {
+                    // Update access count
+                    self.documents.alter(file_path, |_, mut cached| {
+                        cached.access_count += 1;
+                        cached
+                    });
 
-                *self.hit_count.write() += 1;
-                debug!("Cache hit for {}", file_path.display());
-                return Ok(document);
+                    *self.hit_count.write() += 1;
+                    debug!("Cache hit for {}", file_path.display());
+                    return Some((document, extra));
+                }
+            } else {
+                // Remove expired or outdated entry. A caller-rejected entry
+                // is left alone: it is still a valid record of the file,
+                // and the rebuild that follows overwrites it anyway.
+                self.documents.remove(file_path);
             }
-            // Remove expired or outdated entry
-            self.documents.remove(file_path);
         }
 
         *self.miss_count.write() += 1;
         debug!("Cache miss for {}", file_path.display());
-        Err(BuildError::Cache("Document not found in cache".to_string()).into())
+        None
     }
 
     pub fn store_document(&self, file_path: &Path, document: &Document) -> Result<()> {
@@ -154,6 +221,13 @@ impl BuildCache {
         debug!("Invalidated cache for {}", file_path.display());
     }
 
+    /// Empty the cache, in memory and on disk (`-E`, `--clean`).
+    ///
+    /// The fingerprint file is written back immediately: it records which
+    /// configuration the *directory* belongs to, and leaving it missing
+    /// would make the next build mistake this deliberate emptying for a
+    /// configuration change and throw away everything the build that
+    /// follows this one is about to cache.
     #[allow(dead_code)]
     pub fn clear(&self) -> Result<()> {
         self.documents.clear();
@@ -163,8 +237,12 @@ impl BuildCache {
 
         if self.cache_dir.exists() {
             std::fs::remove_dir_all(&self.cache_dir)?;
-            std::fs::create_dir_all(&self.cache_dir)?;
         }
+        std::fs::create_dir_all(&self.cache_dir)?;
+        std::fs::write(
+            self.cache_dir.join(".config-fingerprint"),
+            &self.config_fingerprint,
+        )?;
 
         debug!("Cleared all cache");
         Ok(())
@@ -390,6 +468,31 @@ mod tests {
     }
 
     #[test]
+    fn caller_rejected_entry_counts_as_a_miss() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("page.rst");
+        std::fs::write(&source, "Page\n----\n").unwrap();
+
+        let cache = BuildCache::new(tmp.path().join("cache"), 500, 24, "fp-1").unwrap();
+        cache
+            .store_document(&source, &make_document(&source))
+            .unwrap();
+
+        let rejected = cache.get_document_with(&source, |_| None::<()>);
+        assert!(rejected.is_none());
+        assert_eq!(cache.hit_count(), 0, "a rejected entry is not a hit");
+        assert_eq!(cache.miss_count(), 1);
+
+        // The entry survives rejection, so a later accepting lookup hits.
+        let accepted = cache.get_document_with(&source, |doc| Some(doc.html.clone()));
+        assert_eq!(
+            accepted.map(|(_, html)| html).as_deref(),
+            Some("<html><body>cached</body></html>")
+        );
+        assert_eq!(cache.hit_count(), 1);
+    }
+
+    #[test]
     fn changed_fingerprint_discards_persisted_cache() {
         let tmp = TempDir::new().unwrap();
         let source = tmp.path().join("page.rst");
@@ -414,6 +517,50 @@ mod tests {
             let cache = BuildCache::new(cache_dir, 500, 24, "fp-2").unwrap();
             assert!(cache.get_document(&source).is_err());
         }
+    }
+
+    #[test]
+    fn clearing_keeps_the_directory_claimed_by_this_configuration() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("page.rst");
+        std::fs::write(&source, "Page\n----\n").unwrap();
+        let cache_dir = tmp.path().join("cache");
+
+        {
+            let cache = BuildCache::new(cache_dir.clone(), 500, 24, "fp-1").unwrap();
+            cache.clear().unwrap();
+            // What a build after `-E`/`--clean` caches:
+            cache
+                .store_document(&source, &make_document(&source))
+                .unwrap();
+        }
+
+        let cache = BuildCache::new(cache_dir, 500, 24, "fp-1").unwrap();
+        assert!(
+            !cache.config_changed(),
+            "an emptied cache still belongs to the configuration that emptied it"
+        );
+        assert!(
+            cache.get_document(&source).is_ok(),
+            "a cleared cache that was refilled must survive to the next build"
+        );
+    }
+
+    #[test]
+    fn config_changed_reports_the_wipe() {
+        let tmp = TempDir::new().unwrap();
+        let cache_dir = tmp.path().join("cache");
+
+        // A first build has nothing to agree with: everything is new.
+        assert!(BuildCache::new(cache_dir.clone(), 500, 24, "fp-1")
+            .unwrap()
+            .config_changed());
+        assert!(!BuildCache::new(cache_dir.clone(), 500, 24, "fp-1")
+            .unwrap()
+            .config_changed());
+        assert!(BuildCache::new(cache_dir, 500, 24, "fp-2")
+            .unwrap()
+            .config_changed());
     }
 
     #[test]

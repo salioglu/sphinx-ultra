@@ -64,6 +64,7 @@ Tables
                 .parse(
                     black_box(&PathBuf::from("test.rst")),
                     black_box(rst_content),
+                    black_box("test"),
                 )
                 .unwrap()
         })
@@ -110,7 +111,7 @@ Some content for file {}.
         let rt = tokio::runtime::Runtime::new().unwrap();
         b.iter(|| {
             rt.block_on(async {
-                let builder =
+                let mut builder =
                     SphinxBuilder::new(config.clone(), source_dir.clone(), output_dir.clone())
                         .unwrap();
 

@@ -9,7 +9,7 @@
 //! later waves. Behavior sources: the committed differential fixture and the
 //! probe notes in docs/superpowers/plans/2026-08-07-m2-wave1-probes.md.
 
-mod block;
+pub(crate) mod block;
 mod digits;
 pub mod inline;
 pub mod lines;
@@ -27,6 +27,20 @@ pub struct ParseOptions {
     pub sphinx: bool,
     /// The docname recorded on pending_xref nodes (sphinx `refdoc`).
     pub docname: String,
+    /// Every docname the project discovered (sphinx `env.found_docs`).
+    /// The `toctree` directive resolves its entries against this set at
+    /// parse time, exactly as Sphinx's `TocTree.parse_content` does.
+    ///
+    /// `None` means "parsed without an environment" — a standalone parse
+    /// (the differential harnesses, `parse_rst` callers) where no document
+    /// exists, so every toctree entry resolves to nothing and `entries`/
+    /// `includefiles` stay empty. Shared by `Arc` because the build clones
+    /// these options once per source file.
+    pub found_docs: Option<std::sync::Arc<std::collections::BTreeSet<String>>>,
+    /// `exclude_patterns`, which `TocTree.parse_content` consults to tell an
+    /// *excluded* toctree target from a *nonexisting* one. Empty for a parse
+    /// without an environment, where no entry resolves anyway.
+    pub exclude_patterns: Vec<String>,
 }
 
 impl Default for ParseOptions {
@@ -35,6 +49,8 @@ impl Default for ParseOptions {
             source_path: "<string>".to_string(),
             sphinx: false,
             docname: "index".to_string(),
+            found_docs: None,
+            exclude_patterns: Vec::new(),
         }
     }
 }
@@ -71,6 +87,11 @@ pub struct ToctreeRecord {
     pub glob: bool,
     pub entries: Vec<ToctreeEntryRecord>,
     pub line: u32,
+    /// Diagnostics `TocTree.parse_content` produced while resolving this
+    /// directive's entries. They ride the record (and therefore the
+    /// document cache) because the parser has no warning sink, and because
+    /// a cache hit that skipped the parse must still reproduce them.
+    pub warnings: Vec<crate::env::toctree::ToctreeWarning>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -81,6 +102,97 @@ pub struct ToctreeEntryRecord {
     pub line: u32,
 }
 
+/// One `Cmdoption.add_target_and_index` call the parse layer made
+/// (`sphinx/domains/std/__init__.py:308-315`).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ProgramOptionRecord {
+    /// The `.. program::` in scope, `None` outside one.
+    pub program: Option<String>,
+    /// One `desc_signature['allnames']` spelling (`--file`, `-f`, ...).
+    pub name: String,
+    /// `signode['ids'][0]` — the *first* id of the signature, which is what
+    /// Sphinx registers for every spelling in it.
+    pub node_id: String,
+}
+
+/// One `StandardDomain.note_object` call the parse layer made
+/// (`GenericObject`/`ConfigurationValue.add_target_and_index`).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ObjectRegistration {
+    /// `self.objtype` — `envvar`, `confval`, ... `describe`/`object` never
+    /// reach here: the base `add_target_and_index` is a no-op.
+    pub objtype: String,
+    /// The name `handle_signature` returned, which is what the matching
+    /// `:envvar:`/`:confval:` role resolves against.
+    pub name: String,
+    pub node_id: String,
+    /// 1-based line of the signature node (`location=signode`), for the
+    /// duplicate-description warning.
+    pub line: u32,
+}
+
+/// What the parse layer hands the environment besides the doctree itself:
+/// state that lives in the parser (the docutils id/name registry, Sphinx's
+/// `env.ref_context`) and dies with it, but that env collectors need.
+///
+/// Named for its original single job — the `document.nameids` snapshot
+/// harvested from [`crate::doctree::ids::IdRegistry`] right before it drops,
+/// which wave 4's std-domain label harvest reads. Intended to eventually
+/// ride the document cache, so it stays serde-serializable and cheap to
+/// clone.
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct RegistryExport {
+    /// `(name, id, explicit)`, one entry per registered name. `id` is
+    /// `None` once a name has been duplicated away.
+    pub nameids: Vec<(String, Option<String>, bool)>,
+    /// sphinx `env.new_serialno('index')` counter value at the end of the
+    /// parse (shared by the index directive and index-entry-emitting roles).
+    pub index_serial: u32,
+    /// The std-domain registrations the object-description directives made
+    /// while running, in document order.
+    ///
+    /// Sphinx performs these from inside `add_target_and_index`, against
+    /// state the finished doctree does not carry: the program an option
+    /// belongs to comes from `env.ref_context['std:program']` and is
+    /// stamped on no node, and a `:no-typesetting:` description registers
+    /// itself and then **replaces its whole `desc` node with a bare
+    /// target** — so a doctree walk can neither recover the program nor see
+    /// that the object existed. Recording the calls keeps the env layer
+    /// exact for both.
+    ///
+    /// Deliberately *not* `#[serde(default)]`, for the reason
+    /// [`crate::document::Document::registry`] gives: a cache entry written
+    /// before this field existed must FAIL to decode so the document is
+    /// re-parsed. Defaulting it to an empty vector would let a pre-desc
+    /// cache decode cleanly, and every `:option:`/`:envvar:`/`:confval:`
+    /// in the project would then dangle against an empty registry.
+    pub program_options: Vec<ProgramOptionRecord>,
+    /// See [`Self::program_options`] — including why this is not
+    /// `#[serde(default)]` either.
+    pub std_objects: Vec<ObjectRegistration>,
+    /// Diagnostics the parse raised through Sphinx's *logger* rather than
+    /// into the tree, which have nowhere else to go: docutils turns a
+    /// directive error into a `system_message` node, but a Sphinx directive
+    /// calling `logger.warning` produces no node at all. They ride the
+    /// export (and therefore the document cache) for the same reason
+    /// [`ToctreeRecord::warnings`] does — a cache hit that skipped the parse
+    /// must still reproduce them.
+    pub log_warnings: Vec<ParseLogWarning>,
+}
+
+/// One `logger.warning` a directive raised during the parse.
+///
+/// Today the only producer is `Cmdoption.handle_signature`'s malformed
+/// option description (`domains/std/__init__.py:237-245`), which is logged
+/// with no `type`/`subtype` and so renders with no `[category]` suffix.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ParseLogWarning {
+    /// The warning text, already formatted exactly as Sphinx renders it.
+    pub message: String,
+    /// 1-based line of the `location=` node Sphinx passes.
+    pub line: u32,
+}
+
 /// Everything a parse produces: the doctree plus the flat records the
 /// build pipeline consumes without re-walking raw source.
 pub struct ParseOutput {
@@ -88,6 +200,7 @@ pub struct ParseOutput {
     pub directive_records: Vec<DirectiveRecord>,
     pub role_records: Vec<RoleRecord>,
     pub toctrees: Vec<ToctreeRecord>,
+    pub registry: RegistryExport,
 }
 
 /// Parse RST source into a doctree. Total: never panics, never errors —
@@ -101,5 +214,38 @@ pub fn parse_rst_full(source: &str, opts: &ParseOptions) -> ParseOutput {
     let mut parser = block::BlockParser::new(&lines, &opts.source_path, source.len());
     parser.sphinx = opts.sphinx;
     parser.docname = opts.docname.clone();
+    parser.found_docs = opts.found_docs.clone();
+    parser.exclude_patterns = opts.exclude_patterns.clone();
     parser.parse_document_full()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// [`RegistryExport`]'s newer fields carry state that cannot be recovered
+    /// from a cached doctree, so a cache entry written before they existed
+    /// must MISS rather than decode with empty vectors — decoding it would
+    /// reuse a doctree still full of unknown-directive errors and leave every
+    /// `:option:`/`:envvar:`/`:confval:` in the project dangling. Guards the
+    /// `#[serde(default)]` off these fields, which nothing else would catch:
+    /// the warm-rebuild tests round-trip the current shape only.
+    #[test]
+    fn a_registry_written_before_the_std_records_existed_fails_to_decode() {
+        let complete = r#"{"nameids":[],"index_serial":0,"program_options":[],
+            "std_objects":[],"log_warnings":[]}"#;
+        serde_json::from_str::<RegistryExport>(complete).expect("the current shape decodes");
+
+        for missing in [
+            r#"{"nameids":[],"index_serial":0,"std_objects":[],"log_warnings":[]}"#,
+            r#"{"nameids":[],"index_serial":0,"program_options":[],"log_warnings":[]}"#,
+            r#"{"nameids":[],"index_serial":0,"program_options":[],"std_objects":[]}"#,
+            r#"{"nameids":[],"index_serial":0}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<RegistryExport>(missing).is_err(),
+                "a registry missing a std-record field must fail to decode: {missing}"
+            );
+        }
+    }
 }

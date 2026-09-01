@@ -86,10 +86,16 @@ fn missing_toctree_ref_warns_and_exits_zero() {
 
     // Without -W, warnings do not fail the build.
     assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    // Sphinx logs this with `location=toctree` — the *directive* node, whose
+    // source info is the `.. toctree::` marker line (4 here), not the entry's
+    // own line. Verified against the environment oracle
+    // (`toctree_self_ref`: "index.rst:4: ... nonexisting document 'index'"),
+    // and the `[toc.not_readable]` suffix is what `show_warning_types`
+    // appends.
     assert!(
         stderr_of(&result)
-            .contains("index.rst:6: WARNING: toctree contains reference to nonexisting document 'nonexistent_page'"),
-        "expected toctree warning with the entry's real line number, stderr: {}",
+            .contains("index.rst:4: WARNING: toctree contains reference to nonexisting document 'nonexistent_page' [toc.not_readable]"),
+        "expected the Sphinx-exact toctree warning, stderr: {}",
         stderr_of(&result)
     );
 }
@@ -120,11 +126,15 @@ fn toctree_glob_matches_and_warns_on_dead_pattern() {
         !stderr.contains("nonexisting document"),
         "glob patterns must not be treated as literal references, stderr: {stderr}"
     );
+    // As above: sphinx locates this at the toctree directive (line 4). It
+    // passes `subtype='empty_glob'` but no `type`, so — unlike the
+    // missing-document warning — no `[...]` suffix is appended
+    // (`util/logging.py:545-549`).
     assert!(
         stderr.contains(
-            "index.rst:8: WARNING: toctree glob pattern 'missing*' didn't match any documents"
+            "index.rst:4: WARNING: toctree glob pattern 'missing*' didn't match any documents"
         ),
-        "dead glob pattern must warn with its line, stderr: {stderr}"
+        "dead glob pattern must warn at the directive, stderr: {stderr}"
     );
     assert!(
         !stderr.contains("isn't included in any toctree"),
@@ -179,6 +189,36 @@ fn fail_on_warning_exits_one() {
         result.status.code(),
         Some(1),
         "-W must turn warnings into a failing exit"
+    );
+}
+
+/// A document reachable from two toctrees is an *information* notice in
+/// Sphinx (`logger.info`, `environment/__init__.py:950-959`), not a
+/// warning — so `-W` must not turn it into a failing build.
+#[test]
+fn multiple_toctree_parents_do_not_fail_under_fail_on_warning() {
+    let src = out_dir("multi-parent-src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(
+        src.join("index.rst"),
+        "Index\n=====\n\n.. toctree::\n\n   a\n   b\n",
+    )
+    .unwrap();
+    std::fs::write(src.join("a.rst"), "A\n=\n\n.. toctree::\n\n   c\n").unwrap();
+    std::fs::write(src.join("b.rst"), "B\n=\n\n.. toctree::\n\n   c\n").unwrap();
+    std::fs::write(src.join("c.rst"), "C\n=\n\nShared leaf.\n").unwrap();
+
+    let out = out_dir("multi-parent-out");
+    let result = build(&src, &out, &["-W"]);
+
+    let stderr = stderr_of(&result);
+    assert!(
+        result.status.success(),
+        "the multiple-parents notice must not count as a warning, stderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("WARNING"),
+        "no warnings expected for a shared toctree leaf, stderr: {stderr}"
     );
 }
 
@@ -322,6 +362,53 @@ fn incremental_cache_hit_still_writes_output() {
     );
 }
 
+/// A document is outdated when a file it pulls in is newer than the build
+/// that read it — not only when its own source changes. The `deps_image`
+/// fixture's `page.rst` embeds `pic.png`; touching the picture must re-read
+/// that page and nothing else.
+#[test]
+fn touching_an_embedded_image_re_reads_only_the_page_that_embeds_it() {
+    let src = out_dir("deps-image-src");
+    std::fs::create_dir_all(&src).unwrap();
+    for name in ["conf.py", "index.rst", "page.rst", "pic.png"] {
+        std::fs::copy(fixture("deps_image").join(name), src.join(name)).unwrap();
+    }
+    let out = out_dir("deps-image-out");
+
+    let run1 = build(&src, &out, &["--incremental"]);
+    assert!(run1.status.success(), "stderr: {}", stderr_of(&run1));
+
+    let run2 = build(&src, &out, &["--incremental"]);
+    assert!(
+        stderr_of(&run2).contains("Cache hits: 2"),
+        "an unchanged project reads nothing, stderr: {}",
+        stderr_of(&run2)
+    );
+
+    // Touch the picture: its mtime moves past the time `page` was read.
+    let picture = src.join("pic.png");
+    let bytes = std::fs::read(&picture).unwrap();
+    std::fs::write(&picture, &bytes).unwrap();
+
+    let run3 = build(&src, &out, &["--incremental"]);
+    assert!(
+        stderr_of(&run3).contains("Cache hits: 1"),
+        "the page embedding the touched image must be re-read, stderr: {}",
+        stderr_of(&run3)
+    );
+    assert!(
+        out.join("page.html").is_file() && out.join("index.html").is_file(),
+        "both pages are still written"
+    );
+
+    let run4 = build(&src, &out, &["--incremental"]);
+    assert!(
+        stderr_of(&run4).contains("Cache hits: 2"),
+        "the re-read settled the dependency, stderr: {}",
+        stderr_of(&run4)
+    );
+}
+
 #[test]
 fn clean_incremental_build_produces_full_output() {
     let out = out_dir("clean-incremental");
@@ -365,6 +452,245 @@ fn config_change_invalidates_cache() {
         stderr_of(&run3).contains("Cache hits: 0"),
         "config change must invalidate the cache, stderr: {}",
         stderr_of(&run3)
+    );
+}
+
+/// This crate's discovery is wider than Sphinx's — it admits `.md` and
+/// `.txt` where Sphinx's default `source_suffix` is `.rst` alone — and the
+/// orphan check is where that difference reaches the user: a `README.md`
+/// must not earn a `toc.not_included` warning Sphinx never emits. An
+/// orphaned `.rst` still does.
+#[test]
+fn a_non_rst_file_is_not_reported_as_an_orphan() {
+    let src = out_dir("orphan-suffixes-src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(src.join("conf.py"), "project = 'p'\n").unwrap();
+    std::fs::write(
+        src.join("index.rst"),
+        "Index\n=====\n\n.. toctree::\n\n   page\n",
+    )
+    .unwrap();
+    std::fs::write(src.join("page.rst"), "Page\n====\n\nBody.\n").unwrap();
+    std::fs::write(src.join("README.md"), "# Readme\n").unwrap();
+    std::fs::write(src.join("notes.txt"), "Notes\n=====\n\nBody.\n").unwrap();
+    std::fs::write(src.join("stray.rst"), "Stray\n=====\n\nBody.\n").unwrap();
+
+    let out = out_dir("orphan-suffixes-out");
+    let result = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap()]);
+
+    let stderr = stderr_of(&result);
+    assert!(
+        !stderr.contains("README.md"),
+        "a .md file is not a document Sphinx reads, stderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("notes.txt"),
+        "nor is a .txt file, stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("stray.rst") && stderr.contains("isn't included in any toctree"),
+        "an orphaned .rst still warns, stderr: {stderr}"
+    );
+}
+
+/// Two files mapping to one docname are not two documents: every piece of
+/// per-document state downstream of discovery is keyed by docname alone, so
+/// one of them has to go (`Project.discover`, `project.py:64-79`), and which
+/// one must not depend on directory walk order.
+///
+/// It must go **silently** here, though. Sphinx's default `source_suffix` is
+/// `.rst` alone, so it never discovers the `.md`/`.txt` sibling and builds
+/// this tree clean; warning about a collision Sphinx cannot see would fail
+/// `-W` on a build Sphinx passes. The report is reserved for a collision
+/// between two files Sphinx would both have read.
+#[test]
+fn two_files_for_one_docname_resolve_silently_and_deterministically() {
+    let src = out_dir("duplicate-docname-src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(src.join("conf.py"), "project = 'p'\n").unwrap();
+    std::fs::write(
+        src.join("index.rst"),
+        "Index\n=====\n\n.. toctree::\n\n   page\n",
+    )
+    .unwrap();
+    std::fs::write(src.join("page.rst"), "Page RST\n========\n\nrst body.\n").unwrap();
+    std::fs::write(src.join("page.md"), "Page MD\n=======\n\nmd body.\n").unwrap();
+    std::fs::write(src.join("page.txt"), "Page TXT\n========\n\ntxt body.\n").unwrap();
+
+    let out = out_dir("duplicate-docname-out");
+    let first = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap(), "-W"]);
+    let stderr = stderr_of(&first);
+
+    assert!(
+        !stderr.contains("multiple files found for the document"),
+        "sphinx sees no collision here, so neither may we, stderr: {stderr}"
+    );
+    assert!(
+        first.status.success(),
+        "sphinx builds this clean, so -W must pass, stderr: {stderr}"
+    );
+
+    // The winner is `.rst` — first in the discovery suffix order — and is
+    // stable across builds, warm or cold. The defect this pins was an
+    // output page that alternated between the two sources.
+    let page = out.join("page.html");
+    let cold = std::fs::read_to_string(&page).unwrap();
+    assert!(cold.contains("rst body"), "first suffix wins: {cold}");
+    for _ in 0..2 {
+        let again = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap(), "-W"]);
+        assert!(again.status.success(), "stderr: {}", stderr_of(&again));
+        assert_eq!(
+            std::fs::read_to_string(&page).unwrap(),
+            cold,
+            "the rendered page must not alternate between the two sources"
+        );
+    }
+}
+
+/// `:numbered:` takes an optional depth (`int_or_nothing` in Sphinx's
+/// `TocTree.option_spec`), so `:numbered: 2` is the documented spelling of
+/// the feature, not an error. The retained M1 directive validator had it
+/// filed as a flag option and warned on every use, failing `-W` on a
+/// project sphinx 9.1.0 builds clean.
+#[test]
+fn a_numbered_toctree_with_a_depth_builds_clean() {
+    let src = out_dir("toctree-numbered-depth-src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(src.join("conf.py"), "project = 'p'\n").unwrap();
+    std::fs::write(
+        src.join("index.rst"),
+        "Index\n=====\n\n.. toctree::\n   :numbered: 2\n   :maxdepth: 2\n\n   a\n",
+    )
+    .unwrap();
+    std::fs::write(src.join("a.rst"), "A\n=\n\nBody.\n").unwrap();
+
+    let out = out_dir("toctree-numbered-depth-out");
+    let result = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap(), "-W"]);
+
+    let stderr = stderr_of(&result);
+    assert!(
+        !stderr.contains("numbered option should not have a value"),
+        "`:numbered: 2` is valid input, stderr: {stderr}"
+    );
+    assert!(
+        result.status.success(),
+        "sphinx builds this clean, so -W must pass, stderr: {stderr}"
+    );
+}
+
+/// A `.. _label:` written above a figure/table/code-block labels it exactly
+/// as the `:name:` option does — docutils' `PropagateTargets` moves the ids
+/// onto the node before Sphinx numbers it. Numbering and `:numref:` must
+/// agree on the propagated id, or every reference to such a node fails with
+/// "Any number is not assigned" and takes `-W` down with it. sphinx 9.1.0
+/// builds this project clean and renders `Fig. 1` / `Fig. 2`.
+#[test]
+fn a_label_above_a_figure_numbers_it_and_numref_resolves() {
+    let src = out_dir("numfig-propagated-label-src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(src.join("conf.py"), "project = 'p'\nnumfig = True\n").unwrap();
+    std::fs::write(src.join("pic.png"), b"x").unwrap();
+    std::fs::write(
+        src.join("index.rst"),
+        "Index\n=====\n\n\
+         .. figure:: pic.png\n   :name: fig1\n\n   A caption.\n\n\
+         .. _fig2:\n\n.. figure:: pic.png\n\n   Another caption.\n\n\
+         See :numref:`fig1` and :numref:`fig2`.\n",
+    )
+    .unwrap();
+
+    let out = out_dir("numfig-propagated-label-out");
+    let result = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap(), "-W"]);
+
+    let stderr = stderr_of(&result);
+    assert!(
+        !stderr.contains("Any number is not assigned"),
+        "the labelled figure must be numbered, stderr: {stderr}"
+    );
+    assert!(
+        result.status.success(),
+        "sphinx builds this clean, so -W must pass, stderr: {stderr}"
+    );
+}
+
+/// `-W` and `-n` are operational flags, not configuration: adding either
+/// must not invalidate the cache. Sphinx cannot invalidate on them
+/// (`nitpicky`'s rebuild class is `''`, `warningiserror` is not a `Config`
+/// value at all), and if this crate did, the forced cold read would re-emit
+/// every read-phase warning — so the first `-W` run would fail and the next
+/// identical one would pass.
+#[test]
+fn operational_flags_do_not_invalidate_the_cache() {
+    let src = out_dir("cache-operational-flags-src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(
+        src.join("index.rst"),
+        "Index\n=====\n\n.. toctree::\n\n   a\n   b\n",
+    )
+    .unwrap();
+    // b.rst redefines a.rst's label: one read-phase warning, emitted only
+    // by a build that actually reads b.
+    std::fs::write(src.join("a.rst"), ".. _dup:\n\nA\n=\n\nBody.\n").unwrap();
+    std::fs::write(src.join("b.rst"), ".. _dup:\n\nB\n=\n\nBody.\n").unwrap();
+    std::fs::write(src.join("conf.py"), "project = 'flags'\n").unwrap();
+
+    // sphinx-build compat mode: incremental by default, and the only mode
+    // that accepts both -W and -n.
+    let out = out_dir("cache-operational-flags-out");
+    let s = src.to_str().unwrap().to_string();
+    let o = out.to_str().unwrap().to_string();
+
+    let run1 = sphinx_build(&[&s, &o]);
+    assert!(run1.status.success(), "stderr: {}", stderr_of(&run1));
+    assert!(
+        stderr_of(&run1).contains("duplicate label dup"),
+        "the cold build reports the duplicate label, stderr: {}",
+        stderr_of(&run1)
+    );
+
+    let run2 = sphinx_build(&[&s, &o]);
+    assert!(
+        stderr_of(&run2).contains("Cache hits: 3"),
+        "an unchanged project reads nothing, stderr: {}",
+        stderr_of(&run2)
+    );
+
+    // Adding -W must not wipe the cache, and must not fail the build over
+    // warnings a warm build never re-emits.
+    let run3 = sphinx_build(&[&s, &o, "-W"]);
+    assert!(
+        stderr_of(&run3).contains("Cache hits: 3"),
+        "-W must not invalidate the cache, stderr: {}",
+        stderr_of(&run3)
+    );
+    let run4 = sphinx_build(&[&s, &o, "-W"]);
+    assert_eq!(
+        run3.status.success(),
+        run4.status.success(),
+        "two identical -W runs must agree on the exit code; \
+         run3: {}\nrun4: {}",
+        stderr_of(&run3),
+        stderr_of(&run4)
+    );
+    assert!(
+        run3.status.success() && run4.status.success(),
+        "a warm -W build over an unchanged project has no warnings to fail on, \
+         stderr: {}",
+        stderr_of(&run3)
+    );
+
+    // Same for -n, and dropping the flags again is likewise free.
+    let run5 = sphinx_build(&[&s, &o, "-n"]);
+    assert!(
+        stderr_of(&run5).contains("Cache hits: 3"),
+        "-n must not invalidate the cache, stderr: {}",
+        stderr_of(&run5)
+    );
+    let run6 = sphinx_build(&[&s, &o]);
+    assert!(
+        stderr_of(&run6).contains("Cache hits: 3"),
+        "dropping the flags must not invalidate the cache either, stderr: {}",
+        stderr_of(&run6)
     );
 }
 
@@ -872,14 +1198,20 @@ fn nitpicky_flags_broken_refs() {
         )],
     );
 
-    // Without -n: silent (the heuristics are opt-in)
+    // Without -n: `:doc:` and `:ref:` are `warn_dangling` roles, so Sphinx
+    // reports them broken in a plain build too — `nitpicky` only widens the
+    // warning to the roles that are *not* warn_dangling (and to the other
+    // domains). Until the std domain landed, this crate reported neither
+    // without -n; the environment-differential oracle (`doc_refs`,
+    // `glossary_terms`, built with nitpicky off) is what settles it.
     let out_quiet = out_dir("nitpicky-broken-off");
     let result = build(&src, &out_quiet, &[]);
     assert!(result.status.success());
+    let quiet_stderr = stderr_of(&result);
     assert!(
-        !stderr_of(&result).contains("unknown document"),
-        "cross-ref validation must be opt-in, stderr: {}",
-        stderr_of(&result)
+        quiet_stderr.contains("index.rst:4: WARNING: unknown document: 'missing_doc'")
+            && quiet_stderr.contains("index.rst:4: WARNING: undefined label: 'missing-label'"),
+        "warn_dangling roles report broken references without -n, stderr: {quiet_stderr}"
     );
 
     // With -n (compat mode): both broken refs warn, with line numbers
@@ -1024,5 +1356,132 @@ fn nitpicky_resolves_real_refs() {
     assert!(
         !stderr.contains("unknown document") && !stderr.contains("undefined label"),
         "resolvable refs must not warn under -n, stderr: {stderr}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// intersphinx (tests/fixtures/intersphinx): a project whose conf.py maps one
+// other project to a *local* inventory file, so the whole feature is
+// exercised end to end without ever touching the network.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn intersphinx_resolves_a_cross_project_ref_and_reports_a_missing_external() {
+    let out = out_dir("intersphinx");
+    let src = fixture("intersphinx");
+    let result = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap()]);
+
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    let stderr = stderr_of(&result);
+
+    // `:ref:`example`` names a label that exists only in the other
+    // project's inventory: resolving it through intersphinx is what stops
+    // the dangling-reference warning.
+    assert!(
+        !stderr.contains("undefined label"),
+        "the cross-project label must resolve, stderr: {stderr}"
+    );
+    // `:external:std:ref:`whatever`` matches nothing anywhere, and reports
+    // it in Sphinx's exact words — `type='ref', subtype=reftype` is what
+    // makes the category `ref.ref`.
+    assert!(
+        stderr.contains(
+            "index.rst:6: WARNING: external std:ref reference target not found: whatever [ref.ref]"
+        ),
+        "stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("build succeeded, 1 warning."),
+        "the external miss is the only warning, stderr: {stderr}"
+    );
+}
+
+#[test]
+fn disabling_the_labels_objtype_takes_the_cross_project_ref_away_again() {
+    // The control for the test above: with `std:label` disabled, the very
+    // same bare `:ref:` stops resolving and the dangling warning comes back
+    // — which is what proves intersphinx (and not something else) resolved
+    // it.
+    let out = out_dir("intersphinx-disabled");
+    let src = fixture("intersphinx");
+    let result = sphinx_build(&[
+        src.to_str().unwrap(),
+        out.to_str().unwrap(),
+        "-D",
+        "intersphinx_disabled_reftypes=std:label",
+    ]);
+
+    let stderr = stderr_of(&result);
+    assert!(
+        stderr.contains("index.rst:4: WARNING: undefined label: 'example' [ref.ref]"),
+        "stderr: {stderr}"
+    );
+}
+
+#[test]
+fn an_invalid_intersphinx_mapping_exits_two_with_sphinxs_config_error() {
+    // Sphinx raises ConfigError from `validate_intersphinx_mapping`, which
+    // aborts the build; sphinx-build reports an exception with exit code 2.
+    let src = temp_source(
+        "intersphinx-bad-mapping",
+        &[
+            ("index.rst", "Title\n=====\n\nText.\n"),
+            (
+                "conf.py",
+                "project = 'Bad'\nintersphinx_mapping = {'p': 'https://x/'}\n",
+            ),
+        ],
+    );
+    let out = out_dir("intersphinx-bad-mapping");
+    let result = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap()]);
+
+    assert_eq!(
+        result.status.code(),
+        Some(2),
+        "stderr: {}",
+        stderr_of(&result)
+    );
+    let stderr = stderr_of(&result);
+    assert!(
+        stderr.contains("Invalid `intersphinx_mapping` configuration (1 error)."),
+        "stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains(
+            "Invalid value `'https://x/'` in intersphinx_mapping['p']. \
+             Expected a two-element tuple or list."
+        ),
+        "the per-entry error is logged before the abort, stderr: {stderr}"
+    );
+}
+
+#[test]
+fn an_empty_inventory_location_tuple_exits_two_with_sphinxs_invariant_error() {
+    // `('https://x/', ())` passes `intersphinx_mapping` validation and then
+    // fails `_IntersphinxProject`'s invariants when the inventories load,
+    // which is a ConfigError in Sphinx — the same abort, one phase later.
+    let src = temp_source(
+        "intersphinx-empty-locations",
+        &[
+            ("index.rst", "Title\n=====\n\nText.\n"),
+            (
+                "conf.py",
+                "project = 'Empty'\nintersphinx_mapping = {'p': ('https://x/', ())}\n",
+            ),
+        ],
+    );
+    let out = out_dir("intersphinx-empty-locations");
+    let result = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap()]);
+
+    assert_eq!(
+        result.status.code(),
+        Some(2),
+        "stderr: {}",
+        stderr_of(&result)
+    );
+    let stderr = stderr_of(&result);
+    assert!(
+        stderr.contains("An invalid intersphinx_mapping entry was added after normalisation."),
+        "stderr: {stderr}"
     );
 }

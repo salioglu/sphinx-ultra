@@ -1,0 +1,776 @@
+{
+  "cases": [
+    {
+      "covers": "std:label $-compaction (multi-word explicit dispname AND title==id -> '-'), std:doc entries (dispname = doc title), glossary terms with an embedded space and a bare colon, py:module/py:function/py:class/py:method $-compaction, binary-safety oracle (see UNSAFE_UTF8_CASE below).",
+      "expect": {
+        "py:function": {
+          "mymod.greet": {
+            "display_name": "-",
+            "project_name": "fixture",
+            "project_version": "",
+            "uri": "https://docs.example.org/v1/a.html#mymod.greet"
+          }
+        },
+        "py:module": {
+          "mymod": {
+            "display_name": "-",
+            "project_name": "fixture",
+            "project_version": "",
+            "uri": "https://docs.example.org/v1/a.html#module-mymod"
+          }
+        },
+        "std:doc": {
+          "a": {
+            "display_name": "A",
+            "project_name": "fixture",
+            "project_version": "",
+            "uri": "https://docs.example.org/v1/a.html"
+          },
+          "b": {
+            "display_name": "B",
+            "project_name": "fixture",
+            "project_version": "",
+            "uri": "https://docs.example.org/v1/b.html"
+          },
+          "index": {
+            "display_name": "Index",
+            "project_name": "fixture",
+            "project_version": "",
+            "uri": "https://docs.example.org/v1/index.html"
+          }
+        },
+        "std:label": {
+          "example": {
+            "display_name": "-",
+            "project_name": "fixture",
+            "project_version": "",
+            "uri": "https://docs.example.org/v1/b.html#example"
+          },
+          "explicit-target": {
+            "display_name": "Explicit Target Section",
+            "project_name": "fixture",
+            "project_version": "",
+            "uri": "https://docs.example.org/v1/index.html#explicit-target"
+          },
+          "genindex": {
+            "display_name": "Index",
+            "project_name": "fixture",
+            "project_version": "",
+            "uri": "https://docs.example.org/v1/genindex.html"
+          },
+          "modindex": {
+            "display_name": "Module Index",
+            "project_name": "fixture",
+            "project_version": "",
+            "uri": "https://docs.example.org/v1/py-modindex.html"
+          },
+          "py-modindex": {
+            "display_name": "Python Module Index",
+            "project_name": "fixture",
+            "project_version": "",
+            "uri": "https://docs.example.org/v1/py-modindex.html"
+          },
+          "search": {
+            "display_name": "Search Page",
+            "project_name": "fixture",
+            "project_version": "",
+            "uri": "https://docs.example.org/v1/search.html"
+          }
+        },
+        "std:term": {
+          "a term": {
+            "display_name": "-",
+            "project_name": "fixture",
+            "project_version": "",
+            "uri": "https://docs.example.org/v1/a.html#term-a-term"
+          },
+          "a term including:colon": {
+            "display_name": "-",
+            "project_name": "fixture",
+            "project_version": "",
+            "uri": "https://docs.example.org/v1/a.html#term-a-term-including-colon"
+          }
+        }
+      },
+      "inv_file": "std_objects_and_docs.inv",
+      "kind": "ok",
+      "name": "std_objects_and_docs",
+      "project": "fixture",
+      "raw_objects": {
+        "py": [
+          {
+            "anchor": "module-mymod",
+            "dispname": "mymod",
+            "docname": "a",
+            "name": "mymod",
+            "objtype": "module",
+            "priority": 0
+          },
+          {
+            "anchor": "mymod.greet",
+            "dispname": "mymod.greet",
+            "docname": "a",
+            "name": "mymod.greet",
+            "objtype": "function",
+            "priority": 1
+          }
+        ],
+        "std": [
+          {
+            "anchor": "",
+            "dispname": "A",
+            "docname": "a",
+            "name": "a",
+            "objtype": "doc",
+            "priority": -1
+          },
+          {
+            "anchor": "",
+            "dispname": "B",
+            "docname": "b",
+            "name": "b",
+            "objtype": "doc",
+            "priority": -1
+          },
+          {
+            "anchor": "",
+            "dispname": "Index",
+            "docname": "index",
+            "name": "index",
+            "objtype": "doc",
+            "priority": -1
+          },
+          {
+            "anchor": "term-a-term",
+            "dispname": "a term",
+            "docname": "a",
+            "name": "a term",
+            "objtype": "term",
+            "priority": -1
+          },
+          {
+            "anchor": "term-a-term-including-colon",
+            "dispname": "a term including:colon",
+            "docname": "a",
+            "name": "a term including:colon",
+            "objtype": "term",
+            "priority": -1
+          },
+          {
+            "anchor": "",
+            "dispname": "Index",
+            "docname": "genindex",
+            "name": "genindex",
+            "objtype": "label",
+            "priority": -1
+          },
+          {
+            "anchor": "",
+            "dispname": "Module Index",
+            "docname": "py-modindex",
+            "name": "modindex",
+            "objtype": "label",
+            "priority": -1
+          },
+          {
+            "anchor": "",
+            "dispname": "Search Page",
+            "docname": "search",
+            "name": "search",
+            "objtype": "label",
+            "priority": -1
+          },
+          {
+            "anchor": "",
+            "dispname": "Python Module Index",
+            "docname": "py-modindex",
+            "name": "py-modindex",
+            "objtype": "label",
+            "priority": -1
+          },
+          {
+            "anchor": "example",
+            "dispname": "example",
+            "docname": "b",
+            "name": "example",
+            "objtype": "label",
+            "priority": -1
+          },
+          {
+            "anchor": "explicit-target",
+            "dispname": "Explicit Target Section",
+            "docname": "index",
+            "name": "explicit-target",
+            "objtype": "label",
+            "priority": -1
+          }
+        ]
+      },
+      "source": "sphinx_build",
+      "version": ""
+    },
+    {
+      "covers": "Non-ASCII fullname/dispname/project-name bytes throughout: a py:function/py:module whose accented name does NOT collapse to a `$`-compacted anchor (docutils ASCII-folds the anchor id but not the recorded name -- anchor no longer ends with fullname), a CJK label+title pair, a glossary term with accented characters in both term and body.",
+      "expect": {
+        "py:function": {
+          "café": {
+            "display_name": "-",
+            "project_name": "unicode fixture",
+            "project_version": "",
+            "uri": "https://docs.example.org/v1/a.html#cafe"
+          }
+        },
+        "py:module": {
+          "café_mod": {
+            "display_name": "-",
+            "project_name": "unicode fixture",
+            "project_version": "",
+            "uri": "https://docs.example.org/v1/a.html#module-cafe_mod"
+          }
+        },
+        "std:doc": {
+          "a": {
+            "display_name": "A",
+            "project_name": "unicode fixture",
+            "project_version": "",
+            "uri": "https://docs.example.org/v1/a.html"
+          },
+          "index": {
+            "display_name": "Index",
+            "project_name": "unicode fixture",
+            "project_version": "",
+            "uri": "https://docs.example.org/v1/index.html"
+          }
+        },
+        "std:label": {
+          "genindex": {
+            "display_name": "Index",
+            "project_name": "unicode fixture",
+            "project_version": "",
+            "uri": "https://docs.example.org/v1/genindex.html"
+          },
+          "modindex": {
+            "display_name": "Module Index",
+            "project_name": "unicode fixture",
+            "project_version": "",
+            "uri": "https://docs.example.org/v1/py-modindex.html"
+          },
+          "py-modindex": {
+            "display_name": "Python Module Index",
+            "project_name": "unicode fixture",
+            "project_version": "",
+            "uri": "https://docs.example.org/v1/py-modindex.html"
+          },
+          "search": {
+            "display_name": "Search Page",
+            "project_name": "unicode fixture",
+            "project_version": "",
+            "uri": "https://docs.example.org/v1/search.html"
+          },
+          "日本語ラベル": {
+            "display_name": "日本語の見出し",
+            "project_name": "unicode fixture",
+            "project_version": "",
+            "uri": "https://docs.example.org/v1/index.html#id1"
+          }
+        },
+        "std:term": {
+          "Ünïcödé Term": {
+            "display_name": "-",
+            "project_name": "unicode fixture",
+            "project_version": "",
+            "uri": "https://docs.example.org/v1/a.html#term-Unicode-Term"
+          }
+        }
+      },
+      "inv_file": "unicode_names.inv",
+      "kind": "ok",
+      "name": "unicode_names",
+      "project": "unicode fixture",
+      "raw_objects": {
+        "py": [
+          {
+            "anchor": "module-cafe_mod",
+            "dispname": "café_mod",
+            "docname": "a",
+            "name": "café_mod",
+            "objtype": "module",
+            "priority": 0
+          },
+          {
+            "anchor": "cafe",
+            "dispname": "café",
+            "docname": "a",
+            "name": "café",
+            "objtype": "function",
+            "priority": 1
+          }
+        ],
+        "std": [
+          {
+            "anchor": "",
+            "dispname": "A",
+            "docname": "a",
+            "name": "a",
+            "objtype": "doc",
+            "priority": -1
+          },
+          {
+            "anchor": "",
+            "dispname": "Index",
+            "docname": "index",
+            "name": "index",
+            "objtype": "doc",
+            "priority": -1
+          },
+          {
+            "anchor": "term-Unicode-Term",
+            "dispname": "Ünïcödé Term",
+            "docname": "a",
+            "name": "Ünïcödé Term",
+            "objtype": "term",
+            "priority": -1
+          },
+          {
+            "anchor": "",
+            "dispname": "Index",
+            "docname": "genindex",
+            "name": "genindex",
+            "objtype": "label",
+            "priority": -1
+          },
+          {
+            "anchor": "",
+            "dispname": "Module Index",
+            "docname": "py-modindex",
+            "name": "modindex",
+            "objtype": "label",
+            "priority": -1
+          },
+          {
+            "anchor": "",
+            "dispname": "Search Page",
+            "docname": "search",
+            "name": "search",
+            "objtype": "label",
+            "priority": -1
+          },
+          {
+            "anchor": "",
+            "dispname": "Python Module Index",
+            "docname": "py-modindex",
+            "name": "py-modindex",
+            "objtype": "label",
+            "priority": -1
+          },
+          {
+            "anchor": "id1",
+            "dispname": "日本語の見出し",
+            "docname": "index",
+            "name": "日本語ラベル",
+            "objtype": "label",
+            "priority": -1
+          }
+        ]
+      },
+      "source": "sphinx_build",
+      "version": ""
+    },
+    {
+      "covers": "Header whitespace-run escaping on both Project and Version (collapsed to single spaces; entry lines are NOT escaped), nested py:class/py:method both $-compacting, an explicit std:label title==id dispname compaction alongside a std:doc entry whose dispname differs from its docname.",
+      "expect": {
+        "py:class": {
+          "Widget": {
+            "display_name": "-",
+            "project_name": "My Project",
+            "project_version": "1.0 beta",
+            "uri": "https://docs.example.org/v1/index.html#Widget"
+          }
+        },
+        "py:method": {
+          "Widget.render": {
+            "display_name": "-",
+            "project_name": "My Project",
+            "project_version": "1.0 beta",
+            "uri": "https://docs.example.org/v1/index.html#Widget.render"
+          }
+        },
+        "std:doc": {
+          "example": {
+            "display_name": "Example Page",
+            "project_name": "My Project",
+            "project_version": "1.0 beta",
+            "uri": "https://docs.example.org/v1/example.html"
+          },
+          "index": {
+            "display_name": "Index",
+            "project_name": "My Project",
+            "project_version": "1.0 beta",
+            "uri": "https://docs.example.org/v1/index.html"
+          }
+        },
+        "std:label": {
+          "example": {
+            "display_name": "-",
+            "project_name": "My Project",
+            "project_version": "1.0 beta",
+            "uri": "https://docs.example.org/v1/index.html#example"
+          },
+          "genindex": {
+            "display_name": "Index",
+            "project_name": "My Project",
+            "project_version": "1.0 beta",
+            "uri": "https://docs.example.org/v1/genindex.html"
+          },
+          "modindex": {
+            "display_name": "Module Index",
+            "project_name": "My Project",
+            "project_version": "1.0 beta",
+            "uri": "https://docs.example.org/v1/py-modindex.html"
+          },
+          "py-modindex": {
+            "display_name": "Python Module Index",
+            "project_name": "My Project",
+            "project_version": "1.0 beta",
+            "uri": "https://docs.example.org/v1/py-modindex.html"
+          },
+          "search": {
+            "display_name": "Search Page",
+            "project_name": "My Project",
+            "project_version": "1.0 beta",
+            "uri": "https://docs.example.org/v1/search.html"
+          }
+        }
+      },
+      "inv_file": "dispname_and_header_escape.inv",
+      "kind": "ok",
+      "name": "dispname_and_header_escape",
+      "project": "My Project",
+      "raw_objects": {
+        "py": [
+          {
+            "anchor": "Widget",
+            "dispname": "Widget",
+            "docname": "index",
+            "name": "Widget",
+            "objtype": "class",
+            "priority": 1
+          },
+          {
+            "anchor": "Widget.render",
+            "dispname": "Widget.render",
+            "docname": "index",
+            "name": "Widget.render",
+            "objtype": "method",
+            "priority": 1
+          }
+        ],
+        "std": [
+          {
+            "anchor": "",
+            "dispname": "Example Page",
+            "docname": "example",
+            "name": "example",
+            "objtype": "doc",
+            "priority": -1
+          },
+          {
+            "anchor": "",
+            "dispname": "Index",
+            "docname": "index",
+            "name": "index",
+            "objtype": "doc",
+            "priority": -1
+          },
+          {
+            "anchor": "",
+            "dispname": "Index",
+            "docname": "genindex",
+            "name": "genindex",
+            "objtype": "label",
+            "priority": -1
+          },
+          {
+            "anchor": "",
+            "dispname": "Module Index",
+            "docname": "py-modindex",
+            "name": "modindex",
+            "objtype": "label",
+            "priority": -1
+          },
+          {
+            "anchor": "",
+            "dispname": "Search Page",
+            "docname": "search",
+            "name": "search",
+            "objtype": "label",
+            "priority": -1
+          },
+          {
+            "anchor": "",
+            "dispname": "Python Module Index",
+            "docname": "py-modindex",
+            "name": "py-modindex",
+            "objtype": "label",
+            "priority": -1
+          },
+          {
+            "anchor": "example",
+            "dispname": "example",
+            "docname": "index",
+            "name": "example",
+            "objtype": "label",
+            "priority": -1
+          }
+        ]
+      },
+      "source": "sphinx_build",
+      "version": "1.0 beta"
+    },
+    {
+      "covers": "The default, un-set `version` config renders as a genuinely empty `# Version:` header line (blank, not '-' or absent) -- the smallest project in the corpus so this case reads clearly on its own.",
+      "expect": {
+        "py:function": {
+          "ping": {
+            "display_name": "-",
+            "project_name": "minimal",
+            "project_version": "",
+            "uri": "https://docs.example.org/v1/index.html#ping"
+          }
+        },
+        "std:doc": {
+          "a": {
+            "display_name": "A",
+            "project_name": "minimal",
+            "project_version": "",
+            "uri": "https://docs.example.org/v1/a.html"
+          },
+          "index": {
+            "display_name": "Index",
+            "project_name": "minimal",
+            "project_version": "",
+            "uri": "https://docs.example.org/v1/index.html"
+          }
+        },
+        "std:label": {
+          "genindex": {
+            "display_name": "Index",
+            "project_name": "minimal",
+            "project_version": "",
+            "uri": "https://docs.example.org/v1/genindex.html"
+          },
+          "minimal-label": {
+            "display_name": "Minimal Label Section",
+            "project_name": "minimal",
+            "project_version": "",
+            "uri": "https://docs.example.org/v1/a.html#minimal-label"
+          },
+          "modindex": {
+            "display_name": "Module Index",
+            "project_name": "minimal",
+            "project_version": "",
+            "uri": "https://docs.example.org/v1/py-modindex.html"
+          },
+          "py-modindex": {
+            "display_name": "Python Module Index",
+            "project_name": "minimal",
+            "project_version": "",
+            "uri": "https://docs.example.org/v1/py-modindex.html"
+          },
+          "search": {
+            "display_name": "Search Page",
+            "project_name": "minimal",
+            "project_version": "",
+            "uri": "https://docs.example.org/v1/search.html"
+          }
+        }
+      },
+      "inv_file": "empty_version_minimal.inv",
+      "kind": "ok",
+      "name": "empty_version_minimal",
+      "project": "minimal",
+      "raw_objects": {
+        "py": [
+          {
+            "anchor": "ping",
+            "dispname": "ping",
+            "docname": "index",
+            "name": "ping",
+            "objtype": "function",
+            "priority": 1
+          }
+        ],
+        "std": [
+          {
+            "anchor": "",
+            "dispname": "A",
+            "docname": "a",
+            "name": "a",
+            "objtype": "doc",
+            "priority": -1
+          },
+          {
+            "anchor": "",
+            "dispname": "Index",
+            "docname": "index",
+            "name": "index",
+            "objtype": "doc",
+            "priority": -1
+          },
+          {
+            "anchor": "",
+            "dispname": "Index",
+            "docname": "genindex",
+            "name": "genindex",
+            "objtype": "label",
+            "priority": -1
+          },
+          {
+            "anchor": "",
+            "dispname": "Module Index",
+            "docname": "py-modindex",
+            "name": "modindex",
+            "objtype": "label",
+            "priority": -1
+          },
+          {
+            "anchor": "",
+            "dispname": "Search Page",
+            "docname": "search",
+            "name": "search",
+            "objtype": "label",
+            "priority": -1
+          },
+          {
+            "anchor": "",
+            "dispname": "Python Module Index",
+            "docname": "py-modindex",
+            "name": "py-modindex",
+            "objtype": "label",
+            "priority": -1
+          },
+          {
+            "anchor": "minimal-label",
+            "dispname": "Minimal Label Section",
+            "docname": "a",
+            "name": "minimal-label",
+            "objtype": "label",
+            "priority": -1
+          }
+        ]
+      },
+      "source": "sphinx_build",
+      "version": ""
+    },
+    {
+      "covers": "A version-1 inventory (any-whitespace split, 'mod' -> py:module + #module-{name} anchor, everything else -> py:{item_type} + #{name} anchor, display_name always '-').",
+      "expect": {
+        "py:class": {
+          "widget.Gadget": {
+            "display_name": "-",
+            "project_name": "legacy project",
+            "project_version": "0.9",
+            "uri": "https://docs.example.org/v1/widget.html#widget.Gadget"
+          }
+        },
+        "py:module": {
+          "widget": {
+            "display_name": "-",
+            "project_name": "legacy project",
+            "project_version": "0.9",
+            "uri": "https://docs.example.org/v1/widget.html#module-widget"
+          }
+        }
+      },
+      "inv_file": "v1_handcrafted.inv",
+      "kind": "ok",
+      "name": "v1_handcrafted",
+      "project": "legacy project",
+      "source": "handcrafted",
+      "version": "0.9"
+    },
+    {
+      "covers": "posixpath.join's absolute-location-overrides-base branch, end to end through the real v2 line parser (a location starting with '/' replaces URI_BASE entirely rather than being joined onto it).",
+      "expect": {
+        "py:function": {
+          "thing": {
+            "display_name": "Thing",
+            "project_name": "absolute test",
+            "project_version": "1.0",
+            "uri": "/abs/other-root/thing.html#thing"
+          }
+        }
+      },
+      "inv_file": "v2_absolute_location.inv",
+      "kind": "ok",
+      "name": "v2_absolute_location",
+      "project": "absolute test",
+      "source": "handcrafted",
+      "version": "1.0"
+    },
+    {
+      "covers": "py:module first-wins dedup (inventory.py:129-134): two entries share the same (type, name) = ('py:module', 'dupmod') key -- the *first* one wins (a doubling bug in Sphinx <=1.1's own writer the reader still has to tolerate), not the last, unlike every other type/name collision (plain last-wins dict overwrite). The expected table below -- generated by real sphinx, not us -- pins that the surviving uri/display_name come from the FIRST line (first.html / 'First Entry'), not the second.",
+      "expect": {
+        "py:module": {
+          "dupmod": {
+            "display_name": "First Entry",
+            "project_name": "dup test",
+            "project_version": "1.0",
+            "uri": "https://docs.example.org/v1/first.html#module-dupmod"
+          }
+        }
+      },
+      "inv_file": "v2_duplicate_py_module.inv",
+      "kind": "ok",
+      "name": "v2_duplicate_py_module",
+      "project": "dup test",
+      "source": "handcrafted",
+      "version": "1.0"
+    },
+    {
+      "covers": "loads(): first line matches the version-N prefix but N isn't 1 or 2 -> ValueError with a !r-repr'd version suffix.",
+      "error": "unknown or unsupported inventory version: '5'",
+      "inv_file": "err_unknown_version.inv",
+      "kind": "error",
+      "name": "err_unknown_version",
+      "source": "handcrafted"
+    },
+    {
+      "covers": "loads(): first line matches neither v1, v2, nor the version-N prefix at all -> generic invalid-header ValueError quoting the raw (decoded, unescaped) first line.",
+      "error": "invalid inventory header: Not a Sphinx inventory header",
+      "inv_file": "err_invalid_header.inv",
+      "kind": "error",
+      "name": "err_invalid_header",
+      "source": "handcrafted"
+    },
+    {
+      "covers": "_loads_v2(): header parses (4 `\\n`-delimited chunks exist) but the fourth (check) line doesn't contain the substring 'zlib' -> not-compressed ValueError quoting that check line.",
+      "error": "invalid inventory header (not compressed): # The remainder of this file is compressed using LZMA.",
+      "inv_file": "err_not_compressed.inv",
+      "kind": "error",
+      "name": "err_not_compressed",
+      "source": "handcrafted"
+    },
+    {
+      "covers": "_loads_v1(): fewer than 2 lines remain after the format line (no Version line at all) -> missing-project-or-version ValueError, v1 code path.",
+      "error": "invalid inventory header: missing project name or version",
+      "inv_file": "err_missing_project_version_v1.inv",
+      "kind": "error",
+      "name": "err_missing_project_version_v1",
+      "source": "handcrafted"
+    },
+    {
+      "covers": "_loads_v2(): `content.split(b'\\n', maxsplit=3)` yields fewer than 4 parts (no check-line/compressed-tail at all) -> missing-project-or-version ValueError, v2 code path -- same message text as the v1 case above, different raise site.",
+      "error": "invalid inventory header: missing project name or version",
+      "inv_file": "err_missing_project_version_v2.inv",
+      "kind": "error",
+      "name": "err_missing_project_version_v2",
+      "source": "handcrafted"
+    }
+  ],
+  "docutils_version": "0.22.4",
+  "generator": "tools/gen_inventory_fixture.py",
+  "sphinx_version": "9.1.0",
+  "unsafe_utf8_case": "std_objects_and_docs",
+  "uri_base": "https://docs.example.org/v1"
+}

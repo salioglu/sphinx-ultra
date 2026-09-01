@@ -8,7 +8,6 @@ use tokio::fs;
 
 use crate::config::BuildConfig;
 use crate::document::Document;
-use crate::inventory::InventoryFile;
 use crate::template::TemplateEngine;
 use crate::utils;
 
@@ -696,16 +695,6 @@ impl HTMLBuilder {
         Ok(())
     }
 
-    /// Dump object inventory (mirrors Sphinx's dump_inventory)
-    pub async fn dump_inventory(&self, env: &crate::environment::BuildEnvironment) -> Result<()> {
-        info!("Dumping object inventory");
-
-        let inventory_path = self.outdir.join(INVENTORY_FILENAME);
-        InventoryFile::dump(&inventory_path, env, self).await?;
-
-        Ok(())
-    }
-
     /// Dump search index
     pub async fn dump_search_index(
         &self,
@@ -763,11 +752,11 @@ impl HTMLBuilder {
     }
 
     /// Finish the build process
-    pub async fn finish(
-        &mut self,
-        env: &crate::environment::BuildEnvironment,
-        search_index: &crate::search::SearchIndex,
-    ) -> Result<()> {
+    ///
+    /// Object-inventory dumping used to happen here too; it was removed
+    /// along with the dead `BuildEnvironment`-coupled `dump_inventory`
+    /// (M2 wave 4 task 4) and will come back with a decoupled signature.
+    pub async fn finish(&mut self, search_index: &crate::search::SearchIndex) -> Result<()> {
         info!("Finishing HTML build");
 
         // Generate indices
@@ -776,8 +765,7 @@ impl HTMLBuilder {
         // Copy static files
         self.copy_static_files().await?;
 
-        // Dump inventory and search index
-        self.dump_inventory(env).await?;
+        // Dump search index
         self.dump_search_index(search_index).await?;
 
         // Write build info

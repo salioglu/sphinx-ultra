@@ -7,7 +7,6 @@ Welcome to the Sphinx Ultra documentation! This site contains the complete API d
 - **[API Documentation](./api/sphinx_ultra/index.html)** - Complete Rust API documentation
 - **[Quick Start Guide](./QUICK_START.md)** - Get started with Sphinx Ultra
 - **[Implementation Status](./IMPLEMENTATION_STATUS.md)** - Current feature implementation status
-- **[Domain System Guide](./DOMAIN_SYSTEM.md)** - Cross-reference validation system documentation
 - **[GitHub Repository](https://github.com/salioglu/sphinx-ultra)** - Source code and issues
 
 ## 🚀 About Sphinx Ultra
@@ -16,13 +15,20 @@ Sphinx Ultra is a high-performance Rust-based Sphinx documentation builder desig
 
 ### Key Features
 
+Per-subsystem reality (what the binary actually executes, with evidence) lives in
+[Implementation Status](./IMPLEMENTATION_STATUS.md); the sequencing plan is
+[ROADMAP.md](../ROADMAP.md).
+
 - **🚀 Blazing Fast**: Parallel processing with Rust's performance
 - **📊 Scalable**: Handle 10,000+ documentation files efficiently
-- **🔄 Incremental Builds**: Smart caching system for faster rebuilds
-- **🎨 Modern Themes**: Beautiful, responsive documentation themes
-- **🔍 Full-Text Search**: Built-in search index generation
-- **� Domain System**: Complete cross-reference validation with Python and RST domains
-- **💡 Smart Validation**: Intelligent suggestions for broken references with fuzzy matching
+- **🔄 Incremental Builds**: Dependency-driven caching, invalidated by the files
+  and config a document actually depends on
+- **📐 Docutils-fidelity RST**: block + inline grammar and the Sphinx directive
+  set, differentially verified against docutils 0.22.4 and sphinx-build 9.1.0
+- **🔗 Cross-references**: `BuildEnvironment` with the std domain, toctree graph,
+  numfig numbering, genindex data, `objects.inv`, and intersphinx resolution
+- **🎨 Modern Themes** *(planned, ROADMAP M3)*: theme engine and HTML writer
+- **🔍 Full-Text Search** *(planned, ROADMAP M3)*: Sphinx-format search index
 
 ## �️ Development
 
