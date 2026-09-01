@@ -336,11 +336,12 @@ impl SphinxBuilder {
     /// The four phases mirror Sphinx's own split (`builders/__init__.py`):
     ///
     /// - **read** ([`Self::read_phase`], parallel): parse every *outdated*
-    ///   source file into a `Document` + doctree, persisting the doctree per
-    ///   document, and recover the rest from the cache.
+    ///   source file into a `Document` + doctree, and recover the rest from
+    ///   the cache.
     /// - **merge** ([`Self::merge_phase`], sequential, docname-ordered):
     ///   fold each re-read document's output into the [`BuildEnvironment`] —
-    ///   Sphinx's `merge_info_from` plus the collectors it dispatches.
+    ///   Sphinx's `merge_info_from` plus the collectors it dispatches — and
+    ///   persist that document's doctree once those have mutated it.
     /// - **resolve** ([`Self::resolve_phase`]): whole-project state that
     ///   needs every document read first, then persist the environment.
     /// - **write** ([`Self::write_phase`]): emit the output files.
@@ -697,9 +698,10 @@ impl SphinxBuilder {
         );
         document.html = rendered_html;
 
-        // Every successful parse persists its doctree, whether this is a
-        // first build or a re-parse after a rejected cache entry.
-        self.store_doctree(&docname, &parsed.doctree)?;
+        // The doctree is *not* persisted here: the domain hooks the merge
+        // phase runs still mutate it (the index domain removes a node whose
+        // entries do not validate), and what a later build loads has to be
+        // the tree this build resolved. See [`Self::merge_phase`].
 
         // Cache the document
         if self.incremental {
@@ -726,6 +728,10 @@ impl SphinxBuilder {
     /// it and touches nothing else; a document that was not outdated keeps
     /// every contribution the build that read it made, which is the whole
     /// point of the environment being persistent.
+    ///
+    /// This phase also **persists** each re-read document's doctree, at the
+    /// end of its merge: the domain hooks below mutate the tree, and a
+    /// later build must load what they left, not what the parser produced.
     fn merge_phase(&self, env: &mut BuildEnvironment, results: &mut [ReadResult]) {
         env.root_doc = self
             .config
@@ -867,6 +873,30 @@ impl SphinxBuilder {
             );
             for warning in std_warnings {
                 self.add_warning(warning);
+            }
+
+            // Persist the doctree *after* the hooks above have had it, the
+            // way Sphinx writes its pickle after the read's transforms and
+            // `doctree-read` handlers run (`builders/__init__.py:632-671`;
+            // `IndexDomain.process_doc` at `domains/index.py:47-60` is the
+            // one that mutates here, removing an `index` node whose entries
+            // did not validate). Persisting the parser's tree instead would
+            // hand the next build a document this build already rejected
+            // part of — and the two builds would resolve different trees.
+            //
+            // Failing to write it is reported like any other per-document
+            // failure, but the file is removed first: a stale doctree left
+            // beside a fresh `all_docs` entry would look current to the next
+            // build, whereas a missing one simply makes the document
+            // outdated and re-read.
+            if let Err(e) = self.store_doctree(docname, &result.doctree) {
+                let _ = std::fs::remove_file(self.doctree_path(docname));
+                self.errors.lock().unwrap().push(BuildErrorReport::new(
+                    result.document.source_path.clone(),
+                    None,
+                    format!("{e:#}"),
+                    ErrorType::Other,
+                ));
             }
         }
     }

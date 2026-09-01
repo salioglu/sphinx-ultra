@@ -1742,6 +1742,12 @@ fn an_invalid_index_entry_drops_its_whole_node_like_sphinx() {
         "the rejection happened while reading, and this build read nothing: {warm:?}"
     );
     assert_eq!(
+        warm_env["resolved_pformat"], cold_env["resolved_pformat"],
+        "the rejected node stays rejected: a rebuild resolves the doctree the \
+         *read* left behind — index domain's removal included — not the one \
+         the parser first produced"
+    );
+    assert_eq!(
         warm_env["index_entries"], expected_entries,
         "the entries that survived the rejection are still recorded"
     );
