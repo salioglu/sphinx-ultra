@@ -507,10 +507,13 @@ impl SphinxBuilder {
     /// and its write set (every found document) is what this builder writes
     /// in any case (see [`Self::write_phase`]).
     fn plan_read(&self, env: &BuildEnvironment, files: &[PathBuf]) -> BTreeSet<String> {
-        let found: BTreeSet<String> = files
+        // `env.doc2path` for the documents this build discovered, and
+        // `env.found_docs` as its key set.
+        let sources: BTreeMap<String, PathBuf> = files
             .iter()
-            .map(|path| self.docname_of_path(path))
+            .map(|path| (self.docname_of_path(path), path.clone()))
             .collect();
+        let found: BTreeSet<String> = sources.keys().cloned().collect();
 
         if !self.incremental {
             debug!(
@@ -519,12 +522,6 @@ impl SphinxBuilder {
             );
             return found;
         }
-
-        // `env.doc2path` for the documents this build discovered.
-        let sources: BTreeMap<String, PathBuf> = files
-            .iter()
-            .map(|path| (self.docname_of_path(path), path.clone()))
-            .collect();
 
         let outdated = env.get_outdated_files(
             &found,
@@ -609,10 +606,11 @@ impl SphinxBuilder {
             files
                 .par_iter()
                 .map(|file_path| {
-                    let outdated = to_read.contains(&self.docname_of_path(file_path));
+                    let docname = self.docname_of_path(file_path);
+                    let outdated = to_read.contains(&docname);
                     (
                         file_path.clone(),
-                        self.read_one_file(file_path, &found_docs, outdated),
+                        self.read_one_file(file_path, docname, &found_docs, outdated),
                     )
                 })
                 .collect()
@@ -648,12 +646,12 @@ impl SphinxBuilder {
     fn read_one_file(
         &self,
         file_path: &Path,
+        docname: String,
         found_docs: &Arc<BTreeSet<String>>,
         outdated: bool,
     ) -> Result<ReadResult> {
         let relative_path = file_path.strip_prefix(&self.source_dir)?;
         debug!("Processing file: {}", relative_path.display());
-        let docname = self.docname_of_path(file_path);
 
         // The write phase still writes an unread document's page — skipping
         // the write is how cached pages went missing from the output tree.

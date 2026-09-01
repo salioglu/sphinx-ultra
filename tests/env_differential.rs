@@ -1099,6 +1099,24 @@ fn touching_one_document_re_reads_only_it_and_the_environment_still_matches_a_co
         "an incremental rebuild's environment must equal a cold build's"
     );
     assert_eq!(incremental_warnings, cold_warnings);
+
+    // Now touch the document that *owns* the label. Its own entry has to be
+    // cleared before it is read again, or re-registering the label finds
+    // the previous build's copy of itself and warns about a duplicate that
+    // does not exist.
+    write(
+        &source_dir,
+        "a",
+        "A\n=\n\n.. _label-a:\n\nSection A\n---------\n\nMore.\n",
+    );
+    let (hits, env, warnings) = incremental_build(&source_dir, &warm_out);
+    assert_eq!(hits, 2);
+    assert!(
+        warnings.is_empty(),
+        "re-reading a label's own document must not make it a duplicate of \
+         itself: {warnings:?}"
+    );
+    assert_eq!(env["std"]["labels"], cold_env["std"]["labels"]);
 }
 
 /// A document that disappears is cleared from the environment, and both
