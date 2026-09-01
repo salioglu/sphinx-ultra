@@ -136,8 +136,14 @@ pub struct BuildConfig {
     /// `<output>/.sphinx-ultra-cache` when unset
     pub doctree_dir: Option<std::path::PathBuf>,
 
-    /// Extra HTML template variables (conf.py `html_context`, CLI `-A`)
-    pub html_context: std::collections::HashMap<String, serde_json::Value>,
+    /// Extra HTML template variables (conf.py `html_context`, CLI `-A`).
+    ///
+    /// Ordered, not hashed: this struct's serialization is the cache/
+    /// environment fingerprint (`builder::config_fingerprint`), and a
+    /// `HashMap` would emit its entries in `RandomState` order — a digest
+    /// that differs on every process, wiping the cache directory on every
+    /// build for any project that sets two or more `html_context` keys.
+    pub html_context: std::collections::BTreeMap<String, serde_json::Value>,
 
     /// Run directive/role validation during the build
     pub validate_directives: bool,
@@ -327,7 +333,7 @@ impl Default for BuildConfig {
             nitpick_ignore_regex: vec![],
             tags: vec![],
             doctree_dir: None,
-            html_context: std::collections::HashMap::new(),
+            html_context: std::collections::BTreeMap::new(),
             validate_directives: true,
 
             numfig: false,

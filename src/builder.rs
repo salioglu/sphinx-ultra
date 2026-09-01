@@ -140,6 +140,50 @@ pub struct SphinxBuilder {
     intersphinx: Intersphinx,
 }
 
+/// [`BuildConfig`] fields deliberately kept *out* of the cache fingerprint.
+///
+/// Both are operational switches that steer how this run reports
+/// diagnostics; neither changes the content the cache holds, and Sphinx
+/// treats neither as an environment-invalidating change:
+///
+/// * `nitpicky` (`-n`) is a `Config` value whose rebuild class is `''`
+///   (`sphinx/config.py:272`), and `_config_status` only reports
+///   `CONFIG_CHANGED` for values whose rebuild class is `'env'`
+///   (`sphinx/environment/__init__.py:366-369`) — so `-n` never invalidates
+///   Sphinx's environment.
+/// * `fail_on_warning` (`-W`, Sphinx's `warningiserror`) is not a `Config`
+///   value at all: it is a `sphinx-build` argument and can never take part
+///   in a config comparison.
+///
+/// Including them here would be worse than a spurious full rebuild. A
+/// fingerprint mismatch wipes the whole cache directory (documents,
+/// `doctrees/`, `env.bin`, `__intersphinx_cache__`), and read-phase
+/// diagnostics are only emitted for documents a build actually reads — so
+/// merely adding `-W` would force a cold read that re-emits every
+/// read-phase warning and fails, while the *next* identical `-W` run would
+/// be warm, emit nothing, and pass. Everything else stays in, `tags`
+/// included: tags select `only::` branches and therefore change parse
+/// output.
+const EXCLUDED_FROM_FINGERPRINT: [&str; 2] = ["fail_on_warning", "nitpicky"];
+
+/// blake3 over the configuration minus [`EXCLUDED_FROM_FINGERPRINT`].
+///
+/// The value is serialized through `serde_json::Value` before hashing, which
+/// also makes the digest order-independent: `Value::Object` is a `BTreeMap`,
+/// so every map in the configuration is emitted in sorted-key order no
+/// matter what order the source type iterates in.
+fn config_fingerprint(config: &BuildConfig) -> Result<String> {
+    let mut value = serde_json::to_value(config)?;
+    if let Some(map) = value.as_object_mut() {
+        for key in EXCLUDED_FROM_FINGERPRINT {
+            map.remove(key);
+        }
+    }
+    Ok(blake3::hash(serde_json::to_string(&value)?.as_bytes())
+        .to_hex()
+        .to_string())
+}
+
 impl SphinxBuilder {
     pub fn new(config: BuildConfig, source_dir: PathBuf, output_dir: PathBuf) -> Result<Self> {
         // -d/doctree_dir relocates the cache (sphinx-build's doctree dir).
@@ -147,11 +191,11 @@ impl SphinxBuilder {
             .doctree_dir
             .clone()
             .unwrap_or_else(|| output_dir.join(".sphinx-ultra-cache"));
-        // Any config change invalidates cached documents (they were rendered
-        // under the old configuration).
-        let config_fingerprint = blake3::hash(serde_json::to_string(&config)?.as_bytes())
-            .to_hex()
-            .to_string();
+        // A change to any *content-bearing* configuration value invalidates
+        // cached documents (they were rendered under the old configuration);
+        // the two purely operational flags in `BuildConfig` are excluded —
+        // see [`config_fingerprint`].
+        let config_fingerprint = config_fingerprint(&config)?;
         let cache = BuildCache::new(
             cache_dir,
             config.max_cache_size_mb,
@@ -524,10 +568,12 @@ impl SphinxBuilder {
 
         let outdated = env.get_outdated_files(
             &found,
-            // A configuration change wipes the cache directory whole
-            // (`.config-fingerprint`), so it reaches this point as an empty
-            // environment as well; saying it out loud keeps the two
-            // statements from drifting apart.
+            // A content-bearing configuration change wipes the cache
+            // directory whole (`.config-fingerprint`), so it reaches this
+            // point as an empty environment as well; saying it out loud
+            // keeps the two statements from drifting apart. Operational
+            // flags (`-W`, `-n`) are excluded from the fingerprint
+            // (`EXCLUDED_FROM_FINGERPRINT`) and therefore never land here.
             self.cache.config_changed(),
             &env::FileTimes {
                 source_modified_us: &|docname| {
@@ -1604,6 +1650,81 @@ mod tests {
             .block_on(builder.build())
             .unwrap();
         (stats, builder)
+    }
+
+    /// `-W` and `-n` steer diagnostics, not content: toggling either must
+    /// leave the fingerprint — and therefore the whole cache directory —
+    /// alone. Sphinx cannot invalidate on either (`config.py:272` gives
+    /// `nitpicky` rebuild class `''`; `warningiserror` is not a `Config`
+    /// value), so neither may invalidate here.
+    #[test]
+    fn operational_flags_are_excluded_from_the_fingerprint() {
+        let base = BuildConfig::default();
+        let baseline = config_fingerprint(&base).unwrap();
+
+        let mut warned = base.clone();
+        warned.fail_on_warning = true;
+        assert_eq!(config_fingerprint(&warned).unwrap(), baseline, "-W");
+
+        let mut nitpicky = base.clone();
+        nitpicky.nitpicky = true;
+        assert_eq!(config_fingerprint(&nitpicky).unwrap(), baseline, "-n");
+
+        let mut both = base.clone();
+        both.fail_on_warning = true;
+        both.nitpicky = true;
+        assert_eq!(config_fingerprint(&both).unwrap(), baseline, "-W -n");
+    }
+
+    /// The filter is exactly two keys wide. Everything else — `tags`
+    /// included, because tags select `only::` branches and so change parse
+    /// output — still invalidates.
+    #[test]
+    fn content_bearing_config_still_changes_the_fingerprint() {
+        let base = BuildConfig::default();
+        let baseline = config_fingerprint(&base).unwrap();
+
+        let mut tagged = base.clone();
+        tagged.tags = vec!["draft".to_string()];
+        assert_ne!(config_fingerprint(&tagged).unwrap(), baseline, "tags");
+
+        let mut nitpick_ignore = base.clone();
+        nitpick_ignore.nitpick_ignore = vec![("ref".to_string(), "x".to_string())];
+        assert_ne!(
+            config_fingerprint(&nitpick_ignore).unwrap(),
+            baseline,
+            "nitpick_ignore is data, not an operational flag"
+        );
+
+        let mut numfig = base.clone();
+        numfig.numfig = true;
+        assert_ne!(config_fingerprint(&numfig).unwrap(), baseline, "numfig");
+    }
+
+    /// Serializing through `serde_json::Value` sorts every map, so a
+    /// multi-key `html_context` hashes the same on every call — the
+    /// property that keeps the cache from being wiped on every build.
+    #[test]
+    fn multi_key_html_context_fingerprints_stably() {
+        let mut config = BuildConfig::default();
+        for key in ["a", "b", "c", "d", "e", "f", "g", "h"] {
+            config.html_context.insert(
+                key.to_string(),
+                serde_json::Value::String(key.to_uppercase()),
+            );
+        }
+
+        let first = config_fingerprint(&config).unwrap();
+        for _ in 0..8 {
+            assert_eq!(config_fingerprint(&config).unwrap(), first);
+        }
+
+        // ...and it is still sensitive to the contents.
+        let mut changed = config.clone();
+        changed
+            .html_context
+            .insert("a".to_string(), serde_json::Value::String("Z".to_string()));
+        assert_ne!(config_fingerprint(&changed).unwrap(), first);
     }
 
     #[test]

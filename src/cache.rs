@@ -89,9 +89,19 @@ impl BuildCache {
     /// discarded, this build's documents, doctrees and `env.bin` included.
     ///
     /// A first build counts too (there is no stored fingerprint to agree
-    /// with), which is what Sphinx's `CONFIG_NEW` is: both mean "nothing
-    /// carried over from a previous build is usable", and both make every
-    /// document outdated.
+    /// with), and in that case the effect matches Sphinx's `CONFIG_NEW`:
+    /// nothing carried over from a previous build is usable, so every
+    /// document is outdated.
+    ///
+    /// The resemblance stops there, and deliberately so. Sphinx's
+    /// `CONFIG_CHANGED` (`environment/__init__.py:366-369`) fires only for
+    /// config values whose rebuild class is `'env'` and never deletes
+    /// doctrees, the environment or the intersphinx cache; this crate
+    /// compares one whole-configuration digest and wipes the directory. The
+    /// digest is therefore taken over a *filtered* configuration — see
+    /// `builder::EXCLUDED_FROM_FINGERPRINT` — so that operational flags
+    /// (`-W`, `-n`), which Sphinx cannot invalidate on, cannot invalidate
+    /// here either.
     pub fn config_changed(&self) -> bool {
         self.config_changed
     }

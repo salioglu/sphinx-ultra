@@ -455,6 +455,87 @@ fn config_change_invalidates_cache() {
     );
 }
 
+/// `-W` and `-n` are operational flags, not configuration: adding either
+/// must not invalidate the cache. Sphinx cannot invalidate on them
+/// (`nitpicky`'s rebuild class is `''`, `warningiserror` is not a `Config`
+/// value at all), and if this crate did, the forced cold read would re-emit
+/// every read-phase warning — so the first `-W` run would fail and the next
+/// identical one would pass.
+#[test]
+fn operational_flags_do_not_invalidate_the_cache() {
+    let src = out_dir("cache-operational-flags-src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(
+        src.join("index.rst"),
+        "Index\n=====\n\n.. toctree::\n\n   a\n   b\n",
+    )
+    .unwrap();
+    // b.rst redefines a.rst's label: one read-phase warning, emitted only
+    // by a build that actually reads b.
+    std::fs::write(src.join("a.rst"), ".. _dup:\n\nA\n=\n\nBody.\n").unwrap();
+    std::fs::write(src.join("b.rst"), ".. _dup:\n\nB\n=\n\nBody.\n").unwrap();
+    std::fs::write(src.join("conf.py"), "project = 'flags'\n").unwrap();
+
+    // sphinx-build compat mode: incremental by default, and the only mode
+    // that accepts both -W and -n.
+    let out = out_dir("cache-operational-flags-out");
+    let s = src.to_str().unwrap().to_string();
+    let o = out.to_str().unwrap().to_string();
+
+    let run1 = sphinx_build(&[&s, &o]);
+    assert!(run1.status.success(), "stderr: {}", stderr_of(&run1));
+    assert!(
+        stderr_of(&run1).contains("duplicate label dup"),
+        "the cold build reports the duplicate label, stderr: {}",
+        stderr_of(&run1)
+    );
+
+    let run2 = sphinx_build(&[&s, &o]);
+    assert!(
+        stderr_of(&run2).contains("Cache hits: 3"),
+        "an unchanged project reads nothing, stderr: {}",
+        stderr_of(&run2)
+    );
+
+    // Adding -W must not wipe the cache, and must not fail the build over
+    // warnings a warm build never re-emits.
+    let run3 = sphinx_build(&[&s, &o, "-W"]);
+    assert!(
+        stderr_of(&run3).contains("Cache hits: 3"),
+        "-W must not invalidate the cache, stderr: {}",
+        stderr_of(&run3)
+    );
+    let run4 = sphinx_build(&[&s, &o, "-W"]);
+    assert_eq!(
+        run3.status.success(),
+        run4.status.success(),
+        "two identical -W runs must agree on the exit code; \
+         run3: {}\nrun4: {}",
+        stderr_of(&run3),
+        stderr_of(&run4)
+    );
+    assert!(
+        run3.status.success() && run4.status.success(),
+        "a warm -W build over an unchanged project has no warnings to fail on, \
+         stderr: {}",
+        stderr_of(&run3)
+    );
+
+    // Same for -n, and dropping the flags again is likewise free.
+    let run5 = sphinx_build(&[&s, &o, "-n"]);
+    assert!(
+        stderr_of(&run5).contains("Cache hits: 3"),
+        "-n must not invalidate the cache, stderr: {}",
+        stderr_of(&run5)
+    );
+    let run6 = sphinx_build(&[&s, &o]);
+    assert!(
+        stderr_of(&run6).contains("Cache hits: 3"),
+        "dropping the flags must not invalidate the cache either, stderr: {}",
+        stderr_of(&run6)
+    );
+}
+
 #[test]
 fn stats_prints_source_file_count() {
     let result = bin()

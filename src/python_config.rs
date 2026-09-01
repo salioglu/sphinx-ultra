@@ -1153,7 +1153,11 @@ impl ConfPyConfig {
         config.nitpicky = self.nitpicky.unwrap_or(false);
         config.nitpick_ignore = self.nitpick_ignore.clone();
         config.nitpick_ignore_regex = self.nitpick_ignore_regex.clone();
-        config.html_context = self.html_context.clone();
+        config.html_context = self
+            .html_context
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
 
         // Numbering (`numfig` family). `numfig_format` MERGES over the
         // defaults `BuildConfig::default()` seeded — sphinx applies the
