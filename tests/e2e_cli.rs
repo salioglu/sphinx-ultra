@@ -494,11 +494,17 @@ fn a_non_rst_file_is_not_reported_as_an_orphan() {
 }
 
 /// Two files mapping to one docname are not two documents: every piece of
-/// per-document state downstream of discovery is keyed by docname alone.
-/// Sphinx warns and keeps one (`Project.discover`, `project.py:64-79`); so
-/// does this, deterministically by source-suffix precedence.
+/// per-document state downstream of discovery is keyed by docname alone, so
+/// one of them has to go (`Project.discover`, `project.py:64-79`), and which
+/// one must not depend on directory walk order.
+///
+/// It must go **silently** here, though. Sphinx's default `source_suffix` is
+/// `.rst` alone, so it never discovers the `.md`/`.txt` sibling and builds
+/// this tree clean; warning about a collision Sphinx cannot see would fail
+/// `-W` on a build Sphinx passes. The report is reserved for a collision
+/// between two files Sphinx would both have read.
 #[test]
-fn two_files_for_one_docname_warn_and_one_deterministically_wins() {
+fn two_files_for_one_docname_resolve_silently_and_deterministically() {
     let src = out_dir("duplicate-docname-src");
     std::fs::create_dir_all(&src).unwrap();
     std::fs::write(src.join("conf.py"), "project = 'p'\n").unwrap();
@@ -512,33 +518,26 @@ fn two_files_for_one_docname_warn_and_one_deterministically_wins() {
     std::fs::write(src.join("page.txt"), "Page TXT\n========\n\ntxt body.\n").unwrap();
 
     let out = out_dir("duplicate-docname-out");
-    let first = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap()]);
+    let first = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap(), "-W"]);
     let stderr = stderr_of(&first);
 
     assert!(
-        stderr.contains(
-            "WARNING: multiple files found for the document \"page\": \
-             page.rst, page.md, page.txt"
-        ),
-        "the collision is reported the way Sphinx reports it, stderr: {stderr}"
+        !stderr.contains("multiple files found for the document"),
+        "sphinx sees no collision here, so neither may we, stderr: {stderr}"
     );
-    // The builder canonicalizes its source dir, so compare against that.
-    let canonical = src.canonicalize().unwrap();
     assert!(
-        stderr.contains(&format!(
-            "Use '{}' for the build.",
-            canonical.join("page.rst").display()
-        )),
-        "and names the file it kept, stderr: {stderr}"
+        first.status.success(),
+        "sphinx builds this clean, so -W must pass, stderr: {stderr}"
     );
 
-    // The winner is stable across builds, warm or cold — the defect this
-    // pins was an output page that alternated between the two files.
+    // The winner is `.rst` — first in the discovery suffix order — and is
+    // stable across builds, warm or cold. The defect this pins was an
+    // output page that alternated between the two sources.
     let page = out.join("page.html");
     let cold = std::fs::read_to_string(&page).unwrap();
     assert!(cold.contains("rst body"), "first suffix wins: {cold}");
     for _ in 0..2 {
-        let again = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap()]);
+        let again = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap(), "-W"]);
         assert!(again.status.success(), "stderr: {}", stderr_of(&again));
         assert_eq!(
             std::fs::read_to_string(&page).unwrap(),

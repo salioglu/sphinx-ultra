@@ -176,6 +176,19 @@ const EXCLUDED_FROM_FINGERPRINT: [&str; 2] = ["fail_on_warning", "nitpicky"];
 /// `doc2path` fallback.
 const DISCOVERY_SUFFIXES: [&str; 3] = ["rst", "md", "txt"];
 
+/// Whether Sphinx's *default* `source_suffix` — `{'.rst':
+/// 'restructuredtext'}` (`config.py:243`) — covers `path`.
+///
+/// This crate's discovery is deliberately wider than that, and the two
+/// places where the difference would otherwise reach the user's warning
+/// stream both gate on this predicate: the orphan check in
+/// [`SphinxBuilder::resolve_phase`] and the docname-collision report in
+/// [`SphinxBuilder::dedup_by_docname`]. Neither may fail a `-W` build over
+/// a file Sphinx would not have read in the first place.
+fn is_default_source_suffix(path: &Path) -> bool {
+    path.extension().is_some_and(|extension| extension == "rst")
+}
+
 /// `path`'s position in [`DISCOVERY_SUFFIXES`], or `None` if it is not a
 /// document at all.
 fn suffix_rank(path: &Path) -> Option<usize> {
@@ -542,6 +555,19 @@ impl SphinxBuilder {
     /// alternated between them across builds, the loser's edits never
     /// invalidated anything, and two threads wrote one output path at once.
     ///
+    /// The *warning* is scoped the same way the orphan check is
+    /// ([`is_default_source_suffix`]): Sphinx's default `source_suffix` is
+    /// `.rst` alone, so a collision involving at most one `.rst` file is
+    /// not a collision Sphinx can see — it never discovered the `.md`/`.txt`
+    /// sibling at all, and builds `page.rst` beside `page.md` cleanly. Only
+    /// a collision between two files Sphinx would *both* have read is
+    /// reported; anything else drops its loser silently, so a wider
+    /// discovery set can never fail a `-W` build that Sphinx passes. No two
+    /// same-stem `.rst` files can exist in one directory, so today the
+    /// warning is unreachable by construction; it becomes reachable when
+    /// `source_suffix` turns configurable and a project names a second
+    /// restructuredtext suffix (wave 6, with MyST).
+    ///
     /// Two deliberate deviations from Sphinx's message, both because
     /// Sphinx's own rendering is an artifact rather than a contract: the
     /// listed files are the colliding *documents* in the order this
@@ -568,26 +594,34 @@ impl SphinxBuilder {
                     .cmp(&suffix_rank(b))
                     .then_with(|| a.as_path().cmp(b.as_path()))
             });
-            let listed: Vec<String> = candidates
+            // Only a collision Sphinx could see is worth a diagnostic.
+            if candidates
                 .iter()
-                .map(|path| {
-                    path.strip_prefix(&self.source_dir)
-                        .unwrap_or(path)
-                        .display()
-                        .to_string()
-                })
-                .collect();
-            self.add_warning(BuildWarning::new(
-                // Logged with no `location`, so it prints bare.
-                PathBuf::new(),
-                None,
-                format!(
-                    "multiple files found for the document \"{docname}\": {}\nUse {} for the build.",
-                    listed.join(", "),
-                    py_repr_str(&candidates[0].display().to_string()),
-                ),
-                WarningType::Other,
-            ));
+                .filter(|path| is_default_source_suffix(path))
+                .count()
+                > 1
+            {
+                let listed: Vec<String> = candidates
+                    .iter()
+                    .map(|path| {
+                        path.strip_prefix(&self.source_dir)
+                            .unwrap_or(path)
+                            .display()
+                            .to_string()
+                    })
+                    .collect();
+                self.add_warning(BuildWarning::new(
+                    // Logged with no `location`, so it prints bare.
+                    PathBuf::new(),
+                    None,
+                    format!(
+                        "multiple files found for the document \"{docname}\": {}\nUse {} for the build.",
+                        listed.join(", "),
+                        py_repr_str(&candidates[0].display().to_string()),
+                    ),
+                    WarningType::Other,
+                ));
+            }
             dropped.extend(candidates.into_iter().skip(1));
         }
 
@@ -1127,7 +1161,7 @@ impl SphinxBuilder {
         let orphan_candidate = |docname: &str| {
             sources
                 .get(docname)
-                .is_none_or(|path| path.extension().is_some_and(|ext| ext == "rst"))
+                .is_none_or(|path| is_default_source_suffix(path))
         };
         for message in env_toctree::check_consistency(env, &orphan_candidate) {
             // Sphinx logs these with `location=docname`, which renders as

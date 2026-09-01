@@ -224,10 +224,12 @@ surface. The binary's CLI is unaffected.
   that sets two or more `html_context` keys no longer invalidates it on
   every run. Both were consequences of what the cache fingerprint covered.
 - **Two source files that map to one document name are resolved
-  deterministically**, with Sphinx's
-  `multiple files found for the document "…"` warning naming the file kept
-  (previously both were built, to one output path, from one shared
-  doctree).
+  deterministically**, keeping the one whose suffix comes first (previously
+  both were built, to one output path, from one shared doctree). This is
+  silent for a collision Sphinx's default `source_suffix` cannot see — a
+  `page.rst` beside a `page.md` builds clean, as it does under Sphinx.
+  Sphinx's `multiple files found for the document "…"` warning is reserved
+  for a collision between two files Sphinx would both have read.
 - **An `intersphinx_timeout` that is negative, NaN or absurdly large is
   ignored with a warning** rather than aborting the process.
 
