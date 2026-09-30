@@ -303,6 +303,9 @@ pub(crate) struct BlockParser {
     /// doctree cannot carry them).
     program_option_records: Vec<super::ProgramOptionRecord>,
     std_object_records: Vec<super::ObjectRegistration>,
+    /// The `glossary` directives' term registrations — see
+    /// [`super::RegistryExport::glossary_terms`].
+    glossary_term_records: Vec<super::GlossaryTermRecord>,
     /// The py-domain registrations (`PythonDomain.note_object` /
     /// `note_module` calls), in document order — see
     /// [`super::RegistryExport::py_objects`].
@@ -394,6 +397,7 @@ impl BlockParser {
             toctree_records: Vec::new(),
             program_option_records: Vec::new(),
             std_object_records: Vec::new(),
+            glossary_term_records: Vec::new(),
             py_object_records: Vec::new(),
             py_module_records: Vec::new(),
             reporter: Reporter::default(),
@@ -418,6 +422,7 @@ impl BlockParser {
             index_serial: self.registry.index_serial(),
             program_options: std::mem::take(&mut self.program_option_records),
             std_objects: std::mem::take(&mut self.std_object_records),
+            glossary_terms: std::mem::take(&mut self.glossary_term_records),
             py_objects: std::mem::take(&mut self.py_object_records),
             py_modules: std::mem::take(&mut self.py_module_records),
             diagnostics: std::mem::take(&mut self.reporter).take(),
@@ -619,6 +624,8 @@ impl BlockParser {
         self.program_option_records
             .append(&mut sub.program_option_records);
         self.std_object_records.append(&mut sub.std_object_records);
+        self.glossary_term_records
+            .append(&mut sub.glossary_term_records);
         self.py_object_records.append(&mut sub.py_object_records);
         self.py_module_records.append(&mut sub.py_module_records);
         self.dependency_records.append(&mut sub.dependency_records);
@@ -4800,6 +4807,19 @@ impl BlockParser {
                 let node_id = self.registry.sphinx_make_id("term", &term_text);
                 self.registry.note_explicit_id(&node_id);
                 term.attrs.ids.push(node_id.clone());
+                // `std._note_term(termtext, node_id, location=term)`: the
+                // registration — and its duplicate warning — happens here,
+                // after this term's inline messages and before its
+                // definition is parsed. `location=term` prints the line
+                // `make_glossary_term` stamped on the term, the item's
+                // 0-based offset (the quirk `glossary_msg` documents).
+                self.glossary_term_records.push(super::GlossaryTermRecord {
+                    term: term_text.clone(),
+                    node_id: node_id.clone(),
+                    source: tl.source,
+                    line: tl.lineno.saturating_sub(1),
+                    seq: self.reporter.next_seq(),
+                });
                 let mut index = Node::elem("index", term_span);
                 index.set(
                     "entries",

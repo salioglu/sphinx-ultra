@@ -15,7 +15,8 @@
 //! covered. **Every** `expect` key is now live (tasks 5-10):
 //! `tocs_pformat`, `toc_num_entries`, `toctree_includes`,
 //! `files_to_rebuild`, `relations`, `toc_secnumbers`, `toc_fignumbers`,
-//! `std`, `index_entries`, `genindex`, `resolved_pformat` and `warnings` —
+//! `std`, `index_entries`, `genindex`, `resolved_pformat` and
+//! `warning_records` (which supersedes the line-split `warnings`) —
 //! the last three with strict, self-cleaning exemption tables
 //! ([`KNOWN_STD_GAPS`], [`KNOWN_RESOLVED_GAPS`], [`KNOWN_WARNING_GAPS`])
 //! naming what each remaining divergence waits on.
@@ -113,7 +114,12 @@ pub struct Expect {
     /// (`note_included`), values sorted.
     pub included: BTreeMap<String, Vec<String>>,
     pub resolved_pformat: BTreeMap<String, String>,
-    pub warnings: Vec<String>,
+    /// The build's warning stream, one entry per printed RECORD (a
+    /// multi-line docutils message is one entry, blank lines kept), in
+    /// print order. The fixture's older `warnings` key is this stream split
+    /// into non-blank lines — the generator asserts exactly that — so it
+    /// is not read: it cannot tell two records from one.
+    pub warning_records: Vec<String>,
 }
 
 #[derive(serde::Deserialize, Debug, PartialEq, Eq)]
@@ -560,21 +566,6 @@ const KNOWN_WARNING_GAPS: &[(&str, &str)] = &[
          project's other warning, `numfig is disabled. :numref: is ignored.`, \
          this task does produce)",
     ),
-    (
-        "inc_basic",
-        "every one of this project's oracle warnings is a docutils *reporter* \
-         message (the `[docutils]` suffix): Sphinx's `LoggingReporter` streams \
-         each `system_message` it builds to the warning log as well as into \
-         the doctree, while this crate keeps reporter messages in-tree only. \
-         That split is pre-existing and project-wide (wave-4.5 task 12 \
-         verified it is not include-specific), and it is why the project sets \
-         `keep_warnings`: the same bytes are compared at full strength as \
-         `system_message` nodes in `resolved_pformat` — the missing-file and \
-         `start-after` SEVEREs, the multi-line circular-inclusion chains, and \
-         the `:pyobject:` not-found text. The sibling `inc_warn` project \
-         carries the include/literalinclude warnings that DO go through the \
-         logger on both sides, and compares byte-for-byte",
-    ),
 ];
 
 /// Projects whose oracle `std` data this task deliberately does not
@@ -691,6 +682,13 @@ const KNOWN_RESOLVED_GAPS: &[(&str, &str, &str)] = &[
          KNOWN_HIGHLIGHT_STAMP_GAPS, which cannot be applied to a document \
          that already diverges structurally",
     ),
+    // Wave 5 diagnostics-stream projects: both documents of
+    // `reporter_interleave` that carry a toctree (the second one's names
+    // only a missing document, which Sphinx's resolution replaces with
+    // nothing). The project exists for its warning stream; `first` is
+    // compared at full strength.
+    ("reporter_interleave", "index", TOCTREE_RESOLUTION),
+    ("reporter_interleave", "second", TOCTREE_RESOLUTION),
 ];
 
 /// The attributes Sphinx's `HighlightLanguageTransform`
@@ -723,20 +721,21 @@ const HIGHLIGHT_STAMP_ATTRS: [&str; 3] = ["language", "force", "linenos"];
 /// BOUNDARY, stated so the next reader does not have to derive it: the
 /// forgiveness is keyed on OUR side lacking the attribute entirely
 /// ([`drop_unstamped_highlight_attrs`] skips any attribute we do carry).
-/// On these six documents that means a `language`/`force` value set
+/// On these documents that means a `language`/`force` value set
 /// explicitly BY A DIRECTIVE would be forgiven if we failed to emit it at
 /// all — e.g. a `:language:` added to `inc_basic/a`, where the whole
 /// attribute going missing on our side would read as an unstamped
 /// attribute rather than as the bug it is. (Panel fix round B, [21]: the
-/// earlier claim that none of the six carries a directive-set value was
-/// false — `inc_basic/b`'s `:lineno-match:` literalinclude carries
-/// `linenos="1"`, set by the directive, `code.py:476-481`.) `linenos` is
+/// earlier claim that none of the six wave-4.5 entries carries a
+/// directive-set value was false — `inc_basic/b`'s `:lineno-match:`
+/// literalinclude carries `linenos="1"`, set by the directive,
+/// `code.py:476-481`.) `linenos` is
 /// therefore held to a tighter rule: the transform only ever stamps
 /// `linenos` from the `linenothreshold` comparison, which this corpus
 /// never lowers below its `sys.maxsize` default, so a stamped value is
 /// always `"0"` and an oracle `linenos="1"` is by construction
 /// directive-set — [`drop_unstamped_highlight_attrs`] refuses to drop it.
-/// A `language`/`force` value set by a directive on one of these six
+/// A `language`/`force` value set by a directive on one of these
 /// documents still belongs in a document outside this table, or the
 /// table shrinks. The full-strength venue for all three attributes is
 /// `inc_highlight/index` (two literalincludes with `:language:` plus
@@ -750,6 +749,11 @@ const KNOWN_HIGHLIGHT_STAMP_GAPS: &[(&str, &str)] = &[
     ("inc_basic", "circ_b"),
     ("inc_basic", "shared/frag"),
     ("inc_warn", "a"),
+    // The literal blocks of in-tree `system_message`s (kept by
+    // `keep_warnings`): an include failure's, and an error's raised inside
+    // an included file.
+    ("inc_missing", "index"),
+    ("inc_nested_error", "index"),
 ];
 
 fn known_highlight_stamp_gap(project: &str, docname: &str) -> bool {
@@ -831,11 +835,10 @@ fn known_warning_gap(project: &str) -> Option<&'static str> {
 /// sides still DIFFER — so a project that started emitting a warning of its
 /// own would go on passing under an exemption written for a warning it
 /// FAILS to emit. Every entry's stated reason is of that second kind ("not
-/// ported yet", "the oracle logs reporter messages we keep in-tree"), so
-/// the sound invariant is a one-directional one: our warnings must be a
-/// subset of the oracle's. A warning on our side that the oracle lacks is
-/// a fabricated diagnostic, which is precisely what breaks `-W` on a
-/// project Sphinx builds clean.
+/// ported yet"), so the sound invariant is a one-directional one: our
+/// warnings must be a subset of the oracle's. A warning on our side that
+/// the oracle lacks is a fabricated diagnostic, which is precisely what
+/// breaks `-W` on a project Sphinx builds clean.
 fn assert_warning_gap_is_sound(project: &str, actual: &[String], expected: &[String]) {
     // Multiset containment, not set membership: the corpus treats
     // multiplicity as load-bearing (inc_warn expects one line exactly
@@ -863,21 +866,6 @@ fn assert_warning_gap_is_sound(project: &str, actual: &[String], expected: &[Str
          does not (or emits one more often than it does) — the exemption \
          covers MISSING warnings, never invented ones: {extra:#?}"
     );
-    if project == "inc_basic" {
-        // Its reason is specifically that the whole set is reporter-side,
-        // so anything at all on our side contradicts the exemption.
-        assert!(
-            actual.is_empty(),
-            "[inc_basic] the exemption says every oracle warning is a \
-             docutils reporter message we keep in-tree only, so our logger \
-             side must be empty: {actual:#?}"
-        );
-        assert!(
-            !expected.is_empty(),
-            "[inc_basic] the oracle side went empty — the exemption has \
-             nothing left to excuse; delete it"
-        );
-    }
 }
 
 /// Fixture `conf` keys that provably steer no behavior this crate has
@@ -1318,15 +1306,20 @@ fn relations_match_oracle() {
     report(&divergences, "relations");
 }
 
-/// Every diagnostic the build emits, byte-identical to `sphinx-build`'s —
-/// message text, `file:line` location, and the `[type.subtype]` suffix
-/// `show_warning_types` appends.
+/// Every diagnostic the build emits, byte-identical to `sphinx-build`'s and
+/// compared record by record — message text (a multi-line docutils message
+/// with its blank lines), `file:line` location, the `WARNING`/`ERROR`/
+/// `CRITICAL` prefix, the `[type.subtype]` suffix `show_warning_types`
+/// appends — in print order: each re-read document's read-phase stream
+/// (docutils reporter records and the directives' and domains' logger
+/// records, interleaved as they were created), then its index and std
+/// `process_doc` warnings, documents in sorted order; resolution-phase
+/// warnings after all of them.
 ///
-/// Live for the projects whose oracle warnings are toctree diagnostics;
-/// the rest are pinned in [`KNOWN_WARNING_GAPS`] to the task that will
-/// produce them.
+/// The projects whose oracle stream holds a warning of a subsystem not
+/// ported yet are pinned in [`KNOWN_WARNING_GAPS`].
 #[test]
-fn warnings_match_oracle() {
+fn warning_records_match_the_oracle() {
     let fixture = load_fixture();
     let mut divergences = Vec::new();
     let mut visited_gaps: Vec<&str> = Vec::new();
@@ -1341,7 +1334,7 @@ fn warnings_match_oracle() {
             .collect();
         let expected: Vec<String> = project
             .expect
-            .warnings
+            .warning_records
             .iter()
             .map(|warning| canon_scope8(warning))
             .collect();
@@ -1359,7 +1352,7 @@ fn warnings_match_oracle() {
                 assert_warning_gap_is_sound(&project.name, &actual, &expected);
             }
             None if !matches => divergences.push(format!(
-                "[{}] warnings\n  expected: {expected:#?}\n  actual:   {actual:#?}",
+                "[{}] warning_records\n  expected: {expected:#?}\n  actual:   {actual:#?}",
                 project.name
             )),
             None => {}
@@ -1374,7 +1367,7 @@ fn warnings_match_oracle() {
         );
     }
 
-    report(&divergences, "warnings");
+    report(&divergences, "warning_records");
 }
 
 // ---------------------------------------------------------------------------
@@ -1738,13 +1731,13 @@ fn resolved_doctrees_match_oracle() {
 /// fixture document (or project) exactly once and that the two document
 /// tables are disjoint — so the table lengths ARE the exemption counts.
 /// Update the seven constants and the doc sites together.
-const DOCUMENTED_PROJECTS: usize = 29;
-const DOCUMENTED_DOCUMENTS: usize = 84;
-const DOCUMENTED_WHOLESALE_EXEMPT_DOCUMENTS: usize = 43;
-const DOCUMENTED_STAMP_EXEMPT_DOCUMENTS: usize = 6;
-const DOCUMENTED_BYTE_EXACT_DOCUMENTS: usize = 35;
-const DOCUMENTED_WARNING_EXEMPT_PROJECTS: usize = 5;
-const DOCUMENTED_BYTE_EXACT_WARNING_PROJECTS: usize = 24;
+const DOCUMENTED_PROJECTS: usize = 32;
+const DOCUMENTED_DOCUMENTS: usize = 89;
+const DOCUMENTED_WHOLESALE_EXEMPT_DOCUMENTS: usize = 45;
+const DOCUMENTED_STAMP_EXEMPT_DOCUMENTS: usize = 8;
+const DOCUMENTED_BYTE_EXACT_DOCUMENTS: usize = 36;
+const DOCUMENTED_WARNING_EXEMPT_PROJECTS: usize = 4;
+const DOCUMENTED_BYTE_EXACT_WARNING_PROJECTS: usize = 28;
 
 #[test]
 fn exemption_arithmetic_matches_the_documented_numbers() {
@@ -3299,8 +3292,8 @@ fn py_builtins_in_a_loaded_inventory_resolve_externally_before_the_silencer() {
 // label and a doc hit, each with the winner's extended literal classes, the
 // std/py ambiguity with its ` or `-joined `[ref.any]` warning, and a dangling
 // target warning without nitpicky — compares at full strength in
-// `resolved_doctrees_match_oracle` and `warnings_match_oracle`. The tests
-// below stay as the fast, in-process feedback layer.
+// `resolved_doctrees_match_oracle` and `warning_records_match_the_oracle`.
+// The tests below stay as the fast, in-process feedback layer.
 // ---------------------------------------------------------------------------
 
 /// [PY §3.4] `resolve_any_role`: `f` → py-func with refid, `m` → py-mod —

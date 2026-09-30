@@ -246,6 +246,33 @@ pub struct ObjectRegistration {
     pub seq: u32,
 }
 
+/// One `StandardDomain._note_term` call the `glossary` directive made
+/// (`make_glossary_term`, `sphinx/domains/std/__init__.py:375-407`): the
+/// term registers as a `term` object *and* under its lowercased text, and
+/// `note_object` warns about a duplicate right there, at parse time —
+/// after the term's own inline parse, before its definition's.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct GlossaryTermRecord {
+    /// `termtext = term.astext()`, taken from the parsed term before the
+    /// index node is appended (`domains/std/__init__.py:389`).
+    pub term: String,
+    pub node_id: String,
+    /// Source-table index of the term's line (a glossary inside an
+    /// included file attributes its terms to that file). Not
+    /// `#[serde(default)]` (cache-shape rule, see
+    /// [`RegistryExport::program_options`]).
+    pub source: u16,
+    /// The line the duplicate warning prints: `location=term`, whose line
+    /// `make_glossary_term` set from the content item's **0-based** offset
+    /// (`self.content.items`, from `abs_line_offset()`), so one *less* than
+    /// the term's own 1-based line. Verified against sphinx 9.1.0: a term
+    /// on source line 8 reports `b.rst:7`, one on line 16 `second.rst:15`.
+    pub line: u32,
+    /// Where the duplicate warning belongs in the document's diagnostics
+    /// sequence — see [`PyObjectRecord::seq`].
+    pub seq: u32,
+}
+
 /// What the parse layer hands the environment besides the doctree itself:
 /// state that lives in the parser (the docutils id/name registry, Sphinx's
 /// `env.ref_context`) and dies with it, but that env collectors need.
@@ -285,6 +312,16 @@ pub struct RegistryExport {
     /// See [`Self::program_options`] — including why this is not
     /// `#[serde(default)]` either.
     pub std_objects: Vec<ObjectRegistration>,
+    /// The glossary terms the `glossary` directives registered, in the
+    /// order they ran — source order, which a `:sorted:` glossary's tree no
+    /// longer shows (`GlossarySorter` runs afterwards; probe-pinned by
+    /// `a_sorted_glossary_registers_its_terms_in_source_order`). A replay
+    /// from the finished doctree could neither recover that order nor put
+    /// a term's duplicate warning among the parse's other records. Not
+    /// `#[serde(default)]` — see [`Self::program_options`]: a stale entry
+    /// decoding with no terms would drop every glossary term from a
+    /// re-read document's environment.
+    pub glossary_terms: Vec<GlossaryTermRecord>,
     /// The py-domain object registrations (`PythonDomain.note_object`), in
     /// document order. Same rationale and cache-shape rule as
     /// [`Self::program_options`]: the program state analog here is the
@@ -382,6 +419,7 @@ mod tests {
         "program_options":[{"source":0,"program":null,"name":"-f","node_id":"a"}],
         "std_objects":[{"source":0,"objtype":"envvar","name":"P","node_id":"b","line":1,
             "seq":1}],
+        "glossary_terms":[{"term":"t","node_id":"term-t","source":0,"line":3,"seq":3}],
         "py_objects":[{"fullname":"m.f","objtype":"function","node_id":"m.f",
             "aliased":false,"source":0,"lineno":1,"seq":2}],
         "py_modules":[{"name":"m","node_id":"module-m","synopsis":"","platform":"",
@@ -439,6 +477,10 @@ mod tests {
             "std_objects",
             "py_objects",
             "py_modules",
+            // A registry from before glossary terms were recorded at parse
+            // time must MISS: a defaulted empty list would register no
+            // term of a re-read document.
+            "glossary_terms",
             // A pre-wave-5 registry (logger warnings in `log_warnings`, no
             // diagnostics stream) must MISS: a defaulted empty stream would
             // make a document-cache hit print none of the parse's
@@ -466,6 +508,7 @@ mod tests {
         must_miss(&["std_objects", "0"], "source");
         must_miss(&["py_objects", "0"], "source");
         must_miss(&["py_modules", "0"], "source");
+        must_miss(&["glossary_terms", "0"], "source");
     }
 
     /// The fields of a [`diagnostics::Diagnostic`] record, and the `seq`
@@ -492,6 +535,9 @@ mod tests {
         }
         must_miss(&["std_objects", "0"], "seq");
         must_miss(&["py_objects", "0"], "seq");
+        for field in ["term", "node_id", "line", "seq"] {
+            must_miss(&["glossary_terms", "0"], field);
+        }
     }
 
     /// The provenance fields panel fix round B added to the DOCUMENT-side

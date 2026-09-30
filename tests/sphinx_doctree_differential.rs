@@ -229,9 +229,10 @@ fn matches_sphinx_oracle_pformat() {
 /// holds — other documents' included — so this crate replays the parse's
 /// registration records in the merge phase (`env::py_domain::
 /// collect_registrations`), and the environment oracle
-/// (`tests/env_differential.rs`, project `py_dup`) is its venue. `(case,
-/// record, reason)`; strict: each record must be in the case's oracle
-/// output and absent from ours.
+/// (`tests/env_differential.rs`, projects `py_dup` and — for its place
+/// among the parse's other records, by the registration's `seq` —
+/// `reporter_interleave`) is its venue. `(case, record, reason)`; strict:
+/// each record must be in the case's oracle output and absent from ours.
 const MERGE_TIME_RECORDS: &[(&str, &str, &str)] = &[(
     "py.duplicate_functions",
     "<snippet>:3: WARNING: duplicate object description of dup, other instance in index, \

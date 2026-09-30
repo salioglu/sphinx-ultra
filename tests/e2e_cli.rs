@@ -1307,7 +1307,8 @@ fn temp_source(test_name: &str, files: &[(&str, &str)]) -> PathBuf {
 /// option 'bogus' for toctree directive` said the same thing in other
 /// words -- they are gone, so a project like this one cannot earn two
 /// warnings for one mistake. (That docutils' messages reach the warning
-/// stream, and what `-W` does with them, is pinned where they are printed.)
+/// stream, and fail `-W`, is pinned by
+/// `an_empty_note_and_an_unknown_toctree_option_fail_dash_w`.)
 #[test]
 fn directive_validation_does_not_echo_docutils_errors() {
     let src = temp_source(
@@ -1331,6 +1332,290 @@ fn directive_validation_does_not_echo_docutils_errors() {
             "{validator_text:?} restates a docutils error, stderr: {stderr}"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// The docutils reporter channel (wave 5, sub-project 1): every docutils
+// `system_message` of level >= 2 is printed as `sphinx-build` prints it —
+// `{source}:{line}: {WARNING|ERROR|CRITICAL}: {text} [docutils]` — to stderr
+// and the `-w` file alike, counts as a warning (exit 0 without `-W`, 1 with
+// it), and is printed by the build that reads its document, not by one that
+// serves the document from cache. Every expected record below is byte-for-
+// byte what `sphinx-build -b html -w FILE . OUT` (sphinx 9.1.0, docutils
+// 0.22.4, run from the source directory) writes for the same project; the
+// main document's absolute path is the only part taken from our own output.
+// ---------------------------------------------------------------------------
+
+/// A project whose one diagnostic is a missing `include` target: a docutils
+/// SEVERE, printed `CRITICAL`.
+const MISSING_INCLUDE: &str = "Index\n=====\n\n.. include:: missing.rst\n\nAfter.\n";
+
+/// The record a missing `include` target prints, after its location
+/// (`index.rst:4: ` in [`MISSING_INCLUDE`]). The message keeps the include
+/// argument as written (docutils' path is cwd-relative; with the build run
+/// from the source directory, Sphinx's bytes are these). The tree keeps
+/// the directive's literal block; the printed record does not — docutils
+/// writes the message before appending it.
+const MISSING_INCLUDE_RECORD: &str = "CRITICAL: Problems with \"include\" directive path:\n\
+     InputError: [Errno 2] No such file or directory: 'missing.rst'. [docutils]";
+
+/// The contents of a `-w` file.
+fn warning_file_contents(path: &Path) -> String {
+    std::fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("warning file {} should exist: {e}", path.display()))
+}
+
+/// The path the build printed for the document `name` at the start of the
+/// first record in `written` whose location is `name:{line}:` — the one part
+/// of an expected record that depends on where the test runs (temp dir,
+/// symlinks, separators) rather than on what Sphinx prints.
+fn printed_path<'a>(written: &'a str, name: &str, line: u32) -> &'a str {
+    let marker = format!("{name}:{line}: ");
+    let end = written
+        .find(&marker)
+        .unwrap_or_else(|| panic!("no record at {name}:{line} in {written:?}"))
+        + name.len();
+    let path = &written[..end];
+    // Taken from the file's very start, so it must be one absolute path —
+    // nothing printed ahead of the first record hides inside it.
+    assert!(
+        !path.contains('\n') && Path::new(path).is_absolute(),
+        "the first record does not start the file with the document's path: {written:?}"
+    );
+    path
+}
+
+/// `stderr` carries every one of `records`, in this order.
+fn assert_printed_in_order(stderr: &str, records: &[String]) {
+    let mut from = 0;
+    for record in records {
+        let at = stderr[from..]
+            .find(record.as_str())
+            .unwrap_or_else(|| panic!("stderr lacks {record:?} (in order), stderr: {stderr}"));
+        from += at + record.len();
+    }
+}
+
+/// A missing `include` target is docutils' SEVERE, which Sphinx prints as
+/// `CRITICAL` — and counts as a warning, so the build still succeeds (D2).
+#[test]
+fn a_missing_include_prints_critical_and_exits_zero() {
+    let src = temp_source("missing-include", &[("index.rst", MISSING_INCLUDE)]);
+    let out = out_dir("missing-include");
+    let result = build(&src, &out, &[]);
+
+    let stderr = stderr_of(&result);
+    assert!(result.status.success(), "stderr: {stderr}");
+    assert!(
+        stderr.contains(&format!("index.rst:4: {MISSING_INCLUDE_RECORD}")),
+        "the SEVERE prints as CRITICAL, stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("build succeeded, 1 warning."),
+        "a CRITICAL record is a warning, stderr: {stderr}"
+    );
+    assert!(
+        out.join("index.html").is_file(),
+        "the page is still written"
+    );
+}
+
+/// `-W` fails a build whose only record is CRITICAL — the record is a
+/// warning like any other — and the `-w` file carries it.
+#[test]
+fn dash_w_fails_a_build_whose_only_record_is_critical() {
+    let src = temp_source("critical-only", &[("index.rst", MISSING_INCLUDE)]);
+    let out = out_dir("critical-only");
+    let warning_file = out_dir("critical-only-log").join("warnings.txt");
+    let result = build(&src, &out, &["-W", "-w", warning_file.to_str().unwrap()]);
+
+    let stderr = stderr_of(&result);
+    assert_eq!(result.status.code(), Some(1), "stderr: {stderr}");
+    assert!(
+        stderr
+            .contains("build finished with problems, 1 warning (with warnings treated as errors)."),
+        "stderr: {stderr}"
+    );
+    let written = warning_file_contents(&warning_file);
+    let path = printed_path(&written, "index.rst", 4);
+    assert_eq!(written, format!("{path}:4: {MISSING_INCLUDE_RECORD}\n"));
+}
+
+/// Sphinx's `-w` file is byte-identical to its stderr; ours must carry the
+/// same records as our stderr, each once, in the same order — every level,
+/// and a multi-line record with its blank line.
+#[test]
+fn w_file_and_stderr_carry_the_same_reporter_records() {
+    let src = temp_source(
+        "reporter-levels",
+        &[(
+            "index.rst",
+            "Index\n=====\n\nPara *bad.\n\n.. note::\n\n.. unknown-thing:: arg\n\n\
+             .. include:: missing.rst\n\nEnd.\n",
+        )],
+    );
+    let out = out_dir("reporter-levels");
+    let warning_file = out_dir("reporter-levels-log").join("warnings.txt");
+    let result = build(&src, &out, &["-w", warning_file.to_str().unwrap()]);
+
+    let stderr = stderr_of(&result);
+    assert!(result.status.success(), "stderr: {stderr}");
+    let written = warning_file_contents(&warning_file);
+    let path = printed_path(&written, "index.rst", 4);
+    let records = [
+        format!("{path}:4: WARNING: Inline emphasis start-string without end-string. [docutils]"),
+        format!(
+            "{path}:6: ERROR: Content block expected for the \"note\" directive; none found. \
+             [docutils]"
+        ),
+        format!(
+            "{path}:8: ERROR: Unknown directive type \"unknown-thing\".\n\n\
+             .. unknown-thing:: arg [docutils]"
+        ),
+        format!("{path}:10: {MISSING_INCLUDE_RECORD}"),
+    ];
+    assert_eq!(
+        written,
+        records.iter().map(|r| format!("{r}\n")).collect::<String>(),
+        "the -w file holds exactly these records"
+    );
+    assert_printed_in_order(&stderr, &records);
+    assert!(
+        stderr.contains("build succeeded, 4 warnings."),
+        "stderr: {stderr}"
+    );
+}
+
+/// A document served from the cache is not read, so it prints none of its
+/// read-phase records (Sphinx does not re-read it either: its warm rebuild
+/// of this project prints nothing); re-reading a document brings its own
+/// records back, and only its own.
+#[test]
+fn a_cached_document_prints_no_read_diagnostics() {
+    let src = temp_source(
+        "cached-diagnostics",
+        &[
+            (
+                "index.rst",
+                "Index\n=====\n\n.. toctree::\n\n   other\n\nPara *bad.\n",
+            ),
+            ("other.rst", "Other\n=====\n\n.. note::\n"),
+        ],
+    );
+    let out = out_dir("cached-diagnostics");
+    let index_record =
+        "index.rst:8: WARNING: Inline emphasis start-string without end-string. [docutils]";
+    let other_record =
+        "other.rst:4: ERROR: Content block expected for the \"note\" directive; none found. \
+         [docutils]";
+
+    let cold = build(&src, &out, &["--incremental"]);
+    let stderr = stderr_of(&cold);
+    assert!(cold.status.success(), "stderr: {stderr}");
+    assert!(stderr.contains(index_record), "stderr: {stderr}");
+    assert!(stderr.contains(other_record), "stderr: {stderr}");
+    assert!(stderr.contains("build succeeded, 2 warnings."), "{stderr}");
+
+    let warm = build(&src, &out, &["--incremental"]);
+    let stderr = stderr_of(&warm);
+    assert!(warm.status.success(), "stderr: {stderr}");
+    assert!(
+        stderr.contains("Cache hits: 2"),
+        "nothing is read: {stderr}"
+    );
+    assert!(
+        !stderr.contains("[docutils]") && !stderr.contains("build succeeded,"),
+        "a cached document prints no read diagnostics, stderr: {stderr}"
+    );
+
+    std::fs::write(src.join("other.rst"), "Other\n=====\n\n.. note::\n").unwrap();
+    let reread = build(&src, &out, &["--incremental"]);
+    let stderr = stderr_of(&reread);
+    assert!(
+        stderr.contains("Cache hits: 1"),
+        "other is re-read: {stderr}"
+    );
+    assert!(stderr.contains(other_record), "stderr: {stderr}");
+    assert!(!stderr.contains(index_record), "stderr: {stderr}");
+    assert!(stderr.contains("build succeeded, 1 warning."), "{stderr}");
+}
+
+/// A docutils message raised inside an `include`d file names that file and
+/// its own line, not the including document's. The location is the crate's
+/// srcdir-relative spelling of included content (Sphinx spells it relative
+/// to the working directory, which is the same bytes when the build runs
+/// from the source directory, as the oracle build did); the message bytes
+/// are Sphinx's.
+#[test]
+fn an_include_error_inside_an_included_file_names_that_file() {
+    let src = temp_source(
+        "include-error",
+        &[
+            (
+                "index.rst",
+                "Index\n=====\n\nBefore.\n\n.. include:: part.inc\n\nAfter.\n",
+            ),
+            ("part.inc", "Part para.\n\n.. note::\n\nPart end.\n"),
+        ],
+    );
+    let out = out_dir("include-error");
+    let warning_file = out_dir("include-error-log").join("warnings.txt");
+    let result = build(&src, &out, &["-w", warning_file.to_str().unwrap()]);
+
+    let stderr = stderr_of(&result);
+    assert!(result.status.success(), "stderr: {stderr}");
+    let record =
+        "part.inc:3: ERROR: Content block expected for the \"note\" directive; none found. \
+         [docutils]";
+    assert_eq!(warning_file_contents(&warning_file), format!("{record}\n"));
+    assert!(stderr.contains(record), "stderr: {stderr}");
+}
+
+/// The two docutils errors the D1 audit took the validators' restatements
+/// of (see `directive_validation_does_not_echo_docutils_errors`) print once
+/// each, as Sphinx prints them — the toctree's with its literal block, the
+/// note's without — and fail `-W` again.
+#[test]
+fn an_empty_note_and_an_unknown_toctree_option_fail_dash_w() {
+    let src = temp_source(
+        "docutils-errors",
+        &[(
+            "index.rst",
+            "Title\n=====\n\n.. note::\n\n.. toctree::\n   :bogus:\n\n   self\n",
+        )],
+    );
+    let out = out_dir("docutils-errors");
+    let warning_file = out_dir("docutils-errors-log").join("warnings.txt");
+    let result = build(&src, &out, &["-w", warning_file.to_str().unwrap()]);
+
+    let stderr = stderr_of(&result);
+    assert!(result.status.success(), "stderr: {stderr}");
+    let written = warning_file_contents(&warning_file);
+    let path = printed_path(&written, "index.rst", 4);
+    assert_eq!(
+        written,
+        format!(
+            "{path}:4: ERROR: Content block expected for the \"note\" directive; none found. \
+             [docutils]\n\
+             {path}:6: ERROR: Error in \"toctree\" directive:\nunknown option: \"bogus\".\n\n\
+             .. toctree::\n   :bogus:\n\n   self [docutils]\n"
+        )
+    );
+
+    let strict = build(&src, &out_dir("docutils-errors-strict"), &["-W"]);
+    assert_eq!(
+        strict.status.code(),
+        Some(1),
+        "stderr: {}",
+        stderr_of(&strict)
+    );
+    assert!(
+        stderr_of(&strict).contains(
+            "build finished with problems, 2 warnings (with warnings treated as errors)."
+        ),
+        "stderr: {}",
+        stderr_of(&strict)
+    );
 }
 
 #[test]

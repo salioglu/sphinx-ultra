@@ -7,12 +7,13 @@
 //!
 //! Registrations replay from the parse layer's records
 //! ([`crate::rst::RegistryExport::py_objects`]/[`py_modules`]) inside
-//! [`crate::env::std_domain::process_doc`]'s parse-time pass: in Sphinx
-//! every one of these calls fires *while the directive runs*, so a
-//! document's py duplicate warnings interleave with its std
-//! description/term duplicates in document order — probe-verified against
-//! sphinx 9.1.0 (a doc with an envvar duplicate at line 8, a py duplicate
-//! at line 15 and a term duplicate at line 18 warns 8 → 15 → 18).
+//! [`crate::env::std_domain::replay_registrations`]: in Sphinx every one of
+//! these calls fires *while the directive runs*, so a document's py
+//! duplicate warnings interleave with its std description/term duplicates
+//! — and its reporter and logger records — in creation order, which each
+//! record's `seq` carries — probe-verified against sphinx 9.1.0 (a doc
+//! with an envvar duplicate at line 8, a py duplicate at line 15 and a
+//! term duplicate at line 18 warns 8 → 15 → 18).
 //! `PythonDomain` defines **no** `process_doc` hook at all, so the `py`
 //! slot of `_DomainsContainer._process_doc` (dispatch order `c, changeset,
 //! citation, cpp, index, js, math, py, rst, std`) contributes nothing of
@@ -24,7 +25,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::env::std_domain::{source_path_of, DocumentIds, DocumentSource};
+use crate::env::std_domain::{source_path_of, DocumentSource};
 use crate::env::BuildEnvironment;
 use crate::error::{BuildWarning, WarningType};
 
@@ -920,11 +921,11 @@ pub fn builtin_resolver(reftype: &str, target: &str) -> bool {
 /// the parser's ref_context, and a `:no-typesetting:` object registers
 /// itself and then vanishes from the tree).
 ///
-/// Duplicate warnings join `out` keyed by the registered node's position
-/// in the doctree — the same document-order merge key
-/// [`crate::env::std_domain::process_doc`] uses for its glossary and
-/// description passes, because in Sphinx all three warning streams are
-/// parse-time and interleave in document order (see the module comment).
+/// Duplicate warnings join `warnings` keyed by the record's `seq` — its
+/// place in the document's diagnostics stream, the merge key
+/// [`crate::env::std_domain::replay_registrations`] uses for the glossary
+/// and description replays too, because in Sphinx all three warning
+/// streams are parse-time (see the module comment).
 ///
 /// `note_module` runs before `note_object` for the whole record stream
 /// where Sphinx alternates per directive; the two registries are disjoint
@@ -932,8 +933,7 @@ pub fn builtin_resolver(reftype: &str, target: &str) -> bool {
 pub(crate) fn collect_registrations(
     env: &mut BuildEnvironment,
     doc: &DocumentSource<'_>,
-    ids: &DocumentIds<'_>,
-    warnings: &mut Vec<(usize, BuildWarning)>,
+    warnings: &mut Vec<(u32, BuildWarning)>,
 ) {
     for record in &doc.registry.py_modules {
         env.py.note_module(
@@ -959,12 +959,8 @@ pub(crate) fn collect_registrations(
         ) else {
             continue;
         };
-        let order = ids
-            .get(&record.node_id)
-            .map(|(order, _)| order)
-            .unwrap_or(usize::MAX);
         warnings.push((
-            order,
+            record.seq,
             // [PY §5]: plain `logger.warning` with no type/subtype — no
             // `[category]` suffix, and no objtype in the text (unlike the
             // std domain's `duplicate {objtype} description`).
@@ -1829,7 +1825,7 @@ mod tests {
         assert!(py.modules[py.modules_index["mod"]].1.deprecated);
     }
 
-    // ---- the replay through std_domain::process_doc --------------------
+    // ---- the replay through std_domain::replay_registrations -----------
 
     fn parse(source: &str, docname: &str) -> crate::rst::ParseOutput {
         parse_rst_full(
@@ -1848,8 +1844,9 @@ mod tests {
     }
 
     /// Fold sources into a fresh environment through the real per-document
-    /// orchestration ([`std_domain::process_doc`], which replays the py
-    /// records) and return it with the warnings.
+    /// orchestration ([`std_domain::replay_registrations`], which replays
+    /// the py records, then [`std_domain::process_doc`]) and return it with
+    /// the warnings.
     fn read(sources: &[(&str, &str)]) -> (BuildEnvironment, Vec<BuildWarning>) {
         let mut env = BuildEnvironment::default();
         let mut warnings = Vec::new();
@@ -1857,17 +1854,18 @@ mod tests {
         for (docname, source) in sources {
             let parsed = parse(source, docname);
             let path = PathBuf::from(format!("/src/{docname}.rst"));
-            std_domain::process_doc(
-                &mut env,
-                &DocumentSource {
-                    docname,
-                    doctree: &parsed.doctree,
-                    registry: &parsed.registry,
-                    path: &path,
-                },
-                &doc2path,
-                &mut warnings,
+            let doc = DocumentSource {
+                docname,
+                doctree: &parsed.doctree,
+                registry: &parsed.registry,
+                path: &path,
+            };
+            warnings.extend(
+                std_domain::replay_registrations(&mut env, &doc)
+                    .into_iter()
+                    .map(|(_, warning)| warning),
             );
+            std_domain::process_doc(&mut env, &doc, &doc2path, &mut warnings);
         }
         (env, warnings)
     }

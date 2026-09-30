@@ -214,8 +214,16 @@ fn wants_sphinx_build_mode(args: &[String]) -> bool {
 
 /// Initialize logging with a default filter that a pre-set RUST_LOG overrides
 /// (ROADMAP M1: never clobber the user's RUST_LOG).
+///
+/// Multi-line messages print verbatim, continuation lines unindented: a
+/// warning record is multi-line whenever docutils' message carries its
+/// literal block or an include chain, and `sphinx-build` writes it to
+/// stderr exactly as to the `-w` file (the two are byte-identical there).
+/// env_logger's default would indent every continuation line by four
+/// spaces, so stderr would no longer carry the record the `-w` file does.
 fn init_logging(default_level: &str) {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(default_level))
+        .format_indent(None)
         .init();
 }
 

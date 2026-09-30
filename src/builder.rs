@@ -1047,23 +1047,33 @@ impl SphinxBuilder {
                 env.reread_always.insert(docname.to_string());
             }
 
-            // The document's toctree diagnostics, produced when its entries
-            // were resolved. Sphinx logs them during the read phase, which
-            // walks documents in this same sorted order.
-            self.report_parse_warnings(&result.document, &result.doctree);
+            // The registrations Sphinx makes from inside the directives
+            // while it parses (glossary terms, std and py object
+            // descriptions), replayed from the parse records: their
+            // duplicate warnings belong to the parse stream below.
+            let registrations = env_std::replay_registrations(
+                env,
+                &env_std::DocumentSource {
+                    docname,
+                    doctree: &result.doctree,
+                    registry: &result.document.registry,
+                    path: &result.document.source_path,
+                },
+            );
 
-            // The domains' read-phase hooks, dispatched in the order
-            // `_DomainsContainer._process_doc` walks them — `c, changeset,
-            // citation, cpp, index, js, math, py, rst, std`, so `index`
-            // before `std` with `py` in between — and after the parse
-            // diagnostics above, which Sphinx logs while reading.
-            // `PythonDomain` defines no `process_doc` hook, so its slot in
-            // that walk is a no-op: the py registrations (and their
-            // duplicate warnings, which are parse-time in Sphinx and
-            // interleave with std's in document order) replay inside
-            // `env_std::process_doc`'s parse-time pass below. Warning
-            // locations come from node spans and the doctree's source
-            // table, not the document text.
+            // Everything Sphinx prints while it reads this document, in
+            // the order it prints it: the parse stream first (see
+            // [`Self::report_read_diagnostics`]), then the domains'
+            // `process_doc` hooks, which the `SphinxDomains` read transform
+            // (priority 850) runs after the document is parsed —
+            // dispatched in the order `_DomainsContainer._process_doc`
+            // walks them, `c, changeset, citation, cpp, index, js, math,
+            // py, rst, std`, so `index` before `std`. `PythonDomain` defines no `process_doc` hook,
+            // so its slot in that walk is a no-op (its registrations were
+            // replayed above). Warning locations come from node spans and
+            // the doctree's source table, not the document text.
+            self.report_read_diagnostics(&result.document, &result.doctree, registrations);
+
             let mut index_warnings = Vec::new();
             env_genindex::process_doc(
                 env,
@@ -1118,26 +1128,42 @@ impl SphinxBuilder {
         }
     }
 
-    /// Surface one document's parse-time logger diagnostics —
-    /// `TocTree.parse_content`'s warnings and the `logger.warning` calls
-    /// other directives make — in the order the parse made them (`seq`).
-    /// They are carried on the parse records rather than raised as they
-    /// happen, so that a cache hit — which skips the parse entirely — still
-    /// reproduces them.
+    /// Print one re-read document's parse stream, in the order Sphinx's
+    /// read prints it: every record of [`RegistryExport::diagnostics`] —
+    /// the docutils reporter messages (`[docutils]`, WARNING/ERROR/
+    /// CRITICAL) and the directives' and domains' logger warnings — merged
+    /// with the parse-time registrations' duplicate warnings
+    /// (`registrations`, from [`env_std::replay_registrations`]), all by
+    /// the `seq` each took when it was created. Sphinx's read is serial
+    /// and buffers its warnings (`pending_warnings`,
+    /// `sphinx/builders/__init__.py:403-409`), flushing them in emission
+    /// order, documents in sorted order (`:512`) — which is this loop's
+    /// order and each document's creation order.
     ///
-    /// The reporter-channel records (docutils `system_message`s) share the
-    /// stream but are not printed yet: that is the next step of the
-    /// reporter channel's rollout.
+    /// Only documents read by this build get here: a document served from
+    /// cache was not parsed, and prints nothing — `sphinx-build` does not
+    /// re-read it either. The records ride the parse output all the same,
+    /// cached with the document, so the environment the cache feeds is the
+    /// one the read produced.
     ///
-    /// `doctree` supplies the source table: a warning raised inside an
-    /// included file — a toctree's `location=toctree` or a log warning's
-    /// `location=node` — renders that file's path, not the document's.
-    fn report_parse_warnings(&self, document: &Document, doctree: &Doctree) {
-        let mut ordered: Vec<BuildWarning> = Vec::new();
-        for diagnostic in &document.registry.diagnostics {
-            if diagnostic.channel != DiagnosticChannel::Logger {
-                continue;
-            }
+    /// Every record is a warning — counted, printed to the `-w` file,
+    /// failing `-W` — whatever its level; none is a `BuildErrorReport`
+    /// (a docutils ERROR or SEVERE does not fail `sphinx-build` either).
+    ///
+    /// `doctree` supplies the source table: a record raised inside an
+    /// included file renders that file's path (its srcdir-relative
+    /// spelling), not the document's; a logger record whose Sphinx
+    /// `location=` is a path tuple gets `doc2path`'s doubled suffix
+    /// ([`Diagnostic::rendered_path`]).
+    ///
+    /// [`RegistryExport::diagnostics`]: crate::rst::RegistryExport::diagnostics
+    fn report_read_diagnostics(
+        &self,
+        document: &Document,
+        doctree: &Doctree,
+        registrations: Vec<(u32, BuildWarning)>,
+    ) {
+        let stream = document.registry.diagnostics.iter().map(|diagnostic| {
             let source_path = doctree
                 .sources
                 .get(diagnostic.source as usize)
@@ -1147,10 +1173,13 @@ impl SphinxBuilder {
             if names_a_missing_document(diagnostic) {
                 warning.warning_type = WarningType::MissingToctreeRef;
             }
-            ordered.push(warning);
-        }
+            (diagnostic.seq, warning)
+        });
+        let mut ordered: Vec<(u32, BuildWarning)> = stream.chain(registrations).collect();
+        // One counter numbers both, so every `seq` is distinct.
+        ordered.sort_by_key(|(seq, _)| *seq);
         let mut warnings = self.warnings.lock().unwrap();
-        warnings.extend(ordered);
+        warnings.extend(ordered.into_iter().map(|(_, warning)| warning));
     }
 
     /// Resolve phase: whole-project state that only exists once every

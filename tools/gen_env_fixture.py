@@ -58,6 +58,10 @@ Harness notes:
     `app.build()` + `env.collect_relations()` + `IndexEntries(...).create_index()`
     have all run, in that fixed order -- the full, non-duplicated warning
     text a real build-plus-relations-plus-genindex pass would produce.
+    `warning_records` (wave 5) is the same stream one entry per RECORD --
+    each write of Sphinx's warning handler, minus its line terminator --
+    so a multi-line docutils message keeps its boundaries and blank lines;
+    the generator asserts that splitting it reproduces `warnings`.
   - confoverrides always include `{'smartquotes': False}` (Sphinx's default
     smartquotes rewriting is irrelevant noise for this corpus); per-project
     extras (numfig, numfig_secnum_depth, numfig_format, ...) come from each
@@ -990,10 +994,11 @@ Ref :py:func:`missing_fn` and :py:class:`int` and :py:class:`Missing`.
         # `sub/nested`, `shared/frag2.rst` (missing -> SEVERE) when
         # `shared/frag` is parsed standalone.
         #
-        # The project's `warnings` are gap-tabled in the consumer: sphinx
-        # ALSO logs every reporter message to the warning stream with a
-        # `[docutils]` suffix, while this crate keeps reporter messages
-        # in-tree only (pre-existing project-wide divergence, T12 ledger).
+        # Every one of the project's warning records is a docutils reporter
+        # message (`[docutils]`), printed at creation and — under
+        # `keep_warnings` — kept in the resolved doctrees too, so the same
+        # bytes are compared twice: as records and as `system_message`
+        # nodes (the tree keeps the DirectiveError literal the record lacks).
         "name": "inc_basic",
         "conf": {"keep_warnings": True},
         "files": {
@@ -1433,6 +1438,141 @@ Option: :option:`git\x1fadd -x` and :option:`git-add -x`.
 """,
         },
     },
+    # -----------------------------------------------------------------------
+    # Wave 5 (sub-project 1, Task 4): the diagnostics stream, compared per
+    # RECORD through `warning_records`. Each project below sets
+    # `keep_warnings` so the reporter messages also stay in the resolved
+    # doctrees, where both sides compare them node for node.
+    # -----------------------------------------------------------------------
+    {
+        # One document (`second`) whose read prints every parse-time
+        # channel, interleaved in creation order: docutils reporter records
+        # (inline WARNINGs, a DirectiveError ERROR printed without its
+        # literal, an option-parse ERROR printed WITH its literal and so
+        # spanning a blank line), a toctree logger record, and the
+        # registration duplicates Sphinx logs from inside the directives at
+        # parse time (`note_object`: py function, std envvar, glossary term
+        # — the term between its own inline parse and its definition's).
+        # After the whole parse stream: `IndexDomain.process_doc`'s invalid
+        # entry, then `StandardDomain.process_doc`'s duplicate label — the
+        # SphinxDomains order. Documents are read sorted, so `first` (the
+        # first object instances) and `index` (the first `shared` label;
+        # its resolved doctree already diverges on its toctree) are read
+        # before `second`. The label is a section's (`PropagateTargets`
+        # shape) rather than a rubric's `:name:`: docutils leaves a rubric
+        # without a line, which Sphinx prints as `x.rst:: WARNING: duplicate
+        # label ...` — a separate node-location quirk, not this axis. The
+        # section title differs from the label so the two names do not
+        # collide (a duplicate implicit name would move the toc anchor).
+        # Probe: docs/superpowers/research/probes/probe-reporter-oracle/p6.
+        "name": "reporter_interleave",
+        "conf": {"keep_warnings": True},
+        "files": {
+            "index": """\
+Index
+=====
+
+.. toctree::
+
+   first
+   second
+
+.. _shared:
+
+Shared section
+--------------
+""",
+            "first": """\
+First
+=====
+
+.. py:function:: dup()
+
+.. envvar:: DUPVAR
+
+.. glossary::
+
+   gterm
+      First.
+""",
+            "second": """\
+Second
+======
+
+Para *bad one.
+
+.. py:function:: dup()
+
+.. toctree::
+
+   missing-doc
+
+.. envvar:: DUPVAR
+
+.. glossary::
+
+   gterm
+      Second *bad in the definition.
+
+.. note::
+
+.. note::
+   :bogus: x
+
+   Body.
+
+.. index:: single:
+
+.. _shared:
+
+Shared section
+--------------
+
+Para *bad two.
+""",
+        },
+    },
+    {
+        # A missing `include` target: docutils raises a SEVERE
+        # DirectiveError, which Sphinx prints as `CRITICAL` (without the
+        # literal the tree message carries) and counts as a warning.
+        "name": "inc_missing",
+        "conf": {"keep_warnings": True},
+        "files": {
+            "index": """\
+Index
+=====
+
+.. include:: missing.rst
+
+After.
+""",
+        },
+    },
+    {
+        # Reporter records raised INSIDE included files, two levels deep,
+        # between records of the files around them: each record names the
+        # file (and line) it was raised in, and the stream stays in
+        # creation order across the three sources.
+        "name": "inc_nested_error",
+        "conf": {"keep_warnings": True},
+        "files": {
+            "index": """\
+Index
+=====
+
+Before *bad.
+
+.. include:: outer.inc
+
+After *bad.
+""",
+        },
+        "data_files": {
+            "outer.inc": "Outer para.\n\n.. include:: inner.inc\n\nOuter *bad.\n",
+            "inner.inc": "Inner para.\n\n.. note::\n\nInner *bad.\n",
+        },
+    },
 ]
 
 
@@ -1639,6 +1779,25 @@ def dump_genindex(genindex) -> list:
     return out
 
 
+class RecordingStream(io.StringIO):
+    """The warning stream, remembering each `write` as one record.
+
+    Sphinx's warning handler writes one formatted record per call
+    (`logging.StreamHandler.emit`: `stream.write(msg + terminator)`, through
+    `SafeEncodingWriter.write`), so the writes ARE the records — multi-line
+    ones (a reporter message carrying its literal block) included, with
+    their blank lines, which the line-split `warnings` key cannot show.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.records = []
+
+    def write(self, s):
+        self.records.append(s)
+        return super().write(s)
+
+
 def build_project(entry: dict) -> dict:
     base = Path(tempfile.mkdtemp(prefix="env_oracle_srcdir_")).resolve() / "src"
     base.mkdir(parents=True)
@@ -1652,12 +1811,13 @@ def build_project(entry: dict) -> dict:
     def capture_write_doc(docname, doctree):
         resolved_raw[docname] = doctree.pformat()
 
+    warning_stream = RecordingStream()
     with docutils_namespace(), patch_docutils(str(base)):
         app = SphinxTestApp(
             buildername="dummy",
             srcdir=base,
             status=io.StringIO(),
-            warning=io.StringIO(),
+            warning=warning_stream,
             confoverrides=dict(confoverrides),
         )
         try:
@@ -1697,6 +1857,20 @@ def build_project(entry: dict) -> dict:
 
             warnings_text = normalize(app.warning.getvalue(), base)
             warnings = [line for line in warnings_text.splitlines() if line.strip()]
+
+            # One entry per record, exactly as printed minus the handler's
+            # line terminator. The line-split `warnings` above must be
+            # these records split the same way, or a write was not a record.
+            warning_records = []
+            for record in warning_stream.records:
+                assert record.endswith("\n"), f"unterminated record: {record!r}"
+                warning_records.append(normalize(record[:-1], base))
+            assert warnings == [
+                line
+                for record in warning_records
+                for line in record.splitlines()
+                if line.strip()
+            ], "warning_records do not split into warnings"
 
             tocs_pformat = {
                 docname: normalize(toc.pformat(), base)
@@ -1742,6 +1916,7 @@ def build_project(entry: dict) -> dict:
                 "included": dump_included(env),
                 "resolved_pformat": resolved_pformat,
                 "warnings": warnings,
+                "warning_records": warning_records,
             }
         finally:
             app.cleanup()
