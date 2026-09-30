@@ -2,7 +2,7 @@
 //! (`sphinx/transforms/__init__.py`). Today: MoveModuleTargets,
 //! ReorderConsecutiveTargetAndIndexNodes, SortIds and FilterSystemMessages.
 
-use super::TransformCtx;
+use super::{for_each_node_mut, TransformCtx};
 use crate::doctree::{kinds, AttrValue, Node};
 
 /// `FilterSystemMessages` (`sphinx/transforms/__init__.py:337-347`,
@@ -37,16 +37,14 @@ pub(super) fn filter_system_messages(ctx: &mut TransformCtx) {
 /// going first. Draining the slot section by section is the same thing:
 /// only the removal at index 2 moves a sibling into it.
 pub(super) fn move_module_targets(ctx: &mut TransformCtx) {
-    let mut stack = vec![&mut ctx.tree.root];
-    while let Some(node) = stack.pop() {
+    for_each_node_mut(&mut ctx.tree.root, |node| {
         if node.kind == kinds::SECTION {
             while node.children.get(2).is_some_and(is_module_target) {
                 let target = node.children.remove(2);
                 node.attrs.ids.splice(0..0, target.attrs.ids);
             }
         }
-        stack.extend(node.children.iter_mut());
-    }
+    });
 }
 
 /// `node['ids'] and 'ismod' in node` for a `target` (`:164-167`).
@@ -70,8 +68,7 @@ fn is_module_target(node: &Node) -> bool {
 /// iterator is not, having no target below it to miss. Visiting each
 /// child slot of each parent left to right is therefore the same.
 pub(super) fn reorder_consecutive_target_and_index_nodes(ctx: &mut TransformCtx) {
-    let mut stack = vec![&mut ctx.tree.root];
-    while let Some(node) = stack.pop() {
+    for_each_node_mut(&mut ctx.tree.root, |node| {
         let children = &mut node.children;
         for start in 0..children.len() {
             if children[start].kind != kinds::TARGET {
@@ -86,8 +83,7 @@ pub(super) fn reorder_consecutive_target_and_index_nodes(ctx: &mut TransformCtx)
                 children[start..end].sort_by_key(|child| child.kind != "index");
             }
         }
-        stack.extend(children.iter_mut());
-    }
+    });
 }
 
 /// `SortIds` (`sphinx/transforms/__init__.py:217-225`, priority 261, right
@@ -97,14 +93,12 @@ pub(super) fn reorder_consecutive_target_and_index_nodes(ctx: &mut TransformCtx)
 /// titled "Identity" given a label gets `ids="lbl identity"`, and its toc
 /// anchor and HTML id become the label's. `names` are left alone.
 pub(super) fn sort_ids(ctx: &mut TransformCtx) {
-    let mut stack = vec![&mut ctx.tree.root];
-    while let Some(node) = stack.pop() {
+    for_each_node_mut(&mut ctx.tree.root, |node| {
         let ids = &mut node.attrs.ids;
         if node.kind == kinds::SECTION && ids.len() > 1 && ids[0].starts_with("id") {
             ids.rotate_left(1);
         }
-        stack.extend(node.children.iter_mut());
-    }
+    });
 }
 
 fn remove_messages_below(node: &mut Node, filterlevel: i64) {
@@ -243,6 +237,7 @@ mod tests {
             &mut tree,
             IdRegistry::new(),
             0,
+            None,
             "index",
             &keeping_warnings(),
             &mut records,

@@ -91,6 +91,17 @@ pub struct Attrs {
     pub extra: Vec<(&'static str, AttrValue)>,
 }
 
+/// The [`Attrs::extra`] key under which a node keeps docutils'
+/// `Node.rawsource` — the source text it was parsed from — where a read
+/// transform reads it back: a `substitution_reference` (the reference as
+/// written) and a `substitution_definition` (its explicit-markup block),
+/// from which Substitutions builds its `problematic` and a circular
+/// definition's literal (`docutils/transforms/references.py:702-704,
+/// 735-738`). docutils keeps `rawsource` beside `Element.attributes`, not
+/// in them, so `attlist()` never prints it, and neither does
+/// [`Node::pformat`].
+pub const RAWSOURCE: &str = "rawsource";
+
 /// One doctree node. Element nodes have `text == None`; text leaves have
 /// `kind == kinds::TEXT`, `Some(text)`, and no children or attributes.
 #[derive(Debug, Clone, PartialEq, Serialize)]

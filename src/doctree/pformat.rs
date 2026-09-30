@@ -9,6 +9,8 @@
 //!   `serial_escape` (`\` -> `\\`, then ` ` -> `\ `) and join with a space.
 //! - Text nodes: each line of the text on its own line at child indent.
 //! - Every emitted line ends with `\n`.
+//! - [`super::RAWSOURCE`] never prints: docutils keeps `rawsource` outside
+//!   the attribute dict.
 
 use super::{kinds, AttrValue, Node};
 
@@ -54,6 +56,10 @@ fn write_node(node: &Node, depth: usize, out: &mut String) {
     push_list_attr(&mut attrs, "ids", &node.attrs.ids);
     push_list_attr(&mut attrs, "names", &node.attrs.names);
     for (key, value) in &node.attrs.extra {
+        // docutils' `rawsource` is no attribute (`super::RAWSOURCE`).
+        if *key == super::RAWSOURCE {
+            continue;
+        }
         let rendered = match value {
             AttrValue::Int(i) => i.to_string(),
             AttrValue::Str(s) => s.clone(),
@@ -267,6 +273,23 @@ mod tests {
         assert_eq!(
             p.pformat(),
             "<paragraph>\n    x y\n    t\n    s\n    k\n    j\n"
+        );
+    }
+
+    /// docutils keeps a node's `rawsource` beside its attribute dict, not in
+    /// it, so `attlist()` never prints it: nor does pformat print the
+    /// [`crate::doctree::RAWSOURCE`] a substitution node keeps it under.
+    // oracle: substitution_reference('|a\\ b|', 'ab', refname='ab').pformat()
+    //   == '<substitution_reference refname="ab">\n    ab\n'
+    #[test]
+    fn pformat_never_prints_the_rawsource() {
+        let mut subref = Node::elem(kinds::SUBSTITUTION_REFERENCE, Span::ZERO);
+        subref.set("refname", AttrValue::Str("ab".into()));
+        subref.set(crate::doctree::RAWSOURCE, AttrValue::Str("|a\\ b|".into()));
+        subref.children.push(Node::text_node("ab", Span::ZERO));
+        assert_eq!(
+            subref.pformat(),
+            "<substitution_reference refname=\"ab\">\n    ab\n"
         );
     }
 

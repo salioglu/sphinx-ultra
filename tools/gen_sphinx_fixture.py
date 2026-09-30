@@ -100,7 +100,8 @@ re-admits the constructs of the transform it lands, in a `tx_*` family of its
 own: `tx_filter` (FilterSystemMessages -- INFO stripping) first, then
 `tx_targets` (MoveModuleTargets, ReorderConsecutiveTargetAndIndexNodes,
 PropagateTargets, SortIds -- which also re-admitted the propagation-visible
-`py.module_basic`/`py.duplicate_modules` from EXCLUDED). Later tasks
+`py.module_basic`/`py.duplicate_modules` from EXCLUDED), then `tx_subst`
+(DefaultSubstitutions, docutils Substitutions). Later tasks
 extend this corpus with Sphinx-specific directives (toctree, code-block,
 versionadded/versionchanged/deprecated, seealso, only, highlight, math, index,
 rst-class, ...) once the Rust side grows the sphinx registry + env surface.
@@ -162,10 +163,25 @@ addition here fails loudly there instead of silently parsing under defaults.
 
 WAVE-4.5 EXCLUSIONS (py-domain corpus; every entry in EXCLUDED below carries
 its reason and the assert keeps CASES disjoint from it — see that dict).
+
+SOURCE_DATE_EPOCH PIN (M2 wave 5, Task 8): `|today|` with an empty `today`
+is Sphinx's `format_date(today_fmt or '%b %d, %Y', language=...)`
+(`sphinx/transforms/__init__.py:130-135`), which reads the build date from
+$SOURCE_DATE_EPOCH when it is set and from the clock otherwise
+(`sphinx/util/i18n.py:271-280`). This module sets
+SOURCE_DATE_EPOCH=1234567890 (2009-02-13 23:31:30 UTC) for the whole run, at
+import, so every case that substitutes `|today|` (tx_subst.today_fmt,
+tx_subst.today_default_format) records the same text on every regeneration.
+The pin is recorded in the fixture header (`settings.source_date_epoch`), and
+the Rust consumer hands the same instant to the transform pass
+(`TransformConfig.build_date`). No other recorded output reads the variable:
+the pin was verified inert for every case that predates it (extend-only
+regeneration, byte-identical).
 """
 
 import io
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -189,6 +205,10 @@ assert sphinx.__version__ == EXPECTED_SPHINX, (
 from sphinx.util.console import nocolor  # noqa: E402
 
 nocolor()  # warning text must not carry environment-dependent ANSI escapes
+
+# The build date `|today|` formats (module docstring, "SOURCE_DATE_EPOCH PIN").
+SOURCE_DATE_EPOCH = 1234567890
+os.environ["SOURCE_DATE_EPOCH"] = str(SOURCE_DATE_EPOCH)
 
 from sphinx.parsers import RSTParser  # noqa: E402
 from sphinx.testing.util import SphinxTestApp  # noqa: E402
@@ -322,6 +342,9 @@ SUPPORTED_KINDS = {
     "literal_strong",
     "literal_emphasis",
     "pending_xref_condition",
+    # M2 wave 5, Task 8: the definitions Substitutions leaves in the tree
+    # (`Invisible`; the writers skip them).
+    "substitution_definition",
 }
 
 CASES = [
@@ -1021,6 +1044,49 @@ CASES = [
     # duplicate_modules_take_the_module_0_serial).
     ('py', 'module_basic', '.. py:module:: mymod\n   :synopsis: A module.\n   :platform: Unix\n\n.. py:function:: f(x)\n\n   Body.\n'),
     ('py', 'duplicate_modules', '.. py:module:: dupmod\n\n.. py:module:: dupmod\n'),
+    # ===== tx_subst (M2 wave 5, sub-project 1, Task 8) =====
+    # Sphinx's DefaultSubstitutions (210, `sphinx/transforms/__init__.py:
+    # 111-150`) and docutils' Substitutions (220, `transforms/references.py:
+    # 642-764`). Formerly unreachable: SUPPORTED_KINDS lacked the
+    # `substitution_definition` every definition leaves in the tree.
+    ('tx_subst', 'replace', '.. |name| replace:: replacement *text*\n\nSee |name| here.\n'),
+    ('tx_subst', 'unicode', '.. |copy| unicode:: 0xA9 .. copyright sign\n\n|copy| 2026\n'),
+    # The reference comes first, so the copy of `a` still holds `|b|`: the
+    # nested reference joins the worklist and is expanded after the others.
+    ('tx_subst', 'nested', 'x |a| y\n\n.. |a| replace:: A |b| A\n.. |b| replace:: B\n'),
+    # Both error texts: the nested copy of `|b|` is "referenced" (located at
+    # the paragraph its chain of `ref-origin`s starts from), then each
+    # definition is replaced by a "detected" message holding its source.
+    ('tx_subst', 'circular', 'See |a| here.\n\n.. |a| replace:: x |b|\n.. |b| replace:: y |a|\n'),
+    ('tx_subst', 'undefined', 'See |undef| here.\n'),
+    ('tx_subst', 'case_insensitive_fallback', '.. |Name| replace:: value\n\n|name| and |NAME| and |Name|\n'),
+    ('tx_subst', 'default_version_release', '|version| and |release|\n', {'version': '1.2', 'release': '1.2.3'}),
+    ('tx_subst', 'default_today_fixed', '|today|\n', {'today': 'Sept 30'}),
+    # SOURCE_DATE_EPOCH is pinned (module docstring).
+    ('tx_subst', 'today_fmt', '|today|\n', {'today_fmt': '%Y'}),
+    ('tx_subst', 'doc_definition_wins', '.. |version| replace:: mine\n\n|version|\n'),
+    # U+00A0 is Python whitespace: both spellings name the definition "a b".
+    ('tx_subst', 'name_nbsp', '.. |a b| replace:: nb\n\n|a b| and |a b|\n'),
+    ('tx_subst', 'translation_progress', '|translation progress|\n'),
+    # `b` grows to 11 * 1000 + 10 characters as its own references expand,
+    # past docutils' 10000 `line_length_limit`; the error has no node, so it
+    # is located one past the document's last line (line 5 of 4).
+    ('tx_subst', 'expansion_exceeds_line_length_limit', '.. |a| replace:: ' + 'x' * 1000 + '\n.. |b| replace:: ' + ' '.join(['|a|'] * 11) + '\n\nSee |b| here.\n'),
+    # The edges of the two transforms (new inputs):
+    # `:trim:` strips the Python whitespace of the Text on either side.
+    ('tx_subst', 'trim', 'a |x| b\n\n.. |x| unicode:: U+2014\n   :trim:\n'),
+    # The definition's own reference fails first; `|a|` then deep-copies
+    # the `problematic`, ids and all (`ids="id2"` twice).
+    ('tx_subst', 'undefined_inside_definition_is_copied', '.. |a| replace:: x |nope|\n\n|a|\n'),
+    ('tx_subst', 'circular_definitions_first', '.. |a| replace:: x |b|\n.. |b| replace:: y |a|\n\nSee |a| here.\n'),
+    # DefaultSubstitutions walks the definitions too.
+    ('tx_subst', 'default_inside_definition', '.. |v| replace:: v |version|\n\nx |v|\n', {'version': '1.2'}),
+    # DefaultSubstitutions matches names exactly (`|version|` is not defined
+    # here, so it takes the empty default); Substitutions falls back to the
+    # case-insensitive name (`|VERSION|` finds `Version`).
+    ('tx_subst', 'default_names_are_exact', '.. |Version| replace:: mine\n\n|version| |VERSION|\n'),
+    # `today_fmt` unset: `'%b %d, %Y'` of the pinned date.
+    ('tx_subst', 'today_default_format', '|today|\n'),
 
 ]
 
@@ -1195,6 +1261,7 @@ def check_effective_settings(app: SphinxTestApp, doctree) -> dict:
     effective["keep_warnings"] = True
     effective["extensions"] = []
     effective["docname"] = "index"
+    effective["source_date_epoch"] = SOURCE_DATE_EPOCH
     return effective
 
 
@@ -1237,6 +1304,7 @@ def main() -> int:
         "pyconf": 30,
         "tx_filter": 1,
         "tx_targets": 16,
+        "tx_subst": 19,
     }
     counts: dict = {}
     for case in CASES:

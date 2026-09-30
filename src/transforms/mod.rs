@@ -28,6 +28,7 @@
 //! from [`TransformCtx::ids`], and records what it prints through
 //! [`TransformCtx::reporter`].
 
+mod dates;
 pub(crate) mod misc;
 pub(crate) mod references;
 
@@ -35,7 +36,7 @@ use std::collections::BTreeMap;
 
 use crate::config::{BuildConfig, SmartquotesExcludes};
 use crate::doctree::ids::{fully_normalize_name, IdRegistry};
-use crate::doctree::{kinds, AttrValue, Doctree, Node};
+use crate::doctree::{kinds, messages, AttrValue, Doctree, Node};
 use crate::rst::diagnostics::{Diagnostic, Reporter};
 use crate::rst::ParseOptions;
 
@@ -65,6 +66,25 @@ pub struct TransformConfig {
     /// `today_fmt` (`config.py:228-229`); `None` means `'%b %d, %Y'`
     /// (`transforms/__init__.py:134`).
     pub today_fmt: Option<String>,
+    /// The date `|today|` formats when `today` is empty.
+    pub build_date: BuildDate,
+}
+
+/// Where `|today|` takes the build date from when `today` is empty — the
+/// `date=None` branch of Sphinx's `format_date` (`sphinx/util/i18n.py:
+/// 270-280`), which DefaultSubstitutions calls with no date
+/// (`sphinx/transforms/__init__.py:135`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum BuildDate {
+    /// What a build uses, and what Sphinx does: `$SOURCE_DATE_EPOCH` when it
+    /// is set, else the current time, read when a document substitutes
+    /// `|today|`. Always UTC — Sphinx's `local_time` stays `False` here.
+    #[default]
+    Environment,
+    /// A fixed instant, in whole seconds since the Unix epoch (UTC): the
+    /// `SOURCE_DATE_EPOCH` a test or an oracle harness pins, without the
+    /// process environment.
+    Epoch(i64),
 }
 
 impl Default for TransformConfig {
@@ -80,6 +100,7 @@ impl Default for TransformConfig {
             release: String::new(),
             today: String::new(),
             today_fmt: None,
+            build_date: BuildDate::Environment,
         }
     }
 }
@@ -100,6 +121,7 @@ impl From<&BuildConfig> for TransformConfig {
             release: config.release.clone().unwrap_or_default(),
             today: config.today.clone(),
             today_fmt: config.today_fmt.clone(),
+            build_date: BuildDate::Environment,
         }
     }
 }
@@ -119,6 +141,19 @@ pub fn node_at<'n>(root: &'n Node, path: &[usize]) -> Option<&'n Node> {
 pub(crate) fn node_at_mut<'n>(root: &'n mut Node, path: &[usize]) -> Option<&'n mut Node> {
     path.iter()
         .try_fold(root, |node, &index| node.children.get_mut(index))
+}
+
+/// Hand every node of the tree under `root`, `root` included, to `visit` —
+/// a node before its children, which are visited as `visit` left them —
+/// by an explicit stack, so no depth of nesting overflows the call stack.
+/// Siblings are visited last first: for the transforms that only rewrite
+/// each node in place (or its children), order is no matter.
+pub(crate) fn for_each_node_mut(root: &mut Node, mut visit: impl FnMut(&mut Node)) {
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        visit(node);
+        stack.extend(node.children.iter_mut());
+    }
 }
 
 /// The docutils `document`'s node lists (`docutils/nodes.py:1734-1786`) as
@@ -293,6 +328,10 @@ pub struct TransformCtx<'a> {
     pub config: &'a TransformConfig,
     /// `self.env.docname`: the document being read.
     pub docname: &'a str,
+    /// Where a message with no node is located
+    /// ([`crate::rst::ParseOutput::end_of_input`];
+    /// [`Self::end_of_parse_message`]).
+    end_of_input: Option<(u16, u32)>,
     /// The diagnostics sink — docutils' `document.reporter` and Sphinx's
     /// logger in one stream, continuing the parse's numbering
     /// ([`Reporter::continuing_from`]): every transform in Sphinx runs
@@ -324,11 +363,15 @@ static READ_TRANSFORMS: &[ReadTransform] = &[
     // 020 Locale, 025 TranslationProgressTotaliser: no-op without message
     //     catalogs / the `translation_progress` attribute no oracle compares.
     // 100 RefOnlyBulletListTransform: no-op under `html_compact_lists=True`.
-    // 210 DefaultSubstitutions (Task 8).
+    (
+        210,
+        "DefaultSubstitutions",
+        references::default_substitutions,
+    ),
     (210, "MoveModuleTargets", misc::move_module_targets),
     // 210 HandleCodeBlocks (Task 12), AutoNumbering (Task 12),
     //     AutoIndexUpgrader (never fires for core directives).
-    // 220 Substitutions (Task 8).
+    (220, "Substitutions", references::substitutions),
     (
         220,
         "ReorderConsecutiveTargetAndIndexNodes",
@@ -366,6 +409,7 @@ impl<'a> TransformCtx<'a> {
         tree: &'a mut Doctree,
         ids: IdRegistry,
         next_seq: u32,
+        end_of_input: Option<(u16, u32)>,
         docname: &'a str,
         config: &'a TransformConfig,
     ) -> Self {
@@ -375,7 +419,39 @@ impl<'a> TransformCtx<'a> {
             lists: None,
             config,
             docname,
+            end_of_input,
             reporter: Reporter::continuing_from(next_seq),
+        }
+    }
+
+    /// The `system_message` docutils' reporter makes at `line` of source-
+    /// table entry `source`, its `source` attribute naming that entry's path
+    /// — or, with no line, only the document's (`Reporter.system_message`,
+    /// `docutils/utils/__init__.py:187-207`: `source` falls back to the
+    /// reporter's own). Neither recorded nor placed: the transform does both.
+    pub(crate) fn message(&self, level: u8, text: &str, source: u16, line: Option<u32>) -> Node {
+        let source = if line.is_some() { source } else { 0 };
+        let path = self
+            .tree
+            .sources
+            .get(usize::from(source))
+            .or_else(|| self.tree.sources.first())
+            .map_or("<document>", String::as_str);
+        let mut message =
+            messages::system_message(level, text, source, line.unwrap_or_default(), path);
+        if line.is_none() {
+            message.attrs.extra.retain(|(key, _)| *key != "line");
+        }
+        message
+    }
+
+    /// [`Self::message`] for a message a transform raises with no node to
+    /// locate it by: docutils asks the finished parse where it is
+    /// ([`crate::rst::ParseOutput::end_of_input`], research §9.3).
+    pub(crate) fn end_of_parse_message(&self, level: u8, text: &str) -> Node {
+        match self.end_of_input {
+            Some((source, line)) => self.message(level, text, source, Some(line)),
+            None => self.message(level, text, 0, None),
         }
     }
 
@@ -409,9 +485,11 @@ impl<'a> TransformCtx<'a> {
 /// Run the read transforms over one parsed document, in Sphinx's order:
 /// `tree` is rewritten in place, `ids` is the parse's registry
 /// ([`crate::rst::ParseOutput::ids`]) and `next_seq` its diagnostics
-/// counter ([`crate::rst::ParseOutput::next_seq`]), both continued; every
-/// record a transform makes is appended to `diagnostics` — the document's
-/// stream ([`crate::rst::RegistryExport::diagnostics`]) — numbered from
+/// counter ([`crate::rst::ParseOutput::next_seq`]), both continued;
+/// `end_of_input` is where the parse's input ended
+/// ([`crate::rst::ParseOutput::end_of_input`]). Every record a transform
+/// makes is appended to `diagnostics` — the document's stream
+/// ([`crate::rst::RegistryExport::diagnostics`]) — numbered from
 /// `next_seq` on.
 ///
 /// `next_seq` is handed over separately because the recorded diagnostics
@@ -422,11 +500,12 @@ pub fn apply_read_transforms(
     tree: &mut Doctree,
     ids: IdRegistry,
     next_seq: u32,
+    end_of_input: Option<(u16, u32)>,
     docname: &str,
     config: &TransformConfig,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
-    let mut ctx = TransformCtx::new(tree, ids, next_seq, docname, config);
+    let mut ctx = TransformCtx::new(tree, ids, next_seq, end_of_input, docname, config);
     ctx.run(READ_TRANSFORMS);
     diagnostics.extend(ctx.finish());
 }
@@ -447,6 +526,7 @@ pub fn parse_and_transform(
         &mut out.doctree,
         out.ids,
         out.next_seq,
+        out.end_of_input,
         &opts.docname,
         config,
         &mut diagnostics,
@@ -470,6 +550,7 @@ pub(crate) fn parse_full_and_transform(
         &mut out.doctree,
         std::mem::take(&mut out.ids),
         out.next_seq,
+        out.end_of_input,
         &opts.docname,
         &TransformConfig::default(),
         &mut out.registry.diagnostics,
@@ -507,6 +588,7 @@ mod tests {
             release: String::new(),
             today: String::new(),
             today_fmt: None,
+            build_date: BuildDate::Environment,
         };
         assert_eq!(TransformConfig::default(), expected);
         assert_eq!(TransformConfig::from(&BuildConfig::default()), expected);
@@ -547,6 +629,7 @@ mod tests {
                 release: "1.2.3".to_string(),
                 today: "Sept 30".to_string(),
                 today_fmt: Some("%Y".to_string()),
+                build_date: BuildDate::Environment,
             }
         );
         let unset = BuildConfig {
@@ -570,13 +653,15 @@ mod tests {
         assert_eq!((*priority, *name), (999, "FilterSystemMessages"));
     }
 
-    /// The target family in its probed slots (research §1.2: 210-021,
-    /// 220-032, 260-005, 261-023): the reorder must run before
-    /// PropagateTargets (`transforms/__init__.py:472`, "This transform MUST
-    /// run before ``PropagateTargets``"), and SortIds after it, since it
-    /// sorts the ids PropagateTargets appended.
+    /// The substitution and target families in their probed slots
+    /// (research §1.2: 210-020, 210-021, 220-004, 220-032, 260-005,
+    /// 261-023): each substitution transform ahead of its priority's
+    /// neighbour, as Sphinx queues them; the reorder before PropagateTargets
+    /// (`transforms/__init__.py:472`, "This transform MUST run before
+    /// ``PropagateTargets``"), and SortIds after it, since it sorts the ids
+    /// PropagateTargets appended.
     #[test]
-    fn the_target_transforms_run_in_sphinx_order() {
+    fn the_substitution_and_target_transforms_run_in_sphinx_order() {
         let order: Vec<(u16, &str)> = READ_TRANSFORMS
             .iter()
             .map(|(priority, name, _)| (*priority, *name))
@@ -585,7 +670,9 @@ mod tests {
         assert_eq!(
             order,
             [
+                (210, "DefaultSubstitutions"),
                 (210, "MoveModuleTargets"),
+                (220, "Substitutions"),
                 (220, "ReorderConsecutiveTargetAndIndexNodes"),
                 (260, "PropagateTargets"),
                 (261, "SortIds"),
@@ -642,7 +729,7 @@ mod tests {
 
         let mut tree = out.doctree;
         let config = TransformConfig::default();
-        let mut ctx = TransformCtx::new(&mut tree, out.ids, out.next_seq, "index", &config);
+        let mut ctx = TransformCtx::new(&mut tree, out.ids, out.next_seq, None, "index", &config);
         ctx.run(&[
             (100, "ReportOne", report_one as fn(&mut TransformCtx)),
             (200, "LogOne", log_one),
@@ -695,7 +782,7 @@ mod tests {
             &sphinx_opts(),
         );
         let config = TransformConfig::default();
-        let mut ctx = TransformCtx::new(&mut tree, IdRegistry::new(), 0, "index", &config);
+        let mut ctx = TransformCtx::new(&mut tree, IdRegistry::new(), 0, None, "index", &config);
         ctx.run(&[
             (
                 210,

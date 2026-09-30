@@ -398,6 +398,18 @@ pub struct ParseOutput {
     /// rather than from the highest recorded diagnostic, which a later
     /// registration can outnumber. Never serialized.
     pub next_seq: u32,
+    /// Where docutils' reporter locates a message raised after the parse
+    /// with no node to locate it by — the Substitutions line-length error,
+    /// the anonymous-hyperlink mismatch (research `2026-09-30-m2-wave5-
+    /// transforms.md` §9.3): the `(source, line)` one past the last line of
+    /// the top-level input, spliced `include` lines counted. Its
+    /// `get_source_and_line()` is still bound to the finished top-level
+    /// state machine (`states.py:244-246`), whose cursor stops there
+    /// (`statemachine.py:358-377`). `None` for an input without lines
+    /// (docutils: no line either). A document that ends inside a
+    /// directive's nested content leaves docutils' cursor further on, with
+    /// no line at all — not modelled (ledgered). Never serialized.
+    pub end_of_input: Option<(u16, u32)>,
 }
 
 /// Parse RST source into a doctree. Total: never panics, never errors —

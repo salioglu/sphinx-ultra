@@ -21,10 +21,17 @@
 //!
 //! Per-case config (wave-4.5 task 8): a case may carry a `conf` dict — the
 //! confoverrides the generator applied for that case. Every key maps onto
-//! `ParseOptions.py` ([`sphinx_ultra::py::PySigConfig`]); an unmapped key is
-//! a hard error so a future generator-side conf addition fails HERE instead
-//! of silently parsing under defaults (serde ignores unknown struct fields,
-//! so without the explicit map a conf case would quietly lose its config).
+//! `ParseOptions.py` ([`sphinx_ultra::py::PySigConfig`]) or, since M2 wave 5
+//! (the default substitutions' `version`/`release`/`today`/`today_fmt`),
+//! onto the read transforms' [`TransformConfig`]; an unmapped key is a hard
+//! error so a future generator-side conf addition fails HERE instead of
+//! silently parsing under defaults (serde ignores unknown struct fields, so
+//! without the explicit map a conf case would quietly lose its config).
+//!
+//! The generator pins `SOURCE_DATE_EPOCH` for its whole run and records it in
+//! the fixture header (`settings.source_date_epoch`); every case is
+//! transformed with that instant as its build date
+//! ([`BuildDate::Epoch`]), so `|today|` formats the date Sphinx formatted.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -33,13 +40,21 @@ use std::sync::Arc;
 use sphinx_ultra::error::BuildWarning;
 use sphinx_ultra::py::PySigConfig;
 use sphinx_ultra::rst::ParseOptions;
-use sphinx_ultra::transforms::{parse_and_transform, TransformConfig};
+use sphinx_ultra::transforms::{parse_and_transform, BuildDate, TransformConfig};
 
 #[derive(serde::Deserialize)]
 struct Fixture {
     docutils_version: String,
     sphinx_version: String,
+    settings: Settings,
     cases: Vec<Case>,
+}
+
+/// The fixture header's `settings` this harness reads.
+#[derive(serde::Deserialize)]
+struct Settings {
+    /// The `SOURCE_DATE_EPOCH` the generator ran under.
+    source_date_epoch: i64,
 }
 
 #[derive(serde::Deserialize)]
@@ -55,8 +70,13 @@ struct Case {
 }
 
 /// Map a fixture case's `conf` dict onto the [`PySigConfig`] the parse layer
-/// consumes. Errors on any key (or value shape) it does not understand.
-fn py_config_from_conf(conf: &BTreeMap<String, serde_json::Value>) -> Result<PySigConfig, String> {
+/// consumes and the [`TransformConfig`] the read transforms consume, the
+/// latter starting from `transforms` (the fixture's base). Errors on any key
+/// (or value shape) it does not understand.
+fn configs_from_conf(
+    conf: &BTreeMap<String, serde_json::Value>,
+    transforms: TransformConfig,
+) -> Result<(PySigConfig, TransformConfig), String> {
     use serde_json::Value;
 
     fn opt_i64(key: &str, value: &Value) -> Result<Option<i64>, String> {
@@ -81,9 +101,22 @@ fn py_config_from_conf(conf: &BTreeMap<String, serde_json::Value>) -> Result<PyS
             .ok_or_else(|| format!("conf key {key}: expected string, got {value}"))
     }
 
+    fn opt_string(key: &str, value: &Value) -> Result<Option<String>, String> {
+        match value {
+            Value::Null => Ok(None),
+            other => string(key, other).map(Some),
+        }
+    }
+
     let mut py = PySigConfig::default();
+    let mut transforms = transforms;
     for (key, value) in conf {
         match key.as_str() {
+            // The default substitutions (DefaultSubstitutions, priority 210).
+            "version" => transforms.version = string(key, value)?,
+            "release" => transforms.release = string(key, value)?,
+            "today" => transforms.today = string(key, value)?,
+            "today_fmt" => transforms.today_fmt = opt_string(key, value)?,
             "maximum_signature_line_length" => {
                 py.maximum_signature_line_length = opt_i64(key, value)?;
             }
@@ -108,23 +141,26 @@ fn py_config_from_conf(conf: &BTreeMap<String, serde_json::Value>) -> Result<PyS
             "strip_signature_backslash" => py.strip_signature_backslash = boolean(key, value)?,
             other => {
                 return Err(format!(
-                    "unmapped conf key {other:?}: teach py_config_from_conf about it \
-                     (and the parse layer, if it is not a PySigConfig knob)"
+                    "unmapped conf key {other:?}: teach configs_from_conf about it \
+                     (and the parse layer or the transforms, if it is neither a \
+                     PySigConfig nor a TransformConfig knob)"
                 ));
             }
         }
     }
-    Ok(py)
+    Ok((py, transforms))
 }
 
 /// The read-transform configuration every fixture case was generated under:
 /// the generator's fixed `CONFOVERRIDES` (`keep_warnings=True`,
-/// `smartquotes=False`), every other key at Sphinx's default. A case's own
-/// `conf` never touches these (the generator asserts it).
-fn fixture_transform_config() -> TransformConfig {
+/// `smartquotes=False`) and its pinned `SOURCE_DATE_EPOCH`, every other key
+/// at Sphinx's default. A case's own `conf` never touches these (the
+/// generator asserts it).
+fn fixture_transform_config(settings: &Settings) -> TransformConfig {
     TransformConfig {
         keep_warnings: true,
         smartquotes: false,
+        build_date: BuildDate::Epoch(settings.source_date_epoch),
         ..TransformConfig::default()
     }
 }
@@ -136,19 +172,24 @@ fn an_unmapped_conf_key_fails() {
         "python_no_such_setting".to_string(),
         serde_json::Value::Bool(true),
     );
-    let err = py_config_from_conf(&conf).unwrap_err();
+    let err = configs_from_conf(&conf, TransformConfig::default()).unwrap_err();
     assert!(
         err.contains("unmapped conf key \"python_no_such_setting\""),
         "unexpected error text: {err}"
     );
 
     // A mapped key with the wrong value shape fails too.
-    let mut conf = BTreeMap::new();
-    conf.insert(
-        "add_function_parentheses".to_string(),
-        serde_json::Value::String("yes".to_string()),
-    );
-    assert!(py_config_from_conf(&conf).is_err());
+    for (key, value) in [
+        ("add_function_parentheses", serde_json::json!("yes")),
+        ("version", serde_json::json!(1.2)),
+        ("today_fmt", serde_json::json!(false)),
+    ] {
+        let conf = BTreeMap::from([(key.to_string(), value)]);
+        assert!(
+            configs_from_conf(&conf, TransformConfig::default()).is_err(),
+            "{key} accepted a wrong-shaped value"
+        );
+    }
 }
 
 #[test]
@@ -163,7 +204,8 @@ fn a_mapped_conf_translates_onto_py_sig_config() {
         }"#,
     )
     .unwrap();
-    let py = py_config_from_conf(&conf).unwrap();
+    let (py, transforms) = configs_from_conf(&conf, TransformConfig::default()).unwrap();
+    assert_eq!(transforms, TransformConfig::default());
     assert_eq!(
         py,
         PySigConfig {
@@ -173,6 +215,32 @@ fn a_mapped_conf_translates_onto_py_sig_config() {
             python_use_unqualified_type_names: true,
             add_function_parentheses: false,
             ..PySigConfig::default()
+        }
+    );
+}
+
+/// The default substitutions' keys land on the transform configuration,
+/// over the base the caller hands in, and leave the py knobs alone.
+#[test]
+fn a_mapped_conf_translates_onto_the_transform_config() {
+    let conf: BTreeMap<String, serde_json::Value> = serde_json::from_str(
+        r#"{"version": "1.2", "release": "1.2.3", "today": "Sept 30", "today_fmt": "%Y"}"#,
+    )
+    .unwrap();
+    let base = TransformConfig {
+        keep_warnings: true,
+        ..TransformConfig::default()
+    };
+    let (py, transforms) = configs_from_conf(&conf, base.clone()).unwrap();
+    assert_eq!(py, PySigConfig::default());
+    assert_eq!(
+        transforms,
+        TransformConfig {
+            version: "1.2".to_string(),
+            release: "1.2.3".to_string(),
+            today: "Sept 30".to_string(),
+            today_fmt: Some("%Y".to_string()),
+            ..base
         }
     );
 }
@@ -198,13 +266,14 @@ fn matches_sphinx_oracle_pformat() {
 
     let mut mismatches = Vec::new();
     for case in &fixture.cases {
-        let py = match py_config_from_conf(&case.conf) {
-            Ok(py) => py,
-            Err(err) => {
-                mismatches.push(format!("[{}] CONF ERROR: {err}", case.name));
-                continue;
-            }
-        };
+        let (py, transforms) =
+            match configs_from_conf(&case.conf, fixture_transform_config(&fixture.settings)) {
+                Ok(configs) => configs,
+                Err(err) => {
+                    mismatches.push(format!("[{}] CONF ERROR: {err}", case.name));
+                    continue;
+                }
+            };
         let rst = case.rst.clone();
         let ours = std::panic::catch_unwind(move || {
             parse_and_transform(
@@ -219,7 +288,7 @@ fn matches_sphinx_oracle_pformat() {
                     srcdir: None,
                     ..Default::default()
                 },
-                &fixture_transform_config(),
+                &transforms,
             )
             .0
             .root
@@ -302,13 +371,14 @@ fn every_case_warns_what_sphinx_prints() {
         .collect();
     let mut mismatches = Vec::new();
     for case in &fixture.cases {
-        let py = match py_config_from_conf(&case.conf) {
-            Ok(py) => py,
-            Err(err) => {
-                mismatches.push(format!("[{}] CONF ERROR: {err}", case.name));
-                continue;
-            }
-        };
+        let (py, transforms) =
+            match configs_from_conf(&case.conf, fixture_transform_config(&fixture.settings)) {
+                Ok(configs) => configs,
+                Err(err) => {
+                    mismatches.push(format!("[{}] CONF ERROR: {err}", case.name));
+                    continue;
+                }
+            };
         let mut expected = case.warnings.clone();
         for (name, record, _) in MERGE_TIME_RECORDS {
             if *name == case.name {
@@ -332,7 +402,7 @@ fn every_case_warns_what_sphinx_prints() {
                     found_docs: Some(found_docs),
                     ..Default::default()
                 },
-                &fixture_transform_config(),
+                &transforms,
             );
             records
                 .iter()

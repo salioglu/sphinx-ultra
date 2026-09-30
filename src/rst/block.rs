@@ -343,6 +343,10 @@ pub(crate) struct BlockParser {
     /// Parse-recorded included docnames (see
     /// [`super::RegistryExport::included`]); sphinx mode only.
     included_records: Vec<String>,
+    /// Where the top-level input ended: the `(source, line)` one past its
+    /// last line (see [`super::ParseOutput::end_of_input`]), set when
+    /// [`Self::parse_document_impl`] has consumed it.
+    end_of_input: Option<(u16, u32)>,
 }
 
 #[derive(Debug, Default)]
@@ -408,6 +412,7 @@ impl BlockParser {
             include_log: Vec::new(),
             dependency_records: Vec::new(),
             included_records: Vec::new(),
+            end_of_input: None,
         }
     }
 
@@ -443,6 +448,7 @@ impl BlockParser {
             registry,
             ids: self.registry,
             next_seq,
+            end_of_input: self.end_of_input,
         }
     }
 
@@ -843,6 +849,11 @@ impl BlockParser {
         while !stack.is_empty() {
             Self::close_section(&mut root, &mut stack);
         }
+        // docutils' `StringList.info` "just past the end" (`statemachine.py:
+        // 1299-1307`) through `get_source_and_line` (`:358-377`): the last
+        // input line's source, one line on — spliced `include` lines count,
+        // as they do in docutils' input list.
+        self.end_of_input = lines.last().map(|line| (line.source, line.lineno + 1));
 
         let fixups = self.registry.take_fixups();
         ids::apply_dupname_fixups(&mut root, &fixups);
@@ -7965,6 +7976,8 @@ impl BlockParser {
 
         let mut subst = Node::elem("substitution_definition", span);
         subst.attrs.names.push(subname_ws.clone());
+        // `nodes.substitution_definition(blocktext)` (`states.py:2169`).
+        subst.set(crate::doctree::RAWSOURCE, AttrValue::Str(blocktext.clone()));
 
         // Locate the embedded-directive line: the marker remainder, else
         // the first non-blank content line (hanging-indent form).
@@ -13739,6 +13752,25 @@ mod tests {
         assert_eq!(ws_collapse("git\x1fadd", "-"), "git-add");
         assert_eq!(ws_collapse("a \x1f\t b", "-"), "a-b");
         assert_eq!(ws_collapse("plain", " "), "plain");
+    }
+
+    /// A substitution definition keeps docutils' `rawsource`, the
+    /// `blocktext` it is created from (`states.py:2146,2169`: the marker
+    /// line and the indented block, indentation kept) — what a circular
+    /// definition's `literal_block` holds (docutils 0.22.4, oracle case
+    /// `tx_subst.circular`), here with a continuation line.
+    #[test]
+    fn a_substitution_definition_keeps_its_rawsource() {
+        let tree = parse_rst(
+            "Para.\n\n.. |a| replace::\n   x |a|\n\nAfter.\n",
+            &ParseOptions::default(),
+        );
+        let definition = &tree.root.children[1];
+        assert_eq!(definition.kind, "substitution_definition");
+        assert_eq!(
+            definition.get(crate::doctree::RAWSOURCE),
+            Some(&AttrValue::Str(".. |a| replace::\n   x |a|".to_string()))
+        );
     }
 
     /// Run `explicit.patterns.target` over the text after the construct's

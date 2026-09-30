@@ -1785,6 +1785,14 @@ impl<'a> Inliner<'a> {
             "refname",
             AttrValue::Str(crate::doctree::ids::whitespace_normalize_name(&text)),
         );
+        // `rawsource = unescape(string[matchstart:textend], True)`
+        // (`states.py:834`, `inline_obj`): the end pattern's group 1 takes
+        // the `_`s too.
+        let written: String = self.chars[i..after].iter().collect();
+        subref.set(
+            crate::doctree::RAWSOURCE,
+            AttrValue::Str(unescape(&written, true)),
+        );
         subref
             .children
             .push(Node::text_node(text.clone(), self.span));
@@ -2067,6 +2075,32 @@ mod tests {
         let mut reg = IdRegistry::new();
         let r = parse_inline(text, Span::ZERO, 1, &mut reg, "<snippet>");
         (r.nodes, r.messages)
+    }
+
+    /// The node's `rawsource` as the inliner makes it: `unescape(
+    /// string[matchstart:textend], True)` (`states.py:834`, `inline_obj`),
+    /// the reference as written — backslashes restored, the trailing
+    /// `_`/`__` of a hyperlink reference included (the end pattern's group 1
+    /// swallows them). docutils 0.22.4 prints it in a `problematic`:
+    /// `|a\ b|` for refname `ab` (probed, Task 8).
+    #[test]
+    fn a_substitution_reference_keeps_its_rawsource() {
+        let rawsource = |text: &str| {
+            let (nodes, _) = pi(text);
+            let mut stack: Vec<&Node> = nodes.iter().collect();
+            while let Some(node) = stack.pop() {
+                if node.kind == kinds::SUBSTITUTION_REFERENCE {
+                    return node.get(crate::doctree::RAWSOURCE).cloned();
+                }
+                stack.extend(&node.children);
+            }
+            None
+        };
+        let expect = |raw: &str| Some(AttrValue::Str(raw.to_string()));
+        assert_eq!(rawsource("See |a\\ b| here."), expect("|a\\ b|"));
+        assert_eq!(rawsource("See |a\\*b| here."), expect("|a\\*b|"));
+        assert_eq!(rawsource("|x|_"), expect("|x|_"));
+        assert_eq!(rawsource("|x|__ and"), expect("|x|__"));
     }
 
     #[test]

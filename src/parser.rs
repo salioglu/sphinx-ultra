@@ -169,6 +169,7 @@ impl Parser {
             &mut output.doctree,
             output.ids,
             output.next_seq,
+            output.end_of_input,
             docname,
             &self.transforms,
             &mut output.registry.diagnostics,
