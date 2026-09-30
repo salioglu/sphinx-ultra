@@ -258,5 +258,7 @@ fixtures (existing cases regenerate byte-identically).
 
 A stopped, pre-spec implementer branch (`worktree-agent-a4f3ddbcbdf34254d`,
 commit `58c850a`, "the docutils reporter channel") exists locally. It was
-written without this spec: implementers may read it for reference; nothing
-in it is accepted without passing this sub-project's reviews.
+written without this spec and without tests first. **Amended during
+planning (2026-09-30):** superpowers:test-driven-development's Iron Law
+forbids keeping, adapting or consulting code written before its test, so
+implementers do not read that branch; the work is redone test-first.
