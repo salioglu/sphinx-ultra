@@ -2282,6 +2282,17 @@ html_additional_pages = {'extra': 'extra.html'}
         },
     },
     {
+        # A hashed value outside the str/int/bool/None leaf set: the float
+        # makes .buildinfo's config hash depend on Python's float repr
+        # ('0.5', '1e+16'), so the fixture flags `buildinfo_modelable:
+        # false` for this project (the rest of the output is ordinary).
+        "name": "cfg_context_values",
+        "conf_py": (
+            "html_context = {'ratio': 0.5, 'big': 1e16, 'pair': ('a', 1), 'nothing': None}\n"
+        ),
+        "files": _two_docs(),
+    },
+    {
         "name": "cfg_sidebars",
         "conf_py": """\
 html_sidebars = {

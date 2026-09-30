@@ -71,6 +71,24 @@
 //!   bytes already differ from the oracle's ([`mask_checksums`]) -- that
 //!   difference is reported by [`assets_match_oracle`] once instead of on
 //!   every page; for a byte-identical static file the checksum must match.
+//!
+//! # Harness assumptions T6 may need to revisit
+//!
+//! * The builder kind is selected with `-D builder=dirhtml`, i.e. a
+//!   `BuildConfig` field named `builder` (design decision 3); html projects
+//!   leave it at its default.
+//! * The warning stream mirrors the `-w` file `src/main.rs` writes: every
+//!   `BuildConfig::validate` message as `WARNING: <message>` first, then
+//!   each `BuildStats::warning_details` entry's `render()`.
+//! * The crate's cache directory is left at its default
+//!   (`<outdir>/.sphinx-ultra-cache`, allowlisted in [`OUR_ONLY_PREFIXES`]).
+//! * SOURCE_DATE_EPOCH is set (and restored) around the few builds whose
+//!   fixture `env` carries it; every other build runs with it removed.
+//!
+//! A run against today's crate (before T6) builds all projects once the
+//! override strictness in [`build_project`] is relaxed; every page then
+//! diverges from line 1 (the read-time placeholder writer), which is the
+//! expected starting point.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
@@ -1505,12 +1523,12 @@ fn normalizations_are_precise() {
 /// exemption counts. Update the constants together with the report that
 /// quotes them.
 const DOCUMENTED_FIXTURE_FILES: usize = 10;
-const DOCUMENTED_PROJECTS: usize = 133;
+const DOCUMENTED_PROJECTS: usize = 134;
 const DOCUMENTED_DIRHTML_PROJECTS: usize = 5;
-const DOCUMENTED_OUTPUT_FILES: usize = 2957;
-const DOCUMENTED_PAGES: usize = 590;
-const DOCUMENTED_ASSETS: usize = 1691;
-const DOCUMENTED_SOURCES: usize = 277;
+const DOCUMENTED_OUTPUT_FILES: usize = 2978;
+const DOCUMENTED_PAGES: usize = 594;
+const DOCUMENTED_ASSETS: usize = 1703;
+const DOCUMENTED_SOURCES: usize = 279;
 const DOCUMENTED_WARNING_RECORDS: usize = 66;
 const DOCUMENTED_EXEMPT_PAGES: usize = 0;
 const DOCUMENTED_EXEMPT_ASSETS: usize = 0;

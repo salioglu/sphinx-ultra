@@ -18344,6 +18344,881 @@
     "language": "en",
     "smartquotes": false
    },
+   "conf_py": "project = 'fixture'\nextensions = []\nmaster_doc = 'index'\nexclude_patterns = ['_build']\nhtml_context = {'ratio': 0.5, 'big': 1e16, 'pair': ('a', 1), 'nothing': None}\n",
+   "expect": {
+    "buildinfo": "# Sphinx build info version 1\n# This file records the configuration used when building these files. When it is not found, a full rebuild will be done.\nconfig: a25db978f6719f732b4c3ca394a08e80\ntags: 645f666f9bcd5a90fca523b33c5a78b7\n",
+    "buildinfo_config": {
+     "html_context": {
+      "hash": "923e833c6c3d5b46bf5355f41d31bb06",
+      "repr": "{'ratio': 0.5, 'big': 1e+16, 'pair': ('a', 1), 'nothing': None}"
+     }
+    },
+    "buildinfo_modelable": false,
+    "buildinfo_unmodelable_leaves": [
+     "float"
+    ],
+    "inventory": {
+     "header": [
+      "# Sphinx inventory version 2",
+      "# Project: fixture",
+      "# Version: ",
+      "# The remainder of this file is compressed using zlib."
+     ],
+     "payload": "genindex std:label -1 genindex.html Index\nindex std:doc -1 index.html Home\nmodindex std:label -1 py-modindex.html Module Index\nother std:doc -1 other.html Other\nother-label std:label -1 other.html#$ Other\npy-modindex std:label -1 py-modindex.html Python Module Index\nsearch std:label -1 search.html Search Page\n"
+    },
+    "output_files": {
+     ".buildinfo": {
+      "kind": "buildinfo",
+      "sha256": "003883d6c28db5abc525bf8a8600599421ff7dbe1c046bbe88359d406c9777be",
+      "text": true
+     },
+     "_sources/index.rst.txt": {
+      "kind": "source",
+      "sha256": "d523d3f0f122b8c92fbfbcf5e7b200dbcaf8a904f6eeaa6152beb43b9a10df4b",
+      "text": true
+     },
+     "_sources/other.rst.txt": {
+      "kind": "source",
+      "sha256": "4c6181ca0a528b6fdee6b6e2db30e30ae0f6c2dbdea916bc8149783a5f9a4092",
+      "text": true
+     },
+     "_static/base-stemmer.js": {
+      "kind": "static",
+      "sha256": "eb67bedbfa264bd8a2201ebe07c861abbcbc56d7eaa28c53ff8b84f65ccd450f",
+      "text": false
+     },
+     "_static/basic.css": {
+      "kind": "static",
+      "sha256": "656ff1bacd6f260fc7d71b97f9c2f1fcbf692dc84bf469cd952034efcb9eefed",
+      "text": true
+     },
+     "_static/doctools.js": {
+      "kind": "static",
+      "sha256": "6b2524c2723cc6e06cbf056e0b2861d50ba8fdd082ece13378bfb45d7a090528",
+      "text": false
+     },
+     "_static/documentation_options.js": {
+      "kind": "static",
+      "sha256": "de67807817d57570f5b4a39e165f724903240d430e1bd8c52598f433dff81566",
+      "text": true
+     },
+     "_static/english-stemmer.js": {
+      "kind": "static",
+      "sha256": "1f995807fde5a820390fb9046e4813a7eb8f20a4684650f14fbdeb4c2ad7ffc5",
+      "text": false
+     },
+     "_static/file.png": {
+      "kind": "static",
+      "sha256": "5c4bc9a16aebf38c4b950f59b8e501ca36495328cb9eb622218bce9064a35e3e",
+      "text": false
+     },
+     "_static/language_data.js": {
+      "kind": "static",
+      "sha256": "af1c48fc5b0e0e9423cac068d55cdf22f541648709ae4b9190ee8aa9c2b08150",
+      "text": true
+     },
+     "_static/minus.png": {
+      "kind": "static",
+      "sha256": "47e7fc50db3699f1ca41ce9a2ffa202c00c5d1d5180c55f62ba859b1bd6cc008",
+      "text": false
+     },
+     "_static/plus.png": {
+      "kind": "static",
+      "sha256": "54115199b96a130cba02147c47c0deb43dcc9b9f08b5162bba8642b34980ac63",
+      "text": false
+     },
+     "_static/pygments.css": {
+      "kind": "static",
+      "sha256": "2ffd83f343f76ded65a0d16657d4d2f2075f6b8da42b76bad0b6cd2061a9d977",
+      "text": true
+     },
+     "_static/searchtools.js": {
+      "kind": "static",
+      "sha256": "954625d140412a9d3d954d67e2e3aec8f8bd18018cf7600b894298fb157c7780",
+      "text": false
+     },
+     "_static/sphinx_highlight.js": {
+      "kind": "static",
+      "sha256": "c551409f6bae30d602d5b47676696803554e7ceaa458c1c6eb8367b9d2c4dd31",
+      "text": false
+     },
+     "genindex.html": {
+      "kind": "page",
+      "sha256": "9bd1081ecce0a34a58c40f32c8e2d3901b5d8ae1aa088b5be1e8b1ad8dffda24",
+      "text": true
+     },
+     "index.html": {
+      "kind": "page",
+      "sha256": "7419c5da64cf2dc385edeebc5faafd586b52682df37c6e3c697ac4cd7734fb0e",
+      "text": true
+     },
+     "objects.inv": {
+      "kind": "inventory",
+      "sha256": "7aaab7b40ab3ffcb1e62a324bf5012d9d87bfaab797189c326853248f7917cc3",
+      "text": false
+     },
+     "other.html": {
+      "kind": "page",
+      "sha256": "325b848ffa3ed1ae9bd2e6a2591d8f4d18e00da30b74e8757077839e8040719c",
+      "text": true
+     },
+     "search.html": {
+      "kind": "page",
+      "sha256": "2e5082219bc22630e977b11c69002389ac718a3c02913cfec9dd8ca2152f797a",
+      "text": true
+     },
+     "searchindex.js": {
+      "kind": "searchindex"
+     }
+    },
+    "page_context": {
+     "genindex.html": {
+      "addctx": {
+       "genindexcounts": [],
+       "genindexentries": [],
+       "split_index": false
+      },
+      "ctx": {
+       "builder": "html",
+       "content_root": "./",
+       "copyright": "",
+       "css_files": [
+        [
+         "_static/pygments.css",
+         {
+          "rel": "stylesheet",
+          "type": "text/css"
+         },
+         200
+        ],
+        [
+         "_static/basic.css",
+         {
+          "rel": "stylesheet",
+          "type": "text/css"
+         },
+         200
+        ]
+       ],
+       "docstitle": "fixture  documentation",
+       "favicon_url": "",
+       "file_suffix": ".html",
+       "has_source": true,
+       "language": "en",
+       "last_updated": null,
+       "link_suffix": ".html",
+       "logo_url": "",
+       "pageurl": null,
+       "script_files": [
+        [
+         "_static/documentation_options.js",
+         {},
+         200
+        ],
+        [
+         "_static/doctools.js",
+         {},
+         200
+        ],
+        [
+         "_static/sphinx_highlight.js",
+         {},
+         200
+        ]
+       ],
+       "shorttitle": "fixture  documentation",
+       "show_copyright": true,
+       "show_source": true,
+       "show_sphinx": true,
+       "sidebars": [
+        "localtoc.html",
+        "relations.html",
+        "sourcelink.html",
+        "searchbox.html"
+       ],
+       "use_opensearch": ""
+      },
+      "pagename": "genindex",
+      "template": "genindex.html"
+     },
+     "index.html": {
+      "addctx": {
+       "body": "<section id=\"home\">\n<h1>Home<a class=\"headerlink\" href=\"#home\" title=\"Link to this heading\">¶</a></h1>\n<div class=\"toctree-wrapper compound\">\n<ul>\n<li class=\"toctree-l1\"><a class=\"reference internal\" href=\"other.html\">Other</a><ul>\n<li class=\"toctree-l2\"><a class=\"reference internal\" href=\"other.html#other-section\">Other Section</a></li>\n</ul>\n</li>\n</ul>\n</div>\n<p>Intro paragraph linking <a class=\"reference internal\" href=\"other.html\"><span class=\"doc\">Other</span></a> and <a class=\"reference internal\" href=\"other.html#other-label\"><span class=\"std std-ref\">Other</span></a>.</p>\n<section id=\"home-section\">\n<h2>Home Section<a class=\"headerlink\" href=\"#home-section\" title=\"Link to this heading\">¶</a></h2>\n<ul class=\"simple\">\n<li><p>simple</p></li>\n<li><p>list</p></li>\n</ul>\n</section>\n</section>\n",
+       "display_toc": true,
+       "has_maths_elements": false,
+       "meta": null,
+       "metatags": "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n",
+       "next": {
+        "link": "other.html",
+        "title": "Other"
+       },
+       "page_source_suffix": ".rst",
+       "parents": [],
+       "prev": null,
+       "rellinks": [
+        [
+         "genindex",
+         "General Index",
+         "I",
+         "index"
+        ],
+        [
+         "other",
+         "Other",
+         "N",
+         "next"
+        ]
+       ],
+       "sourcename": "index.rst.txt",
+       "title": "Home",
+       "toc": "<ul>\n<li><a class=\"reference internal\" href=\"#\">Home</a><ul>\n<li><a class=\"reference internal\" href=\"#home-section\">Home Section</a></li>\n</ul>\n</li>\n</ul>\n"
+      },
+      "ctx": {
+       "builder": "html",
+       "content_root": "./",
+       "copyright": "",
+       "css_files": [
+        [
+         "_static/pygments.css",
+         {
+          "rel": "stylesheet",
+          "type": "text/css"
+         },
+         200
+        ],
+        [
+         "_static/basic.css",
+         {
+          "rel": "stylesheet",
+          "type": "text/css"
+         },
+         200
+        ]
+       ],
+       "docstitle": "fixture  documentation",
+       "favicon_url": "",
+       "file_suffix": ".html",
+       "has_source": true,
+       "language": "en",
+       "last_updated": null,
+       "link_suffix": ".html",
+       "logo_url": "",
+       "pageurl": null,
+       "script_files": [
+        [
+         "_static/documentation_options.js",
+         {},
+         200
+        ],
+        [
+         "_static/doctools.js",
+         {},
+         200
+        ],
+        [
+         "_static/sphinx_highlight.js",
+         {},
+         200
+        ]
+       ],
+       "shorttitle": "fixture  documentation",
+       "show_copyright": true,
+       "show_source": true,
+       "show_sphinx": true,
+       "sidebars": [
+        "localtoc.html",
+        "relations.html",
+        "sourcelink.html",
+        "searchbox.html"
+       ],
+       "use_opensearch": ""
+      },
+      "pagename": "index",
+      "template": "page.html"
+     },
+     "other.html": {
+      "addctx": {
+       "body": "<section id=\"other\">\n<span id=\"other-label\"></span><h1>Other<a class=\"headerlink\" href=\"#other\" title=\"Link to this heading\">¶</a></h1>\n<section id=\"other-section\">\n<h2>Other Section<a class=\"headerlink\" href=\"#other-section\" title=\"Link to this heading\">¶</a></h2>\n<p>Text.</p>\n</section>\n</section>\n",
+       "display_toc": true,
+       "has_maths_elements": false,
+       "meta": {},
+       "metatags": "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />\n",
+       "next": null,
+       "page_source_suffix": ".rst",
+       "parents": [],
+       "prev": {
+        "link": "index.html",
+        "title": "Home"
+       },
+       "rellinks": [
+        [
+         "genindex",
+         "General Index",
+         "I",
+         "index"
+        ],
+        [
+         "index",
+         "Home",
+         "P",
+         "previous"
+        ]
+       ],
+       "sourcename": "other.rst.txt",
+       "title": "Other",
+       "toc": "<ul>\n<li><a class=\"reference internal\" href=\"#\">Other</a><ul>\n<li><a class=\"reference internal\" href=\"#other-section\">Other Section</a></li>\n</ul>\n</li>\n</ul>\n"
+      },
+      "ctx": {
+       "builder": "html",
+       "content_root": "./",
+       "copyright": "",
+       "css_files": [
+        [
+         "_static/pygments.css",
+         {
+          "rel": "stylesheet",
+          "type": "text/css"
+         },
+         200
+        ],
+        [
+         "_static/basic.css",
+         {
+          "rel": "stylesheet",
+          "type": "text/css"
+         },
+         200
+        ]
+       ],
+       "docstitle": "fixture  documentation",
+       "favicon_url": "",
+       "file_suffix": ".html",
+       "has_source": true,
+       "language": "en",
+       "last_updated": null,
+       "link_suffix": ".html",
+       "logo_url": "",
+       "pageurl": null,
+       "script_files": [
+        [
+         "_static/documentation_options.js",
+         {},
+         200
+        ],
+        [
+         "_static/doctools.js",
+         {},
+         200
+        ],
+        [
+         "_static/sphinx_highlight.js",
+         {},
+         200
+        ]
+       ],
+       "shorttitle": "fixture  documentation",
+       "show_copyright": true,
+       "show_source": true,
+       "show_sphinx": true,
+       "sidebars": [
+        "localtoc.html",
+        "relations.html",
+        "sourcelink.html",
+        "searchbox.html"
+       ],
+       "use_opensearch": ""
+      },
+      "pagename": "other",
+      "template": "page.html"
+     },
+     "search.html": {
+      "addctx": {},
+      "ctx": {
+       "builder": "html",
+       "content_root": "./",
+       "copyright": "",
+       "css_files": [
+        [
+         "_static/pygments.css",
+         {
+          "rel": "stylesheet",
+          "type": "text/css"
+         },
+         200
+        ],
+        [
+         "_static/basic.css",
+         {
+          "rel": "stylesheet",
+          "type": "text/css"
+         },
+         200
+        ]
+       ],
+       "docstitle": "fixture  documentation",
+       "favicon_url": "",
+       "file_suffix": ".html",
+       "has_source": true,
+       "language": "en",
+       "last_updated": null,
+       "link_suffix": ".html",
+       "logo_url": "",
+       "pageurl": null,
+       "script_files": [
+        [
+         "_static/documentation_options.js",
+         {},
+         200
+        ],
+        [
+         "_static/doctools.js",
+         {},
+         200
+        ],
+        [
+         "_static/sphinx_highlight.js",
+         {},
+         200
+        ]
+       ],
+       "shorttitle": "fixture  documentation",
+       "show_copyright": true,
+       "show_source": true,
+       "show_sphinx": true,
+       "sidebars": [
+        "localtoc.html",
+        "relations.html",
+        "sourcelink.html",
+        "searchbox.html"
+       ],
+       "use_opensearch": ""
+      },
+      "pagename": "search",
+      "template": "search.html"
+     }
+    },
+    "pages": {
+     "genindex.html": [
+      "<!DOCTYPE html>",
+      "",
+      "<html lang=\"en\" data-content_root=\"./\">",
+      "  <head>",
+      "    <meta charset=\"utf-8\" />",
+      "    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />",
+      "    <title>Index &#8212; fixture  documentation</title>",
+      "    <link rel=\"stylesheet\" type=\"text/css\" href=\"_static/pygments.css?v=8e8a900e\" />",
+      "    <link rel=\"stylesheet\" type=\"text/css\" href=\"_static/basic.css?v=29da98fa\" />",
+      "    <script src=\"_static/documentation_options.js?v=5929fcd5\"></script>",
+      "    <script src=\"_static/doctools.js?v=fd6eb6e6\"></script>",
+      "    <script src=\"_static/sphinx_highlight.js?v=6ffebe34\"></script>",
+      "    <link rel=\"index\" title=\"Index\" href=\"#\" />",
+      "    <link rel=\"search\" title=\"Search\" href=\"search.html\" /> ",
+      "  </head><body>",
+      "    <div class=\"related\" role=\"navigation\" aria-label=\"Related\">",
+      "      <h3>Navigation</h3>",
+      "      <ul>",
+      "        <li class=\"right\" style=\"margin-right: 10px\">",
+      "          <a href=\"#\" title=\"General Index\"",
+      "             accesskey=\"I\">index</a></li>",
+      "        <li class=\"nav-item nav-item-0\"><a href=\"index.html\">fixture  documentation</a> &#187;</li>",
+      "        <li class=\"nav-item nav-item-this\"><a href=\"\">Index</a></li> ",
+      "      </ul>",
+      "    </div>  ",
+      "",
+      "    <div class=\"document\">",
+      "      <div class=\"documentwrapper\">",
+      "        <div class=\"bodywrapper\">",
+      "          <div class=\"body\" role=\"main\">",
+      "            ",
+      "",
+      "<h1 id=\"index\">Index</h1>",
+      "",
+      "<div class=\"genindex-jumpbox\">",
+      " ",
+      "</div>",
+      "",
+      "",
+      "            <div class=\"clearer\"></div>",
+      "          </div>",
+      "        </div>",
+      "      </div>",
+      "      <div class=\"sphinxsidebar\" role=\"navigation\" aria-label=\"Main\">",
+      "        <div class=\"sphinxsidebarwrapper\">",
+      "<search id=\"searchbox\" style=\"display: none\" role=\"search\">",
+      "  <h3 id=\"searchlabel\">Quick search</h3>",
+      "    <div class=\"searchformwrapper\">",
+      "    <form class=\"search\" action=\"search.html\" method=\"get\">",
+      "      <input type=\"text\" name=\"q\" aria-labelledby=\"searchlabel\" autocomplete=\"off\" autocorrect=\"off\" autocapitalize=\"off\" spellcheck=\"false\"/>",
+      "      <input type=\"submit\" value=\"Go\" />",
+      "    </form>",
+      "    </div>",
+      "</search>",
+      "<script>document.getElementById('searchbox').style.display = \"block\"</script>",
+      "        </div>",
+      "      </div>",
+      "      <div class=\"clearer\"></div>",
+      "    </div>",
+      "    <div class=\"related\" role=\"navigation\" aria-label=\"Related\">",
+      "      <h3>Navigation</h3>",
+      "      <ul>",
+      "        <li class=\"right\" style=\"margin-right: 10px\">",
+      "          <a href=\"#\" title=\"General Index\"",
+      "             >index</a></li>",
+      "        <li class=\"nav-item nav-item-0\"><a href=\"index.html\">fixture  documentation</a> &#187;</li>",
+      "        <li class=\"nav-item nav-item-this\"><a href=\"\">Index</a></li> ",
+      "      </ul>",
+      "    </div>",
+      "    <div class=\"footer\" role=\"contentinfo\">",
+      "    &#169; Copyright .",
+      "      @@generator-credit@@",
+      "    </div>",
+      "  </body>",
+      "</html>"
+     ],
+     "index.html": [
+      "<!DOCTYPE html>",
+      "",
+      "<html lang=\"en\" data-content_root=\"./\">",
+      "  <head>",
+      "    <meta charset=\"utf-8\" />",
+      "    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" /><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />",
+      "",
+      "    <title>Home &#8212; fixture  documentation</title>",
+      "    <link rel=\"stylesheet\" type=\"text/css\" href=\"_static/pygments.css?v=8e8a900e\" />",
+      "    <link rel=\"stylesheet\" type=\"text/css\" href=\"_static/basic.css?v=29da98fa\" />",
+      "    <script src=\"_static/documentation_options.js?v=5929fcd5\"></script>",
+      "    <script src=\"_static/doctools.js?v=fd6eb6e6\"></script>",
+      "    <script src=\"_static/sphinx_highlight.js?v=6ffebe34\"></script>",
+      "    <link rel=\"index\" title=\"Index\" href=\"genindex.html\" />",
+      "    <link rel=\"search\" title=\"Search\" href=\"search.html\" />",
+      "    <link rel=\"next\" title=\"Other\" href=\"other.html\" /> ",
+      "  </head><body>",
+      "    <div class=\"related\" role=\"navigation\" aria-label=\"Related\">",
+      "      <h3>Navigation</h3>",
+      "      <ul>",
+      "        <li class=\"right\" style=\"margin-right: 10px\">",
+      "          <a href=\"genindex.html\" title=\"General Index\"",
+      "             accesskey=\"I\">index</a></li>",
+      "        <li class=\"right\" >",
+      "          <a href=\"other.html\" title=\"Other\"",
+      "             accesskey=\"N\">next</a> |</li>",
+      "        <li class=\"nav-item nav-item-0\"><a href=\"#\">fixture  documentation</a> &#187;</li>",
+      "        <li class=\"nav-item nav-item-this\"><a href=\"\">Home</a></li> ",
+      "      </ul>",
+      "    </div>  ",
+      "",
+      "    <div class=\"document\">",
+      "      <div class=\"documentwrapper\">",
+      "        <div class=\"bodywrapper\">",
+      "          <div class=\"body\" role=\"main\">",
+      "            ",
+      "  <section id=\"home\">",
+      "<h1>Home<a class=\"headerlink\" href=\"#home\" title=\"Link to this heading\">¶</a></h1>",
+      "<div class=\"toctree-wrapper compound\">",
+      "<ul>",
+      "<li class=\"toctree-l1\"><a class=\"reference internal\" href=\"other.html\">Other</a><ul>",
+      "<li class=\"toctree-l2\"><a class=\"reference internal\" href=\"other.html#other-section\">Other Section</a></li>",
+      "</ul>",
+      "</li>",
+      "</ul>",
+      "</div>",
+      "<p>Intro paragraph linking <a class=\"reference internal\" href=\"other.html\"><span class=\"doc\">Other</span></a> and <a class=\"reference internal\" href=\"other.html#other-label\"><span class=\"std std-ref\">Other</span></a>.</p>",
+      "<section id=\"home-section\">",
+      "<h2>Home Section<a class=\"headerlink\" href=\"#home-section\" title=\"Link to this heading\">¶</a></h2>",
+      "<ul class=\"simple\">",
+      "<li><p>simple</p></li>",
+      "<li><p>list</p></li>",
+      "</ul>",
+      "</section>",
+      "</section>",
+      "",
+      "",
+      "            <div class=\"clearer\"></div>",
+      "          </div>",
+      "        </div>",
+      "      </div>",
+      "      <div class=\"sphinxsidebar\" role=\"navigation\" aria-label=\"Main\">",
+      "        <div class=\"sphinxsidebarwrapper\">",
+      "  <div>",
+      "    <h3><a href=\"#\">Table of Contents</a></h3>",
+      "    <ul>",
+      "<li><a class=\"reference internal\" href=\"#\">Home</a><ul>",
+      "<li><a class=\"reference internal\" href=\"#home-section\">Home Section</a></li>",
+      "</ul>",
+      "</li>",
+      "</ul>",
+      "",
+      "  </div>",
+      "  <div>",
+      "    <h4>Next topic</h4>",
+      "    <p class=\"topless\"><a href=\"other.html\"",
+      "                          title=\"next chapter\">Other</a></p>",
+      "  </div>",
+      "  <div role=\"note\" aria-label=\"source link\">",
+      "    <h3>This Page</h3>",
+      "    <ul class=\"this-page-menu\">",
+      "      <li><a href=\"_sources/index.rst.txt\"",
+      "            rel=\"nofollow\">Show Source</a></li>",
+      "    </ul>",
+      "   </div>",
+      "<search id=\"searchbox\" style=\"display: none\" role=\"search\">",
+      "  <h3 id=\"searchlabel\">Quick search</h3>",
+      "    <div class=\"searchformwrapper\">",
+      "    <form class=\"search\" action=\"search.html\" method=\"get\">",
+      "      <input type=\"text\" name=\"q\" aria-labelledby=\"searchlabel\" autocomplete=\"off\" autocorrect=\"off\" autocapitalize=\"off\" spellcheck=\"false\"/>",
+      "      <input type=\"submit\" value=\"Go\" />",
+      "    </form>",
+      "    </div>",
+      "</search>",
+      "<script>document.getElementById('searchbox').style.display = \"block\"</script>",
+      "        </div>",
+      "      </div>",
+      "      <div class=\"clearer\"></div>",
+      "    </div>",
+      "    <div class=\"related\" role=\"navigation\" aria-label=\"Related\">",
+      "      <h3>Navigation</h3>",
+      "      <ul>",
+      "        <li class=\"right\" style=\"margin-right: 10px\">",
+      "          <a href=\"genindex.html\" title=\"General Index\"",
+      "             >index</a></li>",
+      "        <li class=\"right\" >",
+      "          <a href=\"other.html\" title=\"Other\"",
+      "             >next</a> |</li>",
+      "        <li class=\"nav-item nav-item-0\"><a href=\"#\">fixture  documentation</a> &#187;</li>",
+      "        <li class=\"nav-item nav-item-this\"><a href=\"\">Home</a></li> ",
+      "      </ul>",
+      "    </div>",
+      "    <div class=\"footer\" role=\"contentinfo\">",
+      "    &#169; Copyright .",
+      "      @@generator-credit@@",
+      "    </div>",
+      "  </body>",
+      "</html>"
+     ],
+     "other.html": [
+      "<!DOCTYPE html>",
+      "",
+      "<html lang=\"en\" data-content_root=\"./\">",
+      "  <head>",
+      "    <meta charset=\"utf-8\" />",
+      "    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" /><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />",
+      "",
+      "    <title>Other &#8212; fixture  documentation</title>",
+      "    <link rel=\"stylesheet\" type=\"text/css\" href=\"_static/pygments.css?v=8e8a900e\" />",
+      "    <link rel=\"stylesheet\" type=\"text/css\" href=\"_static/basic.css?v=29da98fa\" />",
+      "    <script src=\"_static/documentation_options.js?v=5929fcd5\"></script>",
+      "    <script src=\"_static/doctools.js?v=fd6eb6e6\"></script>",
+      "    <script src=\"_static/sphinx_highlight.js?v=6ffebe34\"></script>",
+      "    <link rel=\"index\" title=\"Index\" href=\"genindex.html\" />",
+      "    <link rel=\"search\" title=\"Search\" href=\"search.html\" />",
+      "    <link rel=\"prev\" title=\"Home\" href=\"index.html\" /> ",
+      "  </head><body>",
+      "    <div class=\"related\" role=\"navigation\" aria-label=\"Related\">",
+      "      <h3>Navigation</h3>",
+      "      <ul>",
+      "        <li class=\"right\" style=\"margin-right: 10px\">",
+      "          <a href=\"genindex.html\" title=\"General Index\"",
+      "             accesskey=\"I\">index</a></li>",
+      "        <li class=\"right\" >",
+      "          <a href=\"index.html\" title=\"Home\"",
+      "             accesskey=\"P\">previous</a> |</li>",
+      "        <li class=\"nav-item nav-item-0\"><a href=\"index.html\">fixture  documentation</a> &#187;</li>",
+      "        <li class=\"nav-item nav-item-this\"><a href=\"\">Other</a></li> ",
+      "      </ul>",
+      "    </div>  ",
+      "",
+      "    <div class=\"document\">",
+      "      <div class=\"documentwrapper\">",
+      "        <div class=\"bodywrapper\">",
+      "          <div class=\"body\" role=\"main\">",
+      "            ",
+      "  <section id=\"other\">",
+      "<span id=\"other-label\"></span><h1>Other<a class=\"headerlink\" href=\"#other\" title=\"Link to this heading\">¶</a></h1>",
+      "<section id=\"other-section\">",
+      "<h2>Other Section<a class=\"headerlink\" href=\"#other-section\" title=\"Link to this heading\">¶</a></h2>",
+      "<p>Text.</p>",
+      "</section>",
+      "</section>",
+      "",
+      "",
+      "            <div class=\"clearer\"></div>",
+      "          </div>",
+      "        </div>",
+      "      </div>",
+      "      <div class=\"sphinxsidebar\" role=\"navigation\" aria-label=\"Main\">",
+      "        <div class=\"sphinxsidebarwrapper\">",
+      "  <div>",
+      "    <h3><a href=\"index.html\">Table of Contents</a></h3>",
+      "    <ul>",
+      "<li><a class=\"reference internal\" href=\"#\">Other</a><ul>",
+      "<li><a class=\"reference internal\" href=\"#other-section\">Other Section</a></li>",
+      "</ul>",
+      "</li>",
+      "</ul>",
+      "",
+      "  </div>",
+      "  <div>",
+      "    <h4>Previous topic</h4>",
+      "    <p class=\"topless\"><a href=\"index.html\"",
+      "                          title=\"previous chapter\">Home</a></p>",
+      "  </div>",
+      "  <div role=\"note\" aria-label=\"source link\">",
+      "    <h3>This Page</h3>",
+      "    <ul class=\"this-page-menu\">",
+      "      <li><a href=\"_sources/other.rst.txt\"",
+      "            rel=\"nofollow\">Show Source</a></li>",
+      "    </ul>",
+      "   </div>",
+      "<search id=\"searchbox\" style=\"display: none\" role=\"search\">",
+      "  <h3 id=\"searchlabel\">Quick search</h3>",
+      "    <div class=\"searchformwrapper\">",
+      "    <form class=\"search\" action=\"search.html\" method=\"get\">",
+      "      <input type=\"text\" name=\"q\" aria-labelledby=\"searchlabel\" autocomplete=\"off\" autocorrect=\"off\" autocapitalize=\"off\" spellcheck=\"false\"/>",
+      "      <input type=\"submit\" value=\"Go\" />",
+      "    </form>",
+      "    </div>",
+      "</search>",
+      "<script>document.getElementById('searchbox').style.display = \"block\"</script>",
+      "        </div>",
+      "      </div>",
+      "      <div class=\"clearer\"></div>",
+      "    </div>",
+      "    <div class=\"related\" role=\"navigation\" aria-label=\"Related\">",
+      "      <h3>Navigation</h3>",
+      "      <ul>",
+      "        <li class=\"right\" style=\"margin-right: 10px\">",
+      "          <a href=\"genindex.html\" title=\"General Index\"",
+      "             >index</a></li>",
+      "        <li class=\"right\" >",
+      "          <a href=\"index.html\" title=\"Home\"",
+      "             >previous</a> |</li>",
+      "        <li class=\"nav-item nav-item-0\"><a href=\"index.html\">fixture  documentation</a> &#187;</li>",
+      "        <li class=\"nav-item nav-item-this\"><a href=\"\">Other</a></li> ",
+      "      </ul>",
+      "    </div>",
+      "    <div class=\"footer\" role=\"contentinfo\">",
+      "    &#169; Copyright .",
+      "      @@generator-credit@@",
+      "    </div>",
+      "  </body>",
+      "</html>"
+     ],
+     "search.html": [
+      "<!DOCTYPE html>",
+      "",
+      "<html lang=\"en\" data-content_root=\"./\">",
+      "  <head>",
+      "    <meta charset=\"utf-8\" />",
+      "    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />",
+      "    <title>Search &#8212; fixture  documentation</title>",
+      "    <link rel=\"stylesheet\" type=\"text/css\" href=\"_static/pygments.css?v=8e8a900e\" />",
+      "    <link rel=\"stylesheet\" type=\"text/css\" href=\"_static/basic.css?v=29da98fa\" />",
+      "    ",
+      "    <script src=\"_static/documentation_options.js?v=5929fcd5\"></script>",
+      "    <script src=\"_static/doctools.js?v=fd6eb6e6\"></script>",
+      "    <script src=\"_static/sphinx_highlight.js?v=6ffebe34\"></script>",
+      "    <script src=\"_static/searchtools.js\"></script>",
+      "    <script src=\"_static/language_data.js\"></script>",
+      "    <link rel=\"index\" title=\"Index\" href=\"genindex.html\" />",
+      "    <link rel=\"search\" title=\"Search\" href=\"#\" />",
+      "    <script src=\"searchindex.js\" defer=\"defer\"></script>",
+      "    <meta name=\"robots\" content=\"noindex\" />",
+      "     ",
+      "",
+      "  </head><body>",
+      "    <div class=\"related\" role=\"navigation\" aria-label=\"Related\">",
+      "      <h3>Navigation</h3>",
+      "      <ul>",
+      "        <li class=\"right\" style=\"margin-right: 10px\">",
+      "          <a href=\"genindex.html\" title=\"General Index\"",
+      "             accesskey=\"I\">index</a></li>",
+      "        <li class=\"nav-item nav-item-0\"><a href=\"index.html\">fixture  documentation</a> &#187;</li>",
+      "        <li class=\"nav-item nav-item-this\"><a href=\"\">Search</a></li> ",
+      "      </ul>",
+      "    </div>  ",
+      "",
+      "    <div class=\"document\">",
+      "      <div class=\"documentwrapper\">",
+      "        <div class=\"bodywrapper\">",
+      "          <div class=\"body\" role=\"main\">",
+      "            ",
+      "  <h1 id=\"search-documentation\">Search</h1>",
+      "  ",
+      "  <noscript>",
+      "  <div class=\"admonition warning\">",
+      "  <p>",
+      "    Please activate JavaScript to enable the search",
+      "    functionality.",
+      "  </p>",
+      "  </div>",
+      "  </noscript>",
+      "  ",
+      "  ",
+      "  <p>",
+      "    Searching for multiple words only shows matches that contain",
+      "    all words.",
+      "  </p>",
+      "  ",
+      "  ",
+      "  <form action=\"\" method=\"get\">",
+      "    <input type=\"text\" name=\"q\" aria-labelledby=\"search-documentation\" value=\"\" autocomplete=\"off\" autocorrect=\"off\" autocapitalize=\"off\" spellcheck=\"false\"/>",
+      "    <input type=\"submit\" value=\"search\" />",
+      "    <span id=\"search-progress\" style=\"padding-left: 10px\"></span>",
+      "  </form>",
+      "  ",
+      "  ",
+      "  <div id=\"search-results\"></div>",
+      "  ",
+      "",
+      "            <div class=\"clearer\"></div>",
+      "          </div>",
+      "        </div>",
+      "      </div>",
+      "      <div class=\"sphinxsidebar\" role=\"navigation\" aria-label=\"Main\">",
+      "        <div class=\"sphinxsidebarwrapper\">",
+      "        </div>",
+      "      </div>",
+      "      <div class=\"clearer\"></div>",
+      "    </div>",
+      "    <div class=\"related\" role=\"navigation\" aria-label=\"Related\">",
+      "      <h3>Navigation</h3>",
+      "      <ul>",
+      "        <li class=\"right\" style=\"margin-right: 10px\">",
+      "          <a href=\"genindex.html\" title=\"General Index\"",
+      "             >index</a></li>",
+      "        <li class=\"nav-item nav-item-0\"><a href=\"index.html\">fixture  documentation</a> &#187;</li>",
+      "        <li class=\"nav-item nav-item-this\"><a href=\"\">Search</a></li> ",
+      "      </ul>",
+      "    </div>",
+      "    <div class=\"footer\" role=\"contentinfo\">",
+      "    &#169; Copyright .",
+      "      @@generator-credit@@",
+      "    </div>",
+      "  </body>",
+      "</html>"
+     ]
+    },
+    "sources": {
+     "_sources/index.rst.txt": "Home\n====\n\n.. toctree::\n\n   other\n\nIntro paragraph linking :doc:`other` and :ref:`other-label`.\n\nHome Section\n------------\n\n* simple\n* list\n",
+     "_sources/other.rst.txt": ".. _other-label:\n\nOther\n=====\n\nOther Section\n-------------\n\nText.\n"
+    },
+    "warnings": []
+   },
+   "family": "config",
+   "files": {
+    "index": "Home\n====\n\n.. toctree::\n\n   other\n\nIntro paragraph linking :doc:`other` and :ref:`other-label`.\n\nHome Section\n------------\n\n* simple\n* list\n",
+    "other": ".. _other-label:\n\nOther\n=====\n\nOther Section\n-------------\n\nText.\n"
+   },
+   "name": "cfg_context_values"
+  },
+  {
+   "builder": "html",
+   "conf": {
+    "highlight_language": "none",
+    "html_theme": "basic",
+    "language": "en",
+    "smartquotes": false
+   },
    "conf_py": "project = 'fixture'\nextensions = []\nmaster_doc = 'index'\nexclude_patterns = ['_build']\nhtml_sidebars = {\n    '**': ['globaltoc.html', 'searchbox.html'],\n    'other': [],\n    'o*': ['relations.html'],\n    'i*': ['searchbox.html'],\n    'special': ['localtoc.html', 'sourcelink.html'],\n}\n",
    "expect": {
     "buildinfo": "# Sphinx build info version 1\n# This file records the configuration used when building these files. When it is not found, a full rebuild will be done.\nconfig: 148a9ec42677d87b492e74eabb06b445\ntags: 645f666f9bcd5a90fca523b33c5a78b7\n",
