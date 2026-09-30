@@ -126,11 +126,11 @@ pub fn node_at<'n>(root: &'n Node, path: &[usize]) -> Option<&'n Node> {
 /// `nametypes` tables and the id set live in the continued [`IdRegistry`]
 /// instead.
 ///
-/// Paths address the tree as it was when the lists were collected. A
-/// transform that inserts, removes or moves nodes invalidates them for
-/// every transform after it, which must then re-collect
-/// (`ctx.lists = DocumentLists::collect(&ctx.tree.root)`) before reading
-/// them.
+/// Paths address the tree as it was when the lists were collected, and a
+/// stale one does not go dead: after a node before it is removed it names
+/// whatever moved into its slot. A transform therefore reads them through
+/// [`TransformCtx::lists`], which never hands it lists collected before an
+/// earlier transform ran.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DocumentLists {
     /// `document.ids`: each id to the node carrying it — the first, like
@@ -271,9 +271,10 @@ pub struct TransformCtx<'a> {
     /// `note_implicit_target`) must come after every id the parse handed
     /// out, exactly as it does on the one `document` docutils keeps.
     pub ids: IdRegistry,
-    /// The `document`'s node lists, rebuilt by one walk when the pass
-    /// starts (see [`DocumentLists`] for when to re-collect them).
-    pub lists: DocumentLists,
+    /// The `document`'s node lists for the tree as the running transform
+    /// found it, collected on first use; read through [`Self::lists`].
+    /// `None` until then, and again after every transform.
+    lists: Option<DocumentLists>,
     /// `self.config`.
     pub config: &'a TransformConfig,
     /// `self.env.docname`: the document being read.
@@ -348,20 +349,34 @@ impl<'a> TransformCtx<'a> {
         docname: &'a str,
         config: &'a TransformConfig,
     ) -> Self {
-        let lists = DocumentLists::collect(&tree.root);
         TransformCtx {
             tree,
             ids,
-            lists,
+            lists: None,
             config,
             docname,
             reporter: Reporter::continuing_from(next_seq),
         }
     }
 
+    /// The `document`'s node lists ([`DocumentLists`]) for the tree as the
+    /// running transform found it: one walk the first time the transform
+    /// asks, shared by its later calls. Lists collected for an earlier
+    /// transform are never handed on — the pass drops them after each
+    /// transform, whatever it did to the tree — so no transform needs to
+    /// know what the ones before it changed. A transform that itself
+    /// restructures the tree and then needs paths into the result walks
+    /// again ([`DocumentLists::collect`]).
+    pub fn lists(&mut self) -> &DocumentLists {
+        let tree = &*self.tree;
+        self.lists
+            .get_or_insert_with(|| DocumentLists::collect(&tree.root))
+    }
+
     fn run(&mut self, table: &[ReadTransform]) {
         for (_, _, transform) in table {
             transform(self);
+            self.lists = None;
         }
     }
 
@@ -560,6 +575,47 @@ mod tests {
                 (3, DiagnosticChannel::Logger, "index".to_string()),
             ]
         );
+    }
+
+    /// Reads the lists, then removes the document's first block — the shape
+    /// of MoveModuleTargets (210) removing a module target
+    /// (`sphinx/transforms/__init__.py:175`).
+    fn note_then_remove_first_block(ctx: &mut TransformCtx) {
+        assert_eq!(ctx.lists().substitution_defs["sub"], [1]);
+        ctx.tree.root.children.remove(0);
+    }
+
+    /// Reads a substitution definition through the lists — the shape of
+    /// Substitutions (220) after it.
+    fn read_the_substitution_definition(ctx: &mut TransformCtx) {
+        let path = ctx.lists().substitution_defs["sub"].clone();
+        assert_eq!(
+            node_at(&ctx.tree.root, &path).map(|node| node.kind),
+            Some("substitution_definition"),
+            "the lists handed this transform a path from before the removal: {path:?}"
+        );
+    }
+
+    /// A path from before an earlier transform's structural change does
+    /// not go dead, it silently names the node that moved into its slot —
+    /// here the paragraph after the definition. Every transform must be
+    /// handed lists of the tree as it finds it.
+    #[test]
+    fn the_lists_follow_the_tree_from_one_transform_to_the_next() {
+        let mut tree = crate::rst::parse_rst(
+            "Para.\n\n.. |sub| replace:: text\n\nAfter.\n",
+            &sphinx_opts(),
+        );
+        let config = TransformConfig::default();
+        let mut ctx = TransformCtx::new(&mut tree, IdRegistry::new(), 0, "index", &config);
+        ctx.run(&[
+            (
+                210,
+                "RemoveFirstBlock",
+                note_then_remove_first_block as fn(&mut TransformCtx),
+            ),
+            (220, "ReadSubstitution", read_the_substitution_definition),
+        ]);
     }
 
     /// The docutils `document` lists the parse left behind
