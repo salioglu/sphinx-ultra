@@ -874,45 +874,29 @@ fn assert_warning_gap_is_sound(project: &str, actual: &[String], expected: &[Str
 ///
 /// `smartquotes`: no smart-quote transform exists.
 ///
-/// `keep_warnings`: no `FilterSystemMessages` transform exists — this crate
-/// never removes a reporter `system_message` from a doctree, which is
-/// precisely what `keep_warnings=True` asks Sphinx to do (its transform
-/// keeps every message of level >= 2). The *stripping* half — the `False`
-/// default, which drops every system_message below SEVERE — is the
-/// unimplemented one, so the entry is sound only while every project that
-/// sets the key sets it `True`; [`assert_inert_conf_is_sound`] pins that.
-/// Projects that leave it unset are self-defending: Sphinx strips their
-/// messages, so a system_message appearing on our side alone would fail the
-/// `resolved_pformat` comparison rather than pass silently.
+/// (`keep_warnings` left this table with the read-transform pass: the
+/// `FilterSystemMessages` transform reads it, so it is applied as `-D
+/// keep_warnings=...` like any other key — the `keep_warnings_true` /
+/// `keep_warnings_false` projects compare the same document under both
+/// settings.)
 ///
 /// A new fixture project introducing another such key must either have it
 /// added here (with the same kind of justification) or be expressible as a
 /// `-D` override.
-const KNOWN_INERT_CONF: &[&str] = &["smartquotes", "keep_warnings"];
+const KNOWN_INERT_CONF: &[&str] = &["smartquotes"];
 
 /// The side-condition that makes one [`KNOWN_INERT_CONF`] entry sound.
-///
-/// `keep_warnings` is inert only in its `True` sense (see the constant's
-/// docs), so a project setting it any other way must fail here rather than
-/// be compared against a differently filtered oracle.
 ///
 /// Exhaustive on purpose. A future key added to [`KNOWN_INERT_CONF`] with
 /// no arm here fails the first project that sets it, with instructions —
 /// the mechanical forcing the table otherwise lacks, so "inert" cannot be
 /// claimed for a new key without either a side-condition or an explicit
 /// statement that every value is inert.
-fn assert_inert_conf_is_sound(project: &str, key: &str, value: &serde_json::Value) {
+fn assert_inert_conf_is_sound(project: &str, key: &str, _value: &serde_json::Value) {
     match key {
         // Inert in EVERY sense: no smart-quote transform exists at all, so
         // neither `True` nor `False` steers anything.
         "smartquotes" => {}
-        "keep_warnings" => assert_eq!(
-            value,
-            &serde_json::Value::Bool(true),
-            "project {project:?}: keep_warnings={value}, but the harness treats the key \
-             as inert only in its `True` sense — this crate never strips reporter \
-             system_messages, and the stripping half is unimplemented"
-        ),
         other => panic!(
             "project {project:?} sets {other:?}, which is listed in KNOWN_INERT_CONF \
              but has no soundness arm in assert_inert_conf_is_sound. Add one: either \
@@ -1731,13 +1715,13 @@ fn resolved_doctrees_match_oracle() {
 /// fixture document (or project) exactly once and that the two document
 /// tables are disjoint — so the table lengths ARE the exemption counts.
 /// Update the seven constants and the doc sites together.
-const DOCUMENTED_PROJECTS: usize = 32;
-const DOCUMENTED_DOCUMENTS: usize = 89;
+const DOCUMENTED_PROJECTS: usize = 34;
+const DOCUMENTED_DOCUMENTS: usize = 91;
 const DOCUMENTED_WHOLESALE_EXEMPT_DOCUMENTS: usize = 45;
 const DOCUMENTED_STAMP_EXEMPT_DOCUMENTS: usize = 8;
-const DOCUMENTED_BYTE_EXACT_DOCUMENTS: usize = 36;
+const DOCUMENTED_BYTE_EXACT_DOCUMENTS: usize = 38;
 const DOCUMENTED_WARNING_EXEMPT_PROJECTS: usize = 4;
-const DOCUMENTED_BYTE_EXACT_WARNING_PROJECTS: usize = 28;
+const DOCUMENTED_BYTE_EXACT_WARNING_PROJECTS: usize = 30;
 
 #[test]
 fn exemption_arithmetic_matches_the_documented_numbers() {

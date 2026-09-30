@@ -1,6 +1,11 @@
-//! Differential test: our RST parser vs the SPHINX ORACLE — the pseudo-XML a
-//! real `sphinx-build` 9.1.0 read phase (dummy builder, `extensions = []`,
-//! smartquotes off, keep_warnings on) produces for the committed fixture corpus.
+//! Differential test: our RST parser and read-transform pass vs the SPHINX
+//! ORACLE — the pseudo-XML a real `sphinx-build` 9.1.0 read phase (dummy
+//! builder, `extensions = []`, smartquotes off, keep_warnings on) produces for
+//! the committed fixture corpus. The oracle's tree is the one Sphinx's read
+//! transforms leave, so ours is too: every case goes through
+//! [`parse_and_transform`] under the fixture's pinned
+//! [`fixture_transform_config`], and both the tree and the printed records
+//! (parse-time and transform-time) are compared.
 //!
 //! Regenerate the fixture (manual, never in CI):
 //!     PYTHONNOUSERSITE=1 uv run --python 3.12 --with 'sphinx==9.1.0' \
@@ -27,7 +32,8 @@ use std::sync::Arc;
 
 use sphinx_ultra::error::BuildWarning;
 use sphinx_ultra::py::PySigConfig;
-use sphinx_ultra::rst::{parse_rst, parse_rst_full, ParseOptions};
+use sphinx_ultra::rst::ParseOptions;
+use sphinx_ultra::transforms::{parse_and_transform, TransformConfig};
 
 #[derive(serde::Deserialize)]
 struct Fixture {
@@ -111,6 +117,18 @@ fn py_config_from_conf(conf: &BTreeMap<String, serde_json::Value>) -> Result<PyS
     Ok(py)
 }
 
+/// The read-transform configuration every fixture case was generated under:
+/// the generator's fixed `CONFOVERRIDES` (`keep_warnings=True`,
+/// `smartquotes=False`), every other key at Sphinx's default. A case's own
+/// `conf` never touches these (the generator asserts it).
+fn fixture_transform_config() -> TransformConfig {
+    TransformConfig {
+        keep_warnings: true,
+        smartquotes: false,
+        ..TransformConfig::default()
+    }
+}
+
 #[test]
 fn an_unmapped_conf_key_fails() {
     let mut conf = BTreeMap::new();
@@ -189,7 +207,7 @@ fn matches_sphinx_oracle_pformat() {
         };
         let rst = case.rst.clone();
         let ours = std::panic::catch_unwind(move || {
-            parse_rst(
+            parse_and_transform(
                 &rst,
                 &ParseOptions {
                     source_path: "<snippet>".into(),
@@ -201,7 +219,9 @@ fn matches_sphinx_oracle_pformat() {
                     srcdir: None,
                     ..Default::default()
                 },
+                &fixture_transform_config(),
             )
+            .0
             .root
             .pformat()
         });
@@ -248,9 +268,13 @@ fn printed(d: &sphinx_ultra::rst::diagnostics::Diagnostic, sources: &[String]) -
     BuildWarning::from_diagnostic(d, PathBuf::from(path)).render()
 }
 
-/// The parse prints what Sphinx's read phase prints for each snippet, in
+/// The read prints what Sphinx's read phase prints for each snippet, in
 /// the same order: reporter records at their creation, interleaved with the
-/// directives' and domains' logger records. Parsed against the oracle's
+/// directives' and domains' logger records, then the read transforms'
+/// records — the whole stream [`parse_and_transform`] returns, so a
+/// transform-time record the oracle prints is compared like any other
+/// (`tx_filter.info_message_stripped` guards the transform side: the INFO
+/// FilterSystemMessages strips never prints). Parsed against the oracle's
 /// project, whose only document is `index` (the toctree resolves against
 /// it); the tree comparison above parses without a project and is
 /// unaffected.
@@ -290,7 +314,7 @@ fn every_case_warns_what_sphinx_prints() {
         let rst = case.rst.clone();
         let found_docs = Arc::clone(&found_docs);
         let ours = std::panic::catch_unwind(move || {
-            let out = parse_rst_full(
+            let (tree, records) = parse_and_transform(
                 &rst,
                 &ParseOptions {
                     source_path: "<snippet>".into(),
@@ -300,11 +324,11 @@ fn every_case_warns_what_sphinx_prints() {
                     found_docs: Some(found_docs),
                     ..Default::default()
                 },
+                &fixture_transform_config(),
             );
-            out.registry
-                .diagnostics
+            records
                 .iter()
-                .map(|d| printed(d, &out.doctree.sources))
+                .map(|d| printed(d, &tree.sources))
                 .collect::<Vec<_>>()
         });
         match ours {

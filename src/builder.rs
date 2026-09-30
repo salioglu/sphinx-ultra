@@ -62,7 +62,14 @@ const DOCTREE_MAGIC: &[u8; 4] = b"SUDT";
 /// Version 2: wave 4.5's provenance change — `Span` gained a `line` field
 /// (and its byte range now indexes the parser's processed source text),
 /// so version-1 blobs no longer decode as written.
-const DOCTREE_FORMAT_VERSION: u32 = 2;
+///
+/// Version 3: wave 5's read-transform pass ([`crate::transforms`]) — the
+/// persisted tree is the one Sphinx's read transforms leave, no longer the
+/// parser's (FilterSystemMessages has removed its `system_message`s, and
+/// the transform families to come rewrite targets, references,
+/// substitutions and footnotes). The shape is unchanged, so a version-2
+/// blob decodes cleanly into an untransformed tree: a change of meaning.
+const DOCTREE_FORMAT_VERSION: u32 = 3;
 
 /// Bytes of the [`DOCTREE_MAGIC`] + [`DOCTREE_FORMAT_VERSION`] header.
 const DOCTREE_HEADER_LEN: usize = DOCTREE_MAGIC.len() + std::mem::size_of::<u32>();
@@ -2184,6 +2191,72 @@ mod tests {
         std::fs::write(builder.doctree_path("index"), bytes).unwrap();
 
         assert!(builder.load_doctree("index").is_none());
+    }
+
+    /// Version 3 changed what a persisted doctree MEANS — the tree after
+    /// the read transforms, not the parser's — while its shape stayed
+    /// put, so a version-2 blob still decodes, into a tree that never had
+    /// its `system_message`s filtered. The version word alone makes it the
+    /// miss it must be.
+    #[test]
+    fn a_version_2_doctree_is_a_cache_miss() {
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("source");
+        let output_dir = tmp.path().join("build");
+        write_project(&source_dir);
+
+        let (_cold, builder) = build_incrementally(&source_dir, &output_dir);
+        let doctree = builder.load_doctree("index").expect("doctree decodes");
+
+        let mut bytes = Vec::from(DOCTREE_MAGIC);
+        bytes.extend_from_slice(&2u32.to_le_bytes());
+        bytes.extend_from_slice(&crate::doctree::to_bincode(&doctree));
+        std::fs::write(builder.doctree_path("index"), bytes).unwrap();
+        assert!(
+            builder.load_doctree("index").is_none(),
+            "a version-2 blob holds an untransformed tree"
+        );
+
+        let (stats, rebuilt) = build_incrementally(&source_dir, &output_dir);
+        assert_eq!(stats.cache_hits, 1, "the version-2 document is re-read");
+        assert!(rebuilt.load_doctree("index").is_some());
+    }
+
+    /// The persisted doctree is the post-transform tree — Sphinx pickles
+    /// the doctree after its read transforms have run
+    /// (`builders/__init__.py:632-671`) — and a warm build, which does not
+    /// re-read an up-to-date document, resolves exactly that tree. Under
+    /// the default `keep_warnings=False`, FilterSystemMessages
+    /// (`transforms/__init__.py:337-347`) has removed the inline markup
+    /// error's `system_message` and left its `problematic` in place; the
+    /// cached document must come back the same way.
+    #[test]
+    fn a_warm_build_loads_the_transformed_doctree() {
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("source");
+        let output_dir = tmp.path().join("build");
+        write_project(&source_dir);
+        std::fs::write(source_dir.join("a.rst"), "A\n=\n\nPara *bad.\n").unwrap();
+
+        let (cold, builder) = build_incrementally(&source_dir, &output_dir);
+        assert_eq!(cold.cache_hits, 0);
+        let persisted = builder.load_doctree("a").expect("doctree decodes");
+        let persisted = persisted.root.pformat();
+        assert!(
+            !persisted.contains("<system_message") && persisted.contains("<problematic"),
+            "the persisted blob decodes to the post-transform tree:\n{persisted}"
+        );
+
+        let (warm, warm_builder) = build_incrementally(&source_dir, &output_dir);
+        assert_eq!(warm.cache_hits, 2, "both documents come from the cache");
+        let snapshot = warm_builder.snapshot_env();
+        let resolved = snapshot["resolved_pformat"]["a"]
+            .as_str()
+            .expect("the cached document is resolved");
+        assert!(
+            !resolved.contains("<system_message") && resolved.contains("<problematic"),
+            "the warm build resolves the transformed tree:\n{resolved}"
+        );
     }
 
     #[test]

@@ -142,6 +142,26 @@ pub struct Reporter {
 }
 
 impl Reporter {
+    /// A recorder that carries on a stream another one started: its first
+    /// record (or registration) takes `next`.
+    ///
+    /// The read-transform pass records into one of these, seeded with the
+    /// parse's [`Self::peek_seq`]: Sphinx runs its read transforms after
+    /// the parse, so every record a transform makes follows every record
+    /// the parse made — and every registration whose duplicate warning the
+    /// parse logged — in the document's one stream.
+    pub fn continuing_from(next: u32) -> Reporter {
+        Reporter {
+            next: Cell::new(next),
+            records: RefCell::default(),
+        }
+    }
+
+    /// The number the next record or registration will take, unspent.
+    pub fn peek_seq(&self) -> u32 {
+        self.next.get()
+    }
+
     /// The next number in creation order, spent.
     pub fn next_seq(&self) -> u32 {
         let seq = self.next.get();

@@ -21,6 +21,7 @@ pub mod python_config;
 pub mod rst;
 pub mod search;
 pub mod template;
+pub mod transforms;
 pub mod utils;
 pub mod validation;
 

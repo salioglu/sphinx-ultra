@@ -40,6 +40,10 @@ pub struct Parser {
     srcdir: Option<std::path::PathBuf>,
     /// `source_encoding` (see [`crate::rst::ParseOptions::source_encoding`]).
     source_encoding: String,
+    /// The read transforms' configuration slice
+    /// ([`crate::transforms::TransformConfig`]), projected once like
+    /// [`Self::py`].
+    transforms: crate::transforms::TransformConfig,
 }
 
 /// Everything one source file's parse produces: the pipeline's [`Document`]
@@ -58,6 +62,7 @@ impl Parser {
             py: crate::py::PySigConfig::from(config),
             srcdir: None,
             source_encoding: config.source_encoding.clone(),
+            transforms: crate::transforms::TransformConfig::from(config),
         })
     }
 
@@ -123,6 +128,15 @@ impl Parser {
     /// Returns the parsed doctree so callers (tests included) can inspect
     /// docname-carrying attrs (`pending_xref[refdoc]`, toctree `parent`)
     /// that don't otherwise survive onto `Document`.
+    ///
+    /// The doctree is Sphinx's read-phase tree: the parse, then the read
+    /// transforms ([`crate::transforms::apply_read_transforms`]), which
+    /// Sphinx runs on every document right after parsing it
+    /// (`sphinx/util/docutils.py:906`) — here, inside the build's parallel
+    /// read, before anything reads the tree, before the merge phase's
+    /// domain hooks, and before the tree is persisted. The transforms'
+    /// records join the parse's in `document.registry.diagnostics`,
+    /// numbered after them.
     fn parse_rst_into(
         &self,
         content: &str,
@@ -131,7 +145,7 @@ impl Parser {
         found_docs: Option<Arc<BTreeSet<String>>>,
         document: &mut Document,
     ) -> Doctree {
-        let output = rst::parse_rst_full(
+        let mut output = rst::parse_rst_full(
             content,
             &rst::ParseOptions {
                 source_path: file_path.display().to_string(),
@@ -143,6 +157,14 @@ impl Parser {
                 srcdir: self.srcdir.clone(),
                 source_encoding: self.source_encoding.clone(),
             },
+        );
+        crate::transforms::apply_read_transforms(
+            &mut output.doctree,
+            output.ids,
+            output.next_seq,
+            docname,
+            &self.transforms,
+            &mut output.registry.diagnostics,
         );
         {
             let root = &output.doctree.root;

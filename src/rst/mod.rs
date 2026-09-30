@@ -5,9 +5,10 @@
 //! `docutils.parsers.rst.Parser` parse-layer output for the construct set in
 //! `tests/fixtures/doctree_differential.json`. Transforms (doctitle
 //! promotion, target propagation, transition hoisting, message filtering)
-//! are explicitly NOT applied here; they arrive as separate components in
-//! later waves. Behavior sources: the committed differential fixture and the
-//! probe notes in docs/superpowers/plans/2026-08-07-m2-wave1-probes.md.
+//! are explicitly NOT applied here: sphinx mode runs them afterwards, as the
+//! separate read-transform pass in [`crate::transforms`]. Behavior sources:
+//! the committed differential fixture and the probe notes in
+//! docs/superpowers/plans/2026-08-07-m2-wave1-probes.md.
 
 pub(crate) mod block;
 pub mod diagnostics;
@@ -388,6 +389,15 @@ pub struct ParseOutput {
     /// numbering where the parse stopped instead of re-deriving it. Lives
     /// only as long as the parse output: never serialized.
     pub ids: crate::doctree::ids::IdRegistry,
+    /// The document's diagnostics counter as the parse left it: the `seq`
+    /// ([`diagnostics::Diagnostic::seq`]) its next record takes. Every
+    /// number below it is spent — on [`RegistryExport::diagnostics`] and on
+    /// the registrations whose duplicate warnings the merge phase replays
+    /// ([`PyObjectRecord::seq`] and its kin) — so the read-transform pass
+    /// continues from here ([`crate::transforms::apply_read_transforms`])
+    /// rather than from the highest recorded diagnostic, which a later
+    /// registration can outnumber. Never serialized.
+    pub next_seq: u32,
 }
 
 /// Parse RST source into a doctree. Total: never panics, never errors —

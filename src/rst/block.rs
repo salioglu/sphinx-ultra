@@ -414,6 +414,9 @@ impl BlockParser {
     /// parse_document plus the flat build-pipeline records.
     pub(crate) fn parse_document_full(mut self) -> super::ParseOutput {
         let root = self.parse_document_impl();
+        // Read before the stream is taken below: the transform pass
+        // continues the document's numbering from here.
+        let next_seq = self.reporter.peek_seq();
         // Harvest the id/name registry before it drops with `self`: wave 4's
         // std-domain label harvest needs name -> (id, explicit) data that
         // otherwise dies with the BlockParser.
@@ -439,6 +442,7 @@ impl BlockParser {
             toctrees: std::mem::take(&mut self.toctree_records),
             registry,
             ids: self.registry,
+            next_seq,
         }
     }
 

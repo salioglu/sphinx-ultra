@@ -6883,6 +6883,196 @@
         "index": "Index\n=====\n\nBefore *bad.\n\n.. include:: outer.inc\n\nAfter *bad.\n"
       },
       "name": "inc_nested_error"
+    },
+    {
+      "conf": {
+        "keep_warnings": true,
+        "smartquotes": false
+      },
+      "expect": {
+        "dependencies": {},
+        "files_to_rebuild": {},
+        "genindex": [],
+        "included": {},
+        "index_entries": {
+          "index": []
+        },
+        "py_modindex": {
+          "collapse": false,
+          "groups": []
+        },
+        "py_modules": [],
+        "py_objects": [],
+        "relations": {
+          "index": [
+            null,
+            null,
+            null
+          ]
+        },
+        "resolved_pformat": {
+          "index": "<document source=\"<project>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"index\" names=\"index\">\n        <title>\n            Index\n        <paragraph>\n            Para \n            <problematic ids=\"id2\" refid=\"id1\">\n                *\n            bad.\n        <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"4\" source=\"<project>/index.rst\" type=\"WARNING\">\n            <paragraph>\n                Inline emphasis start-string without end-string.\n        <section dupnames=\"dup\" ids=\"dup\">\n            <title>\n                Dup\n            <paragraph>\n                x\n        <section dupnames=\"dup\" ids=\"id3\">\n            <title>\n                Dup\n            <paragraph>\n                y\n"
+        },
+        "std": {
+          "anonlabels": {
+            "genindex": [
+              "genindex",
+              ""
+            ],
+            "modindex": [
+              "py-modindex",
+              ""
+            ],
+            "py-modindex": [
+              "py-modindex",
+              ""
+            ],
+            "search": [
+              "search",
+              ""
+            ]
+          },
+          "labels": {
+            "genindex": [
+              "genindex",
+              "",
+              "Index"
+            ],
+            "modindex": [
+              "py-modindex",
+              "",
+              "Module Index"
+            ],
+            "py-modindex": [
+              "py-modindex",
+              "",
+              "Python Module Index"
+            ],
+            "search": [
+              "search",
+              "",
+              "Search Page"
+            ]
+          },
+          "objects": [],
+          "progoptions": [],
+          "terms": {}
+        },
+        "toc_fignumbers": {},
+        "toc_num_entries": {
+          "index": 3
+        },
+        "toc_secnumbers": {},
+        "tocs_pformat": {
+          "index": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"index\">\n                Index\n        <bullet_list>\n            <list_item>\n                <compact_paragraph>\n                    <reference anchorname=\"#dup\" internal=\"1\" refuri=\"index\">\n                        Dup\n            <list_item>\n                <compact_paragraph>\n                    <reference anchorname=\"#id3\" internal=\"1\" refuri=\"index\">\n                        Dup\n"
+        },
+        "toctree_includes": {},
+        "warning_records": [
+          "<project>/index.rst:4: WARNING: Inline emphasis start-string without end-string. [docutils]"
+        ],
+        "warnings": [
+          "<project>/index.rst:4: WARNING: Inline emphasis start-string without end-string. [docutils]"
+        ]
+      },
+      "files": {
+        "index": "Index\n=====\n\nPara *bad.\n\nDup\n---\n\nx\n\nDup\n---\n\ny\n"
+      },
+      "name": "keep_warnings_true"
+    },
+    {
+      "conf": {
+        "keep_warnings": false,
+        "smartquotes": false
+      },
+      "expect": {
+        "dependencies": {},
+        "files_to_rebuild": {},
+        "genindex": [],
+        "included": {},
+        "index_entries": {
+          "index": []
+        },
+        "py_modindex": {
+          "collapse": false,
+          "groups": []
+        },
+        "py_modules": [],
+        "py_objects": [],
+        "relations": {
+          "index": [
+            null,
+            null,
+            null
+          ]
+        },
+        "resolved_pformat": {
+          "index": "<document source=\"<project>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"index\" names=\"index\">\n        <title>\n            Index\n        <paragraph>\n            Para \n            <problematic ids=\"id2\" refid=\"id1\">\n                *\n            bad.\n        <section dupnames=\"dup\" ids=\"dup\">\n            <title>\n                Dup\n            <paragraph>\n                x\n        <section dupnames=\"dup\" ids=\"id3\">\n            <title>\n                Dup\n            <paragraph>\n                y\n"
+        },
+        "std": {
+          "anonlabels": {
+            "genindex": [
+              "genindex",
+              ""
+            ],
+            "modindex": [
+              "py-modindex",
+              ""
+            ],
+            "py-modindex": [
+              "py-modindex",
+              ""
+            ],
+            "search": [
+              "search",
+              ""
+            ]
+          },
+          "labels": {
+            "genindex": [
+              "genindex",
+              "",
+              "Index"
+            ],
+            "modindex": [
+              "py-modindex",
+              "",
+              "Module Index"
+            ],
+            "py-modindex": [
+              "py-modindex",
+              "",
+              "Python Module Index"
+            ],
+            "search": [
+              "search",
+              "",
+              "Search Page"
+            ]
+          },
+          "objects": [],
+          "progoptions": [],
+          "terms": {}
+        },
+        "toc_fignumbers": {},
+        "toc_num_entries": {
+          "index": 3
+        },
+        "toc_secnumbers": {},
+        "tocs_pformat": {
+          "index": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"index\">\n                Index\n        <bullet_list>\n            <list_item>\n                <compact_paragraph>\n                    <reference anchorname=\"#dup\" internal=\"1\" refuri=\"index\">\n                        Dup\n            <list_item>\n                <compact_paragraph>\n                    <reference anchorname=\"#id3\" internal=\"1\" refuri=\"index\">\n                        Dup\n"
+        },
+        "toctree_includes": {},
+        "warning_records": [
+          "<project>/index.rst:4: WARNING: Inline emphasis start-string without end-string. [docutils]"
+        ],
+        "warnings": [
+          "<project>/index.rst:4: WARNING: Inline emphasis start-string without end-string. [docutils]"
+        ]
+      },
+      "files": {
+        "index": "Index\n=====\n\nPara *bad.\n\nDup\n---\n\nx\n\nDup\n---\n\ny\n"
+      },
+      "name": "keep_warnings_false"
     }
   ],
   "sphinx_version": "9.1.0"

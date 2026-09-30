@@ -3730,6 +3730,13 @@
         "<snippet>:1: WARNING: could not parse arglist ('a, a'): duplicate parameter name: 'a'",
         "<snippet>:3: WARNING: Inline emphasis start-string without end-string. [docutils]"
       ]
+    },
+    {
+      "family": "tx_filter",
+      "name": "tx_filter.info_message_stripped",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section dupnames=\"dup\" ids=\"dup\">\n        <title>\n            Dup\n        <paragraph>\n            x\n    <section dupnames=\"dup\" ids=\"id1\">\n        <title>\n            Dup\n        <paragraph>\n            y\n",
+      "rst": "Dup\n===\n\nx\n\nDup\n===\n\ny\n",
+      "warnings": []
     }
   ],
   "conf_semantics": "a case's optional 'conf' dict is confoverrides applied on top of the base settings above; absent = defaults. The consumer maps every key onto ParseOptions.py and errors on unmapped keys.",

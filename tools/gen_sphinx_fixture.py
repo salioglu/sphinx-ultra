@@ -42,7 +42,9 @@ Pinned configuration (recorded in the fixture header, asserted at runtime):
   - confoverrides: keep_warnings=True (FilterSystemMessages keeps WARNING(2)/
     ERROR(3)/SEVERE(4) system_messages in-tree like the wave-1/2 fixtures;
     DEBUG(0)/INFO(1) are still stripped -- probes doc FilterSystemMessages
-    finding; INFO-emitting snippets are therefore excluded from this corpus)
+    finding. Since M2 wave 5 the consumer runs the same filter
+    (sphinx_ultra::transforms), so INFO-emitting snippets are admitted:
+    family tx_filter)
   - env.settings pins (sphinx.environment.default_settings): auto_id_prefix='id',
     halt_level=5, doctitle_xform=False, sectsubtitle_xform=False
   - report_level: docutils default 2 (Sphinx pins none; probe-verified inert
@@ -81,17 +83,24 @@ Normalizations applied to recorded pseudo_xml (the ONLY two rewrites):
      fails if the attribute survives anywhere else.
 
 CORPUS POLICY (merge bar): every emitted case is byte-identical between this
-Sphinx oracle and the wave-1/2/3 docutils parse layer, hence zero-divergence
-against the Rust parser. Candidate cases where the Sphinx read phase genuinely
-diverges from the docutils parse layer (INFO stripping, PropagateTargets/
-IndirectHyperlinks/ExternalTargets/AnonymousHyperlinks target rewrites,
-Footnotes+FootnoteDocnameUpdater, DoctestTransform classes, doc-start docinfo
-consumption, image `candidates`, Transitions edge warnings, Sphinx role
-replacements for pep/rfc/code/index) are EXCLUDED and documented with full
-diffs in the wave-3 recon report (sphinx-harness-report.md). Later tasks extend
-this corpus with Sphinx-specific directives (toctree, code-block, versionadded/
-versionchanged/deprecated, seealso, only, highlight, math, index, rst-class,
-...) once the Rust side grows the sphinx registry + env surface.
+Sphinx oracle and the crate's parse layer FOLLOWED BY its read-transform pass
+(`sphinx_ultra::transforms::parse_and_transform`, which
+tests/sphinx_doctree_differential.rs runs under this fixture's
+keep_warnings=True / smartquotes=False), in its tree and in its printed
+records, hence zero-divergence against the Rust pipeline. (Until M2 wave 5 the
+bar was the bare wave-1/2/3 docutils parse layer: the crate ran no transform.)
+Candidate cases whose tree a read transform the crate does not run yet
+changes are EXCLUDED; the wave-3 recon report (sphinx-harness-report.md)
+documents the enumerated divergences with full diffs: INFO stripping,
+PropagateTargets/IndirectHyperlinks/ExternalTargets/AnonymousHyperlinks target
+rewrites, Footnotes+FootnoteDocnameUpdater, DoctestTransform classes,
+doc-start docinfo consumption, image `candidates`, Transitions edge warnings,
+Sphinx role replacements for pep/rfc/code/index. Each wave-5 transform task
+re-admits the constructs of the transform it lands, in a `tx_*` family of its
+own: `tx_filter` (FilterSystemMessages -- INFO stripping) first. Later tasks
+extend this corpus with Sphinx-specific directives (toctree, code-block,
+versionadded/versionchanged/deprecated, seealso, only, highlight, math, index,
+rst-class, ...) once the Rust side grows the sphinx registry + env surface.
 
 Wave-4 task 9 tried to add a sphinx-mode `.. figure::` case (to pin where the
 `:name:` id lands, which the docutils-mode fixture already covers as
@@ -953,6 +962,14 @@ CASES = [
     ('sx_std', 'glossary_term_messages_one_line_up', '.. glossary::\n\n   term\n   *x\n      def\n'),
     ('sx_std', 'option_malformed_then_body_message', '.. option:: =bad\n\n   *x\n'),
     ('py', 'arglist_warning_then_body_message', '.. py:function:: f(a, a)\n\n   *x\n'),
+    # ===== tx_filter (M2 wave 5, sub-project 1, Task 6) =====
+    # FilterSystemMessages (`transforms/__init__.py:337-347`, priority 999)
+    # under this fixture's keep_warnings=True filters below level 2: the
+    # parse's INFO `Duplicate implicit target name` message (placed in the
+    # second section after its title) is gone from Sphinx's tree, and INFO
+    # never prints either. Formerly excluded by the corpus policy (INFO
+    # stripping).
+    ('tx_filter', 'info_message_stripped', 'Dup\n===\n\nx\n\nDup\n===\n\ny\n'),
 
 ]
 
@@ -1177,6 +1194,7 @@ def main() -> int:
         "py": 49,
         "pysig": 30,
         "pyconf": 30,
+        "tx_filter": 1,
     }
     counts: dict = {}
     for case in CASES:

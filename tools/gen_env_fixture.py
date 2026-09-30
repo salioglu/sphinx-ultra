@@ -1573,6 +1573,62 @@ After *bad.
             "inner.inc": "Inner para.\n\n.. note::\n\nInner *bad.\n",
         },
     },
+    # -----------------------------------------------------------------------
+    # Wave 5 (sub-project 1, Task 6): `keep_warnings`, the level
+    # FilterSystemMessages (`transforms/__init__.py:337-347`, priority 999)
+    # filters `system_message` nodes below — 2 when on, 5 (everything) when
+    # off. The same document under each setting, carrying one WARNING-level
+    # message (an inline markup error, in the tree after its paragraph) and
+    # one INFO-level message (a duplicate implicit section name, in the
+    # second section after its title): the resolved doctree keeps only the
+    # WARNING under `True`, and no `system_message` at all under `False`.
+    # The printed stream is the same WARNING record under both (INFO never
+    # prints; printing does not depend on the tree).
+    # -----------------------------------------------------------------------
+    {
+        "name": "keep_warnings_true",
+        "conf": {"keep_warnings": True},
+        "files": {
+            "index": """\
+Index
+=====
+
+Para *bad.
+
+Dup
+---
+
+x
+
+Dup
+---
+
+y
+""",
+        },
+    },
+    {
+        "name": "keep_warnings_false",
+        "conf": {"keep_warnings": False},
+        "files": {
+            "index": """\
+Index
+=====
+
+Para *bad.
+
+Dup
+---
+
+x
+
+Dup
+---
+
+y
+""",
+        },
+    },
 ]
 
 
