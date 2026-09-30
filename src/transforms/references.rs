@@ -127,6 +127,12 @@ const LINE_LENGTH_LIMIT: usize = 10_000;
 /// expanded after a "detected" message took its place. The port runs on an
 /// [`Arena`] that keeps all of that.
 ///
+/// One input hangs docutils and is stopped here instead: a cycle through a
+/// definition whose name differs only in case from a later one's — its
+/// references are filed under the other name, so docutils' circularity
+/// test never fires; the guard at that test ends it as a circular
+/// definition (fix round 1, unit-pinned).
+///
 /// Two inputs abort the Sphinx build, and are carried on here instead: a
 /// copy holding a reference to no definition (`normed[...]` raises
 /// `KeyError`, `:726`) queues it like any other, to fail as undefined in
@@ -148,6 +154,9 @@ pub(super) fn substitutions(ctx: &mut TransformCtx) {
         .collect();
     // `nested`: each name to the definitions whose expansion met it.
     let mut nested: HashMap<String, Vec<String>> = HashMap::new();
+    // The same bookkeeping by the definition each nested reference resolves
+    // to — the termination guard below.
+    let mut resolved_nested: HashMap<String, Vec<String>> = HashMap::new();
 
     let mut worklist = arena.findall(Arena::ROOT, kinds::SUBSTITUTION_REFERENCE);
     let mut next = 0;
@@ -184,14 +193,43 @@ pub(super) fn substitutions(ctx: &mut TransformCtx) {
         let copy = arena.deepcopy(definition);
         let mut circular = false;
         for nested_reference in arena.findall(copy, kinds::SUBSTITUTION_REFERENCE) {
-            let nested_refname = arena.str_attr(nested_reference, "refname").to_lowercase();
-            if let Some(nested_name) = normed.get(&nested_refname) {
-                let seen = nested.entry(nested_name.clone()).or_default();
-                if seen.contains(nested_name) {
+            let nested_refname = arena.str_attr(nested_reference, "refname").to_string();
+            if let Some(nested_name) = normed.get(&nested_refname.to_lowercase()) {
+                // Termination guard — a deliberate divergence: docutils
+                // hangs. docutils files a nested reference under its
+                // case-folded name's definition (`normed`, the last of the
+                // names that fold alike), but expands the definition it
+                // names exactly (`:685-686`). When those differ (`|A|` with
+                // both `.. |A|` and `.. |a|` defined), a cycle through `A`
+                // grows `nested["a"]` with `A` and its neighbours only, the
+                // test below never fires, and the worklist grows for ever.
+                // For those references alone, docutils' own test also runs
+                // on the definition the reference resolves to, and the
+                // expansion stops as a circular one. Where every name
+                // resolves to itself the two lists agree and nothing
+                // changes.
+                let resolved = if defs.contains_key(&nested_refname) {
+                    &nested_refname
+                } else {
+                    nested_name
+                };
+                let revisited = |lists: &HashMap<String, Vec<String>>, name: &String| {
+                    lists.get(name).is_some_and(|seen| seen.contains(name))
+                };
+                if revisited(&nested, nested_name)
+                    || (resolved != nested_name && revisited(&resolved_nested, resolved))
+                {
                     circular = true;
                     break;
                 }
-                seen.push(key.clone());
+                nested
+                    .entry(nested_name.clone())
+                    .or_default()
+                    .push(key.clone());
+                resolved_nested
+                    .entry(resolved.clone())
+                    .or_default()
+                    .push(key.clone());
             }
             arena.slots[nested_reference].origin = Some(reference);
             worklist.push(nested_reference);
@@ -870,6 +908,66 @@ mod tests {
             [(Some(3), undefined("nope")), (Some(1), undefined("nope"))]
         );
         assert!(!contains_kind(&tree.root, kinds::SUBSTITUTION_REFERENCE));
+    }
+
+    /// Two definition names differing only in case (review finding, fix
+    /// round 1): `|A|` resolves to `A` exactly (`references.py:685-686`),
+    /// but docutils files each nested reference under its case-folded
+    /// name's definition (`normed[...]`, `:726-728`) — here `a`, whose list
+    /// only ever gains `b` and `A` — so its circularity test never fires and
+    /// the expansion never ends (docutils 0.22.4 hangs: probed by the
+    /// review, `timeout 20` exit 124; no oracle case can exist). The guard
+    /// stops it with the ordinary circular errors: the paragraph's
+    /// reference "referenced", then each definition "detected".
+    #[test]
+    fn a_case_folded_cycle_ends_where_docutils_never_does() {
+        const SOURCE: &str =
+            ".. |A| replace:: |b|\n.. |b| replace:: |A|\n.. |a| replace:: z\n\nSee |A|.\n";
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = sender.send(read(SOURCE));
+        });
+        let (tree, records) = receiver
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the read pass did not terminate");
+        let detected = |line, source: &str| {
+            (
+                Some(line),
+                format!("Circular substitution definition detected:\n\n{source}"),
+            )
+        };
+        assert_eq!(
+            records,
+            [
+                (
+                    Some(5),
+                    "Circular substitution definition referenced: \"A\".".to_string()
+                ),
+                detected(1, ".. |A| replace:: |b|"),
+                detected(2, ".. |b| replace:: |A|"),
+            ]
+        );
+        assert_eq!(
+            tree.root.pformat(),
+            "<document source=\"<snippet>\">\n\
+             \x20   <system_message level=\"3\" line=\"1\" names=\"A\" source=\"<snippet>\" type=\"ERROR\">\n\
+             \x20       <paragraph>\n\
+             \x20           Circular substitution definition detected:\n\
+             \x20       <literal_block xml:space=\"preserve\">\n\
+             \x20           .. |A| replace:: |b|\n\
+             \x20   <system_message level=\"3\" line=\"2\" names=\"b\" source=\"<snippet>\" type=\"ERROR\">\n\
+             \x20       <paragraph>\n\
+             \x20           Circular substitution definition detected:\n\
+             \x20       <literal_block xml:space=\"preserve\">\n\
+             \x20           .. |b| replace:: |A|\n\
+             \x20   <substitution_definition names=\"a\">\n\
+             \x20       z\n\
+             \x20   <paragraph>\n\
+             \x20       See \n\
+             \x20       <problematic ids=\"id2\" refid=\"id1\">\n\
+             \x20           |A|\n\
+             \x20       .\n"
+        );
     }
 
     /// A definition referencing itself twice: its first reference replaces
