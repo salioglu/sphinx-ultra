@@ -5701,6 +5701,17 @@
       "stream": [
         "1: (ERROR/3) Invalid class attribute value for \"container\" directive: \"!!!\"."
       ]
+    },
+    {
+      "family": "reporter",
+      "name": "reporter.line_block_directive_name_then_lines_at_lineno_plus_offset",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target dupnames=\"x\" ids=\"x\">\n    <paragraph>\n        Para.\n    <line_block dupnames=\"x\" ids=\"id1\">\n        <line>\n            <problematic ids=\"id3\" refid=\"id2\">\n                *\n            a\n        <line>\n        <line>\n            <problematic ids=\"id5\" refid=\"id4\">\n                *\n            b\n    <system_message backrefs=\"id3\" ids=\"id2\" level=\"2\" line=\"12\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Inline emphasis start-string without end-string.\n    <system_message backrefs=\"id5\" ids=\"id4\" level=\"2\" line=\"14\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Inline emphasis start-string without end-string.\n",
+      "rst": ".. _x:\n\nPara.\n\n.. line-block::\n   :name: x\n\n   *a\n\n   *b\n",
+      "stream": [
+        "5: (WARNING/2) Duplicate explicit target name: \"x\".",
+        "12: (WARNING/2) Inline emphasis start-string without end-string.",
+        "14: (WARNING/2) Inline emphasis start-string without end-string."
+      ]
     }
   ],
   "docutils_version": "0.22.4",

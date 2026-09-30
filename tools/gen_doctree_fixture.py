@@ -1042,6 +1042,12 @@ CASES = [
     ("reporter", "figure_bad_caption_keeps_printed_content", ".. figure:: pic.png\n\n   - *a\n"),
     ("reporter", "replace_two_paragraphs_discards_content", ".. |x| replace:: a\n\n   *b\n"),
     ("reporter", "container_bad_class_parses_nothing", ".. container:: !!!\n\n   *x\n"),
+    # `LineBlock.run` (`directives/body.py:110-130`): `add_name` BEFORE the
+    # lines (its duplicate-name message is written first, then detached:
+    # a line_block holds no system_message), and each content line — blank
+    # ones counted — inline-parsed at `self.lineno + self.content_offset`.
+    ("reporter", "line_block_directive_name_then_lines_at_lineno_plus_offset",
+     ".. _x:\n\nPara.\n\n.. line-block::\n   :name: x\n\n   *a\n\n   *b\n"),
 
 ]
 
@@ -1126,7 +1132,7 @@ def main() -> int:
         "paragraphs": 4, "sections": 8, "transition": 4, "lists_bullet": 8,
         "lists_enum": 8, "deflist": 8, "quote": 8, "literal": 8,
         "comment_target": 8, "lineblock": 4, "doctest": 4, "errors": 12,
-        "hardening": 20, "mixtures": 8, "review": 45, "inline_basics": 25, "inline_carriers": 10, "inline_refs": 40, "inline_roles": 20, "footnotes": 14, "fields": 15, "options": 10, "tables_grid": 18, "tables_simple": 12, "w2_hardening": 15, "review2": 12, "dir_core": 10, "dir_admonitions": 14, "dir_options": 20, "dir_image": 18, "dir_body": 30, "dir_media": 38, "dir_tables": 30, "substitutions": 30, "reporter": 15,
+        "hardening": 20, "mixtures": 8, "review": 45, "inline_basics": 25, "inline_carriers": 10, "inline_refs": 40, "inline_roles": 20, "footnotes": 14, "fields": 15, "options": 10, "tables_grid": 18, "tables_simple": 12, "w2_hardening": 15, "review2": 12, "dir_core": 10, "dir_admonitions": 14, "dir_options": 20, "dir_image": 18, "dir_body": 30, "dir_media": 38, "dir_tables": 30, "substitutions": 30, "reporter": 16,
     }
     counts: dict = {}
     for family, _, _ in CASES:

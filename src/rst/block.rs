@@ -7750,10 +7750,32 @@ impl BlockParser {
             ));
             return;
         }
+        // `LineBlock.run` (`directives/body.py:110-130`) calls `add_name`
+        // BEFORE the lines: the name takes its ids first, and a duplicate-
+        // name message is created — and written — ahead of the lines'
+        // messages. docutils then detaches it (`note_explicit_target(node,
+        // node)` appends it to the line_block, whose content model admits
+        // no system_message, and `msgnode.validate` pops it,
+        // `nodes.py:1982-1989`), so it prints but never reaches the tree.
+        let mut block_names = Node::elem(kinds::LINE_BLOCK, input.span);
+        let mut detached: Vec<Node> = Vec::new();
+        self.directive_add_name(
+            &mut block_names,
+            &input.options,
+            input.span.source,
+            input.lineno,
+            &mut detached,
+        );
         let mut resolved: Vec<(usize, Vec<Node>)> = Vec::with_capacity(input.content.len());
         let mut lb_messages: Vec<Node> = Vec::new();
         let mut prev_depth = 0usize;
-        for l in &input.content {
+        // Each content line — blank ones counted — inline-parses at
+        // `self.lineno + self.content_offset`, the offset advancing per
+        // line: docutils adds the 0-based content offset to the directive's
+        // own line (probed: a directive at line 5 with content from line 8
+        // warns at 12).
+        let first_line = input.lineno + input.content_lineno.saturating_sub(1);
+        for (i, l) in input.content.iter().enumerate() {
             if l.is_blank() {
                 resolved.push((prev_depth, Vec::new()));
                 continue;
@@ -7769,7 +7791,7 @@ impl BlockParser {
                 .count();
             prev_depth = depth;
             let text = raw.trim_matches(crate::utils::py_isspace).to_string();
-            let inline = self.inline(&text, input.span, l.lineno);
+            let inline = self.inline(&text, input.span, first_line + i as u32);
             lb_messages.extend(inline.messages);
             resolved.push((depth, inline.nodes));
         }
@@ -7777,13 +7799,9 @@ impl BlockParser {
         if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
             block.attrs.classes.extend(classes.iter().cloned());
         }
-        self.directive_add_name(
-            &mut block,
-            &input.options,
-            input.span.source,
-            input.lineno,
-            out,
-        );
+        block.attrs.ids = block_names.attrs.ids;
+        block.attrs.names = block_names.attrs.names;
+        block.attrs.dupnames = block_names.attrs.dupnames;
         out.push(block);
         out.append(&mut lb_messages);
     }
