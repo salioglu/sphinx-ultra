@@ -1,0 +1,6 @@
+Welcome
+=======
+
+.. toctree::
+
+   page

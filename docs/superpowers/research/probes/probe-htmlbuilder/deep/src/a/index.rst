@@ -1,0 +1,6 @@
+A Index
+=======
+
+.. toctree::
+
+   b
