@@ -17570,6 +17570,13 @@ mod include_tests {
             std::fs::Permissions::from_mode(0o000),
         )
         .unwrap();
+        // A privileged user (root, CAP_DAC_OVERRIDE — the usual container
+        // setup) reads a mode-000 file anyway, so there is no EACCES to
+        // observe; the premise, not the parser, is what fails there.
+        if std::fs::read(tmp.path().join("sekrit.rst")).is_ok() {
+            eprintln!("skipping: mode 000 does not deny reads to this user");
+            return;
+        }
         let tree = parse_sphinx(tmp.path(), "main", ".. include:: sekrit.rst\n");
         std::fs::set_permissions(
             tmp.path().join("sekrit.rst"),
