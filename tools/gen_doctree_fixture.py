@@ -21,6 +21,19 @@ Settings pinned where plain docutils and Sphinx 9.1 diverge:
 `auto_id_prefix='id'` (Sphinx overrides docutils' '%'), `report_level=1`
 (keep INFO messages), `halt_level=5` (never halt). Later waves EXTEND the
 corpus and SUPPORTED_KINDS; never remove or rename existing cases.
+
+Per-case `stream` (M2 wave 5, reporter channel): docutils' Reporter writes
+`msg.astext() + '\n'` to its warning stream when it CREATES a message
+(`docutils/utils/__init__.py:213-215`) — before any caller appends a child,
+and whether or not the node is ever attached to the tree. `stream` records
+those writes in order, each reduced the way Sphinx's `WarningStream`
+(`sphinx/util/docutils.py:31-33, 385-393`) reduces it before printing: the
+`<snippet>:` source and the `(TYPE/N) ` header split off by `report_re`, the
+rest `.rstrip()`ped, kept as `{line}: ({TYPE}/{N}) {message}` (the line is
+empty when docutils had none). Only levels >= 2 are kept: Sphinx leaves
+docutils' default `report_level` of 2 in place, so an INFO message never
+reaches its stream (the tree fixture keeps them via `report_level=1`, which
+gates only the stream writes, never message creation).
 """
 
 import io
@@ -130,7 +143,7 @@ SUPPORTED_KINDS = {
 # Families whose snippets intentionally exercise the directive machinery.
 DIRECTIVE_FAMILIES = (
     "dir_core", "dir_admonitions", "dir_options", "dir_image", "dir_body", "dir_media",
-    "dir_tables", "substitutions",
+    "dir_tables", "substitutions", "reporter",
 )
 
 # (family, name, rst) — names unique, families floor-checked below.
@@ -992,20 +1005,98 @@ CASES = [
     # Python's set, so a lone \x1f is blank in both places.
     ("round_f", "simple_table_margin_us_is_blank", "=== ===\na  \x1fb\n=== ===\n"),
     ("round_f", "simple_table_first_column_us_is_continuation", "=== ===\na   b\n\x1f   c\n=== ===\n"),
+    # ----- reporter (M2 wave 5): the stream docutils writes at creation where
+    # it parts from tree order or tree membership. Each case pins one
+    # creation-time behaviour of `stream`; the trees are ordinary.
+    # `Text.text` creates "Unexpected indentation." while gathering the
+    # block, BEFORE the paragraph's inline parse (tree: after it).
+    ("reporter", "unexpected_indentation_before_inline", "*emph\nline2\n  indented\n"),
+    # `Text.underline` creates the short-underline warning first, in a
+    # nested context too, where the tree keeps it before the error.
+    ("reporter", "nested_short_underline_then_unexpected_title", "- item\n\n  Long title here\n  ====\n"),
+    # A skipped title level drops the title's own (already printed) messages.
+    ("reporter", "inconsistent_title_drops_printed_short_underline",
+     "Title\n=====\n\nSub\n---\n\nSubsub\n~~~~~~\n\nT2\n====\n\nX\n+++\n\nLong title\n^^^^\n"),
+    # `line_block_line` inline-parses each line at its own line number.
+    ("reporter", "line_block_lines_at_their_own_lines", "| *a\n| *b\nnext\n"),
+    # `table_top` warns about the missing blank line only after the table —
+    # malformed or not — exists.
+    ("reporter", "grid_multiple_separators_then_blank_line_required",
+     "+---+\n| a |\n+===+\n| b |\n+===+\n| c |\n+---+\nnext\n"),
+    # A malformed simple table never parses a cell: row 1's broken emphasis
+    # is never created.
+    ("reporter", "simple_table_alignment_problem_parses_no_cell",
+     "=====  =====  =====\n*a     b      c\nd      e      f\n--  ---------------\n=====  =====  =====\n"),
+    ("reporter", "simple_table_span_incomplete_parses_no_cell",
+     "=====  =====  =====\n*a     b      c\nd      e      f\n---------  ---------\n=====  =====  =====\n"),
+    # csv cells nest at the directive's content offset (row offset 0).
+    ("reporter", "csv_cell_messages_at_content_offset", "Para.\n\n.. csv-table::\n\n   a, *b\n   c, *d\n"),
+    # ...and their directive-lookup INFO at the cell text's own offset.
+    ("reporter", "csv_cell_unknown_directive", "Para.\n\n.. csv-table::\n\n   \".. foo::\", b\n"),
+    # `CSVTable.run` makes the title before reading data: a data error
+    # discards a title whose messages were already written.
+    ("reporter", "csv_title_messages_before_data_error", ".. csv-table:: *T\n   :file: nope.csv\n"),
+    # Discarded nested parses: written, never attached.
+    ("reporter", "table_directive_discards_nested_content", ".. table:: *T\n\n   *para\n"),
+    ("reporter", "list_table_discards_nested_content", ".. list-table:: *T\n\n   * - *a\n     - b\n   * - c\n"),
+    ("reporter", "figure_bad_caption_keeps_printed_content", ".. figure:: pic.png\n\n   - *a\n"),
+    ("reporter", "replace_two_paragraphs_discards_content", ".. |x| replace:: a\n\n   *b\n"),
+    ("reporter", "container_bad_class_parses_nothing", ".. container:: !!!\n\n   *x\n"),
+
 ]
 
 
-def parse_pformat(text: str) -> str:
+SOURCE = "<snippet>"
+
+# Sphinx's `WarningStream` pattern (`sphinx/util/docutils.py:31-33`): the
+# `source:line: (TYPE/N) ` header docutils' `system_message.astext()` puts
+# before every message (`docutils/nodes.py`, `system_message.astext`).
+REPORT_RE = re.compile(r"^(.+?:(?:\d+)?): \((DEBUG|INFO|WARNING|ERROR|SEVERE)/(\d+)?\) ")
+
+
+class StreamRecorder(io.StringIO):
+    """The warning stream, one entry per `write`: `Reporter.system_message`
+    writes each message in one call, at creation."""
+
+    def __init__(self):
+        super().__init__()
+        self.writes = []
+
+    def write(self, s):
+        self.writes.append(s)
+        return super().write(s)
+
+
+def stream_records(writes: list) -> list:
+    """The level >= 2 writes, reduced as Sphinx's `WarningStream.write`
+    reduces them (`sphinx/util/docutils.py:385-393`)."""
+    records = []
+    for text in writes:
+        matched = REPORT_RE.search(text)
+        assert matched, f"unrecognized reporter write: {text!r}"
+        location, msg_type, level = matched.groups()
+        if int(level) < 2:
+            continue
+        assert location.startswith(SOURCE + ":"), f"unexpected location: {location!r}"
+        line = location[len(SOURCE) + 1:]
+        message = REPORT_RE.sub("", text).rstrip()
+        records.append(f"{line}: ({msg_type}/{level}) {message}")
+    return records
+
+
+def parse_pformat(text: str) -> tuple:
+    """The parse-layer pformat and the reporter stream records."""
     parser = Parser()
     settings = get_default_settings(Parser)
     settings.report_level = 1
     settings.halt_level = 5
-    settings.warning_stream = io.StringIO()
+    recorder = StreamRecorder()
+    settings.warning_stream = recorder
     settings.auto_id_prefix = "id"
     settings.id_prefix = ""
-    document = new_document("<snippet>", settings)
+    document = new_document(SOURCE, settings)
     parser.parse(text, document)
-    return document.pformat()
+    return document.pformat(), stream_records(recorder.writes)
 
 
 def kinds_of(text: str) -> set:
@@ -1035,7 +1126,7 @@ def main() -> int:
         "paragraphs": 4, "sections": 8, "transition": 4, "lists_bullet": 8,
         "lists_enum": 8, "deflist": 8, "quote": 8, "literal": 8,
         "comment_target": 8, "lineblock": 4, "doctest": 4, "errors": 12,
-        "hardening": 20, "mixtures": 8, "review": 45, "inline_basics": 25, "inline_carriers": 10, "inline_refs": 40, "inline_roles": 20, "footnotes": 14, "fields": 15, "options": 10, "tables_grid": 18, "tables_simple": 12, "w2_hardening": 15, "review2": 12, "dir_core": 10, "dir_admonitions": 14, "dir_options": 20, "dir_image": 18, "dir_body": 30, "dir_media": 38, "dir_tables": 30, "substitutions": 30,
+        "hardening": 20, "mixtures": 8, "review": 45, "inline_basics": 25, "inline_carriers": 10, "inline_refs": 40, "inline_roles": 20, "footnotes": 14, "fields": 15, "options": 10, "tables_grid": 18, "tables_simple": 12, "w2_hardening": 15, "review2": 12, "dir_core": 10, "dir_admonitions": 14, "dir_options": 20, "dir_image": 18, "dir_body": 30, "dir_media": 38, "dir_tables": 30, "substitutions": 30, "reporter": 15,
     }
     counts: dict = {}
     for family, _, _ in CASES:
@@ -1052,7 +1143,7 @@ def main() -> int:
         if stray:
             bad.append(f"{name}: unsupported kinds {sorted(stray)}")
             continue
-        pseudo = parse_pformat(rst)
+        pseudo, stream = parse_pformat(rst)
         # Directive machinery is wave 3: a snippet that reaches docutils'
         # directive parsing is out of corpus scope even when its output
         # nodes are all "supported". Two guards: output text, and directive
@@ -1073,6 +1164,7 @@ def main() -> int:
             "family": family,
             "rst": rst,
             "pseudo_xml": pseudo,
+            "stream": stream,
         })
     if bad:
         print("CORPUS SCOPE VIOLATIONS:", file=sys.stderr)

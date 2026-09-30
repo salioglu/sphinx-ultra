@@ -85,9 +85,8 @@ pub struct ToctreeContent<'a> {
 }
 
 /// What kind of toctree diagnostic this is, kept alongside the Sphinx
-/// message so the builder can map it onto its own coarse
-/// [`crate::error::WarningType`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToctreeWarningKind {
     /// An entry naming a document that is excluded or absent.
     MissingDocument,
@@ -104,19 +103,16 @@ pub enum ToctreeWarningKind {
 
 /// One diagnostic produced while resolving a toctree's entries.
 ///
-/// Carried on the parse record (and therefore through the document cache)
-/// rather than logged on the spot: resolution happens inside the parser,
-/// which has no warning sink, and a cache hit that skipped the parse must
-/// still reproduce the build's warnings.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+/// Returned rather than logged: resolution happens inside the parser, which
+/// records each one on the document's diagnostics stream as a logger record
+/// (`crate::rst::diagnostics::Reporter::log`) at the point
+/// `TocTree.parse_content` logs it.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToctreeWarning {
     /// Source-table index of the `.. toctree::` directive's line: a
     /// toctree written inside an included file warns against THAT file
     /// (`location=toctree` is the node, whose `source` is the included
-    /// file's). Deliberately not `#[serde(default)]` — the warning rides
-    /// the document cache, and a pre-provenance record decoding with
-    /// source 0 would name the includer again (cache-shape rule,
-    /// [`crate::rst::RegistryExport::program_options`]).
+    /// file's).
     pub source: u16,
     /// 1-based line of the `.. toctree::` directive (Sphinx's
     /// `location=toctree`), within `source`.

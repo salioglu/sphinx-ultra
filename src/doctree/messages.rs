@@ -19,12 +19,24 @@ fn type_name(level: u8) -> &'static str {
 /// `<system_message level line source type><paragraph>text`.
 ///
 /// `line` is the absolute 1-based line of the triggering source line
-/// (the underline for title problems, the indented line for indent errors).
-pub fn system_message(level: u8, text: &str, line: u32, source: &str) -> Node {
-    let mut msg = Node::elem(kinds::SYSTEM_MESSAGE, Span::ZERO);
+/// (the underline for title problems, the indented line for indent errors),
+/// within the source-table entry `source`, whose path is `source_path` (what
+/// the `source` attribute prints). The node's span carries `(source, line)`
+/// so a recorder can name the source by index
+/// ([`crate::rst::diagnostics::Reporter::report`]).
+pub fn system_message(level: u8, text: &str, source: u16, line: u32, source_path: &str) -> Node {
+    let mut msg = Node::elem(
+        kinds::SYSTEM_MESSAGE,
+        Span {
+            source,
+            line,
+            start: 0,
+            end: 0,
+        },
+    );
     msg.set("level", AttrValue::Int(i64::from(level)));
     msg.set("line", AttrValue::Int(i64::from(line)));
-    msg.set("source", AttrValue::Str(source.to_string()));
+    msg.set("source", AttrValue::Str(source_path.to_string()));
     msg.set("type", AttrValue::Str(type_name(level).to_string()));
     let mut para = Node::elem(kinds::PARAGRAPH, Span::ZERO);
     para.children.push(Node::text_node(text, Span::ZERO));
@@ -56,7 +68,7 @@ mod tests {
 
     #[test]
     fn system_message_shape() {
-        let m = system_message(WARNING, "Title underline too short.", 3, "<snippet>");
+        let m = system_message(WARNING, "Title underline too short.", 0, 3, "<snippet>");
         assert_eq!(
             m.pformat(),
             "<system_message level=\"2\" line=\"3\" source=\"<snippet>\" type=\"WARNING\">\n    <paragraph>\n        Title underline too short.\n"
@@ -66,7 +78,7 @@ mod tests {
     #[test]
     fn with_literal_appends_preserved_block() {
         let m = with_literal(
-            system_message(WARNING, "Title underline too short.", 2, "<snippet>"),
+            system_message(WARNING, "Title underline too short.", 0, 2, "<snippet>"),
             "Long Section Title\n======",
         );
         assert_eq!(

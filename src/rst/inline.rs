@@ -64,6 +64,9 @@ pub fn unescape(text: &str, restore_backslashes: bool) -> String {
 /// plus system_messages the caller attaches AFTER the enclosing element.
 pub struct InlineResult {
     pub nodes: Vec<Node>,
+    /// Every message the inliner created, in creation order — it never
+    /// drops one — so reporting them as the parse returns is reporting
+    /// them at creation: nothing else is created in between.
     pub messages: Vec<Node>,
     /// Role occurrences (sphinx mode only) for the build pipeline.
     pub roles: Vec<super::RoleRecord>,
@@ -479,6 +482,7 @@ impl<'a> Inliner<'a> {
         let mut msg = messages::system_message(
             messages::WARNING,
             &format!("Inline {construct} start-string without end-string."),
+            self.span.source,
             self.lineno,
             self.source_path,
         );
@@ -657,6 +661,7 @@ impl<'a> Inliner<'a> {
                 let msg = self.registry.set_id_explicit(
                     &mut t,
                     self.lineno,
+                    self.span.source,
                     self.source_path,
                     true,
                     None,
@@ -813,6 +818,7 @@ impl<'a> Inliner<'a> {
             self.messages.push(messages::system_message(
                 messages::INFO,
                 &info_text,
+                self.span.source,
                 self.lineno,
                 self.source_path,
             ));
@@ -825,7 +831,8 @@ impl<'a> Inliner<'a> {
         prob.children
             .push(Node::text_node(unescape(rawsource, true), self.span));
         self.nodes.push(prob);
-        let mut msg = messages::system_message(level, text, self.lineno, self.source_path);
+        let mut msg =
+            messages::system_message(level, text, self.span.source, self.lineno, self.source_path);
         msg.attrs.ids.push(msg_id);
         msg.attrs.backrefs.push(prob_id);
         self.messages.push(msg);
@@ -1622,9 +1629,12 @@ impl<'a> Inliner<'a> {
                     if underscores == 1 {
                         let mut t = Node::elem(kinds::TARGET, self.span);
                         t.attrs.names.push(ids(&display_text));
-                        let msg =
-                            self.registry
-                                .set_id_implicit(&mut t, self.lineno, self.source_path);
+                        let msg = self.registry.set_id_implicit(
+                            &mut t,
+                            self.lineno,
+                            self.span.source,
+                            self.source_path,
+                        );
                         t.set("refname", AttrValue::Str(alias));
                         self.nodes.push(t);
                         if let Some(m) = msg {
@@ -1665,9 +1675,12 @@ impl<'a> Inliner<'a> {
                     if underscores == 1 {
                         let mut t = Node::elem(kinds::TARGET, self.span);
                         t.attrs.names.push(ids(&display_text));
-                        let msg =
-                            self.registry
-                                .set_id_implicit(&mut t, self.lineno, self.source_path);
+                        let msg = self.registry.set_id_implicit(
+                            &mut t,
+                            self.lineno,
+                            self.span.source,
+                            self.source_path,
+                        );
                         t.set("refuri", AttrValue::Str(uri));
                         self.nodes.push(t);
                         if let Some(m) = msg {

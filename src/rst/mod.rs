@@ -138,11 +138,6 @@ pub struct ToctreeRecord {
     pub source: u16,
     /// 1-based line of the directive, within `source`.
     pub line: u32,
-    /// Diagnostics `TocTree.parse_content` produced while resolving this
-    /// directive's entries. They ride the record (and therefore the
-    /// document cache) because the parser has no warning sink, and because
-    /// a cache hit that skipped the parse must still reproduce them.
-    pub warnings: Vec<crate::env::toctree::ToctreeWarning>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -194,6 +189,13 @@ pub struct PyObjectRecord {
     pub source: u16,
     /// 1-based line of the signature node (`location=signode`).
     pub lineno: u32,
+    /// The registration's place in the document's diagnostics sequence
+    /// ([`diagnostics::Diagnostic::seq`]): `note_object` logs its
+    /// duplicate warning at parse time, between the records around it,
+    /// but only the environment replay knows whether it is a duplicate.
+    /// Not `#[serde(default)]` (cache-shape rule, see
+    /// [`RegistryExport::program_options`]).
+    pub seq: u32,
 }
 
 /// One `PythonDomain.note_module` call (`PyModule.run`,
@@ -239,6 +241,9 @@ pub struct ObjectRegistration {
     /// 1-based line of the signature node (`location=signode`), for the
     /// duplicate-description warning.
     pub line: u32,
+    /// Where the duplicate-description warning belongs in the document's
+    /// diagnostics sequence — see [`PyObjectRecord::seq`].
+    pub seq: u32,
 }
 
 /// What the parse layer hands the environment besides the doctree itself:
@@ -291,14 +296,16 @@ pub struct RegistryExport {
     /// document order. Not `#[serde(default)]` — see
     /// [`Self::program_options`].
     pub py_modules: Vec<PyModuleRecord>,
-    /// Diagnostics the parse raised through Sphinx's *logger* rather than
-    /// into the tree, which have nowhere else to go: docutils turns a
-    /// directive error into a `system_message` node, but a Sphinx directive
-    /// calling `logger.warning` produces no node at all. They ride the
-    /// export (and therefore the document cache) for the same reason
-    /// [`ToctreeRecord::warnings`] does — a cache hit that skipped the parse
-    /// must still reproduce them.
-    pub log_warnings: Vec<ParseLogWarning>,
+    /// Every diagnostic the parse raised, in creation order (`seq`): the
+    /// docutils reporter messages of level >= 2, recorded as each was
+    /// created — including those whose node never reached the tree — and
+    /// the directives' and domains' `logger.warning`s (toctree resolution,
+    /// malformed option descriptions, py signature warnings, the
+    /// literalinclude reader) in between; see [`diagnostics::Reporter`].
+    /// They ride the export (and therefore the document cache) because a
+    /// cache hit that skipped the parse must still reproduce them. Not
+    /// `#[serde(default)]` — see [`Self::program_options`].
+    pub diagnostics: Vec<diagnostics::Diagnostic>,
     /// Files the document pulls in at parse time (docutils
     /// `settings.record_dependencies`, harvested by sphinx's
     /// `DependenciesCollector`): one srcdir-relative normalized path per
@@ -318,53 +325,15 @@ pub struct RegistryExport {
     pub included: Vec<String>,
 }
 
-/// One `logger.warning` a directive raised during the parse.
-///
-/// Producers: `Cmdoption.handle_signature`'s malformed option description
-/// (`domains/std/__init__.py:237-245`) and — since wave 4.5 — the three
-/// `literalinclude` reader warnings ([INC §3.4]). All are logged with no
-/// `type`/`subtype` and so render with no `[category]` suffix.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ParseLogWarning {
-    /// Source-table index of the `location=` node's line: the replay
-    /// renders this source's path, not the document's. Deliberately not
-    /// `#[serde(default)]` (cache-shape rule, see
-    /// [`RegistryExport::program_options`]).
-    pub source: u16,
-    /// The warning text, already formatted exactly as Sphinx renders it.
-    pub message: String,
-    /// 1-based line of the `location=` node Sphinx passes.
-    pub line: u32,
-    /// When true, the rendered location appends the first source suffix to
-    /// the source path (see [`Self::rendered_path`]). Not
-    /// `#[serde(default)]` (cache-shape rule, see
-    /// [`RegistryExport::program_options`]): a pre-wave-4.5 cache entry
-    /// must MISS, not decode with the flag silently off.
-    pub doc2path_location: bool,
-}
-
-impl ParseLogWarning {
-    /// The path the rendered warning line spells for this record's source
-    /// table path.
-    ///
-    /// WHY the doubled suffix: a Sphinx `logger.warning(...,
-    /// location=(source, line))` tuple is treated by the log translator as
-    /// `(docname, lineno)` and rendered `f'{env.doc2path(docname)}:{lineno}'`
-    /// (`SP/util/logging.py:507-512`); `doc2path` on a string that is not a
-    /// known docname appends the project's first source suffix
-    /// (`SP/project.py:114-128`). The three literalinclude reader warnings
-    /// pass a full path like `<srcdir>/a.rst` as the tuple's `source`, so
-    /// Sphinx renders the doubled `<srcdir>/a.rst.rst` — byte-exact oracle
-    /// behavior (probed, [INC §3.4]), reproduced here on replay. The
-    /// appended suffix is the crate's first source suffix (`.rst`, matching
-    /// sphinx's default `source_suffix[0]` and this crate's discovery
-    /// order).
-    pub fn rendered_path(&self, source_path: &str) -> String {
-        if self.doc2path_location {
-            format!("{source_path}.rst")
-        } else {
-            source_path.to_string()
-        }
+#[cfg(test)]
+impl RegistryExport {
+    /// The logger-channel records — the directives' and domains' own
+    /// `logger.warning`s — for the tests that pin them.
+    pub(crate) fn log_warnings(&self) -> Vec<&diagnostics::Diagnostic> {
+        self.diagnostics
+            .iter()
+            .filter(|d| d.channel == diagnostics::DiagnosticChannel::Logger)
+            .collect()
     }
 }
 
@@ -376,6 +345,12 @@ pub struct ParseOutput {
     pub role_records: Vec<RoleRecord>,
     pub toctrees: Vec<ToctreeRecord>,
     pub registry: RegistryExport,
+    /// The parser's id/name registry as the parse left it (docutils'
+    /// `document.ids`/`nameids`/`nametypes` and the per-prefix id
+    /// counters), handed on so a later pass over this doctree continues
+    /// numbering where the parse stopped instead of re-deriving it. Lives
+    /// only as long as the parse output: never serialized.
+    pub ids: crate::doctree::ids::IdRegistry,
 }
 
 /// Parse RST source into a doctree. Total: never panics, never errors —
@@ -405,12 +380,14 @@ mod tests {
     /// know the decode failed for no other reason.
     const COMPLETE_REGISTRY: &str = r#"{"nameids":[],"index_serial":0,
         "program_options":[{"source":0,"program":null,"name":"-f","node_id":"a"}],
-        "std_objects":[{"source":0,"objtype":"envvar","name":"P","node_id":"b","line":1}],
+        "std_objects":[{"source":0,"objtype":"envvar","name":"P","node_id":"b","line":1,
+            "seq":1}],
         "py_objects":[{"fullname":"m.f","objtype":"function","node_id":"m.f",
-            "aliased":false,"source":0,"lineno":1}],
+            "aliased":false,"source":0,"lineno":1,"seq":2}],
         "py_modules":[{"name":"m","node_id":"module-m","synopsis":"","platform":"",
             "deprecated":false,"source":0,"lineno":1}],
-        "log_warnings":[{"source":0,"message":"m","line":2,"doc2path_location":false}],
+        "diagnostics":[{"seq":0,"channel":"Logger","level":2,"category":null,"text":"m",
+            "source":0,"line":2,"doc2path_location":false}],
         "dependencies":["part.rst"],"included":["part"]}"#;
 
     /// Decode [`COMPLETE_REGISTRY`] with the field `name` removed at
@@ -462,7 +439,11 @@ mod tests {
             "std_objects",
             "py_objects",
             "py_modules",
-            "log_warnings",
+            // A pre-wave-5 registry (logger warnings in `log_warnings`, no
+            // diagnostics stream) must MISS: a defaulted empty stream would
+            // make a document-cache hit print none of the parse's
+            // diagnostics.
+            "diagnostics",
             // A wave-4.5 pre-include registry (no dependencies/included
             // stream) must MISS: a defaulted empty list would never
             // re-read the document when an included file changes, and
@@ -485,17 +466,37 @@ mod tests {
         must_miss(&["std_objects", "0"], "source");
         must_miss(&["py_objects", "0"], "source");
         must_miss(&["py_modules", "0"], "source");
-        must_miss(&["log_warnings", "0"], "source");
-        // A wave-4.5 pre-literalinclude log record (no doc2path_location)
-        // must MISS: decoding it with the flag silently off would render
-        // the three literalinclude reader warnings at the un-doubled path
-        // on a warm rebuild.
-        must_miss(&["log_warnings", "0"], "doc2path_location");
+    }
+
+    /// The fields of a [`diagnostics::Diagnostic`] record, and the `seq`
+    /// the warning-producing registrations carry, follow the same rule: a
+    /// stale record must MISS rather than decode with a zeroed position
+    /// (every replayed duplicate warning would sort first) or a defaulted
+    /// flag (`doc2path_location` off would render the literalinclude
+    /// reader warnings at the un-doubled path). The two `Option` fields
+    /// (`category`, `line`) are serde's exception — a missing `Option`
+    /// decodes as `None` without any attribute — and need none: they were
+    /// in the record from its first version, and a registry from before
+    /// the record existed misses on `diagnostics` itself.
+    #[test]
+    fn records_written_before_the_diagnostics_stream_existed_fail_to_decode() {
+        for field in [
+            "seq",
+            "channel",
+            "level",
+            "text",
+            "source",
+            "doc2path_location",
+        ] {
+            must_miss(&["diagnostics", "0"], field);
+        }
+        must_miss(&["std_objects", "0"], "seq");
+        must_miss(&["py_objects", "0"], "seq");
     }
 
     /// The provenance fields panel fix round B added to the DOCUMENT-side
-    /// records (`DirectiveRecord`, `RoleRecord`, `ToctreeRecord` and the
-    /// `ToctreeWarning` it carries) follow the same rule. These ride the
+    /// records (`DirectiveRecord`, `RoleRecord`, `ToctreeRecord`) follow
+    /// the same rule. These ride the
     /// document cache (`src/cache.rs`, serde_json): a pre-field entry
     /// decoding with `source: 0` would silently report every directive,
     /// role and toctree inside an included file against the includer's
@@ -528,13 +529,9 @@ mod tests {
                 "line":3}"#,
             r#"{"name":"ref","full_name":"ref","target":"t","display":null,"line":3}"#,
         );
-        must_miss::<crate::env::toctree::ToctreeWarning>(
-            r#"{"source":1,"line":3,"message":"m","category":null,"kind":"MissingDocument"}"#,
-            r#"{"line":3,"message":"m","category":null,"kind":"MissingDocument"}"#,
-        );
         must_miss::<ToctreeRecord>(
-            r#"{"glob":false,"entries":[],"source":1,"line":3,"warnings":[]}"#,
-            r#"{"glob":false,"entries":[],"line":3,"warnings":[]}"#,
+            r#"{"glob":false,"entries":[],"source":1,"line":3}"#,
+            r#"{"glob":false,"entries":[],"line":3}"#,
         );
     }
 }

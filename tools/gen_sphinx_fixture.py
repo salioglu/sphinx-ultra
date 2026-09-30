@@ -123,6 +123,20 @@ tests/fixtures/doctree_differential.json reuse that case's exact rst input;
 three inputs are new (marked). Never remove or rename existing cases; later
 waves only EXTEND the corpus and SUPPORTED_KINDS.
 
+PER-CASE WARNINGS (M2 wave 5, reporter channel): every case records
+`warnings`, the records the read phase printed for the snippet, in the order
+it printed them — docutils reporter messages (written when the Reporter
+CREATES them, `docutils/utils/__init__.py:213-215`, re-logged by Sphinx's
+`WarningStream`, `sphinx/util/docutils.py:385-393`) interleaved with the
+directives' and domains' own `logger.warning` calls, then whatever the read
+transforms log. The app's warning stream is a per-write recorder
+(`StreamHandler.emit` writes each record in one call, message + '\n');
+each record keeps its full printed form minus that terminator, with the
+same `<snippet>` path normalization as the pseudo-XML (the doubled
+`<snippet>.rst` of a tuple `location=` is Sphinx's own `doc2path` output
+and stays). Only the FIRST parse of a case is recorded; the determinism
+re-parse must print the same records.
+
 PER-CASE CONFOVERRIDES (wave-4.5 task 8): a case tuple may carry a fourth
 element, a dict of confoverrides applied ON TOP of the fixed CONFOVERRIDES
 base (smartquotes/keep_warnings are never overridden per-case). One
@@ -923,6 +937,23 @@ CASES = [
     ('pyconf', 'toc_object_entries_off_envvar', '.. envvar:: MYVAR\n', {'toc_object_entries': False}),
     ('pyconf', 'add_module_names_off', '.. py:function:: f(x)\n   :module: optmod\n', {'add_module_names': False}),
     ('pyconf', 'strip_signature_backslash_on', '.. py:function:: f(a\\, b)\n', {'strip_signature_backslash': True}),
+    # M2 wave 5 (reporter channel): cases pinning the per-case `warnings`
+    # stream where it parts from a walk of the tree. A `:caption:` is a
+    # throwaway nested parse at the directive's content offset
+    # (`container_wrapper`, `code.py:78-96`): its unknown-directive ERROR is
+    # printed there although only the `Invalid caption` warning survives.
+    ('sx_directives', 'code_block_caption_throwaway_parse_prints', '.. code-block:: python\n   :caption: .. foo::\n\n   x = 1\n'),
+    ('sx_directives', 'code_block_caption_throwaway_parse_later_line', 'Para.\n\nMore.\n\n.. code-block::\n   :caption: .. foo::\n\n   x = 1\n'),
+    # `parse_inline(self.arguments[1], lineno=self.lineno + 1)`.
+    ('sx_directives', 'versionadded_argument_messages_one_line_down', '.. versionadded:: 1.0 *x\n'),
+    # Reporter and logger records interleave in creation order.
+    ('sx_directives', 'toctree_warnings_interleave_with_reporter', 'Title\n====\n\n.. toctree::\n\n   missing\n\n*x\n\n.. toctree::\n\n   gone\n'),
+    ('sx_directives', 'toctree_glob_matching_nothing', '.. toctree::\n   :glob:\n\n   nope*\n'),
+    # Glossary terms parse at the content item's 0-based offset.
+    ('sx_std', 'glossary_term_messages_one_line_up', '.. glossary::\n\n   term\n   *x\n      def\n'),
+    ('sx_std', 'option_malformed_then_body_message', '.. option:: =bad\n\n   *x\n'),
+    ('py', 'arglist_warning_then_body_message', '.. py:function:: f(a, a)\n\n   *x\n'),
+
 ]
 
 
@@ -993,6 +1024,32 @@ EXCLUDED = {
 }
 
 
+class WarningRecorder(io.StringIO):
+    """The app's warning stream, one entry per `write` — one per printed
+    record (`logging.StreamHandler.emit` writes `msg + terminator` once)."""
+
+    def __init__(self):
+        super().__init__()
+        self.writes = []
+
+    def write(self, s):
+        self.writes.append(s)
+        return super().write(s)
+
+
+def printed_records(app: SphinxTestApp, base: Path) -> list:
+    """Drain the records printed since the last call, normalized."""
+    records = []
+    for text in app.warning.writes:
+        assert text.endswith("\n"), f"a record without its terminator: {text!r}"
+        text = text[:-1].replace(str(base / "index.rst"), SOURCE_TOKEN)
+        assert str(base) not in text, f"srcdir path leaked into a warning:\n{text}"
+        assert "\x1b" not in text, f"ANSI escape in a warning:\n{text!r}"
+        records.append(text)
+    app.warning.writes.clear()
+    return records
+
+
 def make_app(base: Path, conf: dict) -> SphinxTestApp:
     if base.exists():
         shutil.rmtree(base)
@@ -1006,7 +1063,7 @@ def make_app(base: Path, conf: dict) -> SphinxTestApp:
         buildername="dummy",
         srcdir=base,
         status=io.StringIO(),
-        warning=io.StringIO(),
+        warning=WarningRecorder(),
         confoverrides={**CONFOVERRIDES, **conf},
     )
 
@@ -1158,7 +1215,9 @@ def main() -> int:
                     settings_record = record
 
                 for family, name, rst in group_cases:
+                    printed_records(app, base)  # drop anything printed before
                     doctree = probe(app, base, rst)
+                    warnings = printed_records(app, base)
                     stray = {n.tagname for n in doctree.findall()} - SUPPORTED_KINDS
                     if stray:
                         bad.append(f"{family}.{name}: unsupported kinds {sorted(stray)}")
@@ -1172,6 +1231,7 @@ def main() -> int:
                         "family": family,
                         "rst": rst,
                         "pseudo_xml": pseudo,
+                        "warnings": warnings,
                     }
                     if conf:
                         record_case["conf"] = conf
@@ -1183,7 +1243,15 @@ def main() -> int:
                     case_name = f"{family}.{name}"
                     if case_name not in results:
                         continue  # scope violation above
+                    printed_records(app, base)
                     again = normalize(probe(app, base, rst).pformat(), base)
+                    again_warnings = printed_records(app, base)
+                    assert again_warnings == results[case_name]["warnings"], (
+                        f"{case_name}: second parse printed different records "
+                        f"(cross-case state leak?)\n--- first ---\n"
+                        f"{results[case_name]['warnings']}\n--- second ---\n"
+                        f"{again_warnings}"
+                    )
                     assert again == results[case_name]["pseudo_xml"], (
                         f"{case_name}: second parse differs (cross-case state "
                         f"leak?)\n--- first ---\n{results[case_name]['pseudo_xml']}"

@@ -324,11 +324,20 @@ impl IdRegistry {
     /// - new implicit vs old explicit: only the NEW node dupname'd, INFO
     /// - new explicit vs old implicit: OLD dupname'd, new KEEPS the name,
     ///   INFO "Target name overrides implicit target name …"
+    ///
+    /// The message is returned, not attached or recorded: docutils'
+    /// `set_duplicate_name_id` creates it through the Reporter — which
+    /// writes it — and attaches it only when handed a `msgnode`
+    /// (`docutils/nodes.py:1929-1989`), so the caller reports it as created and
+    /// decides where it goes. `source` is the source-table index of
+    /// `source_path`, `line`'s file.
+    #[allow(clippy::too_many_arguments)]
     fn register(
         &mut self,
         node: &mut Node,
         line: u32,
-        source: &str,
+        source: u16,
+        source_path: &str,
         explicit: bool,
         backrefs_on_msg: bool,
         refuri: Option<&str>,
@@ -351,7 +360,7 @@ impl IdRegistry {
                 continue;
             };
             let dup_info = |level: u8, text: String, with_backrefs: bool| {
-                let mut msg = messages::system_message(level, &text, line, source);
+                let mut msg = messages::system_message(level, &text, source, line, source_path);
                 if with_backrefs {
                     msg.attrs.backrefs.push(id.clone());
                 }
@@ -447,8 +456,14 @@ impl IdRegistry {
     /// (placed by the caller inside the new section after its title), new
     /// node dupname'd immediately, old node queued for
     /// [`apply_dupname_fixups`].
-    pub fn set_id_implicit(&mut self, node: &mut Node, line: u32, source: &str) -> Option<Node> {
-        self.register(node, line, source, false, true, None)
+    pub fn set_id_implicit(
+        &mut self,
+        node: &mut Node,
+        line: u32,
+        source: u16,
+        source_path: &str,
+    ) -> Option<Node> {
+        self.register(node, line, source, source_path, false, true, None)
     }
 
     /// Register an explicit target (`.. _name:` forms). On duplicate:
@@ -458,11 +473,12 @@ impl IdRegistry {
         &mut self,
         node: &mut Node,
         line: u32,
-        source: &str,
+        source: u16,
+        source_path: &str,
         internal: bool,
         refuri: Option<&str>,
     ) -> Option<Node> {
-        self.register(node, line, source, true, internal, refuri)
+        self.register(node, line, source, source_path, true, internal, refuri)
     }
 
     /// Register an anonymous target: always an auto id, never a name.
@@ -637,13 +653,13 @@ mod tests {
         let mut reg = IdRegistry::new();
         let mut s1 = Node::elem(kinds::SECTION, Span::ZERO);
         s1.attrs.names.push("duplicate".into());
-        assert!(reg.set_id_implicit(&mut s1, 3, "<snippet>").is_none());
+        assert!(reg.set_id_implicit(&mut s1, 3, 0, "<snippet>").is_none());
         assert_eq!(s1.attrs.ids, vec!["duplicate"]);
 
         let mut s2 = Node::elem(kinds::SECTION, Span::ZERO);
         s2.attrs.names.push("duplicate".into());
         let msg = reg
-            .set_id_implicit(&mut s2, 7, "<snippet>")
+            .set_id_implicit(&mut s2, 7, 0, "<snippet>")
             .expect("dup INFO");
         assert_eq!(s2.attrs.ids, vec!["id1"]);
         assert!(s2.attrs.names.is_empty());
@@ -676,7 +692,7 @@ mod tests {
         for (i, title) in ["!!!", "123", "..."].iter().enumerate() {
             let mut s = Node::elem(kinds::SECTION, Span::ZERO);
             s.attrs.names.push(fully_normalize_name(title));
-            reg.set_id_implicit(&mut s, 1, "<snippet>");
+            reg.set_id_implicit(&mut s, 1, 0, "<snippet>");
             assert_eq!(s.attrs.ids, vec![format!("id{}", i + 1)]);
             assert_eq!(s.attrs.names.len(), 1); // names kept, no collision
         }
@@ -688,13 +704,13 @@ mod tests {
         let mut t1 = Node::elem(kinds::TARGET, Span::ZERO);
         t1.attrs.names.push("dup".into());
         assert!(reg
-            .set_id_explicit(&mut t1, 1, "<snippet>", false, Some("https://1/"))
+            .set_id_explicit(&mut t1, 1, 0, "<snippet>", false, Some("https://1/"))
             .is_none());
 
         let mut t2 = Node::elem(kinds::TARGET, Span::ZERO);
         t2.attrs.names.push("dup".into());
         let msg = reg
-            .set_id_explicit(&mut t2, 3, "<snippet>", false, Some("https://2/"))
+            .set_id_explicit(&mut t2, 3, 0, "<snippet>", false, Some("https://2/"))
             .expect("dup WARNING");
         assert_eq!(msg.get("type"), Some(&AttrValue::Str("WARNING".into())));
         assert!(msg.attrs.backrefs.is_empty()); // external: no backrefs
@@ -704,11 +720,11 @@ mod tests {
         let mut reg = IdRegistry::new();
         let mut i1 = Node::elem(kinds::TARGET, Span::ZERO);
         i1.attrs.names.push("t".into());
-        reg.set_id_explicit(&mut i1, 1, "<snippet>", true, None);
+        reg.set_id_explicit(&mut i1, 1, 0, "<snippet>", true, None);
         let mut i2 = Node::elem(kinds::TARGET, Span::ZERO);
         i2.attrs.names.push("t".into());
         let msg = reg
-            .set_id_explicit(&mut i2, 5, "<snippet>", true, None)
+            .set_id_explicit(&mut i2, 5, 0, "<snippet>", true, None)
             .expect("dup WARNING");
         assert_eq!(msg.attrs.backrefs, vec!["id1"]); // internal: backrefs
     }

@@ -20,13 +20,14 @@ use crate::env::py_domain as env_py_domain;
 use crate::env::resolve as env_resolve;
 use crate::env::std_domain as env_std;
 use crate::env::toctree as env_toctree;
-use crate::env::toctree::{ConsistencyLevel, ToctreeWarningKind};
+use crate::env::toctree::ConsistencyLevel;
 use crate::env::BuildEnvironment;
 use crate::error::{BuildErrorReport, BuildWarning, ErrorType, WarningType};
 use crate::extensions::{ExtensionLoader, SphinxApp};
 use crate::intersphinx::{self, HttpConfig, Intersphinx, LoadRequest, UreqFetcher};
 use crate::matching;
 use crate::parser::Parser;
+use crate::rst::diagnostics::{Diagnostic, DiagnosticChannel};
 use crate::utils;
 use crate::utils::py_repr_str;
 
@@ -104,6 +105,18 @@ pub struct BuildStats {
     pub warnings: usize,
     pub warning_details: Vec<BuildWarning>,
     pub error_details: Vec<BuildErrorReport>,
+}
+
+/// Whether a parse diagnostic is one of `TocTree.parse_content`'s
+/// excluded/nonexisting-document warnings — the two it follows with
+/// `env.note_reread()` (`sphinx/directives/other.py:150-162`), logged as
+/// `toc.excluded` / `toc.not_readable`.
+fn names_a_missing_document(diagnostic: &Diagnostic) -> bool {
+    diagnostic.channel == DiagnosticChannel::Logger
+        && matches!(
+            diagnostic.category.as_deref(),
+            Some("toc.excluded" | "toc.not_readable")
+        )
 }
 
 pub struct SphinxBuilder {
@@ -1024,12 +1037,13 @@ impl SphinxBuilder {
             // takes it up — and stops warning about it. `clear_doc` above
             // dropped the previous read's claim, so a document that no
             // longer has a dangling entry is no longer re-read either.
-            if result.document.toctrees.iter().any(|toctree| {
-                toctree
-                    .warnings
-                    .iter()
-                    .any(|warning| warning.kind == ToctreeWarningKind::MissingDocument)
-            }) {
+            if result
+                .document
+                .registry
+                .diagnostics
+                .iter()
+                .any(names_a_missing_document)
+            {
                 env.reread_always.insert(docname.to_string());
             }
 
@@ -1104,68 +1118,36 @@ impl SphinxBuilder {
         }
     }
 
-    /// Surface one document's parse-time diagnostics: `TocTree.parse_content`'s
-    /// warnings and the `logger.warning` calls other directives make
-    /// (`RegistryExport::log_warnings`). Both are carried on the parse
-    /// records rather than raised as they happen, so that a cache hit — which
-    /// skips the parse entirely — still reproduces them.
+    /// Surface one document's parse-time logger diagnostics —
+    /// `TocTree.parse_content`'s warnings and the `logger.warning` calls
+    /// other directives make — in the order the parse made them (`seq`).
+    /// They are carried on the parse records rather than raised as they
+    /// happen, so that a cache hit — which skips the parse entirely — still
+    /// reproduces them.
     ///
-    /// Each stream replays in its own record sequence — the order the parse
-    /// produced. (The old stable sort by line only reproduced document
-    /// order while every record came from one source; an included file's
-    /// warnings would be shuffled into the includer's. A warning's line is
-    /// display data, not an ordering key.) A document carrying both kinds
-    /// emits all toctree warnings before all log warnings rather than
-    /// interleaved by position — the same cross-category simplification
-    /// `std_domain::process_doc` documents.
+    /// The reporter-channel records (docutils `system_message`s) share the
+    /// stream but are not printed yet: that is the next step of the
+    /// reporter channel's rollout.
     ///
     /// `doctree` supplies the source table: a warning raised inside an
     /// included file — a toctree's `location=toctree` or a log warning's
     /// `location=node` — renders that file's path, not the document's.
     fn report_parse_warnings(&self, document: &Document, doctree: &Doctree) {
         let mut ordered: Vec<BuildWarning> = Vec::new();
-        for toctree in &document.toctrees {
-            for warning in &toctree.warnings {
-                let warning_type = match warning.kind {
-                    ToctreeWarningKind::MissingDocument => WarningType::MissingToctreeRef,
-                    ToctreeWarningKind::EmptyGlob | ToctreeWarningKind::PatternError => {
-                        WarningType::EmptyToctree
-                    }
-                    ToctreeWarningKind::DuplicateEntry => WarningType::Other,
-                };
-                let source_path = doctree
-                    .sources
-                    .get(warning.source as usize)
-                    .map(PathBuf::from)
-                    .unwrap_or_else(|| document.source_path.clone());
-                ordered.push(
-                    BuildWarning::new(
-                        source_path,
-                        Some(warning.line as usize),
-                        warning.message.clone(),
-                        warning_type,
-                    )
-                    .with_category(warning.category.clone()),
-                );
+        for diagnostic in &document.registry.diagnostics {
+            if diagnostic.channel != DiagnosticChannel::Logger {
+                continue;
             }
-        }
-        for warning in &document.registry.log_warnings {
-            // `rendered_path` reproduces sphinx's tuple-location doc2path
-            // append (the doubled `.rst.rst` quirk) for the records that
-            // carry it — see `ParseLogWarning::rendered_path` for WHY.
             let source_path = doctree
                 .sources
-                .get(warning.source as usize)
-                .map(|path| PathBuf::from(warning.rendered_path(path)))
+                .get(diagnostic.source as usize)
+                .map(|path| PathBuf::from(diagnostic.rendered_path(path)))
                 .unwrap_or_else(|| document.source_path.clone());
-            // Sphinx logs these with no `type`/`subtype`, so they render
-            // with no `[category]` suffix.
-            ordered.push(BuildWarning::new(
-                source_path,
-                Some(warning.line as usize),
-                warning.message.clone(),
-                WarningType::Other,
-            ));
+            let mut warning = BuildWarning::from_diagnostic(diagnostic, source_path);
+            if names_a_missing_document(diagnostic) {
+                warning.warning_type = WarningType::MissingToctreeRef;
+            }
+            ordered.push(warning);
         }
         let mut warnings = self.warnings.lock().unwrap();
         warnings.extend(ordered);
