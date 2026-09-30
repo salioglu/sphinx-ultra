@@ -290,6 +290,84 @@ pub struct BuildConfig {
     /// `user_agent`, default `None` (`config.py:288`) — unset means
     /// [`crate::intersphinx::DEFAULT_USER_AGENT`].
     pub user_agent: Option<String>,
+
+    // --- Read-transform keys (sphinx 9.1 `config.py:225-291`) ---
+    //
+    // All rebuild category `'env'`, so every one enters the build-cache
+    // fingerprint (which hashes this whole struct): a change invalidates
+    // every parsed document. `version`/`release` (above) are `''` upstream
+    // (`config.py:225-226`) and stay `Option<String>` here with a `None`
+    // default that consumers read as `''`.
+    /// `smartquotes`, default `True` (`config.py:289`): the master switch of
+    /// the SmartQuotes read transform (`transforms/__init__.py:388-390`).
+    pub smartquotes: bool,
+
+    /// `smartquotes_action`, default `'qDe'` (`config.py:290`): which
+    /// substitutions docutils' smartquotes applies (quotes, dashes,
+    /// ellipses).
+    pub smartquotes_action: String,
+
+    /// `smartquotes_excludes` (`config.py:291-295`): the languages and
+    /// builders the transform stays off for.
+    pub smartquotes_excludes: SmartquotesExcludes,
+
+    /// `keep_warnings`, default `False` (`config.py:261`): the level
+    /// `FilterSystemMessages` filters `system_message` nodes below — 5
+    /// (everything) when off, 2 (only `INFO`/`DEBUG`) when on
+    /// (`transforms/__init__.py:343-347`).
+    pub keep_warnings: bool,
+
+    /// `today`, default `''` (`config.py:227`): the literal text of the
+    /// `|today|` substitution; empty means "format the build date with
+    /// [`Self::today_fmt`]" (`transforms/__init__.py:130-135`).
+    pub today: String,
+
+    /// `today_fmt`, default `None` (`config.py:228-229`: "the real default is
+    /// locale-dependent"): the format of `|today|` when [`Self::today`] is
+    /// empty. Unset means the translated `'%b %d, %Y'`
+    /// (`transforms/__init__.py:134`).
+    pub today_fmt: Option<String>,
+
+    /// `highlight_language`, default `'default'` (`config.py:257`): the
+    /// language applied to every literal block that names none
+    /// (`transforms/post_transforms/code.py:31-42`).
+    pub highlight_language: String,
+}
+
+/// `smartquotes_excludes` (`config.py:291-295`): a dict of two lists that
+/// upstream reads with `.get('builders', [])` / `.get('languages', [])`
+/// (`transforms/__init__.py:383-384`).
+///
+/// [`Default`] is sphinx's default dict, which is what an unset
+/// `smartquotes_excludes` means. A dict that IS written replaces it whole:
+/// each field carries a plain `#[serde(default)]` (an empty list), so a
+/// project file or `conf.py` naming only `languages` leaves `builders`
+/// empty exactly as upstream's `.get(..., [])` does, rather than refilling
+/// it from the default dict.
+///
+/// `-D smartquotes_excludes=...` is not expressible (sphinx's
+/// `convert_overrides` rejects a dict-valued key the same way,
+/// `config.py:375-381`): `apply_override` answers it with its usual
+/// whole-dict warning, while `-D smartquotes_excludes.languages=de,fr`
+/// reaches one list.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SmartquotesExcludes {
+    /// Language codes (`config.language`) the transform is disabled for.
+    #[serde(default)]
+    pub languages: Vec<String>,
+
+    /// Builder names the transform is disabled for.
+    #[serde(default)]
+    pub builders: Vec<String>,
+}
+
+impl Default for SmartquotesExcludes {
+    fn default() -> Self {
+        Self {
+            languages: ["ja", "zh_CN", "zh_TW"].map(String::from).to_vec(),
+            builders: ["man", "text"].map(String::from).to_vec(),
+        }
+    }
 }
 
 /// Sphinx's default `source_encoding` (`config.py:244`).
@@ -403,8 +481,8 @@ impl Default for BuildConfig {
 
             // Sphinx-compatible defaults
             project: "Sphinx Ultra Project".to_string(),
-            version: Some("1.0.0".to_string()),
-            release: Some("1.0.0".to_string()),
+            version: None,
+            release: None,
             copyright: Some("2024, Sphinx Ultra".to_string()),
             language: Some("en".to_string()),
             root_doc: Some("index".to_string()),
@@ -469,6 +547,15 @@ impl Default for BuildConfig {
             tls_verify: true,
             tls_cacerts: None,
             user_agent: None,
+
+            // Read-transform keys (sphinx 9.1 `config.py:225-291`).
+            smartquotes: true,
+            smartquotes_action: "qDe".to_string(),
+            smartquotes_excludes: SmartquotesExcludes::default(),
+            keep_warnings: false,
+            today: String::new(),
+            today_fmt: None,
+            highlight_language: "default".to_string(),
         }
     }
 }
@@ -1262,6 +1349,118 @@ output:
              utf-8-sig, ascii, latin-1); included files will be read as 'utf-8-sig'"
         );
         assert!(warnings[2].starts_with("The config value `maximum_signature_line_length'"));
+    }
+
+    /// The read-transform keys at Sphinx 9.1's defaults (`config.py:225-291`):
+    /// `version`/`release` are `''` upstream, carried here as `None` and read
+    /// as `''` by consumers.
+    #[test]
+    fn sphinx_defaults_for_the_read_transform_keys() {
+        let config = BuildConfig::default();
+        assert!(config.smartquotes);
+        assert_eq!(config.smartquotes_action, "qDe");
+        assert_eq!(
+            config.smartquotes_excludes,
+            SmartquotesExcludes {
+                languages: vec!["ja".into(), "zh_CN".into(), "zh_TW".into()],
+                builders: vec!["man".into(), "text".into()],
+            }
+        );
+        assert!(!config.keep_warnings);
+        assert_eq!(config.today, "");
+        assert_eq!(config.today_fmt, None);
+        assert_eq!(config.highlight_language, "default");
+        assert_eq!(config.version, None);
+        assert_eq!(config.release, None);
+    }
+
+    /// Each scalar key coerces from its `-D` string to the type the field
+    /// already has; the dict-valued `smartquotes_excludes` takes the same
+    /// whole-dict warning every dict-valued key gets (`-D` has no syntax
+    /// for it), and a dotted member reaches a list inside it.
+    #[test]
+    fn read_transform_keys_are_d_overridable() {
+        let mut config = BuildConfig::default();
+        for (key, value) in [
+            ("smartquotes", "0"),
+            ("keep_warnings", "1"),
+            ("today", "2026-01-01"),
+            ("today_fmt", "%Y"),
+            ("highlight_language", "none"),
+            ("smartquotes_action", "q"),
+        ] {
+            assert!(
+                config.apply_override(key, value).unwrap().is_none(),
+                "{key}"
+            );
+        }
+        assert!(!config.smartquotes);
+        assert!(config.keep_warnings);
+        assert_eq!(config.today, "2026-01-01");
+        assert_eq!(config.today_fmt, Some("%Y".to_string()));
+        assert_eq!(config.highlight_language, "none");
+        assert_eq!(config.smartquotes_action, "q");
+
+        let before = config.clone();
+        let warning = config.apply_override("smartquotes_excludes", "de").unwrap();
+        assert_eq!(config, before);
+        assert!(warning
+            .unwrap()
+            .contains("cannot override dictionary config setting 'smartquotes_excludes'"));
+
+        assert!(config
+            .apply_override("smartquotes_excludes.languages", "de,fr")
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            config.smartquotes_excludes.languages,
+            vec!["de".to_string(), "fr".to_string()]
+        );
+    }
+
+    /// `version`/`release` default to `None` now, so `-D version=1.0` meets a
+    /// null slot whose numeric guess (`1.0` parses as a float) cannot become
+    /// a string field — the retry keeps the text exactly as typed.
+    #[test]
+    fn version_and_release_overrides_keep_numeric_looking_text() {
+        let mut config = BuildConfig::default();
+        assert!(config.apply_override("version", "1.0").unwrap().is_none());
+        assert!(config.apply_override("release", "2").unwrap().is_none());
+        assert_eq!(config.version.as_deref(), Some("1.0"));
+        assert_eq!(config.release.as_deref(), Some("2"));
+    }
+
+    /// A project file spells the keys by their Sphinx names; an absent key
+    /// keeps the Sphinx default, while a `smartquotes_excludes` dict replaces
+    /// the default whole (upstream reads each half with `.get(..., [])`, so
+    /// the half a dict leaves out is empty).
+    #[test]
+    fn read_transform_keys_load_from_yaml() {
+        let temp_dir = TempDir::new().unwrap();
+        let p = temp_dir.path().join("sphinx-ultra.yaml");
+        fs::write(
+            &p,
+            "smartquotes: false\nkeep_warnings: true\ntoday: 'X'\ntoday_fmt: '%d'\n\
+             highlight_language: python\nsmartquotes_excludes:\n  languages: [de]\n",
+        )
+        .unwrap();
+        let config = BuildConfig::from_file(&p).unwrap();
+        assert!(!config.smartquotes);
+        assert!(config.keep_warnings);
+        assert_eq!(config.today, "X");
+        assert_eq!(config.today_fmt.as_deref(), Some("%d"));
+        assert_eq!(config.highlight_language, "python");
+        assert_eq!(config.smartquotes_action, "qDe");
+        assert_eq!(
+            config.smartquotes_excludes.languages,
+            vec!["de".to_string()]
+        );
+        assert!(config.smartquotes_excludes.builders.is_empty());
+
+        // The key left out altogether keeps the whole default dict.
+        fs::write(&p, "project: 'Tiny'\n").unwrap();
+        let config = BuildConfig::from_file(&p).unwrap();
+        assert_eq!(config.smartquotes_excludes, SmartquotesExcludes::default());
     }
 
     #[test]

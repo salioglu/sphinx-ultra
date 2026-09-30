@@ -154,6 +154,16 @@ pub struct ConfPyConfig {
     pub toc_object_entries_show_parents: Option<String>,
     /// `source_encoding` as written, `None` when conf.py said nothing.
     pub source_encoding: Option<String>,
+    // The read-transform keys (`config.py:225-291`): `None` means "conf.py
+    // did not mention it", leaving `BuildConfig::default()`'s sphinx default
+    // in place. `today_fmt = None` spelled out reads as the same thing.
+    pub smartquotes: Option<bool>,
+    pub smartquotes_action: Option<String>,
+    pub smartquotes_excludes: Option<crate::config::SmartquotesExcludes>,
+    pub keep_warnings: Option<bool>,
+    pub today: Option<String>,
+    pub today_fmt: Option<String>,
+    pub highlight_language: Option<String>,
     /// `(key, python type name)` for the `int | None` keys whose conf.py
     /// value is neither an int nor `None` — what sphinx's
     /// `check_confval_types` warns about (see
@@ -431,6 +441,38 @@ impl PythonConfigParser {
             extract_none_default_int("python_maximum_signature_line_length");
         config.confval_type_mismatches = mismatches;
         config.source_encoding = extract_string("source_encoding");
+
+        // Read-transform keys. `smartquotes_excludes` is a dict whose two
+        // halves upstream reads with `.get(..., [])`
+        // (`transforms/__init__.py:383-384`), so a dict that omits one names
+        // an empty list for it; anything that is not a dict is left unset.
+        config.smartquotes = extract_bool("smartquotes");
+        config.smartquotes_action = extract_string("smartquotes_action");
+        config.smartquotes_excludes = self
+            .conf_namespace
+            .get("smartquotes_excludes")
+            .and_then(serde_json::Value::as_object)
+            .map(|map| {
+                let list = |key: &str| -> Vec<String> {
+                    map.get(key)
+                        .and_then(serde_json::Value::as_array)
+                        .map(|items| {
+                            items
+                                .iter()
+                                .filter_map(|v| v.as_str().map(str::to_string))
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                };
+                crate::config::SmartquotesExcludes {
+                    languages: list("languages"),
+                    builders: list("builders"),
+                }
+            });
+        config.keep_warnings = extract_bool("keep_warnings");
+        config.today = extract_string("today");
+        config.today_fmt = extract_string("today_fmt");
+        config.highlight_language = extract_string("highlight_language");
         config.python_trailing_comma_in_multi_line_signatures =
             extract_bool("python_trailing_comma_in_multi_line_signatures");
         config.python_display_short_literal_types =
@@ -497,6 +539,13 @@ impl PythonConfigParser {
                 | "include_patterns"
                 | "source_suffix"
                 | "source_encoding"
+                | "smartquotes"
+                | "smartquotes_action"
+                | "smartquotes_excludes"
+                | "keep_warnings"
+                | "today"
+                | "today_fmt"
+                | "highlight_language"
                 | "root_doc"
                 | "master_doc"
                 | "language"
@@ -1141,6 +1190,13 @@ impl Default for ConfPyConfig {
             toc_object_entries: None,
             toc_object_entries_show_parents: None,
             source_encoding: None,
+            smartquotes: None,
+            smartquotes_action: None,
+            smartquotes_excludes: None,
+            keep_warnings: None,
+            today: None,
+            today_fmt: None,
+            highlight_language: None,
             confval_type_mismatches: Vec::new(),
             add_function_parentheses: None,
             add_module_names: None,
@@ -1288,6 +1344,25 @@ impl ConfPyConfig {
         config.confval_type_mismatches = self.confval_type_mismatches.clone();
         if let Some(source_encoding) = &self.source_encoding {
             config.source_encoding = source_encoding.clone();
+        }
+        if let Some(smartquotes) = self.smartquotes {
+            config.smartquotes = smartquotes;
+        }
+        if let Some(action) = &self.smartquotes_action {
+            config.smartquotes_action = action.clone();
+        }
+        if let Some(excludes) = &self.smartquotes_excludes {
+            config.smartquotes_excludes = excludes.clone();
+        }
+        if let Some(keep_warnings) = self.keep_warnings {
+            config.keep_warnings = keep_warnings;
+        }
+        if let Some(today) = &self.today {
+            config.today = today.clone();
+        }
+        config.today_fmt = self.today_fmt.clone();
+        if let Some(language) = &self.highlight_language {
+            config.highlight_language = language.clone();
         }
         if let Some(trailing_comma) = self.python_trailing_comma_in_multi_line_signatures {
             config.python_trailing_comma_in_multi_line_signatures = trailing_comma;
@@ -1792,5 +1867,77 @@ e = 'esc\n'
             config.to_build_config().unwrap().source_encoding,
             "utf-8-sig"
         );
+    }
+
+    /// The read-transform keys are standard keys: read from conf.py, handed
+    /// to the build configuration, never dropped into `custom_configs`. A
+    /// conf.py that names none of them leaves Sphinx's defaults in place, and
+    /// a `smartquotes_excludes` dict replaces the default wholesale (upstream
+    /// reads each half with `.get(..., [])`, `transforms/__init__.py:383-384`).
+    #[test]
+    fn read_transform_keys_are_read_from_conf_py() {
+        let p = parse(
+            "smartquotes = False\nsmartquotes_action = 'De'\n\
+             smartquotes_excludes = {'languages': ['de'], 'builders': []}\n\
+             keep_warnings = True\ntoday = 'X'\ntoday_fmt = '%d'\n\
+             highlight_language = 'python'\nversion = '1.2'\nrelease = '1.2.3'\n",
+        );
+        let parsed = p.extract_configuration().unwrap();
+        for key in [
+            "smartquotes",
+            "smartquotes_action",
+            "smartquotes_excludes",
+            "keep_warnings",
+            "today",
+            "today_fmt",
+            "highlight_language",
+        ] {
+            assert!(!parsed.custom_configs.contains_key(key), "{key}");
+        }
+        let config = parsed.to_build_config().unwrap();
+        assert!(!config.smartquotes);
+        assert_eq!(config.smartquotes_action, "De");
+        assert_eq!(
+            config.smartquotes_excludes.languages,
+            vec!["de".to_string()]
+        );
+        assert!(config.smartquotes_excludes.builders.is_empty());
+        assert!(config.keep_warnings);
+        assert_eq!(config.today, "X");
+        assert_eq!(config.today_fmt.as_deref(), Some("%d"));
+        assert_eq!(config.highlight_language, "python");
+        assert_eq!(config.version.as_deref(), Some("1.2"));
+        assert_eq!(config.release.as_deref(), Some("1.2.3"));
+
+        // `today_fmt = None` is the default spelled out; half a dict leaves
+        // the other half empty, exactly as upstream's `.get(..., [])` does.
+        let p = parse("today_fmt = None\nsmartquotes_excludes = {'builders': ['html']}\n");
+        let config = p
+            .extract_configuration()
+            .unwrap()
+            .to_build_config()
+            .unwrap();
+        assert_eq!(config.today_fmt, None);
+        assert!(config.smartquotes_excludes.languages.is_empty());
+        assert_eq!(
+            config.smartquotes_excludes.builders,
+            vec!["html".to_string()]
+        );
+
+        // Naming none of them keeps the defaults.
+        let config = parse("project = 'x'\n")
+            .extract_configuration()
+            .unwrap()
+            .to_build_config()
+            .unwrap();
+        let defaults = BuildConfig::default();
+        assert!(config.smartquotes);
+        assert_eq!(config.smartquotes_action, "qDe");
+        assert_eq!(config.smartquotes_excludes, defaults.smartquotes_excludes);
+        assert!(!config.keep_warnings);
+        assert_eq!(config.today, "");
+        assert_eq!(config.highlight_language, "default");
+        assert_eq!(config.version, None);
+        assert_eq!(config.release, None);
     }
 }
