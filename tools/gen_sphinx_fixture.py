@@ -97,7 +97,10 @@ rewrites, Footnotes+FootnoteDocnameUpdater, DoctestTransform classes,
 doc-start docinfo consumption, image `candidates`, Transitions edge warnings,
 Sphinx role replacements for pep/rfc/code/index. Each wave-5 transform task
 re-admits the constructs of the transform it lands, in a `tx_*` family of its
-own: `tx_filter` (FilterSystemMessages -- INFO stripping) first. Later tasks
+own: `tx_filter` (FilterSystemMessages -- INFO stripping) first, then
+`tx_targets` (MoveModuleTargets, ReorderConsecutiveTargetAndIndexNodes,
+PropagateTargets, SortIds -- which also re-admitted the propagation-visible
+`py.module_basic`/`py.duplicate_modules` from EXCLUDED). Later tasks
 extend this corpus with Sphinx-specific directives (toctree, code-block,
 versionadded/versionchanged/deprecated, seealso, only, highlight, math, index,
 rst-class, ...) once the Rust side grows the sphinx registry + env surface.
@@ -970,6 +973,54 @@ CASES = [
     # never prints either. Formerly excluded by the corpus policy (INFO
     # stripping).
     ('tx_filter', 'info_message_stripped', 'Dup\n===\n\nx\n\nDup\n===\n\ny\n'),
+    # ===== tx_targets (M2 wave 5, sub-project 1, Task 7) =====
+    # The target transforms: MoveModuleTargets (210,
+    # `sphinx/transforms/__init__.py:153-175`),
+    # ReorderConsecutiveTargetAndIndexNodes (220, `:446-515`), docutils
+    # PropagateTargets (260, `transforms/references.py:17-95`) and SortIds
+    # (261, `:217-225`). Formerly excluded by the corpus policy
+    # (PropagateTargets target rewrites).
+    ('tx_targets', 'block_target_then_paragraph', '.. _t:\n\npara\n'),
+    # `a` donates to the target `b` first, then `b` ("b a") to the paragraph.
+    ('tx_targets', 'chained_targets', '.. _a:\n.. _b:\n\npara\n'),
+    # `t1` is a document child before the first section; `t2` is the last
+    # child of section "First", so next_node(ascend=True) climbs to "Second".
+    ('tx_targets', 'target_then_section', '.. _t1:\n\nFirst\n=====\n\npara\n\n.. _t2:\n\nSecond\n======\n\ntext\n'),
+    # SortIds: the propagated label follows the section's own `identity`,
+    # which starts with "id", so it is rotated to the end.
+    ('tx_targets', 'identity_section_label', '.. _lbl:\n\nIdentity\n========\n'),
+    ('tx_targets', 'target_index_reorder', '.. _t:\n.. index:: x\n\npara\n'),
+    ('tx_targets', 'module_target_moves_to_section', 'Mod\n===\n\n.. py:module:: mymod\n\ntext\n'),
+    # U+00A0 is Python whitespace (`str.split()` in `fully_normalize_name`).
+    ('tx_targets', 'target_name_nbsp', '.. _a\u00a0b:\n\npara\n'),
+    # The edges of the propagation predicate and of the two sphinx
+    # transforms' position tests (new inputs):
+    # without an index entry the module target is at index 1, so
+    # MoveModuleTargets leaves it and PropagateTargets moves it on.
+    ('tx_targets', 'module_target_without_index_entry_propagates', 'Mod\n===\n\n.. py:module:: halfmod\n   :no-index-entry:\n\ntext\n'),
+    # A section whose auto id is `id1` (non-ASCII title) is sorted too.
+    ('tx_targets', 'non_ascii_section_label', '.. _lbl2:\n\n\u65e5\u672c\n====\n'),
+    # The unknown directive's messages are stepped over, not into.
+    ('tx_targets', 'target_skips_system_messages', '.. _t:\n\n.. nosuchdirective::\n\npara\n'),
+    # An Invisible next node (a comment; an `index` outside the target's
+    # own run) takes nothing, and neither does the end of the document.
+    ('tx_targets', 'target_then_comment_stays', '.. _t:\n\n.. a comment\n\npara\n'),
+    ('tx_targets', 'target_then_index_elsewhere_stays', '- item\n\n  .. _t:\n\n.. index:: x\n\npara\n'),
+    ('tx_targets', 'target_at_document_end_stays', 'para\n\n.. _t:\n'),
+    # A target whose parent is a TextElement is skipped: here the `:envvar:`
+    # role's childless index target inside a line block's `line`.
+    ('tx_targets', 'target_inside_a_line_stays', '| See :envvar:`HOME_A`.\n'),
+    # Every index node of a run moves ahead of every target (a stable sort),
+    # and the chain then carries all four ids to the paragraph.
+    ('tx_targets', 'two_target_index_runs', '.. _a:\n.. index:: x\n.. _b:\n.. index:: y\n\npara\n'),
+    # MoveModuleTargets walks a snapshot: once `ma`'s target leaves index 2,
+    # `mb`'s (no index entry) moves up into it and is absorbed too, ahead.
+    ('tx_targets', 'two_module_targets_move_in_order', 'Mod\n===\n\n.. py:module:: ma\n.. py:module:: mb\n   :no-index-entry:\n\ntext\n'),
+    # Re-admitted from EXCLUDED: the module-target shapes (inputs as pinned by
+    # src/rst/block.rs's module_basic_pre_propagation_shape and
+    # duplicate_modules_take_the_module_0_serial).
+    ('py', 'module_basic', '.. py:module:: mymod\n   :synopsis: A module.\n   :platform: Unix\n\n.. py:function:: f(x)\n\n   Body.\n'),
+    ('py', 'duplicate_modules', '.. py:module:: dupmod\n\n.. py:module:: dupmod\n'),
 
 ]
 
@@ -978,26 +1029,16 @@ CASES = [
 # carry, each with the evidence for why. The assert in main() keeps CASES
 # disjoint from this set; removing an entry requires re-probing the reason.
 EXCLUDED = {
-    # -- PropagateTargets-visible module shapes (plan §Scope-3: docutils
-    #    PropagateTargets is a transform this crate deliberately does not run
-    #    until wave 5; the sphinx pformat moves the module target's id onto
-    #    the NEXT body node, ours keeps it on the target) --
-    "py.module_basic": (
-        "PropagateTargets folds ids='module-mymod' onto the following desc "
-        "(target keeps refid) — propagation-visible, wave 5 [PY §1.6]"
-    ),
+    # -- module content with sections (py.module_basic and
+    #    py.duplicate_modules, the PropagateTargets-visible module shapes,
+    #    were re-admitted in M2 wave 5 once the crate ran the target
+    #    transforms: family tx_targets) --
     "py.module_content_and_sections": (
-        "PropagateTargets moves the module id onto the first content "
-        "paragraph AND py:module content parses with "
-        "allow_section_headings=True (nested sections unrepresentable in "
-        "this parser's nested contexts, T6 deviation 4) [PY §1.6]"
-    ),
-    "py.duplicate_modules": (
-        "PropagateTargets folds the first target's id onto the second "
-        "(sphinx: <target ids='module-0 module-dupmod'>) — propagation-"
-        "visible; the module-0 serial registration is pinned by the Rust "
-        "unit test duplicate_modules_take_the_module_0_serial in "
-        "src/rst/block.rs instead [PY §5]"
+        "py:module content parses with allow_section_headings=True "
+        "(nested sections unrepresentable in this parser's nested "
+        "contexts, T6 deviation 4) [PY §1.6]; the module id moving onto "
+        "the first content paragraph (PropagateTargets) is no longer a "
+        "reason since M2 wave 5"
     ),
     # -- T6 documented divergence: retann ending in ')' --
     "py.function_greedy_retann": (
@@ -1195,6 +1236,7 @@ def main() -> int:
         "pysig": 30,
         "pyconf": 30,
         "tx_filter": 1,
+        "tx_targets": 16,
     }
     counts: dict = {}
     for case in CASES:

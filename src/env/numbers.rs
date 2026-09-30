@@ -25,7 +25,6 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::doctree::{kinds, AttrValue, Doctree, Node};
-use crate::env::std_domain::PropagatedIds;
 use crate::env::toctree::VIRTUAL_DOC_NAMES;
 use crate::env::BuildEnvironment;
 
@@ -350,22 +349,14 @@ impl FignumWalker<'_, '_, '_> {
         let Some(doctree) = (self.load_doctree)(docname) else {
             return;
         };
-        // `PropagateTargets` has already run by the time Sphinx numbers a
-        // doctree, so a `.. _label:` written above a figure/table/code-block
-        // is part of that node's `ids` here. Our parse layer leaves the
-        // target standing, so the transform is replayed as a lookup.
-        let propagated = PropagatedIds::of(&doctree);
-        self.walk_doctree(docname, &doctree.root.children, secnum, &propagated);
+        // The doctree is the read-transform pass's: `PropagateTargets` has
+        // already moved a `.. _label:` written above a figure/table/code-block
+        // into that node's `ids`, as it has by the time Sphinx numbers one.
+        self.walk_doctree(docname, &doctree.root.children, secnum);
     }
 
     /// `_walk_doctree` (`collectors/toctree.py:338-364`).
-    fn walk_doctree(
-        &mut self,
-        docname: &str,
-        children: &[Node],
-        secnum: &[u32],
-        propagated: &PropagatedIds,
-    ) {
+    fn walk_doctree(&mut self, docname: &str, children: &[Node], secnum: &[u32]) {
         for subnode in children {
             // docutils Text nodes are not Elements: Sphinx's isinstance
             // chain skips them entirely.
@@ -375,7 +366,7 @@ impl FignumWalker<'_, '_, '_> {
             if subnode.kind == kinds::SECTION {
                 let next = self.section_number(docname, subnode);
                 let inherited = if next.is_empty() { secnum } else { &next };
-                self.walk_doctree(docname, &subnode.children, inherited, propagated);
+                self.walk_doctree(docname, &subnode.children, inherited);
             } else if subnode.kind == kinds::TOCTREE {
                 // Document order, depth first: this is what makes figure
                 // numbers follow the reading order of the whole project.
@@ -390,12 +381,12 @@ impl FignumWalker<'_, '_, '_> {
             } else {
                 if let Some(figtype) = figtype_of(subnode) {
                     // `fignode['ids'][0]`, after propagation.
-                    if let Some(figure_id) = propagated.effective_ids(subnode).first() {
+                    if let Some(figure_id) = subnode.attrs.ids.first() {
                         let figure_id = figure_id.clone();
                         self.register_fignumber(docname, secnum, figtype, &figure_id);
                     }
                 }
-                self.walk_doctree(docname, &subnode.children, secnum, propagated);
+                self.walk_doctree(docname, &subnode.children, secnum);
             }
         }
     }
@@ -568,10 +559,12 @@ mod tests {
     use super::*;
     use crate::doctree::Span;
     use crate::env::toctree::{build_toc, document_title, note_toctree, toctree_copies};
-    use crate::rst::{parse_rst, ParseOptions};
+    use crate::rst::ParseOptions;
+    use crate::transforms::{parse_and_transform, TransformConfig};
 
     /// Build an environment the way the real merge phase does, from a
-    /// `docname -> rst` corpus, and hand back the doctrees for the loader.
+    /// `docname -> rst` corpus — each document parsed and put through the
+    /// read transforms — and hand back the doctrees for the loader.
     fn read(sources: &[(&str, &str)]) -> (BuildEnvironment, BTreeMap<String, Doctree>) {
         let found: BTreeSet<String> = sources.iter().map(|(name, _)| name.to_string()).collect();
         let found = std::sync::Arc::new(found);
@@ -582,7 +575,7 @@ mod tests {
         };
         let mut doctrees = BTreeMap::new();
         for (docname, body) in sources {
-            let doctree = parse_rst(
+            let (doctree, _) = parse_and_transform(
                 body,
                 &ParseOptions {
                     source_path: format!("{docname}.rst"),
@@ -594,6 +587,7 @@ mod tests {
                     found_docs: Some(std::sync::Arc::clone(&found)),
                     ..Default::default()
                 },
+                &TransformConfig::default(),
             );
             env.all_docs.insert((*docname).to_string(), 0);
             env.titles

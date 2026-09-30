@@ -983,7 +983,7 @@ pub(crate) fn collect_registrations(
 mod tests {
     use super::*;
     use crate::env::std_domain;
-    use crate::rst::{parse_rst_full, ParseOptions};
+    use crate::rst::ParseOptions;
     use std::path::PathBuf;
 
     fn entry(docname: &str, node_id: &str, objtype: &str, aliased: bool) -> PyObjectEntry {
@@ -1827,8 +1827,10 @@ mod tests {
 
     // ---- the replay through std_domain::replay_registrations -----------
 
+    /// A document as the merge phase receives it: parsed, then through the
+    /// read transforms.
     fn parse(source: &str, docname: &str) -> crate::rst::ParseOutput {
-        parse_rst_full(
+        crate::transforms::parse_full_and_transform(
             source,
             &ParseOptions {
                 source_path: format!("<{docname}>"),

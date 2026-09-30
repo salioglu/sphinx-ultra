@@ -253,12 +253,20 @@ fn matches_sphinx_oracle_pformat() {
 /// among the parse's other records, by the registration's `seq` —
 /// `reporter_interleave`) is its venue. `(case, record, reason)`; strict:
 /// each record must be in the case's oracle output and absent from ours.
-const MERGE_TIME_RECORDS: &[(&str, &str, &str)] = &[(
-    "py.duplicate_functions",
-    "<snippet>:3: WARNING: duplicate object description of dup, other instance in index, \
-     use :no-index: for one of them",
-    "duplicate object descriptions are an environment replay (merge phase)",
-)];
+const MERGE_TIME_RECORDS: &[(&str, &str, &str)] = &[
+    (
+        "py.duplicate_functions",
+        "<snippet>:3: WARNING: duplicate object description of dup, other instance in index, \
+         use :no-index: for one of them",
+        "duplicate object descriptions are an environment replay (merge phase)",
+    ),
+    (
+        "py.duplicate_modules",
+        "<snippet>:3: WARNING: duplicate object description of dupmod, other instance in \
+         index, use :no-index: for one of them",
+        "duplicate object descriptions are an environment replay (merge phase)",
+    ),
+];
 
 /// The printed form of one parse diagnostic: its source's path — with the
 /// `doc2path` suffix a tuple `location=` gets (`Diagnostic::

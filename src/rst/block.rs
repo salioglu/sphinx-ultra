@@ -4333,10 +4333,9 @@ impl BlockParser {
     /// keeps only `parsed[0]`).
     ///
     /// `auto_number` is off for code-block, which has never carried the
-    /// parse-time `AutoNumbering` approximation: stamping it there would
-    /// hide a `.. _label:` written above the block from the propagated-
-    /// target numbering replay (see `env::numbers`), the labelled gap this
-    /// approximation already has for literalinclude.
+    /// parse-time `AutoNumbering` approximation: a `.. _label:` written
+    /// above the block reaches it through PropagateTargets in the read pass
+    /// ([`crate::transforms`]), and numbering files it under that label.
     fn container_wrapper(
         &mut self,
         caption: &str,
@@ -5836,10 +5835,11 @@ impl BlockParser {
                 );
                 out.push(index);
             }
-            // NOTE §Scope-3: this is the PRE-propagation shape — the target
-            // keeps its ids; docutils PropagateTargets (a transform this
-            // parse layer deliberately does not run) is what turns it into
-            // `refid` and moves the id onto the next body node (trap 5).
+            // NOTE §Scope-3: this is the parse-layer shape — the target
+            // keeps its ids. The read-transform pass ([`crate::transforms`])
+            // moves them: onto the enclosing section when the module opens
+            // it (MoveModuleTargets), else onto the next body node with the
+            // target keeping a `refid` (PropagateTargets; trap 5).
             out.push(target);
         }
         out.extend(content);
@@ -15405,12 +15405,14 @@ mod py_desc_tests {
 
     // ---- py:module / py:currentmodule (row 9; traps 5, 6) --------------
 
-    /// Row 9 — OUR pre-propagation shape (§Scope-3 sanctioned divergence):
-    /// sphinx's recorded doctree has docutils PropagateTargets move the
-    /// module target's id onto the next body node (`<target ismod="1"
-    /// refid="module-mymod">` + desc `ids="module-mymod"`); this parse
-    /// layer runs no transforms, so the target KEEPS its ids and the desc
-    /// gains none. Everything else is the probe's bytes.
+    /// Row 9 — the PARSE-LAYER shape: sphinx's recorded doctree has the
+    /// read transforms reorder the index nodes ahead of the target and
+    /// PropagateTargets move the module target's id onto the next body node
+    /// (`<target ismod="1" refid="module-mymod">` + desc
+    /// `ids="module-mymod"`); this parse layer runs no transforms, so the
+    /// target KEEPS its ids and the desc gains none. Everything else is the
+    /// probe's bytes. The post-transform tree is the sphinx fixture's
+    /// `py.module_basic` (tools/gen_sphinx_fixture.py).
     #[test]
     fn module_basic_pre_propagation_shape() {
         let out = parse_py(concat!(
@@ -15467,7 +15469,8 @@ mod py_desc_tests {
     }
 
     /// Module content stays in place (the id-propagation onto it is the
-    /// same excluded transform); `:deprecated:` reaches the record.
+    /// read-transform pass's, not the parse layer's); `:deprecated:`
+    /// reaches the record.
     #[test]
     fn module_content_and_deprecated() {
         let out = parse_py(".. py:module:: secmod\n\n   Module body content.\n");
@@ -15618,12 +15621,11 @@ mod py_desc_tests {
     /// `module-0` serial (`make_id` prefix fallback, `util/nodes.py:633-636`)
     /// and registers over the first — probe duplicate_modules [PY §5].
     ///
-    /// The sphinx PFORMAT of this case is propagation-dependent (docutils
-    /// PropagateTargets folds the first target's id onto the second:
-    /// `<target ids="module-0 module-dupmod">`), so it is EXCLUDED from the
-    /// sphinx doctree fixture (tools/gen_sphinx_fixture.py EXCLUDED) and the
-    /// module-0 registration is pinned here on our pre-propagation records
-    /// and ids instead. The duplicate WARNING is the env layer's job (T9).
+    /// This is the parse-layer tree; in sphinx's, the read transforms fold
+    /// the first target's id onto the second (`<target ids="module-0
+    /// module-dupmod">`), which the sphinx fixture's `py.duplicate_modules`
+    /// pins. The module-0 registration is pinned here on the parse's records
+    /// and ids. The duplicate WARNING is the env layer's job (T9).
     #[test]
     fn duplicate_modules_take_the_module_0_serial() {
         let out = parse_py(".. py:module:: dupmod\n\n.. py:module:: dupmod\n");
@@ -17162,7 +17164,7 @@ mod py_docfield_tests {
     ///   it to the `field_list` (`para\n\n.. class:: c\n\n:param x: v`
     ///   → `<field_list classes="c">` in docutils 0.22.4);
     /// * `ids`/`names` reach a field list only through `PropagateTargets`,
-    ///   which this crate does not run (an existing documented exemption).
+    ///   which runs after this parse layer, in the read-transform pass.
     ///
     /// Pinning the mechanism directly means the fix stays correct when
     /// either gap closes, instead of waiting on it.

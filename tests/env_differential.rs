@@ -585,16 +585,6 @@ const TOCTREE_RESOLUTION: &str = "the write-phase toctree resolution that turns 
      `toctree` node into a `compact_paragraph` entry tree is not ported yet";
 const IMAGE_CANDIDATES: &str = "`ImageCollector.process_doc` stamps `candidates` onto \
      every `image`; no image collection exists yet";
-const PROPAGATE_TARGETS: &str = "docutils' `PropagateTargets` transform (which moves a \
-     block-level target's ids and names onto the node after it) is replayed for label \
-     collection but not applied to the tree itself";
-const PROPAGATE_MODULE_TARGETS: &str = "plan §Scope-3: a `py:module` target's ids \
-     migrate onto the following node in Sphinx's tree (docutils `PropagateTargets`, \
-     plus the index/target reorder around it) — the in-tree application is deferred \
-     to wave 5; the registration records (`py_objects`/`py_modules`) pin the \
-     pre-propagation node ids for these same documents, and a module registered as \
-     a document's LAST node (py_dup's `a`) compares clean because a trailing \
-     target has nothing to propagate onto";
 
 /// Per-document `resolved_pformat` divergences this task deliberately does
 /// not close, each pinned to what would close it. Checked **strictly**,
@@ -642,23 +632,15 @@ const KNOWN_RESOLVED_GAPS: &[(&str, &str, &str)] = &[
          from the doctree after reading it (`collectors/metadata.py:40`); \
          ours reads it and leaves the node in place",
     ),
-    ("labels_dups", "a", PROPAGATE_TARGETS),
-    ("labels_dups", "b", PROPAGATE_TARGETS),
-    ("index_entries", "a", PROPAGATE_TARGETS),
     // Wave 4.5 py projects: toctree-bearing index documents share the
-    // write-phase gap above; module-bearing documents are §Scope-3
-    // propagation-visible (verified: each diff is exactly the module
-    // target ids moving onto the section/following target, nothing else).
+    // write-phase gap above. (The module-bearing documents compare at full
+    // strength since the read pass runs MoveModuleTargets,
+    // ReorderConsecutiveTargetAndIndexNodes and PropagateTargets in the
+    // tree — M2 wave 5, which also closed the label documents' entries.)
     ("py_basic", "index", TOCTREE_RESOLUTION),
     ("py_dup", "index", TOCTREE_RESOLUTION),
     ("py_toc", "index", TOCTREE_RESOLUTION),
     ("py_toc_parents", "index", TOCTREE_RESOLUTION),
-    ("py_basic", "a", PROPAGATE_MODULE_TARGETS),
-    ("py_dup", "b", PROPAGATE_MODULE_TARGETS),
-    ("py_toc", "mod", PROPAGATE_MODULE_TARGETS),
-    ("py_toc_parents", "mod", PROPAGATE_MODULE_TARGETS),
-    ("py_modindex", "index", PROPAGATE_MODULE_TARGETS),
-    ("py_modindex_prefix", "index", PROPAGATE_MODULE_TARGETS),
     // Wave 4.5 include/literalinclude projects. Only the toctree-bearing
     // index documents and the one image-bearing document are skipped
     // outright; every other document of these three projects is compared,
@@ -668,12 +650,8 @@ const KNOWN_RESOLVED_GAPS: &[(&str, &str, &str)] = &[
     ("inc_warn", "index", TOCTREE_RESOLUTION),
     ("inc_deps", "index", TOCTREE_RESOLUTION),
     // Panel fix round B: `py_any` keeps every `:any:` reference in `a`
-    // (compared at full strength) and its definitions in `b`, whose two
-    // labels sit before section titles — the PropagateTargets shape. The
-    // module is the document's LAST node, so its target propagates onto
-    // nothing (the py_dup shape) and is not part of the diff.
+    // and its definitions in `b` (both compared at full strength).
     ("py_any", "index", TOCTREE_RESOLUTION),
-    ("py_any", "b", PROPAGATE_TARGETS),
     (
         "inc_deps",
         "a",
@@ -1717,9 +1695,9 @@ fn resolved_doctrees_match_oracle() {
 /// Update the seven constants and the doc sites together.
 const DOCUMENTED_PROJECTS: usize = 34;
 const DOCUMENTED_DOCUMENTS: usize = 91;
-const DOCUMENTED_WHOLESALE_EXEMPT_DOCUMENTS: usize = 45;
+const DOCUMENTED_WHOLESALE_EXEMPT_DOCUMENTS: usize = 35;
 const DOCUMENTED_STAMP_EXEMPT_DOCUMENTS: usize = 8;
-const DOCUMENTED_BYTE_EXACT_DOCUMENTS: usize = 38;
+const DOCUMENTED_BYTE_EXACT_DOCUMENTS: usize = 48;
 const DOCUMENTED_WARNING_EXEMPT_PROJECTS: usize = 4;
 const DOCUMENTED_BYTE_EXACT_WARNING_PROJECTS: usize = 30;
 

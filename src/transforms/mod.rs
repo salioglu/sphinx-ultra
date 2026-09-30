@@ -29,6 +29,7 @@
 //! [`TransformCtx::reporter`].
 
 pub(crate) mod misc;
+pub(crate) mod references;
 
 use std::collections::BTreeMap;
 
@@ -114,6 +115,12 @@ pub fn node_at<'n>(root: &'n Node, path: &[usize]) -> Option<&'n Node> {
         .try_fold(root, |node, &index| node.children.get(index))
 }
 
+/// [`node_at`], for a transform that rewrites the node it finds.
+pub(crate) fn node_at_mut<'n>(root: &'n mut Node, path: &[usize]) -> Option<&'n mut Node> {
+    path.iter()
+        .try_fold(root, |node, &index| node.children.get_mut(index))
+}
+
 /// The docutils `document`'s node lists (`docutils/nodes.py:1734-1786`) as
 /// the parse leaves them — filled there by the `note_*` calls the RST
 /// parser makes as it creates each node (`parsers/rst/states.py`,
@@ -140,9 +147,13 @@ pub struct DocumentLists {
     /// references, footnote and citation references, and named indirect
     /// targets (`note_refname`, `nodes.py:2009-2018,2043-2054`).
     pub refnames: BTreeMap<String, Vec<NodePath>>,
-    /// `document.refids`. The parse never calls `note_refid` — only the
-    /// reference transforms do (`transforms/references.py:95,159,...`) —
-    /// so the walk leaves it empty.
+    /// `document.refids`: each `refid` to the targets pointing at it. The
+    /// parse never calls `note_refid`; PropagateTargets (260) does, for
+    /// every target it points at its next node (`transforms/
+    /// references.py:95`), so the walk notes each target with a `refid` —
+    /// which before 260 are only the crate's parse-time `math` label
+    /// targets, already in their post-propagation shape. (The later
+    /// reference transforms note references too, `:159,...`.)
     pub refids: BTreeMap<String, Vec<NodePath>>,
     /// `document.indirect_targets`: every target with a `refname`
     /// (`note_indirect_target`, `states.py:977,2086`).
@@ -219,6 +230,9 @@ impl DocumentLists {
                     if !node.attrs.names.is_empty() {
                         push(&mut self.refnames, refname);
                     }
+                }
+                if let Some(AttrValue::Str(refid)) = node.get("refid") {
+                    push(&mut self.refids, refid);
                 }
             }
             kinds::FOOTNOTE_REFERENCE => {
@@ -310,12 +324,18 @@ static READ_TRANSFORMS: &[ReadTransform] = &[
     // 020 Locale, 025 TranslationProgressTotaliser: no-op without message
     //     catalogs / the `translation_progress` attribute no oracle compares.
     // 100 RefOnlyBulletListTransform: no-op under `html_compact_lists=True`.
-    // 210 DefaultSubstitutions (Task 8), MoveModuleTargets (Task 7),
-    //     HandleCodeBlocks (Task 12), AutoNumbering (Task 12),
+    // 210 DefaultSubstitutions (Task 8).
+    (210, "MoveModuleTargets", misc::move_module_targets),
+    // 210 HandleCodeBlocks (Task 12), AutoNumbering (Task 12),
     //     AutoIndexUpgrader (never fires for core directives).
-    // 220 Substitutions (Task 8), ReorderConsecutiveTargetAndIndexNodes
-    //     (Task 7).
-    // 260 PropagateTargets, 261 SortIds (Task 7).
+    // 220 Substitutions (Task 8).
+    (
+        220,
+        "ReorderConsecutiveTargetAndIndexNodes",
+        misc::reorder_consecutive_target_and_index_nodes,
+    ),
+    (260, "PropagateTargets", references::propagate_targets),
+    (261, "SortIds", misc::sort_ids),
     // 320 DocTitle, 350 SectionSubTitle: disabled by Sphinx's settings
     //     (`doctitle_xform=False`, `sectsubtitle_xform=False`).
     // 340 DocInfo (Task 11).
@@ -434,6 +454,29 @@ pub fn parse_and_transform(
     (out.doctree, diagnostics)
 }
 
+/// Test support: [`crate::rst::parse_rst_full`] followed by the read pass
+/// under Sphinx's default configuration, every other field of the parse
+/// output kept — the doctree and registry the build's read phase
+/// ([`crate::parser::Parser`]) hands the merge phase. The transforms'
+/// records join `registry.diagnostics`; the id registry the pass continued
+/// is spent, so `ids` comes back empty.
+#[cfg(test)]
+pub(crate) fn parse_full_and_transform(
+    source: &str,
+    opts: &ParseOptions,
+) -> crate::rst::ParseOutput {
+    let mut out = crate::rst::parse_rst_full(source, opts);
+    apply_read_transforms(
+        &mut out.doctree,
+        std::mem::take(&mut out.ids),
+        out.next_seq,
+        &opts.docname,
+        &TransformConfig::default(),
+        &mut out.registry.diagnostics,
+    );
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -525,6 +568,51 @@ mod tests {
         );
         let (priority, name, _) = READ_TRANSFORMS.last().unwrap();
         assert_eq!((*priority, *name), (999, "FilterSystemMessages"));
+    }
+
+    /// The target family in its probed slots (research §1.2: 210-021,
+    /// 220-032, 260-005, 261-023): the reorder must run before
+    /// PropagateTargets (`transforms/__init__.py:472`, "This transform MUST
+    /// run before ``PropagateTargets``"), and SortIds after it, since it
+    /// sorts the ids PropagateTargets appended.
+    #[test]
+    fn the_target_transforms_run_in_sphinx_order() {
+        let order: Vec<(u16, &str)> = READ_TRANSFORMS
+            .iter()
+            .map(|(priority, name, _)| (*priority, *name))
+            .filter(|(priority, _)| (210..=261).contains(priority))
+            .collect();
+        assert_eq!(
+            order,
+            [
+                (210, "MoveModuleTargets"),
+                (220, "ReorderConsecutiveTargetAndIndexNodes"),
+                (260, "PropagateTargets"),
+                (261, "SortIds"),
+            ]
+        );
+    }
+
+    /// `document.refids` after PropagateTargets: every target it pointed at
+    /// its next node (`note_refid`, `references.py:95`) — which a transform
+    /// after it reads (IndirectHyperlinks, `references.py:285,325`).
+    #[test]
+    fn a_propagated_target_is_noted_in_refids() {
+        let (tree, _) = parse_and_transform(
+            ".. _a:\n.. _b:\n\nPara.\n",
+            &sphinx_opts(),
+            &TransformConfig::default(),
+        );
+        let lists = DocumentLists::collect(&tree.root);
+        let expected: BTreeMap<String, Vec<NodePath>> = [
+            ("a".to_string(), vec![vec![0]]),
+            ("b".to_string(), vec![vec![1]]),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(lists.refids, expected);
+        assert_eq!(lists.ids["a"], [2], "both ids now name the paragraph");
+        assert_eq!(lists.ids["b"], [2]);
     }
 
     fn report_one(ctx: &mut TransformCtx) {

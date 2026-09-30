@@ -133,10 +133,10 @@ impl Parser {
     /// transforms ([`crate::transforms::apply_read_transforms`]), which
     /// Sphinx runs on every document right after parsing it
     /// (`sphinx/util/docutils.py:906`) — here, inside the build's parallel
-    /// read, before anything reads the tree, before the merge phase's
-    /// domain hooks, and before the tree is persisted. The transforms'
-    /// records join the parse's in `document.registry.diagnostics`,
-    /// numbered after them.
+    /// read, before anything but the target-marker harvest reads the tree,
+    /// before the merge phase's domain hooks, and before the tree is
+    /// persisted. The transforms' records join the parse's in
+    /// `document.registry.diagnostics`, numbered after them.
     fn parse_rst_into(
         &self,
         content: &str,
@@ -158,6 +158,13 @@ impl Parser {
                 source_encoding: self.source_encoding.clone(),
             },
         );
+        // Explicit targets for nitpicky label resolution: the target markers
+        // as written, read before PropagateTargets (in the pass below) moves
+        // each marker's names onto the node after it.
+        let mut labels = Vec::new();
+        collect_labels(&output.doctree.root, &mut labels);
+        document.labels = labels;
+
         crate::transforms::apply_read_transforms(
             &mut output.doctree,
             output.ids,
@@ -174,17 +181,14 @@ impl Parser {
             document.title = first_section_title(root).unwrap_or_else(|| "Untitled".to_string());
 
             // Flat TOC; the builder's stack walk nests by level. Anchors are
-            // the sections' docutils ids (make_id) — a verified Sphinx-parity
-            // improvement over the M1 lowercase/space-hyphen slugs. Line
-            // numbers come from the spans' stamped provenance.
+            // the sections' first docutils ids after the pass (make_id, or a
+            // label SortIds moved first, `transforms/__init__.py:217-225`) —
+            // a verified Sphinx-parity improvement over the M1
+            // lowercase/space-hyphen slugs. Line numbers come from the spans'
+            // stamped provenance.
             let mut toc = Vec::new();
             collect_toc(root, 1, &mut toc);
             document.toc = toc;
-
-            // Explicit targets for nitpicky label resolution.
-            let mut labels = Vec::new();
-            collect_labels(root, &mut labels);
-            document.labels = labels;
         }
 
         document.toctrees = output.toctrees;

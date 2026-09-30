@@ -1,5 +1,6 @@
 //! Sphinx's own read transforms that belong to no docutils family
-//! (`sphinx/transforms/__init__.py`). Today: FilterSystemMessages.
+//! (`sphinx/transforms/__init__.py`). Today: MoveModuleTargets,
+//! ReorderConsecutiveTargetAndIndexNodes, SortIds and FilterSystemMessages.
 
 use super::TransformCtx;
 use crate::doctree::{kinds, AttrValue, Node};
@@ -18,6 +19,92 @@ use crate::doctree::{kinds, AttrValue, Node};
 pub(super) fn filter_system_messages(ctx: &mut TransformCtx) {
     let filterlevel = if ctx.config.keep_warnings { 2 } else { 5 };
     remove_messages_below(&mut ctx.tree.root, filterlevel);
+}
+
+/// `MoveModuleTargets` (`sphinx/transforms/__init__.py:153-175`, priority
+/// 210): a `py:module` target that is the first thing in a section — the
+/// section's third child, after its title and the module's index node
+/// (`:168-172`; `py:module` emits `[index, target]`) — is absorbed by the
+/// section: its ids are prepended to the section's (`:174`) and it is
+/// removed (`:175`). The index node stays. A target with no ids, one
+/// without the `ismod` attribute, or one at any other position is left to
+/// PropagateTargets (`:164-172`) — a `:no-index-entry:` module's target
+/// sits at index 1, so it is propagated onto the next node instead.
+///
+/// Upstream walks a snapshot of every target (`:163`), so once a module
+/// target leaves index 2 the target behind it moves up into that slot and,
+/// if it is a module target too, is absorbed when its turn comes, its ids
+/// going first. Draining the slot section by section is the same thing:
+/// only the removal at index 2 moves a sibling into it.
+pub(super) fn move_module_targets(ctx: &mut TransformCtx) {
+    let mut stack = vec![&mut ctx.tree.root];
+    while let Some(node) = stack.pop() {
+        if node.kind == kinds::SECTION {
+            while node.children.get(2).is_some_and(is_module_target) {
+                let target = node.children.remove(2);
+                node.attrs.ids.splice(0..0, target.attrs.ids);
+            }
+        }
+        stack.extend(node.children.iter_mut());
+    }
+}
+
+/// `node['ids'] and 'ismod' in node` for a `target` (`:164-167`).
+fn is_module_target(node: &Node) -> bool {
+    node.kind == kinds::TARGET && !node.attrs.ids.is_empty() && node.get("ismod").is_some()
+}
+
+/// `ReorderConsecutiveTargetAndIndexNodes` (`sphinx/transforms/
+/// __init__.py:446-515`, priority 220, before PropagateTargets so that the
+/// index nodes between targets do not stop a label reaching its node): for
+/// each target, the run of `target`/`index` siblings it starts
+/// (`findall(descend=False, siblings=True)`, `:491-495`) is stably sorted
+/// with every index node ahead of every target (`_sort_key`, `:508-515`)
+/// when it holds two or more nodes (`:497-505`; the run is all one
+/// parent's consecutive children by construction).
+///
+/// Upstream visits targets with the document's live iterator while it
+/// re-slices the parent (same length, so the iterator keeps its place): a
+/// target sorted further along is visited again — as the head of a run of
+/// targets alone, a no-op — and an index node sorted back past the
+/// iterator is not, having no target below it to miss. Visiting each
+/// child slot of each parent left to right is therefore the same.
+pub(super) fn reorder_consecutive_target_and_index_nodes(ctx: &mut TransformCtx) {
+    let mut stack = vec![&mut ctx.tree.root];
+    while let Some(node) = stack.pop() {
+        let children = &mut node.children;
+        for start in 0..children.len() {
+            if children[start].kind != kinds::TARGET {
+                continue;
+            }
+            let end = start
+                + children[start..]
+                    .iter()
+                    .take_while(|child| matches!(child.kind, kinds::TARGET | "index"))
+                    .count();
+            if end - start >= 2 {
+                children[start..end].sort_by_key(|child| child.kind != "index");
+            }
+        }
+        stack.extend(children.iter_mut());
+    }
+}
+
+/// `SortIds` (`sphinx/transforms/__init__.py:217-225`, priority 261, right
+/// after PropagateTargets): a section with more than one id whose first id
+/// starts with `id` has that id moved to the end (`:224-225`). Meant for a
+/// docutils auto id (`id1`), it matches any id with the prefix — a section
+/// titled "Identity" given a label gets `ids="lbl identity"`, and its toc
+/// anchor and HTML id become the label's. `names` are left alone.
+pub(super) fn sort_ids(ctx: &mut TransformCtx) {
+    let mut stack = vec![&mut ctx.tree.root];
+    while let Some(node) = stack.pop() {
+        let ids = &mut node.attrs.ids;
+        if node.kind == kinds::SECTION && ids.len() > 1 && ids[0].starts_with("id") {
+            ids.rotate_left(1);
+        }
+        stack.extend(node.children.iter_mut());
+    }
 }
 
 fn remove_messages_below(node: &mut Node, filterlevel: i64) {

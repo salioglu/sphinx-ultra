@@ -3737,6 +3737,136 @@
       "pseudo_xml": "<document source=\"<snippet>\">\n    <section dupnames=\"dup\" ids=\"dup\">\n        <title>\n            Dup\n        <paragraph>\n            x\n    <section dupnames=\"dup\" ids=\"id1\">\n        <title>\n            Dup\n        <paragraph>\n            y\n",
       "rst": "Dup\n===\n\nx\n\nDup\n===\n\ny\n",
       "warnings": []
+    },
+    {
+      "family": "tx_targets",
+      "name": "tx_targets.block_target_then_paragraph",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target refid=\"t\">\n    <paragraph ids=\"t\" names=\"t\">\n        para\n",
+      "rst": ".. _t:\n\npara\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_targets",
+      "name": "tx_targets.chained_targets",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target refid=\"a\">\n    <target refid=\"b\">\n    <paragraph ids=\"b a\" names=\"b a\">\n        para\n",
+      "rst": ".. _a:\n.. _b:\n\npara\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_targets",
+      "name": "tx_targets.target_then_section",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target refid=\"t1\">\n    <section ids=\"first t1\" names=\"first t1\">\n        <title>\n            First\n        <paragraph>\n            para\n        <target refid=\"t2\">\n    <section ids=\"second t2\" names=\"second t2\">\n        <title>\n            Second\n        <paragraph>\n            text\n",
+      "rst": ".. _t1:\n\nFirst\n=====\n\npara\n\n.. _t2:\n\nSecond\n======\n\ntext\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_targets",
+      "name": "tx_targets.identity_section_label",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target refid=\"lbl\">\n    <section ids=\"lbl identity\" names=\"identity lbl\">\n        <title>\n            Identity\n",
+      "rst": ".. _lbl:\n\nIdentity\n========\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_targets",
+      "name": "tx_targets.target_index_reorder",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <index entries=\"('single',\\ 'x',\\ 'index-0',\\ '',\\ None)\" inline=\"0\">\n    <target refid=\"t\">\n    <target refid=\"index-0\">\n    <paragraph ids=\"index-0 t\" names=\"t\">\n        para\n",
+      "rst": ".. _t:\n.. index:: x\n\npara\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_targets",
+      "name": "tx_targets.module_target_moves_to_section",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"module-mymod mod\" names=\"mod\">\n        <title>\n            Mod\n        <index entries=\"('pair',\\ 'module;\\ mymod',\\ 'module-mymod',\\ '',\\ None)\">\n        <paragraph>\n            text\n",
+      "rst": "Mod\n===\n\n.. py:module:: mymod\n\ntext\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_targets",
+      "name": "tx_targets.target_name_nbsp",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target refid=\"a-b\">\n    <paragraph ids=\"a-b\" names=\"a\\ b\">\n        para\n",
+      "rst": ".. _a b:\n\npara\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_targets",
+      "name": "tx_targets.module_target_without_index_entry_propagates",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"mod\" names=\"mod\">\n        <title>\n            Mod\n        <target ismod=\"1\" refid=\"module-halfmod\">\n        <paragraph ids=\"module-halfmod\">\n            text\n",
+      "rst": "Mod\n===\n\n.. py:module:: halfmod\n   :no-index-entry:\n\ntext\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_targets",
+      "name": "tx_targets.non_ascii_section_label",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target refid=\"lbl2\">\n    <section ids=\"lbl2 id1\" names=\"日本 lbl2\">\n        <title>\n            日本\n",
+      "rst": ".. _lbl2:\n\n日本\n====\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_targets",
+      "name": "tx_targets.target_skips_system_messages",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target refid=\"t\">\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown directive type \"nosuchdirective\".\n        <literal_block xml:space=\"preserve\">\n            .. nosuchdirective::\n    <paragraph ids=\"t\" names=\"t\">\n        para\n",
+      "rst": ".. _t:\n\n.. nosuchdirective::\n\npara\n",
+      "warnings": [
+        "<snippet>:3: ERROR: Unknown directive type \"nosuchdirective\".\n\n.. nosuchdirective:: [docutils]"
+      ]
+    },
+    {
+      "family": "tx_targets",
+      "name": "tx_targets.target_then_comment_stays",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target ids=\"t\" names=\"t\">\n    <comment xml:space=\"preserve\">\n        a comment\n    <paragraph>\n        para\n",
+      "rst": ".. _t:\n\n.. a comment\n\npara\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_targets",
+      "name": "tx_targets.target_then_index_elsewhere_stays",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                item\n            <target ids=\"t\" names=\"t\">\n    <index entries=\"('single',\\ 'x',\\ 'index-0',\\ '',\\ None)\" inline=\"0\">\n    <target refid=\"index-0\">\n    <paragraph ids=\"index-0\">\n        para\n",
+      "rst": "- item\n\n  .. _t:\n\n.. index:: x\n\npara\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_targets",
+      "name": "tx_targets.target_at_document_end_stays",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        para\n    <target ids=\"t\" names=\"t\">\n",
+      "rst": "para\n\n.. _t:\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_targets",
+      "name": "tx_targets.target_inside_a_line_stays",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <line_block>\n        <line>\n            See \n            <index entries=\"('single',\\ 'HOME_A',\\ 'index-0',\\ '',\\ None) ('single',\\ 'environment\\ variable;\\ HOME_A',\\ 'index-0',\\ '',\\ None)\">\n            <target ids=\"index-0\">\n            <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"0\" reftarget=\"HOME_A\" reftype=\"envvar\" refwarn=\"0\">\n                <literal classes=\"xref std std-envvar\">\n                    HOME_A\n            .\n",
+      "rst": "| See :envvar:`HOME_A`.\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_targets",
+      "name": "tx_targets.two_target_index_runs",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <index entries=\"('single',\\ 'x',\\ 'index-0',\\ '',\\ None)\" inline=\"0\">\n    <index entries=\"('single',\\ 'y',\\ 'index-1',\\ '',\\ None)\" inline=\"0\">\n    <target refid=\"a\">\n    <target refid=\"index-0\">\n    <target refid=\"b\">\n    <target refid=\"index-1\">\n    <paragraph ids=\"index-1 b index-0 a\" names=\"b a\">\n        para\n",
+      "rst": ".. _a:\n.. index:: x\n.. _b:\n.. index:: y\n\npara\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_targets",
+      "name": "tx_targets.two_module_targets_move_in_order",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"module-mb module-ma mod\" names=\"mod\">\n        <title>\n            Mod\n        <index entries=\"('pair',\\ 'module;\\ ma',\\ 'module-ma',\\ '',\\ None)\">\n        <paragraph>\n            text\n",
+      "rst": "Mod\n===\n\n.. py:module:: ma\n.. py:module:: mb\n   :no-index-entry:\n\ntext\n",
+      "warnings": []
+    },
+    {
+      "family": "py",
+      "name": "py.module_basic",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <index entries=\"('pair',\\ 'module;\\ mymod',\\ 'module-mymod',\\ '',\\ None)\">\n    <index entries=\"('single',\\ 'f()\\ (in\\ module\\ mymod)',\\ 'mymod.f',\\ '',\\ None)\">\n    <target ismod=\"1\" refid=\"module-mymod\">\n    <desc classes=\"py function\" desctype=\"function\" domain=\"py\" ids=\"module-mymod\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"function\">\n        <desc_signature _toc_name=\"f()\" _toc_parts=\"('mymod', 'f')\" class=\"\" classes=\"sig sig-object\" fullname=\"f\" ids=\"mymod.f\" module=\"mymod\">\n            <desc_addname classes=\"sig-prename descclassname\" xml:space=\"preserve\">\n                mymod.\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                f\n            <desc_parameterlist multi_line_parameter_list=\"0\" multi_line_trailing_comma=\"1\" xml:space=\"preserve\">\n                <desc_parameter xml:space=\"preserve\">\n                    <desc_sig_name classes=\"n\">\n                        x\n        <desc_content>\n            <paragraph>\n                Body.\n",
+      "rst": ".. py:module:: mymod\n   :synopsis: A module.\n   :platform: Unix\n\n.. py:function:: f(x)\n\n   Body.\n",
+      "warnings": []
+    },
+    {
+      "family": "py",
+      "name": "py.duplicate_modules",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <index entries=\"('pair',\\ 'module;\\ dupmod',\\ 'module-dupmod',\\ '',\\ None)\">\n    <index entries=\"('pair',\\ 'module;\\ dupmod',\\ 'module-0',\\ '',\\ None)\">\n    <target ismod=\"1\" refid=\"module-dupmod\">\n    <target ids=\"module-0 module-dupmod\" ismod=\"1\">\n",
+      "rst": ".. py:module:: dupmod\n\n.. py:module:: dupmod\n",
+      "warnings": [
+        "<snippet>:3: WARNING: duplicate object description of dupmod, other instance in index, use :no-index: for one of them"
+      ]
     }
   ],
   "conf_semantics": "a case's optional 'conf' dict is confoverrides applied on top of the base settings above; absent = defaults. The consumer maps every key onto ParseOptions.py and errors on unmapped keys.",
