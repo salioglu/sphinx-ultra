@@ -3,7 +3,7 @@
 //! Sphinx's DefaultSubstitutions, which feeds the first of them. Today:
 //! DefaultSubstitutions, Substitutions, PropagateTargets.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::{dates, for_each_node_mut, node_at, node_at_mut, NodePath, TransformCtx};
 use crate::doctree::{kinds, messages, AttrValue, Node, Span, RAWSOURCE};
@@ -127,18 +127,30 @@ const LINE_LENGTH_LIMIT: usize = 10_000;
 /// expanded after a "detected" message took its place. The port runs on an
 /// [`Arena`] that keeps all of that.
 ///
-/// One input hangs docutils and is stopped here instead: a cycle through a
-/// definition whose name differs only in case from a later one's — its
-/// references are filed under the other name, so docutils' circularity
-/// test never fires; the guard at that test ends it as a circular
-/// definition (fix round 1, unit-pinned).
+/// Where docutils never finishes, or aborts the Sphinx build, the port
+/// ends instead — and only there; every document docutils finishes gets
+/// docutils' records and tree:
 ///
-/// Two inputs abort the Sphinx build, and are carried on here instead: a
-/// copy holding a reference to no definition (`normed[...]` raises
-/// `KeyError`, `:726`) queues it like any other, to fail as undefined in
-/// its turn; a definition that a "detected" message has already replaced
-/// (`parent.index(old)` raises `ValueError`, `nodes.py:1101-1103`) or a
-/// discarded copy (no parent) is left where it is, its message printed.
+/// * **Never finishes.** docutils files a nested reference under its
+///   case-folded name's definition (`normed`, the last of the names that
+///   fold alike) but expands the definition it names exactly (`:685-686`).
+///   With names differing only in case (`.. |A|` and `.. |a|`), a cycle
+///   through `A` may never trip the circularity test, and when no
+///   definition on it grows, the line-length limit never ends it either:
+///   docutils loops for ever. The backstop ([`ExpansionState`]) ends the
+///   expansion once its state repeats — which is proof that docutils would
+///   loop for ever, so no document docutils finishes can reach it — each
+///   pending reference then taking the circular branch.
+/// * **Aborts.** Where docutils raises, the Sphinx build aborts, and the
+///   expansion stops there too — the same records printed, the references
+///   not yet reached left in the tree unexpanded (expanding on can loop for
+///   ever, or run to thousands of records Sphinx never prints): a copy
+///   holding a reference to no definition (`normed[...]` raises
+///   `KeyError`, `:726`), and a "detected" message that cannot take its
+///   definition's place — the definition already replaced by an earlier
+///   one (`parent.index(old)` raises `ValueError`, `nodes.py:1101-1103`)
+///   or a discarded copy (no parent: `AttributeError`), the message
+///   printed first.
 pub(super) fn substitutions(ctx: &mut TransformCtx) {
     if !contains_substitution_reference(&ctx.tree.root) {
         return;
@@ -154,13 +166,30 @@ pub(super) fn substitutions(ctx: &mut TransformCtx) {
         .collect();
     // `nested`: each name to the definitions whose expansion met it.
     let mut nested: HashMap<String, Vec<String>> = HashMap::new();
-    // The same bookkeeping by the definition each nested reference resolves
-    // to — the termination guard below.
-    let mut resolved_nested: HashMap<String, Vec<String>> = HashMap::new();
 
     let mut worklist = arena.findall(Arena::ROOT, kinds::SUBSTITUTION_REFERENCE);
+    // The backstop: the state at the start of every round of expansions
+    // after the first (a round: the references the one before queued).
+    let mut round_end = worklist.len();
+    let mut states: HashSet<blake3::Hash> = HashSet::new();
     let mut next = 0;
     while let Some(&reference) = worklist.get(next) {
+        if next == round_end {
+            round_end = worklist.len();
+            let pending = &worklist[next..];
+            if !states.insert(ExpansionState::digest(&arena, &defs, &nested, pending)) {
+                for &reference in pending {
+                    let refname = arena.str_attr(reference, "refname").to_string();
+                    report_circular(ctx, &mut arena, reference, &refname);
+                }
+                break;
+            }
+        }
+        #[cfg(test)]
+        assert!(
+            worklist.len() < 100_000,
+            "runaway substitution expansion (a unit test's input must end)"
+        );
         next += 1;
         let refname = arena.str_attr(reference, "refname").to_string();
         let key = if defs.contains_key(&refname) {
@@ -192,53 +221,35 @@ pub(super) fn substitutions(ctx: &mut TransformCtx) {
         trim_around(&mut arena, reference, definition);
         let copy = arena.deepcopy(definition);
         let mut circular = false;
+        let mut aborted = false;
         for nested_reference in arena.findall(copy, kinds::SUBSTITUTION_REFERENCE) {
-            let nested_refname = arena.str_attr(nested_reference, "refname").to_string();
-            if let Some(nested_name) = normed.get(&nested_refname.to_lowercase()) {
-                // Termination guard — a deliberate divergence: docutils
-                // hangs. docutils files a nested reference under its
-                // case-folded name's definition (`normed`, the last of the
-                // names that fold alike), but expands the definition it
-                // names exactly (`:685-686`). When those differ (`|A|` with
-                // both `.. |A|` and `.. |a|` defined), a cycle through `A`
-                // grows `nested["a"]` with `A` and its neighbours only, the
-                // test below never fires, and the worklist grows for ever.
-                // For those references alone, docutils' own test also runs
-                // on the definition the reference resolves to, and the
-                // expansion stops as a circular one. Where every name
-                // resolves to itself the two lists agree and nothing
-                // changes.
-                let resolved = if defs.contains_key(&nested_refname) {
-                    &nested_refname
-                } else {
-                    nested_name
-                };
-                let revisited = |lists: &HashMap<String, Vec<String>>, name: &String| {
-                    lists.get(name).is_some_and(|seen| seen.contains(name))
-                };
-                if revisited(&nested, nested_name)
-                    || (resolved != nested_name && revisited(&resolved_nested, resolved))
-                {
-                    circular = true;
-                    break;
-                }
-                nested
-                    .entry(nested_name.clone())
-                    .or_default()
-                    .push(key.clone());
-                resolved_nested
-                    .entry(resolved.clone())
-                    .or_default()
-                    .push(key.clone());
+            let nested_refname = arena.str_attr(nested_reference, "refname").to_lowercase();
+            let Some(nested_name) = normed.get(&nested_refname) else {
+                // `KeyError`: where the Sphinx build aborts (see above).
+                aborted = true;
+                break;
+            };
+            let seen = nested.entry(nested_name.clone()).or_default();
+            if seen.contains(nested_name) {
+                circular = true;
+                break;
             }
+            seen.push(key.clone());
             arena.slots[nested_reference].origin = Some(reference);
             worklist.push(nested_reference);
         }
+        if aborted {
+            break;
+        }
         if circular {
-            report_circular(ctx, &mut arena, reference, &refname);
+            if !report_circular(ctx, &mut arena, reference, &refname) {
+                // Where the Sphinx build aborts (see above).
+                break;
+            }
             continue;
         }
         let children = arena.slots[copy].kids.clone();
+        // A reference is always in its parent: it is only replaced here.
         arena.replace_self(reference, children);
     }
     ctx.tree.root = arena.into_tree();
@@ -313,8 +324,14 @@ fn replace_with_problematic(ctx: &mut TransformCtx, arena: &mut Arena, reference
 }
 
 /// The `CircularSubstitutionDefinitionError` branch (`references.py:
-/// 731-755`).
-fn report_circular(ctx: &mut TransformCtx, arena: &mut Arena, reference: usize, refname: &str) {
+/// 731-755`). `false` when the "detected" message cannot take its
+/// definition's place, where docutils raises.
+fn report_circular(
+    ctx: &mut TransformCtx,
+    arena: &mut Arena,
+    reference: usize,
+    refname: &str,
+) -> bool {
     match arena.slots[reference].parent {
         Some(definition) if arena.slots[definition].node.kind == "substitution_definition" => {
             let span = arena.slots[definition].node.span;
@@ -330,7 +347,7 @@ fn report_circular(ctx: &mut TransformCtx, arena: &mut Arena, reference: usize, 
             );
             ctx.reporter.report(&message);
             let message = arena.adopt(message, None);
-            arena.replace_self(definition, vec![message]);
+            arena.replace_self(definition, vec![message])
         }
         _ => {
             let mut origin = reference;
@@ -342,7 +359,121 @@ fn report_circular(ctx: &mut TransformCtx, arena: &mut Arena, reference: usize, 
             ctx.reporter
                 .report(&ctx.message(messages::ERROR, &text, source, Some(line)));
             replace_with_problematic(ctx, arena, reference);
+            true
         }
+    }
+}
+
+/// The backstop that ends an expansion docutils would never finish: a
+/// digest of everything the rest of the expansion depends on, taken at the
+/// start of each round (the references the round before queued, in
+/// worklist order). docutils' algorithm is deterministic in exactly this:
+///
+/// * each definition by name — its shape, text and references (what a copy
+///   holds, the length the line-length limit reads, the names met), its
+///   trim flags, and whether it is still in the tree (where a "detected"
+///   message can still take its place);
+/// * `nested`, as sets (the circularity test asks membership only);
+/// * each pending reference, in order: its name, and where it sits — in
+///   which definition and at which place in it (what its replacement
+///   changes; whether its parent is the definition), in some other
+///   definition node (an older duplicate, a discarded copy: which one,
+///   still in the tree or not, and the place), or in the text (where
+///   nothing it changes is ever read again).
+///
+/// Ids, message locations and the text's content are output only. So when
+/// a round starts in a state an earlier round started in, every round after
+/// repeats the rounds since, for ever: docutils would never finish, and no
+/// document it finishes can come here. (A digest collision would need two
+/// different states to hash alike under BLAKE3.)
+struct ExpansionState(blake3::Hasher);
+
+impl ExpansionState {
+    fn digest(
+        arena: &Arena,
+        defs: &BTreeMap<String, usize>,
+        nested: &HashMap<String, Vec<String>>,
+        pending: &[usize],
+    ) -> blake3::Hash {
+        let mut state = ExpansionState(blake3::Hasher::new());
+        for (name, &definition) in defs {
+            state.text(name);
+            state.number(usize::from(arena.is_attached(definition)));
+            for flag in ["ltrim", "rtrim", "trim"] {
+                state.number(usize::from(
+                    arena.slots[definition].node.get(flag).is_some(),
+                ));
+            }
+            let mut stack = vec![definition];
+            while let Some(id) = stack.pop() {
+                let node = &arena.slots[id].node;
+                state.text(node.kind);
+                state.text(node.text.as_deref().unwrap_or_default());
+                state.text(arena.str_attr(id, "refname"));
+                state.number(arena.slots[id].kids.len());
+                stack.extend(arena.slots[id].kids.iter().rev());
+            }
+        }
+        let mut names: Vec<&String> = nested.keys().collect();
+        names.sort();
+        for name in names {
+            let mut keys: Vec<&String> = nested[name].iter().collect();
+            keys.sort();
+            keys.dedup();
+            state.text(name);
+            state.number(keys.len());
+            keys.into_iter().for_each(|key| state.text(key));
+        }
+        let names_of: HashMap<usize, &str> =
+            defs.iter().map(|(name, &id)| (id, name.as_str())).collect();
+        let mut others: HashMap<usize, usize> = HashMap::new();
+        state.number(pending.len());
+        for &reference in pending {
+            state.text(arena.str_attr(reference, "refname"));
+            // Up to the nearest definition node, noting the places.
+            let mut places = Vec::new();
+            let mut at = reference;
+            let mut owner = None;
+            while let Some(parent) = arena.slots[at].parent {
+                places.push(arena.slots[parent].kids.iter().position(|&kid| kid == at));
+                if arena.slots[parent].node.kind == "substitution_definition" {
+                    owner = Some(parent);
+                    break;
+                }
+                at = parent;
+            }
+            match owner {
+                None => state.text("text"),
+                Some(owner) => {
+                    match names_of.get(&owner) {
+                        Some(name) => {
+                            state.text("definition");
+                            state.text(name);
+                        }
+                        None => {
+                            let count = others.len();
+                            state.text("other");
+                            state.number(*others.entry(owner).or_insert(count));
+                            state.number(usize::from(arena.is_attached(owner)));
+                        }
+                    }
+                    state.number(places.len());
+                    for place in places.iter().rev() {
+                        state.number(place.unwrap_or(usize::MAX));
+                    }
+                }
+            }
+        }
+        state.0.finalize()
+    }
+
+    fn number(&mut self, value: usize) {
+        self.0.update(&(value as u64).to_le_bytes());
+    }
+
+    fn text(&mut self, value: &str) {
+        self.number(value.len());
+        self.0.update(value.as_bytes());
     }
 }
 
@@ -497,14 +628,15 @@ impl Arena {
     /// if an element, takes on `old`'s ids, classes, names and dupnames
     /// (`update_basic_atts`, `:850-869`, skipping values it has), and the new
     /// nodes take `old`'s place in its parent (`Element.replace`,
-    /// `:1101-1109`), which becomes theirs. Does nothing when `old` has no
-    /// parent or its parent no longer holds it, where docutils raises.
-    fn replace_self(&mut self, old: usize, new: Vec<usize>) {
+    /// `:1101-1109`), which becomes theirs. Does nothing, and answers
+    /// `false`, when `old` has no parent or its parent no longer holds it,
+    /// where docutils raises.
+    fn replace_self(&mut self, old: usize, new: Vec<usize>) -> bool {
         let Some(parent) = self.slots[old].parent else {
-            return;
+            return false;
         };
         let Some(index) = self.slots[parent].kids.iter().position(|&kid| kid == old) else {
-            return;
+            return false;
         };
         if let Some(&first) = new.first() {
             if self.slots[first].node.kind != kinds::TEXT {
@@ -528,6 +660,14 @@ impl Arena {
             self.slots[node].parent = Some(parent);
         }
         self.slots[parent].kids.splice(index..=index, new);
+        true
+    }
+
+    /// Whether `id`'s parent still holds it.
+    fn is_attached(&self, id: usize) -> bool {
+        self.slots[id]
+            .parent
+            .is_some_and(|parent| self.slots[parent].kids.contains(&id))
     }
 
     /// The tree under the root, rebuilt from the leaves up.
@@ -896,55 +1036,74 @@ mod tests {
 
     /// A definition holding an undefined reference, expanded before its own
     /// reference is reached: docutils looks the nested name up without a
-    /// default (`normed[...]`, `references.py:726`) and the `KeyError` aborts
-    /// the Sphinx build (probed). Here the nested copy is queued like any
-    /// other and fails as undefined when its turn comes — after the
-    /// definition's own reference.
+    /// default (`normed[...]`, `references.py:726`), and the `KeyError`
+    /// aborts the Sphinx build, after the records before it (probed). The
+    /// pass stops there too — carrying on can run for thousands of records
+    /// Sphinx never prints — and leaves the references not yet reached.
     #[test]
-    fn a_nested_undefined_reference_is_an_error_where_sphinx_crashes() {
-        let (tree, records) = read("|a|\n\n.. |a| replace:: x |nope|\n");
+    fn a_nested_undefined_reference_ends_the_expansion_where_sphinx_aborts() {
+        let (tree, records) = read_bounded("See |u|.\n\n|a|\n\n.. |a| replace:: x |nope|\n");
+        assert_eq!(records, [(Some(1), undefined("u"))]);
         assert_eq!(
-            records,
-            [(Some(3), undefined("nope")), (Some(1), undefined("nope"))]
+            tree.root.children[1].children[0].kind,
+            kinds::SUBSTITUTION_REFERENCE,
+            "`|a|` was being expanded"
         );
-        assert!(!contains_kind(&tree.root, kinds::SUBSTITUTION_REFERENCE));
+        assert!(contains_kind(
+            &tree.root.children[2],
+            kinds::SUBSTITUTION_REFERENCE
+        ));
     }
 
-    /// Two definition names differing only in case (review finding, fix
-    /// round 1): `|A|` resolves to `A` exactly (`references.py:685-686`),
-    /// but docutils files each nested reference under its case-folded
-    /// name's definition (`normed[...]`, `:726-728`) — here `a`, whose list
-    /// only ever gains `b` and `A` — so its circularity test never fires and
-    /// the expansion never ends (docutils 0.22.4 hangs: probed by the
-    /// review, `timeout 20` exit 124; no oracle case can exist). The guard
-    /// stops it with the ordinary circular errors: the paragraph's
-    /// reference "referenced", then each definition "detected".
-    #[test]
-    fn a_case_folded_cycle_ends_where_docutils_never_does() {
-        const SOURCE: &str =
-            ".. |A| replace:: |b|\n.. |b| replace:: |A|\n.. |a| replace:: z\n\nSee |A|.\n";
+    /// [`read`] on a thread, given five seconds: a pass that never ends
+    /// fails the test instead of hanging it.
+    fn read_bounded(source: &'static str) -> (Doctree, Vec<(Option<u32>, String)>) {
         let (sender, receiver) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let _ = sender.send(read(SOURCE));
+            let _ = sender.send(read(source));
         });
-        let (tree, records) = receiver
+        receiver
             .recv_timeout(std::time::Duration::from_secs(5))
-            .expect("the read pass did not terminate");
-        let detected = |line, source: &str| {
-            (
-                Some(line),
-                format!("Circular substitution definition detected:\n\n{source}"),
-            )
-        };
+            .expect("the read pass did not terminate")
+    }
+
+    fn detected(line: u32, source: &str) -> (Option<u32>, String) {
+        (
+            Some(line),
+            format!("Circular substitution definition detected:\n\n{source}"),
+        )
+    }
+
+    fn referenced(line: u32, name: &str) -> (Option<u32>, String) {
+        (
+            Some(line),
+            format!("Circular substitution definition referenced: \"{name}\"."),
+        )
+    }
+
+    /// Two definition names differing only in case: `|A|` expands `A`, the
+    /// definition it names exactly (`references.py:685-686`), but docutils
+    /// files each nested reference under its case-folded name's definition
+    /// (`normed[...]`, `:726-728`) — here `a`, whose list only ever gains
+    /// `b` and `A` — so its circularity test never fires, no definition
+    /// grows, and the expansion never ends (docutils 0.22.4 hangs: probed by
+    /// the review, `timeout 20` exit 124; no oracle case can exist). From
+    /// the third round of expansions on, the state the expansion depends on
+    /// repeats; the backstop then ends each pending reference with the
+    /// ordinary circular errors, in worklist order: the reference in `A`,
+    /// then the one in `b` ("detected", each definition replaced), then the
+    /// paragraph's ("referenced", at the reference it started from).
+    #[test]
+    fn a_case_folded_cycle_ends_where_docutils_never_does() {
+        let (tree, records) = read_bounded(
+            ".. |A| replace:: |b|\n.. |b| replace:: |A|\n.. |a| replace:: z\n\nSee |A|.\n",
+        );
         assert_eq!(
             records,
             [
-                (
-                    Some(5),
-                    "Circular substitution definition referenced: \"A\".".to_string()
-                ),
                 detected(1, ".. |A| replace:: |b|"),
                 detected(2, ".. |b| replace:: |A|"),
+                referenced(5, "A"),
             ]
         );
         assert_eq!(
@@ -973,20 +1132,43 @@ mod tests {
     /// A definition referencing itself twice: its first reference replaces
     /// it with the "detected" message, and its second finds it again,
     /// already out of the tree — where docutils' `parent.index(old)` raises
-    /// (`nodes.py:1101-1103`) and the Sphinx build aborts after printing both
-    /// messages (probed). Here the second replacement is skipped, every
-    /// reference is still replaced, and the pass goes on.
+    /// (`nodes.py:1101-1103`) and the Sphinx build aborts, having printed
+    /// both messages (probed). The pass stops there too: the same two
+    /// records, and the references it had not reached — the paragraph's —
+    /// stay as they are.
     #[test]
-    fn a_second_circular_error_in_a_replaced_definition_is_reported_where_sphinx_crashes() {
-        let (tree, records) = read(".. |a| replace:: |a| |a|\n\nSee |a|.\n");
-        let detected = (
-            Some(1),
-            "Circular substitution definition detected:\n\n.. |a| replace:: |a| |a|".to_string(),
-        );
-        assert_eq!(records[..2], [detected.clone(), detected]);
-        assert!(!contains_kind(&tree.root, kinds::SUBSTITUTION_REFERENCE));
+    fn a_second_circular_error_in_a_replaced_definition_ends_the_expansion() {
+        let (tree, records) = read_bounded(".. |a| replace:: |a| |a|\n\nSee |a|.\n");
+        let detected = detected(1, ".. |a| replace:: |a| |a|");
+        assert_eq!(records, [detected.clone(), detected]);
         assert_eq!(tree.root.children[0].kind, kinds::SYSTEM_MESSAGE);
-        assert!(contains_kind(&tree.root.children[1], kinds::PROBLEMATIC));
+        let paragraph = &tree.root.children[1];
+        assert_eq!(paragraph.children[1].kind, kinds::SUBSTITUTION_REFERENCE);
+    }
+
+    /// Two more documents docutils aborts on at the same `parent.index(old)`
+    /// (a definition replaced by its "detected" message, met again), one of
+    /// them all lower case: expanding on past that point never ends, so the
+    /// pass stops where Sphinx does — having printed exactly what Sphinx
+    /// printed before its `ValueError` (probed).
+    #[test]
+    fn expansion_stops_where_sphinx_aborts_on_a_replaced_definition() {
+        let (_, records) = read_bounded(
+            ".. |c| replace:: |d|\n.. |b| replace:: |a|\n.. |d| replace:: |b| |a|\n\
+             .. |a| replace:: |c| |d|\n",
+        );
+        let c = detected(1, ".. |c| replace:: |d|");
+        assert_eq!(
+            records,
+            [detected(4, ".. |a| replace:: |c| |d|"), c.clone(), c]
+        );
+
+        let (_, records) = read_bounded(
+            ".. |B| replace:: |a|\n.. |c| replace:: |b| |a|\n.. |A| replace:: |c|\n\
+             .. |a| replace:: |A|\n",
+        );
+        let c = detected(2, ".. |c| replace:: |b| |a|");
+        assert_eq!(records, [c.clone(), c]);
     }
 
     fn elem(kind: &'static str, children: Vec<Node>) -> Node {

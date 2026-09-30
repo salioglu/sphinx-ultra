@@ -1087,6 +1087,14 @@ CASES = [
     ('tx_subst', 'default_names_are_exact', '.. |Version| replace:: mine\n\n|version| |VERSION|\n'),
     # `today_fmt` unset: `'%b %d, %Y'` of the pinned date.
     ('tx_subst', 'today_default_format', '|today|\n'),
+    # Definition names differing only in case (review, Task 8 fix round 2):
+    # a reference expands the definition it names exactly, but docutils'
+    # circularity test files it under the case-folded name's (last)
+    # definition, so the test fires late, or never and the line-length
+    # limit ends the expansion. docutils finishes all three.
+    ('tx_subst', 'case_clash_circular_order', '.. |B| replace:: |B|\n.. |b| replace:: |B|\n\nSee |b|.\n'),
+    ('tx_subst', 'case_clash_growth_ends_at_line_length_limit', '.. |a| replace:: |A| |a|\n.. |A| replace:: x\n\nSee |A|.\n'),
+    ('tx_subst', 'case_clash_cycle_cut_by_folded_definition', '.. |A| replace:: |A|\n\nSee |A|.\n\n.. |a| replace:: |a|\n'),
 
 ]
 
@@ -1304,7 +1312,7 @@ def main() -> int:
         "pyconf": 30,
         "tx_filter": 1,
         "tx_targets": 16,
-        "tx_subst": 19,
+        "tx_subst": 22,
     }
     counts: dict = {}
     for case in CASES:
