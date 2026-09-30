@@ -1299,8 +1299,17 @@ fn temp_source(test_name: &str, files: &[(&str, &str)]) -> PathBuf {
     dir
 }
 
+/// D1 (wave 5, sub-project 1): an empty `note` and a `toctree` with an
+/// unknown option are docutils errors (`Content block expected for the
+/// "note" directive; none found.`, `Error in "toctree" directive: unknown
+/// option: "bogus".`), and docutils' own message is the one `sphinx-build`
+/// prints. The validators' `Note directive requires content` and `Unknown
+/// option 'bogus' for toctree directive` said the same thing in other
+/// words -- they are gone, so a project like this one cannot earn two
+/// warnings for one mistake. (That docutils' messages reach the warning
+/// stream, and what `-W` does with them, is pinned where they are printed.)
 #[test]
-fn directive_validation_reports_real_problems() {
+fn directive_validation_does_not_echo_docutils_errors() {
     let src = temp_source(
         "dv-problems",
         &[(
@@ -1313,24 +1322,15 @@ fn directive_validation_reports_real_problems() {
 
     assert!(result.status.success(), "stderr: {}", stderr_of(&result));
     let stderr = stderr_of(&result);
-    assert!(
-        stderr.contains("index.rst:4: WARNING: Note directive requires content"),
-        "empty note must be flagged with file:line, stderr: {stderr}"
-    );
-    assert!(
-        stderr.contains("Unknown option 'bogus' for toctree directive"),
-        "bogus toctree option must be flagged, stderr: {stderr}"
-    );
-
-    // -W promotes validation warnings to a failing exit
-    let out_w = out_dir("dv-problems-W");
-    let result_w = build(&src, &out_w, &["-W"]);
-    assert_eq!(
-        result_w.status.code(),
-        Some(1),
-        "-W must see validation warnings, stderr: {}",
-        stderr_of(&result_w)
-    );
+    for validator_text in [
+        "Note directive requires content",
+        "Unknown option 'bogus' for toctree directive",
+    ] {
+        assert!(
+            !stderr.contains(validator_text),
+            "{validator_text:?} restates a docutils error, stderr: {stderr}"
+        );
+    }
 }
 
 #[test]
@@ -1360,22 +1360,37 @@ fn directive_validation_silent_on_valid_sphinx() {
     }
 }
 
+/// `validate_directives` still gates the directive/role pass. The D1 audit
+/// removed every check the pass made, so a finding can no longer show the
+/// switch working; its one observable is the pass's debug line counting the
+/// occurrences no validator covers (here a `versionadded`), which appears on
+/// a default build and not under `-D validate_directives=0`.
 #[test]
 fn directive_validation_off_switch() {
-    let src = temp_source("dv-off", &[("index.rst", "Title\n=====\n\n.. note::\n")]);
-    let out = out_dir("dv-off");
-    let result = sphinx_build(&[
-        src.to_str().unwrap(),
-        out.to_str().unwrap(),
-        "-D",
-        "validate_directives=0",
-    ]);
+    let src = temp_source(
+        "dv-off",
+        &[("index.rst", "Title\n=====\n\n.. versionadded:: 1.0\n")],
+    );
+    let pass_ran = |out_name: &str, extra: &[&str]| {
+        let out = out_dir(out_name);
+        let result = bin()
+            .env("RUST_LOG", "sphinx_ultra=debug")
+            .arg(&src)
+            .arg(&out)
+            .args(extra)
+            .output()
+            .expect("binary should run");
+        assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+        stderr_of(&result).contains("had no validator and were not checked")
+    };
 
-    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
     assert!(
-        !stderr_of(&result).contains("Note directive requires content"),
-        "-D validate_directives=0 must disable the pass, stderr: {}",
-        stderr_of(&result)
+        pass_ran("dv-on", &[]),
+        "validate_directives defaults to on: the pass runs"
+    );
+    assert!(
+        !pass_ran("dv-off", &["-D", "validate_directives=0"]),
+        "-D validate_directives=0 must disable the pass"
     );
 }
 

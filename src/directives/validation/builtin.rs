@@ -1,28 +1,48 @@
 //! Built-in directive validators for common Sphinx directives
 //!
+//! ## No checks (decision D1, wave 5 sub-project 1)
+//!
+//! Every validator here is silent: `validate` returns `Valid` for any
+//! directive. The checks they used to make fell into two classes, and both
+//! are gone.
+//!
+//! * **docutils or Sphinx already reports it.** A missing argument or
+//!   content block, an unknown option, a flag given a value, an image
+//!   `width`/`height`/`scale`/`align` the option converter rejects: docutils
+//!   raises each as a `DirectiveError` while parsing and the parser
+//!   records it on the reporter channel (`crate::rst::diagnostics`) -- the
+//!   message `sphinx-build` prints as `file:line: ERROR: ... [docutils]`. A
+//!   validator message for the same mistake was a second line in words
+//!   Sphinx never uses.
+//! * **No Sphinx counterpart, and it fired on markup `sphinx-build`
+//!   accepts.** `image`/`figure`'s "unusual extension" (every remote URL
+//!   tripped it), an empty `toctree`, an empty `math`, unbalanced braces in
+//!   `math` (`\left\{ x \right.` is balanced LaTeX).
+//!
+//! The two classes are exhaustive: a check Sphinx does not report can only
+//! fire on markup Sphinx accepts silently, so none survives the audit. Each
+//! validator's `<name>_is_silent_*` tests below pin the markup that drew its
+//! removed checks -- the docutils half against the parse's own reporter
+//! channel, the accepted half against a probe of Sphinx 9.1.0.
+//!
+//! What remains is the framework (the registry, the statistics, the build's
+//! `validate_directives` pass) and each validator's metadata
+//! (`valid_options`, `expected_arguments`, ...), which the default
+//! [`DirectiveValidator::get_suggestions`] reads.
+//!
 //! ## Option lists
 //!
 //! Each validator's option list is spelled ONCE, as a shared `&[&str]`
-//! const, for two reasons found the hard way in wave 4.5:
-//!
-//! * `valid_options()` returns a freshly allocated `Vec<String>` on every
-//!   call, and `LiteralIncludeValidator::validate` calls it from inside its
-//!   per-option loop;
-//! * more importantly, a validator that spells its options twice drifts.
-//!   Task 14's env oracle caught the build warning `Unknown option 'lines'`
-//!   on a `literalinclude` — against an option the very same validator
-//!   advertised as valid — and the task-16 audit found the same shape in
-//!   `code-block` (`force`), `figure` (`figwidth`/`figclass`, warned about
-//!   under the *image* directive's name) and `image` (`loading`).
+//! const. A validator that spells its options twice drifts: wave 4.5 found
+//! `Unknown option 'lines'` warned against an option the very same
+//! validator advertised, and the same shape in `code-block` (`force`),
+//! `figure` (`figwidth`/`figclass`) and `image` (`loading`).
 //!
 //! Every list mirrors the directive's parse-time `option_spec` in
 //! `src/rst/block.rs`, which is this crate's probe-verified transcription
 //! of the real docutils/sphinx spec. The test
 //! `validator_option_lists_match_the_parser_spec` holds the two together in
-//! BOTH directions, and `every_validator_accepts_every_option_it_advertises`
-//! holds each list against its own `validate`. A fabricated "Unknown
-//! option" warning is not cosmetic: it fails `-W` on projects Sphinx builds
-//! clean.
+//! BOTH directions.
 
 use super::{DirectiveValidationResult, DirectiveValidator, ParsedDirective};
 
@@ -51,10 +71,6 @@ const FIGURE_OPTIONS: &[&str] = &[
     "alt", "height", "width", "scale", "align", "target", "loading", "class", "name", "figwidth",
     "figclass", "figname",
 ];
-
-/// The options `FigureValidator` handles itself instead of delegating to
-/// [`ImageValidator`], which does not know them.
-const FIGURE_ONLY_OPTIONS: &[&str] = &["figwidth", "figclass", "figname"];
 
 /// `TOCTREE_OPTS` (`SP/directives/other.py` TocTree.option_spec).
 const TOCTREE_OPTIONS: &[&str] = &[
@@ -126,17 +142,6 @@ fn names(options: &[&'static str]) -> Vec<String> {
     options.iter().map(|name| (*name).to_string()).collect()
 }
 
-/// A docutils length: a number with an optional unit (bare numbers default
-/// to pixels).
-fn is_valid_length(value: &str) -> bool {
-    const UNITS: &[&str] = &["em", "ex", "px", "in", "cm", "mm", "pt", "pc", "%"];
-    let number = UNITS
-        .iter()
-        .find_map(|u| value.strip_suffix(u))
-        .unwrap_or(value);
-    !number.trim().is_empty() && number.trim().parse::<f64>().is_ok()
-}
-
 /// Validator for code-block directive
 #[derive(Default)]
 pub struct CodeBlockValidator;
@@ -152,45 +157,13 @@ impl DirectiveValidator for CodeBlockValidator {
         "code-block"
     }
 
-    fn validate(&self, directive: &ParsedDirective) -> DirectiveValidationResult {
-        // A bare `.. code-block::` is valid Sphinx: the language falls back to
-        // highlight_language. An EMPTY code-block is valid too — Sphinx's
-        // `CodeBlock.run` renders an empty literal_block without a word
-        // (`directives/code.py`), so "has no content" was a fabricated
-        // warning that failed `-W` on markup sphinx-build accepts.
-
-        // Validate common options
-        for (option, value) in &directive.options {
-            match option.as_str() {
-                // Flags: `force` was advertised by `valid_options` but had
-                // no arm, so `.. code-block:: python` + `:force:` warned
-                // "Unknown option" against an option Sphinx accepts.
-                "linenos" | "force" => {
-                    if !value.is_empty() {
-                        return DirectiveValidationResult::Error(format!(
-                            "{option} option should not have a value"
-                        ));
-                    }
-                }
-                "emphasize-lines" => {
-                    // Could validate line numbers format here
-                }
-                // Value-carrying options. `lineno-start` is typed `int` in
-                // sphinx (`code.py:112`), so `-3` and `0` are accepted there;
-                // `dedent` is `optional_int`. The parse-time converter owns
-                // every value diagnostic — a second opinion here can only
-                // fabricate ("must be a positive integer" for a value
-                // sphinx-build takes).
-                "caption" | "name" | "dedent" | "class" | "lineno-start" => {}
-                _ => {
-                    return DirectiveValidationResult::Warning(format!(
-                        "Unknown option '{}' for code-block directive",
-                        option
-                    ));
-                }
-            }
-        }
-
+    fn validate(&self, _directive: &ParsedDirective) -> DirectiveValidationResult {
+        // Silent (D1, see the module docs): `:linenos:`/`:force:` given a
+        // value and an unknown option are docutils `Error in "code-block"
+        // directive` messages; a missing language or an empty body is valid
+        // Sphinx (`CodeBlock.run`, `directives/code.py`); the value
+        // converters (`lineno-start` is plain `int`, `dedent` is
+        // `optional_int`) own their own diagnostics at parse time.
         DirectiveValidationResult::Valid
     }
 
@@ -226,28 +199,10 @@ impl DirectiveValidator for NoteValidator {
         "note"
     }
 
-    fn validate(&self, directive: &ParsedDirective) -> DirectiveValidationResult {
-        // Note directive should have content (the parser routes directive-line
-        // text into content, so a one-line `.. note:: text` passes here)
-        if directive.content.trim().is_empty() {
-            return DirectiveValidationResult::Error("Note directive requires content".to_string());
-        }
-
-        // Validate options
-        for option in directive.options.keys() {
-            match option.as_str() {
-                "class" | "name" => {
-                    // Valid options
-                }
-                _ => {
-                    return DirectiveValidationResult::Warning(format!(
-                        "Unknown option '{}' for note directive",
-                        option
-                    ));
-                }
-            }
-        }
-
+    fn validate(&self, _directive: &ParsedDirective) -> DirectiveValidationResult {
+        // Silent (D1, see the module docs): an empty body is docutils'
+        // `Content block expected for the "note" directive; none found.`
+        // and an unknown option its `unknown option` error.
         DirectiveValidationResult::Valid
     }
 
@@ -283,30 +238,9 @@ impl DirectiveValidator for WarningValidator {
         "warning"
     }
 
-    fn validate(&self, directive: &ParsedDirective) -> DirectiveValidationResult {
-        // Warning directive should have content (directive-line text counts,
-        // same as note)
-        if directive.content.trim().is_empty() {
-            return DirectiveValidationResult::Error(
-                "Warning directive requires content".to_string(),
-            );
-        }
-
-        // Validate options
-        for option in directive.options.keys() {
-            match option.as_str() {
-                "class" | "name" => {
-                    // Valid options
-                }
-                _ => {
-                    return DirectiveValidationResult::Warning(format!(
-                        "Unknown option '{}' for warning directive",
-                        option
-                    ));
-                }
-            }
-        }
-
+    fn validate(&self, _directive: &ParsedDirective) -> DirectiveValidationResult {
+        // Silent (D1, see the module docs): the same two docutils errors
+        // as `note`.
         DirectiveValidationResult::Valid
     }
 
@@ -342,73 +276,13 @@ impl DirectiveValidator for ImageValidator {
         "image"
     }
 
-    fn validate(&self, directive: &ParsedDirective) -> DirectiveValidationResult {
-        // Image directive requires a path argument
-        if directive.arguments.is_empty() {
-            return DirectiveValidationResult::Error(
-                "Image directive requires a path argument".to_string(),
-            );
-        }
-
-        let image_path = &directive.arguments[0];
-        if image_path.is_empty() {
-            return DirectiveValidationResult::Error("Image path cannot be empty".to_string());
-        }
-
-        // Check for valid image extensions
-        let valid_extensions = ["png", "jpg", "jpeg", "gif", "svg", "bmp", "webp"];
-        if let Some(extension) = image_path.split('.').next_back() {
-            if !valid_extensions.contains(&extension.to_lowercase().as_str()) {
-                return DirectiveValidationResult::Warning(format!(
-                    "Unusual image extension: {}",
-                    extension
-                ));
-            }
-        }
-
-        // Validate options
-        for (option, value) in &directive.options {
-            match option.as_str() {
-                // `loading` (embed/link/lazy) is part of the docutils
-                // image spec and was missing here, so `:loading: lazy`
-                // warned "Unknown option" against valid markup.
-                "alt" | "target" | "class" | "name" | "loading" => {
-                    // Valid text options
-                }
-                "width" | "height" => {
-                    if !is_valid_length(value) {
-                        return DirectiveValidationResult::Warning(format!(
-                            "{} is not a valid length: '{}'",
-                            option, value
-                        ));
-                    }
-                }
-                "scale" => {
-                    if value.parse::<f32>().is_err() {
-                        return DirectiveValidationResult::Error(
-                            "Scale must be a number".to_string(),
-                        );
-                    }
-                }
-                "align" => {
-                    let valid_alignments = ["left", "center", "right", "top", "middle", "bottom"];
-                    if !valid_alignments.contains(&value.as_str()) {
-                        return DirectiveValidationResult::Error(format!(
-                            "Invalid alignment: {}. Valid options: {}",
-                            value,
-                            valid_alignments.join(", ")
-                        ));
-                    }
-                }
-                _ => {
-                    return DirectiveValidationResult::Warning(format!(
-                        "Unknown option '{}' for image directive",
-                        option
-                    ));
-                }
-            }
-        }
-
+    fn validate(&self, _directive: &ParsedDirective) -> DirectiveValidationResult {
+        // Silent (D1, see the module docs): a missing argument, an
+        // invalid `width`/`height`/`scale`/`align` and an unknown option
+        // are docutils `Error in "image" directive` messages. The
+        // "unusual extension" check had no counterpart and judged the
+        // target by `split('.').last()`, so a local `.ico`, an
+        // extension-less file and every remote URL tripped it.
         DirectiveValidationResult::Valid
     }
 
@@ -444,33 +318,12 @@ impl DirectiveValidator for FigureValidator {
         "figure"
     }
 
-    fn validate(&self, directive: &ParsedDirective) -> DirectiveValidationResult {
-        // Figure directive requires a path argument
-        if directive.arguments.is_empty() {
-            return DirectiveValidationResult::Error(
-                "Figure directive requires a path argument".to_string(),
-            );
-        }
-
-        // Reuse image validation logic for the shared options. The
-        // figure-only ones must be removed first: `ImageValidator` does
-        // not know them, so they fell through to its catch-all and a plain
-        // `.. figure:: x.png` + `:figwidth: image` warned "Unknown option
-        // 'figwidth' for image directive" -- naming the wrong directive,
-        // about an option this validator itself advertises.
-        let image_validator = ImageValidator::new();
-        let mut temp_directive = directive.clone();
-        temp_directive.name = "image".to_string();
-        for option in FIGURE_ONLY_OPTIONS {
-            temp_directive.options.remove(*option);
-        }
-        let image_result = image_validator.validate(&temp_directive);
-
-        // Figure can have content (caption)
-        match image_result {
-            DirectiveValidationResult::Valid => DirectiveValidationResult::Valid,
-            other => other,
-        }
+    fn validate(&self, _directive: &ParsedDirective) -> DirectiveValidationResult {
+        // Silent (D1, see the module docs): `figure` shares the image
+        // option spec, so docutils reports the same `Error in "figure"
+        // directive` messages, and the extension heuristic it borrowed from
+        // `image` fired on the same accepted markup.
+        DirectiveValidationResult::Valid
     }
 
     fn expected_arguments(&self) -> Vec<String> {
@@ -505,53 +358,13 @@ impl DirectiveValidator for TocTreeValidator {
         "toctree"
     }
 
-    fn validate(&self, directive: &ParsedDirective) -> DirectiveValidationResult {
-        // Toctree typically has content (list of documents)
-        if directive.content.trim().is_empty() {
-            return DirectiveValidationResult::Warning("Toctree directive is empty".to_string());
-        }
-
-        // Validate options
-        for (option, value) in &directive.options {
-            match option.as_str() {
-                // `maxdepth` is typed `int` (`directives/other.py`,
-                // `TocTree.option_spec`): `-1` is the documented "no limit"
-                // spelling, and no depth is "too deep" to Sphinx. The
-                // parse-time converter owns the value diagnostics; the
-                // positive-integer and depth>10 checks that lived here were
-                // fabricated warnings (same class as literalinclude's
-                // `tab-width`, panel fix round B).
-                "maxdepth" => {}
-                // `numbered` is NOT a flag: Sphinx types it `int_or_nothing`
-                // (`directives/other.py`, `TocTree.option_spec`), so
-                // `:numbered: 2` -- the documented spelling for a numbering
-                // depth -- is valid input. Warning on it fabricated a
-                // diagnostic Sphinx never emits and failed `-W` on projects
-                // sphinx 9.1.0 builds clean. Option handling for toctree
-                // belongs to the parser's own table (`TOCTREE_OPTS`, which
-                // has always had this right); nothing is re-checked here.
-                "numbered" => {}
-                "titlesonly" | "glob" | "reversed" | "hidden" | "includehidden" => {
-                    // Flag options
-                    if !value.is_empty() {
-                        return DirectiveValidationResult::Warning(format!(
-                            "{} option should not have a value",
-                            option
-                        ));
-                    }
-                }
-                "caption" | "name" | "class" => {
-                    // Valid text options
-                }
-                _ => {
-                    return DirectiveValidationResult::Warning(format!(
-                        "Unknown option '{}' for toctree directive",
-                        option
-                    ));
-                }
-            }
-        }
-
+    fn validate(&self, _directive: &ParsedDirective) -> DirectiveValidationResult {
+        // Silent (D1, see the module docs): a flag given a value and an
+        // unknown option are docutils `Error in "toctree" directive`
+        // messages; an empty toctree is accepted without a word (`TocTree`
+        // never asserts content), so "Toctree directive is empty" had no
+        // counterpart. `maxdepth` and `numbered` take typed values whose
+        // converters report at parse time.
         DirectiveValidationResult::Valid
     }
 
@@ -587,27 +400,11 @@ impl DirectiveValidator for IncludeValidator {
         "include"
     }
 
-    fn validate(&self, directive: &ParsedDirective) -> DirectiveValidationResult {
-        // Include directive requires a file path
-        if directive.arguments.is_empty() {
-            return DirectiveValidationResult::Error(
-                "Include directive requires a file path".to_string(),
-            );
-        }
-
-        let file_path = &directive.arguments[0];
-        if file_path.is_empty() {
-            return DirectiveValidationResult::Error(
-                "Include file path cannot be empty".to_string(),
-            );
-        }
-
-        // No opinion on the target's spelling: docutils' `Include` opens
-        // whatever path it is given (`<isonum.txt>` is a standard include,
-        // `snippet.py` with `:literal:` is ordinary), and sphinx has no
-        // extension check to mirror. The "Unusual file extension" warning
-        // that lived here was fabricated (panel fix round B, [30]).
-
+    fn validate(&self, _directive: &ParsedDirective) -> DirectiveValidationResult {
+        // Silent (D1, see the module docs): a missing path is docutils'
+        // `1 argument(s) required, 0 supplied.`; docutils opens whatever
+        // path it is given (`<isonum.txt>`, a `.py` under `:literal:`), and
+        // Sphinx has no extension check to mirror.
         DirectiveValidationResult::Valid
     }
 
@@ -643,62 +440,12 @@ impl DirectiveValidator for LiteralIncludeValidator {
         "literalinclude"
     }
 
-    fn validate(&self, directive: &ParsedDirective) -> DirectiveValidationResult {
-        // Similar to include but for code files
-        if directive.arguments.is_empty() {
-            return DirectiveValidationResult::Error(
-                "Literalinclude directive requires a file path".to_string(),
-            );
-        }
-
-        let file_path = &directive.arguments[0];
-        if file_path.is_empty() {
-            return DirectiveValidationResult::Error(
-                "Literalinclude file path cannot be empty".to_string(),
-            );
-        }
-
-        // Option loop. NO value-range arms: `lineno-start` and `tab-width`
-        // are typed plain `int` in sphinx (`code.py:112`, `:425-427`) — a
-        // negative or zero value is accepted there — and `dedent` is
-        // `optional_int`, whose own converter rejects a negative one at
-        // parse time with sphinx's text. Every value diagnostic belongs to
-        // the parse-time converter; the "must be a positive integer" arms
-        // that lived here fabricated warnings sphinx-build never emits.
-        for (option, value) in &directive.options {
-            match option.as_str() {
-                "language" | "start-after" | "end-before" | "prepend" | "append" | "caption"
-                | "name" | "class" | "encoding" | "pyobject" | "diff" | "lineno-start"
-                | "tab-width" | "dedent" => {
-                    // Valid value-carrying options
-                }
-                "linenos" | "force" | "lineno-match" => {
-                    // Flag options
-                    if !value.is_empty() {
-                        return DirectiveValidationResult::Warning(format!(
-                            "{} option should not have a value",
-                            option
-                        ));
-                    }
-                }
-                // Every other name the spec admits (`lines`,
-                // `emphasize-lines`, `start-at`, `end-at`, …) carries a free
-                // string this validator has no extra constraint for.
-                // Consulting the shared const rather than a second literal
-                // list is what keeps the two from drifting: they did, and a
-                // plain `.. literalinclude:: f.py` + `:lines:` warned
-                // "Unknown option 'lines'" against an option the very same
-                // validator advertises as valid.
-                _ if LITERALINCLUDE_OPTIONS.contains(&option.as_str()) => {}
-                _ => {
-                    return DirectiveValidationResult::Warning(format!(
-                        "Unknown option '{}' for literalinclude directive",
-                        option
-                    ));
-                }
-            }
-        }
-
+    fn validate(&self, _directive: &ParsedDirective) -> DirectiveValidationResult {
+        // Silent (D1, see the module docs): a missing path, a flag given a
+        // value and an unknown option are docutils errors. `lineno-start`
+        // and `tab-width` are plain `int` (`code.py`), negative and zero
+        // included, and `dedent` is `optional_int`: their converters own
+        // every value diagnostic at parse time.
         DirectiveValidationResult::Valid
     }
 
@@ -734,21 +481,11 @@ impl DirectiveValidator for AdmonitionValidator {
         "admonition"
     }
 
-    fn validate(&self, directive: &ParsedDirective) -> DirectiveValidationResult {
-        // Admonition directive requires a title argument
-        if directive.arguments.is_empty() {
-            return DirectiveValidationResult::Error(
-                "Admonition directive requires a title argument".to_string(),
-            );
-        }
-
-        // Should have content
-        if directive.content.trim().is_empty() {
-            return DirectiveValidationResult::Warning(
-                "Admonition directive has no content".to_string(),
-            );
-        }
-
+    fn validate(&self, _directive: &ParsedDirective) -> DirectiveValidationResult {
+        // Silent (D1, see the module docs): a missing title is docutils'
+        // `1 argument(s) required, 0 supplied.` and an empty body its
+        // `Content block expected for the "admonition" directive; none
+        // found.`
         DirectiveValidationResult::Valid
     }
 
@@ -784,25 +521,11 @@ impl DirectiveValidator for MathValidator {
         "math"
     }
 
-    fn validate(&self, directive: &ParsedDirective) -> DirectiveValidationResult {
-        // Math directive should have content
-        if directive.content.trim().is_empty() {
-            return DirectiveValidationResult::Error(
-                "Math directive requires LaTeX math content".to_string(),
-            );
-        }
-
-        // Basic LaTeX syntax check
-        let content = directive.content.trim();
-        let open_braces = content.matches('{').count();
-        let close_braces = content.matches('}').count();
-
-        if open_braces != close_braces {
-            return DirectiveValidationResult::Warning(
-                "Unmatched braces in math content".to_string(),
-            );
-        }
-
+    fn validate(&self, _directive: &ParsedDirective) -> DirectiveValidationResult {
+        // Silent (D1, see the module docs): Sphinx's `MathDirective`
+        // (`patches.py`) asserts no content and never reads the LaTeX, so
+        // an empty `.. math::` and braces the counter could not balance
+        // (`\left\{ x \right.`) both build clean.
         DirectiveValidationResult::Valid
     }
 
@@ -826,6 +549,9 @@ impl DirectiveValidator for MathValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::directives::validation::audit_support::{
+        assert_directive_silent, assert_docutils_reports,
+    };
     use crate::directives::validation::SourceLocation;
     use std::collections::HashMap;
 
@@ -848,236 +574,38 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_code_block_validator() {
-        let validator = CodeBlockValidator::new();
-
-        // Valid code block
-        let directive = create_test_directive(
-            "code-block",
-            vec!["python".to_string()],
-            HashMap::new(),
-            "print('Hello, world!')",
-        );
-        assert_eq!(
-            validator.validate(&directive),
-            DirectiveValidationResult::Valid
-        );
-
-        // No language is valid Sphinx (falls back to highlight_language)
-        let directive = create_test_directive(
-            "code-block",
-            vec![],
-            HashMap::new(),
-            "print('Hello, world!')",
-        );
-        assert_eq!(
-            validator.validate(&directive),
-            DirectiveValidationResult::Valid
-        );
-
-        // Bare numbers and all docutils units are valid lengths
-        for width in ["100", "2cm", "50%", "1.5em", "12pt"] {
-            let mut options = HashMap::new();
-            options.insert("width".to_string(), width.to_string());
-            let directive = create_test_directive("image", vec!["x.png".to_string()], options, "");
-            assert_eq!(
-                ImageValidator::new().validate(&directive),
-                DirectiveValidationResult::Valid,
-                "width '{width}' must be accepted"
-            );
-        }
-    }
-
-    #[test]
-    fn test_note_validator() {
-        let validator = NoteValidator::new();
-
-        // Valid note
-        let directive = create_test_directive("note", vec![], HashMap::new(), "This is a note");
-        assert_eq!(
-            validator.validate(&directive),
-            DirectiveValidationResult::Valid
-        );
-
-        // Missing content
-        let directive = create_test_directive("note", vec![], HashMap::new(), "");
-        assert!(matches!(
-            validator.validate(&directive),
-            DirectiveValidationResult::Error(_)
-        ));
-    }
-
-    #[test]
-    fn test_image_validator() {
-        let validator = ImageValidator::new();
-
-        // Valid image
-        let directive =
-            create_test_directive("image", vec!["test.png".to_string()], HashMap::new(), "");
-        assert_eq!(
-            validator.validate(&directive),
-            DirectiveValidationResult::Valid
-        );
-
-        // Missing path
-        let directive = create_test_directive("image", vec![], HashMap::new(), "");
-        assert!(matches!(
-            validator.validate(&directive),
-            DirectiveValidationResult::Error(_)
-        ));
-    }
-
-    #[test]
-    fn test_math_validator() {
-        let validator = MathValidator::new();
-
-        // Valid math
-        let directive = create_test_directive("math", vec![], HashMap::new(), "x = \\frac{a}{b}");
-        assert_eq!(
-            validator.validate(&directive),
-            DirectiveValidationResult::Valid
-        );
-
-        // Missing content
-        let directive = create_test_directive("math", vec![], HashMap::new(), "");
-        assert!(matches!(
-            validator.validate(&directive),
-            DirectiveValidationResult::Error(_)
-        ));
-    }
-
-    /// Every name `LiteralIncludeValidator::valid_options` advertises must
-    /// actually validate. The two lists had drifted: `:lines:`,
-    /// `:emphasize-lines:` and `:lineno-match:` — three of the directive's
-    /// most common options, all present in the real option spec
-    /// (`LITERALINCLUDE_OPTS`, src/rst/block.rs) — fell through to the
-    /// catch-all and warned "Unknown option", a warning stream Sphinx has
-    /// no counterpart for (found by the env-fixture inc_* projects).
-    #[test]
-    fn literalinclude_accepts_every_option_it_advertises() {
-        let validator = LiteralIncludeValidator::new();
-
-        for option in validator.valid_options() {
-            // A value every constrained option accepts: the integer ones
-            // parse it, the flags reject a non-empty value, the rest are
-            // free strings.
-            let value = if matches!(
-                option.as_str(),
-                "linenos" | "force" | "lineno-match" | "dedent"
-            ) {
-                String::new()
-            } else {
-                "1".to_string()
-            };
-            let mut options = HashMap::new();
-            options.insert(option.clone(), value);
-            let directive =
-                create_test_directive("literalinclude", vec!["f.py".to_string()], options, "");
-            assert_eq!(
-                validator.validate(&directive),
-                DirectiveValidationResult::Valid,
-                "option {option:?} is advertised by valid_options but does not validate"
-            );
-        }
-
-        // The catch-all still catches a name that really is not in the spec.
-        let mut options = HashMap::new();
-        options.insert("no-such-option".to_string(), String::new());
-        let directive =
-            create_test_directive("literalinclude", vec!["f.py".to_string()], options, "");
-        assert_eq!(
-            validator.validate(&directive),
-            DirectiveValidationResult::Warning(
-                "Unknown option 'no-such-option' for literalinclude directive".to_string()
-            )
-        );
-    }
-
-    /// Every registered validator, with a directive shaped so that
-    /// validation actually reaches the option loop (arguments where the
-    /// directive needs one, content where it requires one).
-    fn every_validator() -> Vec<(Box<dyn DirectiveValidator>, Vec<String>, &'static str)> {
-        let arg = |s: &str| vec![s.to_string()];
+    /// Every registered built-in directive validator.
+    fn every_validator() -> Vec<Box<dyn DirectiveValidator>> {
         vec![
-            (
-                Box::new(CodeBlockValidator::new()),
-                arg("python"),
-                "print(1)",
-            ),
-            (Box::new(NoteValidator::new()), vec![], "body"),
-            (Box::new(WarningValidator::new()), vec![], "body"),
-            (Box::new(ImageValidator::new()), arg("x.png"), ""),
-            (Box::new(FigureValidator::new()), arg("x.png"), "caption"),
-            (Box::new(TocTreeValidator::new()), vec![], "a\nb"),
-            (Box::new(IncludeValidator::new()), arg("inc.rst"), ""),
-            (Box::new(LiteralIncludeValidator::new()), arg("f.py"), ""),
-            (Box::new(AdmonitionValidator::new()), arg("Title"), "body"),
-            (Box::new(MathValidator::new()), vec![], "x = 1"),
+            Box::new(CodeBlockValidator::new()),
+            Box::new(NoteValidator::new()),
+            Box::new(WarningValidator::new()),
+            Box::new(ImageValidator::new()),
+            Box::new(FigureValidator::new()),
+            Box::new(TocTreeValidator::new()),
+            Box::new(IncludeValidator::new()),
+            Box::new(LiteralIncludeValidator::new()),
+            Box::new(AdmonitionValidator::new()),
+            Box::new(MathValidator::new()),
         ]
     }
 
-    /// THE DRIFT AUDIT (wave-4.5 task 16, generalizing task 14's finding).
-    ///
-    /// For every registered validator: each name it advertises must be
-    /// ACCEPTED by its own `validate`. A validator whose `validate` match
-    /// and `valid_options` disagree emits `Unknown option 'x'` for an
-    /// option it simultaneously calls valid — a warning Sphinx has no
-    /// counterpart for, which fails `-W` on a clean project.
-    ///
-    /// The assertion is about RECOGNITION, not about per-value
-    /// constraints: an advertised option must never produce the
-    /// `Unknown option '…'` catch-all, whatever value it carries. (A
-    /// value-checking arm may still reject a specific value — `:align: 1`
-    /// is an "Invalid alignment" error, and that is correct.) The value
-    /// set includes a negative and a zero so an integer-typed option is
-    /// exercised on the values sphinx's plain `int` converter accepts —
-    /// the range where the fabricated "must be a positive integer" arms
-    /// used to hide.
-    #[test]
-    fn every_validator_accepts_every_option_it_advertises() {
-        for (validator, arguments, content) in every_validator() {
-            for option in validator.valid_options() {
-                for value in ["", "1", "left", "-1", "0"] {
-                    let mut options = HashMap::new();
-                    options.insert(option.clone(), value.to_string());
-                    let directive = create_test_directive(
-                        validator.name(),
-                        arguments.clone(),
-                        options,
-                        content,
-                    );
-                    if let DirectiveValidationResult::Warning(message)
-                    | DirectiveValidationResult::Error(message) = validator.validate(&directive)
-                    {
-                        assert!(
-                            !message.starts_with(&format!("Unknown option '{option}'")),
-                            "{}: option {option:?} is advertised by valid_options \
-                             but its validate() calls it unknown (value {value:?})",
-                            validator.name()
-                        );
-                    }
-                }
-            }
-        }
-    }
-
-    /// The other half of the audit: each validator's advertised list must
-    /// equal the directive's parse-time `option_spec`
+    /// Each validator's advertised list (what the default `get_suggestions`
+    /// calls valid) must equal the directive's parse-time `option_spec`
     /// (`directive_option_names`, src/rst/block.rs), which is this crate's
     /// probe-verified transcription of the real docutils/sphinx spec.
     ///
-    /// Both directions matter. An option in the spec but not the list is a
-    /// fabricated `Unknown option` warning waiting to happen (this caught
-    /// `code-block`'s `class`, `image`/`figure`'s `loading`, and
-    /// `include`'s `parser`/`class`/`name`). An option in the list but not
-    /// the spec is a name the validator blesses and the parser then
-    /// rejects — which is what `literalinclude`'s `start-line`/`end-line`
-    /// were, borrowed from docutils' `include`, where they do exist.
+    /// Both directions matter. An option in the spec but not the list is
+    /// advice that a valid option is unknown (this caught `code-block`'s
+    /// `class`, `image`/`figure`'s `loading`, and `include`'s
+    /// `parser`/`class`/`name`). An option in the list but not the spec is
+    /// a name the validator blesses and the parser then rejects -- which is
+    /// what `literalinclude`'s `start-line`/`end-line` were, borrowed from
+    /// docutils' `include`, where they do exist.
     #[test]
     fn validator_option_lists_match_the_parser_spec() {
         use std::collections::BTreeSet;
-        for (validator, _, _) in every_validator() {
+        for validator in every_validator() {
             let name = validator.name();
             let spec: BTreeSet<String> = crate::rst::block::directive_option_names(name)
                 .unwrap_or_else(|| panic!("{name}: no parse-time directive spec"))
@@ -1116,18 +644,9 @@ mod tests {
                 "literalinclude must not advertise {option:?}: sphinx 9.1.0's \
                  LiteralInclude.option_spec has no such key"
             );
-            let mut options = HashMap::new();
-            options.insert(option.to_string(), "2".to_string());
-            let directive =
-                create_test_directive("literalinclude", vec!["f.py".to_string()], options, "");
-            assert_eq!(
-                LiteralIncludeValidator::new().validate(&directive),
-                DirectiveValidationResult::Warning(format!(
-                    "Unknown option '{option}' for literalinclude directive"
-                ))
-            );
         }
     }
+
     /// Panel fix round B, [17]/[31]: the integer-typed options accept
     /// whatever sphinx's converters accept. `lineno-start`/`tab-width` are
     /// plain `int` (negative and zero included), `maxdepth` is `int` with
@@ -1236,6 +755,253 @@ mod tests {
                 registry.validate_directive(&directive),
                 DirectiveValidationResult::Valid
             );
+        }
+    }
+    // -----------------------------------------------------------------
+    // D1 audit (wave 5, sub-project 1). Once docutils' own messages print,
+    // a validator check that restates one of them -- or that has no Sphinx
+    // counterpart and fires on markup sphinx-build accepts -- is a
+    // double-report or a fabrication. Every claim below is pinned two ways:
+    // the parse's reporter channel shows docutils saying it (the feed is the
+    // build's own, see `audit_support`), and the validator stays silent.
+    // The "accepted" claims were probed on Sphinx 9.1.0 / docutils 0.22.4
+    // (scratchpad probe-task5, the case id is named per test): a project
+    // holding the markup builds with no warning at all.
+    // -----------------------------------------------------------------
+
+    /// docutils' `flag` converter on a valued option (`directives.flag`).
+    fn flag_error(directive: &str, option: &str) -> String {
+        format!(
+            "Error in \"{directive}\" directive:\ninvalid option value: (option: \"{option}\"; \
+             value: 'yes')\nno argument is allowed; \"yes\" supplied."
+        )
+    }
+
+    /// docutils' `unknown option` message (`states.py` `parse_extension_options`).
+    fn unknown_option_error(directive: &str) -> String {
+        format!("Error in \"{directive}\" directive:\nunknown option: \"bogus\".")
+    }
+
+    /// docutils' missing-argument message (`states.py` `parse_directive_arguments`).
+    fn arguments_error(directive: &str) -> String {
+        format!("Error in \"{directive}\" directive:\n1 argument(s) required, 0 supplied.")
+    }
+
+    /// docutils' `assert_has_content` message.
+    fn content_error(directive: &str) -> String {
+        format!("Content block expected for the \"{directive}\" directive; none found.")
+    }
+
+    /// Probe cases `cb_flag_value`, `cb_force_value`, `cb_unknown_opt`: the
+    /// `linenos`/`force` flags with a value and an unknown option are
+    /// docutils `ERROR`s at parse time.
+    #[test]
+    fn code_block_is_silent_where_docutils_already_reports() {
+        let validator = CodeBlockValidator::new();
+        for option in ["linenos", "force"] {
+            let source = format!(".. code-block:: python\n   :{option}: yes\n\n   x = 1\n");
+            assert_docutils_reports(&source, &flag_error("code-block", option));
+            assert_directive_silent(&validator, &source);
+        }
+        let source = ".. code-block:: python\n   :bogus:\n\n   x = 1\n";
+        assert_docutils_reports(source, &unknown_option_error("code-block"));
+        assert_directive_silent(&validator, source);
+    }
+
+    /// Probe cases `note_empty`, `note_unknown_opt`: `assert_has_content`
+    /// and the option parser both raise docutils errors.
+    #[test]
+    fn note_is_silent_where_docutils_already_reports() {
+        let validator = NoteValidator::new();
+        let empty = ".. note::\n";
+        assert_docutils_reports(empty, &content_error("note"));
+        assert_directive_silent(&validator, empty);
+        let unknown = ".. note::\n   :bogus: x\n\n   Body.\n";
+        assert_docutils_reports(unknown, &unknown_option_error("note"));
+        assert_directive_silent(&validator, unknown);
+    }
+
+    /// Probe cases `warning_empty`, `warning_unknown_opt`.
+    #[test]
+    fn warning_is_silent_where_docutils_already_reports() {
+        let validator = WarningValidator::new();
+        let empty = ".. warning::\n";
+        assert_docutils_reports(empty, &content_error("warning"));
+        assert_directive_silent(&validator, empty);
+        let unknown = ".. warning::\n   :bogus: x\n\n   Body.\n";
+        assert_docutils_reports(unknown, &unknown_option_error("warning"));
+        assert_directive_silent(&validator, unknown);
+    }
+
+    /// The `image` option-value and argument failures are all docutils
+    /// errors (probe cases `image_noarg`, `image_width_bad`,
+    /// `image_height_bad`, `image_scale_bad`, `image_align_bad`,
+    /// `image_unknown_opt`).
+    #[test]
+    fn image_is_silent_where_docutils_already_reports() {
+        let value_error = |option: &str, detail: &str| {
+            format!(
+                "Error in \"image\" directive:\ninvalid option value: (option: \"{option}\"; \
+                 value: 'bogus')\n{detail}"
+            )
+        };
+        let cases = [
+            (".. image::\n", arguments_error("image")),
+            (
+                ".. image:: x.png\n   :width: bogus\n",
+                value_error("width", "\"bogus\" is no valid measure.."),
+            ),
+            (
+                ".. image:: x.png\n   :height: bogus\n",
+                value_error("height", "\"bogus\" is no valid measure.."),
+            ),
+            (
+                ".. image:: x.png\n   :scale: bogus\n",
+                value_error("scale", "invalid literal for int() with base 10: 'bogus'."),
+            ),
+            (
+                ".. image:: x.png\n   :align: bogus\n",
+                value_error(
+                    "align",
+                    "\"bogus\" unknown; choose from \"top\", \"middle\", \"bottom\", \"left\", \
+                     \"center\", or \"right\".",
+                ),
+            ),
+            (
+                ".. image:: x.png\n   :bogus: 1\n",
+                unknown_option_error("image"),
+            ),
+        ];
+        for (source, reported) in cases {
+            assert_docutils_reports(source, &reported);
+            assert_directive_silent(&ImageValidator::new(), source);
+        }
+    }
+
+    /// The old "Unusual image extension" warning has no Sphinx counterpart
+    /// and judged the target by `split('.').last()`, so it fired on a local
+    /// `.ico`, an extension-less file, and every remote URL (`com/badge/logo`
+    /// was "the extension" of `https://example.com/badge/logo`). Probe cases
+    /// `image_ico_local`, `image_noext_local`, `image_remote_noext`,
+    /// `image_remote_host_dots`: sphinx-build builds each with no warning.
+    #[test]
+    fn image_is_silent_on_markup_sphinx_accepts() {
+        for source in [
+            ".. image:: favicon.ico\n",
+            ".. image:: _static/logo\n",
+            ".. image:: https://example.com/badge/logo\n",
+            ".. image:: https://img.shields.io/badge/a-b-green\n",
+        ] {
+            assert_directive_silent(&ImageValidator::new(), source);
+        }
+    }
+
+    /// Probe cases `figure_noarg`, `figure_width_bad`, `figure_unknown_opt`.
+    #[test]
+    fn figure_is_silent_where_docutils_already_reports() {
+        let cases = [
+            (".. figure::\n\n   caption\n", arguments_error("figure")),
+            (
+                ".. figure:: x.png\n   :width: bogus\n\n   cap\n",
+                "Error in \"figure\" directive:\ninvalid option value: (option: \"width\"; \
+                 value: 'bogus')\n\"bogus\" is no valid measure.."
+                    .to_string(),
+            ),
+            (
+                ".. figure:: x.png\n   :bogus: 1\n\n   cap\n",
+                unknown_option_error("figure"),
+            ),
+        ];
+        for (source, reported) in cases {
+            assert_docutils_reports(source, &reported);
+            assert_directive_silent(&FigureValidator::new(), source);
+        }
+    }
+
+    /// Probe case `figure_ico`, and the remote form from `accepted_all`:
+    /// the figure borrowed the image extension heuristic.
+    #[test]
+    fn figure_is_silent_on_markup_sphinx_accepts() {
+        for source in [
+            ".. figure:: favicon.ico\n\n   cap\n",
+            ".. figure:: https://example.com/badge/logo\n\n   cap\n",
+        ] {
+            assert_directive_silent(&FigureValidator::new(), source);
+        }
+    }
+
+    /// Probe cases `toctree_flag_value`, `toctree_titlesonly_value`,
+    /// `toctree_unknown_opt`: every flag option (`directives.flag`) and the
+    /// unknown-option case are docutils errors.
+    #[test]
+    fn toctree_is_silent_where_docutils_already_reports() {
+        let validator = TocTreeValidator::new();
+        for option in ["titlesonly", "glob", "reversed", "hidden", "includehidden"] {
+            let source = format!(".. toctree::\n   :{option}: yes\n\n   other\n");
+            assert_docutils_reports(&source, &flag_error("toctree", option));
+            assert_directive_silent(&validator, &source);
+        }
+        let source = ".. toctree::\n   :bogus:\n\n   other\n";
+        assert_docutils_reports(source, &unknown_option_error("toctree"));
+        assert_directive_silent(&validator, source);
+    }
+
+    /// Probe cases `toctree_empty`, `toctree_empty_opts`: an empty toctree
+    /// is accepted silently (`TocTree` never calls `assert_has_content`),
+    /// so "Toctree directive is empty" had no counterpart at all.
+    #[test]
+    fn toctree_is_silent_on_markup_sphinx_accepts() {
+        for source in [".. toctree::\n", ".. toctree::\n   :maxdepth: 2\n"] {
+            assert_directive_silent(&TocTreeValidator::new(), source);
+        }
+    }
+
+    /// Probe case `include_noarg`.
+    #[test]
+    fn include_is_silent_where_docutils_already_reports() {
+        let source = ".. include::\n";
+        assert_docutils_reports(source, &arguments_error("include"));
+        assert_directive_silent(&IncludeValidator::new(), source);
+    }
+
+    /// Probe cases `li_noarg`, `li_flag_value`, `li_unknown_opt`.
+    #[test]
+    fn literalinclude_is_silent_where_docutils_already_reports() {
+        let validator = LiteralIncludeValidator::new();
+        let source = ".. literalinclude::\n";
+        assert_docutils_reports(source, &arguments_error("literalinclude"));
+        assert_directive_silent(&validator, source);
+        for option in ["linenos", "force", "lineno-match"] {
+            let source = format!(".. literalinclude:: f.py\n   :{option}: yes\n");
+            assert_docutils_reports(&source, &flag_error("literalinclude", option));
+            assert_directive_silent(&validator, &source);
+        }
+        let source = ".. literalinclude:: f.py\n   :bogus: 1\n";
+        assert_docutils_reports(source, &unknown_option_error("literalinclude"));
+        assert_directive_silent(&validator, source);
+    }
+
+    /// Probe cases `adm_noarg`, `adm_nocontent`.
+    #[test]
+    fn admonition_is_silent_where_docutils_already_reports() {
+        let validator = AdmonitionValidator::new();
+        let no_title = ".. admonition::\n\n   body\n";
+        assert_docutils_reports(no_title, &arguments_error("admonition"));
+        assert_directive_silent(&validator, no_title);
+        let no_body = ".. admonition:: Title\n";
+        assert_docutils_reports(no_body, &content_error("admonition"));
+        assert_directive_silent(&validator, no_body);
+    }
+
+    /// Probe cases `math_empty`, `math_unbalanced_left_brace`: Sphinx's
+    /// `MathDirective` (`patches.py`) does not assert content and never
+    /// looks at the LaTeX, so an empty `.. math::` and `\left\{ x \right.`
+    /// -- balanced LaTeX whose `\{` the brace counter counted as a bare
+    /// opening brace -- both build with no warning.
+    #[test]
+    fn math_is_silent_on_markup_sphinx_accepts() {
+        for source in [".. math::\n", ".. math::\n\n   \\left\\{ x \\right.\n"] {
+            assert_directive_silent(&MathValidator::new(), source);
         }
     }
 }

@@ -1,7 +1,17 @@
 //! Directive and Role Validation System
 //!
-//! This module provides comprehensive validation for Sphinx directives and roles,
-//! including option validation, content requirements, and parameter checking.
+//! The registry, statistics and trait machinery that `validate_directives`
+//! drives over a build's directive and role records, plus the ten built-in
+//! directive validators and ten built-in role validators.
+//!
+//! Since wave 5 (decision D1) the built-in validators report nothing:
+//! once the parser prints docutils' own messages, a check that restates one
+//! of them -- or that has no Sphinx counterpart and so fires on markup
+//! `sphinx-build` accepts -- is a double-report or a fabrication. The
+//! reasoning and the markup each removed check fired on are in the module
+//! docs of [`builtin`] and [`roles`] and pinned by their `*_is_silent_*`
+//! tests. The traits stay the extension point for a validator that does
+//! report something neither docutils nor Sphinx does.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -577,6 +587,125 @@ impl DirectiveValidationSystem {
     /// Resets validation statistics
     pub fn reset_statistics(&mut self) {
         self.statistics = ValidationStatistics::new();
+    }
+}
+
+/// Test support for the D1 validator audit (wave 5, sub-project 1).
+///
+/// The audit's claim is always one of two shapes — "docutils/Sphinx already
+/// reports this markup" or "Sphinx accepts this markup without a word" — and
+/// the validators must then be silent on it. The feed is therefore built the
+/// way the build builds it: the markup goes through the real parser in
+/// Sphinx mode, and its `directive_records`/`role_records` become the
+/// validators' input exactly as `SphinxBuilder::validate_directives_and_roles`
+/// converts them. The parse's own reporter channel is the proof for the
+/// docutils half of the claim.
+#[cfg(test)]
+pub(crate) mod audit_support {
+    use super::{
+        DirectiveValidationResult, DirectiveValidator, ParsedDirective, ParsedRole,
+        RoleValidationResult, RoleValidator, SourceLocation,
+    };
+    use crate::rst::diagnostics::DiagnosticChannel;
+    use crate::rst::{parse_rst_full, ParseOptions};
+
+    fn location(line: u32) -> SourceLocation {
+        SourceLocation {
+            file: "index.rst".to_string(),
+            line: line as usize,
+            column: 0,
+        }
+    }
+
+    /// Every directive of `source` named `name`, as the build hands it to
+    /// the validators. Panics when there is none: a test that feeds the
+    /// validator nothing proves nothing.
+    fn directives_named(source: &str, name: &str) -> Vec<ParsedDirective> {
+        let out = parse_rst_full(source, &sphinx_options());
+        let found: Vec<ParsedDirective> = out
+            .directive_records
+            .iter()
+            .filter(|r| r.name == name)
+            .map(|r| ParsedDirective {
+                name: r.name.clone(),
+                arguments: r.arguments.clone(),
+                options: r.options.iter().cloned().collect(),
+                content: r.content.clone(),
+                location: location(r.line),
+            })
+            .collect();
+        assert!(!found.is_empty(), "no `{name}` directive in {source:?}");
+        found
+    }
+
+    /// Every role of `source` named `name` (the final `:py:func:` segment),
+    /// as the build hands it to the validators; panics when there is none.
+    fn roles_named(source: &str, name: &str) -> Vec<ParsedRole> {
+        let out = parse_rst_full(source, &sphinx_options());
+        let found: Vec<ParsedRole> = out
+            .role_records
+            .iter()
+            .filter(|r| r.name == name)
+            .map(|r| ParsedRole {
+                name: r.name.clone(),
+                target: r.target.clone(),
+                display_text: r.display.clone(),
+                location: location(r.line),
+            })
+            .collect();
+        assert!(!found.is_empty(), "no `{name}` role in {source:?}");
+        found
+    }
+
+    fn sphinx_options() -> ParseOptions {
+        ParseOptions {
+            source_path: "index.rst".to_string(),
+            sphinx: true,
+            ..Default::default()
+        }
+    }
+
+    /// The docutils half of a "docutils already reports this" claim: the
+    /// parse raised exactly one reporter-channel message for `source`, and
+    /// its printed text starts with `message` (the `DirectiveError` literal
+    /// block that follows is not part of what the comparison pins).
+    pub(crate) fn assert_docutils_reports(source: &str, message: &str) {
+        let out = parse_rst_full(source, &sphinx_options());
+        let reported: Vec<&str> = out
+            .registry
+            .diagnostics
+            .iter()
+            .filter(|d| d.channel == DiagnosticChannel::Reporter)
+            .map(|d| d.text.as_str())
+            .collect();
+        assert_eq!(reported.len(), 1, "{source:?} reported {reported:#?}");
+        assert!(
+            reported[0].starts_with(message),
+            "{source:?}: docutils says {:?}, expected it to start with {message:?}",
+            reported[0]
+        );
+    }
+
+    /// Every `validator.name()` directive of `source` validates clean.
+    pub(crate) fn assert_directive_silent(validator: &dyn DirectiveValidator, source: &str) {
+        for directive in directives_named(source, validator.name()) {
+            assert_eq!(
+                validator.validate(&directive),
+                DirectiveValidationResult::Valid,
+                "{source:?}"
+            );
+        }
+    }
+
+    /// Every `validator.name()` role of `source` validates clean.
+    pub(crate) fn assert_role_silent(validator: &dyn RoleValidator, source: &str) {
+        for role in roles_named(source, validator.name()) {
+            assert_eq!(
+                validator.validate(&role),
+                RoleValidationResult::Valid,
+                "{source:?}"
+            );
+        }
     }
 }
 

@@ -4005,12 +4005,16 @@ fn numbering_warnings_inside_an_included_file_name_that_file() {
     );
 }
 
-/// Directive validation findings for included content name the included
-/// file at its own line (sphinx: `frag.inc:3: ERROR: Error in "image"
-/// directive: invalid option value ...`), never the includer paired with
-/// the fragment's line number — `index.rst:3` is a blank line here.
+/// D1 (wave 5, sub-project 1): markup docutils itself diagnoses earns no
+/// validator finding, in an included file as much as in the document. This
+/// test used to pin the validator's `Invalid alignment: bogus` naming
+/// `frag.inc:3` rather than the includer's `index.rst:3` (a blank line
+/// there). That check is gone: docutils' own `Error in "image" directive:
+/// invalid option value` for the same `:align:` is the one message, and the
+/// file and line it carries for a directive inside an included file are
+/// pinned with the printed diagnostics this sub-project adds.
 #[test]
-fn validation_warnings_inside_an_included_file_name_that_file() {
+fn a_docutils_diagnosed_directive_inside_an_included_file_earns_no_validator_warning() {
     let warnings = tree_warnings(
         &[
             (
@@ -4019,20 +4023,19 @@ fn validation_warnings_inside_an_included_file_name_that_file() {
             ),
             (
                 "frag.inc",
-                "Fragment.\n\n.. image:: x.png\n   :align: bogus\n",
+                "Fragment.\n\n.. image:: x.png\n   :align: bogus\n\n.. note::\n",
             ),
         ],
         &|_| {},
     );
-    let alignment: Vec<&String> = warnings
-        .iter()
-        .filter(|warning| warning.contains("Invalid alignment: bogus"))
-        .collect();
-    assert_eq!(alignment.len(), 1, "{warnings:#?}");
-    assert!(
-        alignment[0].starts_with("frag.inc:3: WARNING: Invalid alignment: bogus"),
-        "{warnings:#?}"
-    );
+    for validator_text in ["Invalid alignment", "Note directive requires content"] {
+        assert!(
+            !warnings
+                .iter()
+                .any(|warning| warning.contains(validator_text)),
+            "{validator_text:?} is a validator echo of a docutils error: {warnings:#?}"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -4065,6 +4068,81 @@ fn a_clean_sphinx_project_earns_no_validation_warnings() {
         &|_| {},
     );
     assert_eq!(warnings, Vec::<String>::new());
+}
+
+/// D1 (wave 5, sub-project 1): every check the M1 validators made that has
+/// no Sphinx counterpart fired on markup `sphinx-build` accepts. This project
+/// holds one instance of each -- a local `.ico` image, a remote one without
+/// an extension, an empty toctree, an empty and a `\left\{` math directive,
+/// `:doc:` targets that are real docnames ending in `.rst`/`.md`, a `.whl`,
+/// an extension-less and a URL download, braces that `\{` makes "unbalanced",
+/// a lowercase abbreviation, a shell pipeline, path characters, `<>` as text
+/// in every non-cross-reference role, and the `&` access key -- and
+/// sphinx 9.1.0 / docutils 0.22.4 builds it with no warning at all (probed:
+/// scratchpad probe-task5, `accepted_all_text_bodies`). The validators used
+/// to add 26.
+#[test]
+fn markup_sphinx_accepts_earns_no_validation_warnings() {
+    let warnings = tree_warnings(
+        &[
+            (
+                "index.rst",
+                "Title\n=====\n\n\
+                 .. image:: favicon.ico\n\n\
+                 .. image:: https://example.com/badge/logo\n\n\
+                 .. figure:: https://example.com/badge/logo\n\n   A caption.\n\n\
+                 .. toctree::\n\n\
+                 .. math::\n\n\
+                 .. math::\n\n   \\left\\{ x \\right.\n\n\
+                 :doc:`notes.rst` and :doc:`notes.md`\n\n\
+                 :download:`pkg <pkg.whl>`, :download:`license <LICENSE>` and \
+                 :download:`site <https://example.com/file.pdf>`\n\n\
+                 :math:`\\left\\{ x \\right.` and :math:`a <>`\n\n\
+                 :abbr:`rst (reStructuredText)` and :abbr:`x <>`\n\n\
+                 :command:`ls | grep foo` and :command:`x <>`\n\n\
+                 :file:`C:\\Windows`, :file:`a?b*c` and :file:`x <>`\n\n\
+                 :kbd:`<>` and :kbd:`x <>`\n\n\
+                 :menuselection:`<>` and :menuselection:`x <>`\n\n\
+                 :guilabel:`&File`, :guilabel:`a && b` and :guilabel:`<>`\n",
+            ),
+            ("favicon.ico", "icon\n"),
+            ("pkg.whl", "wheel\n"),
+            ("LICENSE", "MIT\n"),
+            ("notes.rst.rst", ":orphan:\n\nNotes\n=====\n"),
+            ("notes.md.rst", ":orphan:\n\nNotes\n=====\n"),
+        ],
+        &|_| {},
+    );
+    assert_eq!(warnings, Vec::<String>::new());
+}
+
+/// D1, the cross-reference half: a `:doc:`/`:ref:` whose target does not
+/// resolve is reported by Sphinx itself (`warn_dangling`, no `-n` needed),
+/// and the build already prints those lines byte-for-byte -- the
+/// validators' "should not include file extension" and "requires a ...
+/// target" findings were the same problems said a second time, in words
+/// Sphinx does not use. Probed: scratchpad probe-task5,
+/// `doc_ref_unresolvable`.
+#[test]
+fn unresolvable_doc_and_ref_targets_earn_only_sphinxs_own_warnings() {
+    let warnings = tree_warnings(
+        &[
+            (
+                "index.rst",
+                "Title\n=====\n\n:doc:`other.rst`\n\n:doc:`Title <>`\n\n:ref:`Title <>`\n",
+            ),
+            ("other.rst", ":orphan:\n\nOther\n=====\n"),
+        ],
+        &|_| {},
+    );
+    assert_eq!(
+        warnings,
+        vec![
+            "index.rst:4: WARNING: unknown document: 'other.rst' [ref.doc]",
+            "index.rst:6: WARNING: unknown document: '' [ref.doc]",
+            "index.rst:8: WARNING: undefined label: '' [ref.ref]",
+        ]
+    );
 }
 
 // ---------------------------------------------------------------------------
