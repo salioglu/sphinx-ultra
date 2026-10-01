@@ -2049,3 +2049,79 @@ fn sphinx_build_d_source_encoding_warns_about_deprecation_like_sphinx() {
     assert!(result.status.success());
     assert!(!stderr_of(&result).contains("deprecated"));
 }
+
+/// The parser's nesting guard (`MAX_NEST_DEPTH`, 200 levels) replaces the
+/// `RecursionError` that ends a `sphinx-build` run on deeply nested content
+/// (probed: from 98 nested `note`s, 82 nested `py:function`s): past it the
+/// deeper content is dropped with one ERROR, and the build carries on. A
+/// directive level costs the parser more stack than any other, so a chain of
+/// 260 nested directives must reach the guard rather than overflow a read
+/// thread's stack (which aborts the process: no exit code, a signal) — in
+/// the debug binary `cargo test` builds, whose frames are the largest. The
+/// record is a warning: exit 0, and 1 under `-W`.
+#[test]
+fn nesting_past_the_guard_prints_its_error_instead_of_aborting() {
+    const GUARD: &str = "ERROR: Maximum nesting depth exceeded; deeper content skipped. [docutils]";
+    for (name, opener) in [
+        ("note", ".. note::".to_string()),
+        ("admonition", ".. admonition:: T".to_string()),
+        ("py-function", ".. py:function:: f{depth}()".to_string()),
+    ] {
+        let mut index = String::from("Nest\n====\n\n");
+        for depth in 0..260 {
+            index.push_str(&"   ".repeat(depth));
+            index.push_str(&opener.replace("{depth}", &depth.to_string()));
+            index.push_str("\n\n");
+        }
+        let src = temp_source(&format!("deep-{name}"), &[("index.rst", &index)]);
+
+        let result = build(&src, &out_dir(&format!("deep-{name}")), &[]);
+        let stderr = stderr_of(&result);
+        assert_eq!(result.status.code(), Some(0), "{name}: stderr: {stderr}");
+        assert_eq!(stderr.matches(GUARD).count(), 1, "{name}: stderr: {stderr}");
+
+        let result = build(&src, &out_dir(&format!("deep-{name}-W")), &["-W"]);
+        let stderr = stderr_of(&result);
+        assert_eq!(result.status.code(), Some(1), "{name} -W: stderr: {stderr}");
+        assert_eq!(
+            stderr.matches(GUARD).count(),
+            1,
+            "{name} -W: stderr: {stderr}"
+        );
+    }
+}
+
+/// The phases after the read — the merge, numbering and resolution — walk
+/// the same deep trees, and they run on whatever thread drives the build.
+/// A main thread can be as small as 1 MiB (Windows); under a 512 KiB one
+/// (`ulimit -s 512`, which on Unix sizes the main thread only) the 260-level
+/// note chain must still reach the guard and exit 0.
+#[cfg(unix)]
+#[test]
+fn a_small_main_thread_stack_still_reaches_the_nesting_guard() {
+    let mut index = String::from("Nest\n====\n\n");
+    for depth in 0..260 {
+        index.push_str(&"   ".repeat(depth));
+        index.push_str(".. note::\n\n");
+    }
+    let src = temp_source("deep-small-main", &[("index.rst", &index)]);
+    let out = out_dir("deep-small-main");
+    let result = Command::new("sh")
+        .arg("-c")
+        .arg("ulimit -s 512 && exec \"$0\" build --source \"$1\" --output \"$2\"")
+        .arg(env!("CARGO_BIN_EXE_sphinx-ultra"))
+        .arg(&src)
+        .arg(&out)
+        .env_remove("RUST_LOG")
+        .output()
+        .expect("sh should run");
+    let stderr = stderr_of(&result);
+    assert_eq!(result.status.code(), Some(0), "stderr: {stderr}");
+    assert_eq!(
+        stderr
+            .matches("ERROR: Maximum nesting depth exceeded; deeper content skipped. [docutils]")
+            .count(),
+        1,
+        "stderr: {stderr}"
+    );
+}

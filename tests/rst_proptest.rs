@@ -34,10 +34,8 @@ use proptest::prelude::*;
 use sphinx_ultra::error::BuildWarning;
 use sphinx_ultra::py::annotations::{parse_annotation, PyRefContext};
 use sphinx_ultra::py::PySigConfig;
-use sphinx_ultra::rst::{parse_rst, parse_rst_full, ParseOptions};
-use sphinx_ultra::transforms::{
-    apply_read_transforms, parse_and_transform, BuildDate, TransformConfig,
-};
+use sphinx_ultra::rst::{parse_rst, ParseOptions, PARSE_STACK_SIZE};
+use sphinx_ultra::transforms::{parse_and_transform, BuildDate, TransformConfig};
 
 /// The time one case may take before proptest kills it and reports it — a
 /// hang, as no case takes more than a few seconds even in a debug build.
@@ -801,21 +799,6 @@ fn nested_document(
     src
 }
 
-/// The stack the deep-nesting sweep parses on. The parser recurses once a
-/// nesting level and gives up at 200 levels, and a directive level is
-/// costly: in a debug build 199 nested admonitions, containers or
-/// `py:function`s need more than 4 MiB and fit in 8, and 100 nested
-/// `note`s already overflow 2 MiB (probed) — more than a read-pool thread
-/// or a test thread has. That is a known limitation, recorded in
-/// `docs/IMPLEMENTATION_STATUS.md`; the sweep is about the transforms, so
-/// the parse gets room.
-const PARSE_STACK: usize = 64 * 1024 * 1024;
-
-/// The stack the deep-nesting sweep runs the transforms on: the build's
-/// read pool runs them on its threads after the parse returns, and those
-/// have Rust's default 2 MiB (rayon spawns them without a size).
-const TRANSFORM_STACK: usize = 2 * 1024 * 1024;
-
 proptest! {
     #![proptest_config(ProptestConfig {
         cases: 512,
@@ -846,10 +829,8 @@ proptest! {
     /// replaces deeper content with an ERROR — drawn from every kind that
     /// nests and three that refuse to inside body elements (`topic`,
     /// `sidebar`, `versionadded`), with transform-shaped blocks at every
-    /// level and an inline chain of wrapped substitution references. The parse runs on
-    /// [`PARSE_STACK`]; the transforms on [`TRANSFORM_STACK`], the stack
-    /// the build gives them, which a transform recursing once a level
-    /// would have to fit in.
+    /// level and an inline chain of wrapped substitution references
+    /// ([`read_deep`]).
     #[test]
     fn transforms_survive_the_deep_nesting_sweep(
         levels in (prop_oneof![3 => 1usize..40, 1 => 190usize..=260]).prop_flat_map(|depth| {
@@ -867,49 +848,32 @@ proptest! {
         config in transform_config(),
     ) {
         let src = nested_document(&levels, chain, &tail);
-        let _ = read_on_the_build_stacks(src, config);
+        let _ = read_deep(src, config);
     }
 }
 
-/// [`sphinx_read`] the way the deep-nesting sweep needs it: the parse on
-/// [`PARSE_STACK`], the transforms on [`TRANSFORM_STACK`], then the print
-/// (`pformat` and the tree's drop recurse once a level — test-side work)
-/// on [`PARSE_STACK`] again. Returns the printed records' texts.
-fn read_on_the_build_stacks(src: String, config: TransformConfig) -> Vec<String> {
-    fn on_stack<T: Send + 'static>(stack: usize, work: impl FnOnce() -> T + Send + 'static) -> T {
-        std::thread::Builder::new()
-            .stack_size(stack)
-            .spawn(work)
-            .expect("the thread starts")
-            .join()
-            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
-    }
-    let parsed = on_stack(PARSE_STACK, move || parse_rst_full(&src, &opts()));
-    let transformed = on_stack(TRANSFORM_STACK, move || {
-        let mut out = parsed;
-        apply_read_transforms(
-            &mut out.doctree,
-            std::mem::take(&mut out.ids),
-            out.next_seq,
-            out.end_of_input,
-            "index",
-            &config,
-            &mut out.registry,
-        );
-        out
-    });
-    on_stack(PARSE_STACK, move || {
-        let _ = transformed.doctree.root.pformat();
-        transformed
-            .registry
-            .diagnostics
-            .iter()
-            .map(|record| {
-                let _ = BuildWarning::from_diagnostic(record, "index.rst".into()).render();
-                record.text.clone()
-            })
-            .collect()
-    })
+/// [`sphinx_read`] for the deep-nesting sweep, returning the printed
+/// records' texts. The parse and the transforms move onto a thread with the
+/// build's parse stack (`rst::PARSE_STACK_SIZE`) themselves; the print —
+/// `pformat` and the tree's drop recurse once a level, test-side work —
+/// runs on one too.
+fn read_deep(src: String, config: TransformConfig) -> Vec<String> {
+    std::thread::Builder::new()
+        .stack_size(PARSE_STACK_SIZE)
+        .spawn(move || {
+            let (tree, records) = parse_and_transform(&src, &opts(), &config);
+            let _ = tree.root.pformat();
+            records
+                .iter()
+                .map(|record| {
+                    let _ = BuildWarning::from_diagnostic(record, "index.rst".into()).render();
+                    record.text.clone()
+                })
+                .collect()
+        })
+        .expect("the thread starts")
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
 }
 
 /// The deep-nesting sweep's documents do reach the parser's guard: 260
@@ -940,8 +904,7 @@ fn the_deep_nesting_documents_reach_the_guard() {
     ];
     for opener in openers {
         let levels = vec![(opener, "\"q\" |s| `t`_ [#]_", Vec::new()); 260];
-        let records =
-            read_on_the_build_stacks(nested_document(&levels, 8, &[]), TransformConfig::default());
+        let records = read_deep(nested_document(&levels, 8, &[]), TransformConfig::default());
         let guard = records
             .iter()
             .filter(|text| {

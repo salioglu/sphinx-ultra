@@ -833,9 +833,15 @@ impl SphinxBuilder {
                 .collect::<BTreeSet<String>>(),
         );
 
-        // Configure rayon thread pool
+        // The read pool: every document is parsed and transformed on one of
+        // its threads, which get the parse stack (`rst::PARSE_STACK_SIZE`)
+        // so that the parser's nesting guard, not the stack, ends deep
+        // nesting — and are marked as having it, so the parse runs on them
+        // directly rather than on a thread of its own.
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(self.parallel_jobs)
+            .stack_size(crate::rst::PARSE_STACK_SIZE)
+            .start_handler(|_| crate::rst::mark_parse_stack_thread())
             .build()?;
 
         let results: Vec<(PathBuf, Result<ReadResult>)> = pool.install(|| {

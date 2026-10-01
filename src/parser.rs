@@ -88,7 +88,23 @@ impl Parser {
     /// `env.found_docs`), which the `toctree` directive resolves its entries
     /// against; `None` parses without an environment (see
     /// [`crate::rst::ParseOptions::found_docs`]).
+    ///
+    /// The parse, the read transforms and the walks that derive the
+    /// [`Document`] from the tree all run on a
+    /// [`crate::rst::PARSE_STACK_SIZE`] thread: the build's read pool
+    /// threads have it, and any other caller's work moves onto one.
     pub fn parse_full(
+        &self,
+        file_path: &Path,
+        content: &str,
+        docname: &str,
+        found_docs: Option<Arc<BTreeSet<String>>>,
+    ) -> Result<ParsedFile> {
+        crate::rst::on_parse_stack(|| self.parse_file(file_path, content, docname, found_docs))
+    }
+
+    /// [`Self::parse_full`]'s work, on the thread it runs on.
+    fn parse_file(
         &self,
         file_path: &Path,
         content: &str,
@@ -324,6 +340,39 @@ mod tests {
     use super::*;
     use crate::config::BuildConfig;
     use crate::doctree::AttrValue;
+
+    /// [`Parser::parse_full`] — the build's read of one file — reaches the
+    /// nesting guard from a thread far too small for the parse (512 KiB;
+    /// 260 nested admonitions need between 4 and 5 MiB in a debug build):
+    /// it moves its work onto a [`crate::rst::PARSE_STACK_SIZE`] thread.
+    #[test]
+    fn parse_full_reaches_the_nesting_guard_from_a_small_thread() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("index.rst");
+        let mut content = String::new();
+        for depth in 0..260 {
+            content.push_str(&"   ".repeat(depth));
+            content.push_str(".. admonition:: T\n\n");
+        }
+        std::fs::write(&file, &content).unwrap();
+        let guard = std::thread::Builder::new()
+            .stack_size(512 * 1024)
+            .spawn(move || {
+                let parser = Parser::new(&BuildConfig::default()).unwrap();
+                let parsed = parser.parse_full(&file, &content, "index", None).unwrap();
+                parsed
+                    .document
+                    .registry
+                    .diagnostics
+                    .iter()
+                    .filter(|d| d.text == "Maximum nesting depth exceeded; deeper content skipped.")
+                    .count()
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+        assert_eq!(guard, 1);
+    }
 
     fn parse_doc(content: &str) -> Document {
         let parser = Parser::new(&BuildConfig::default()).unwrap();

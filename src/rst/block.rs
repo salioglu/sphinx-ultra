@@ -253,8 +253,13 @@ struct SectionStart {
 }
 
 /// Nested-container recursion cap. Real documents nest ~10 deep; docutils
-/// itself dies with RecursionError near Python's limit (~1000). We stay
-/// total: content beyond this depth is dropped with an ERROR message.
+/// recurses several Python frames a level and dies with `RecursionError`
+/// long before 200 — probed under Python's default limit of 1000: a
+/// `sphinx-build` 9.1.0 run fails from 98 nested `note`s and 82 nested
+/// `py:function`s, docutils' own parser from 110 nested notes and 165
+/// nested bullet lists or block quotes. We stay total: content beyond this
+/// depth is dropped with an ERROR message, which every thread that parses
+/// has the stack to reach (`super::PARSE_STACK_SIZE`).
 const MAX_NEST_DEPTH: usize = 200;
 
 pub(crate) struct BlockParser {

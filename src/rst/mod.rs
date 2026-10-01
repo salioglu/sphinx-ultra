@@ -474,28 +474,175 @@ pub struct ParseOutput {
     pub end_of_input: Option<(u16, u32)>,
 }
 
+/// The stack every thread that parses a document or runs the read
+/// transforms on it gets: 64 MiB — address space reserved when the thread
+/// starts, committed only as it is touched.
+///
+/// The parser recurses once a nesting level and stops at its 200-level
+/// guard (`MAX_NEST_DEPTH`, `block.rs`), which must be reachable on every
+/// input — it stands in for the `RecursionError` that ends a `sphinx-build`
+/// run there. A directive level is the costliest: probed in a debug build,
+/// the parse, the read transforms and a `pformat` of 260 nested
+/// admonitions, containers or `py:function`s need more than 4 MiB and fit
+/// in 5 (260 nested `note`s fit in 4, bullet lists in 2), where Rust's
+/// default 2 MiB for a spawned thread overflows at about 90 nested `note`s.
+/// 64 MiB leaves twelve times the deepest need measured, for heavier
+/// directives and for what a release build's smaller frames never need.
+pub const PARSE_STACK_SIZE: usize = 64 * 1024 * 1024;
+
+thread_local! {
+    /// Whether this thread was started by this crate with
+    /// [`PARSE_STACK_SIZE`] (the build's read pool, [`on_parse_stack`]).
+    static ON_PARSE_STACK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Record that the current thread has [`PARSE_STACK_SIZE`] — for a thread
+/// pool's start handler that built its threads with it.
+pub(crate) fn mark_parse_stack_thread() {
+    ON_PARSE_STACK.with(|marked| marked.set(true));
+}
+
+/// Run `work` on a thread with [`PARSE_STACK_SIZE`]: right here when this
+/// thread already has it, otherwise on a scoped thread started with it
+/// (a panic in `work` resumes here). Every public entry point that parses
+/// or runs the read transforms goes through this, so no caller's thread —
+/// a test's, a library user's, the main thread — can be too small for the
+/// nesting guard. Should the system refuse the thread, `work` runs here.
+pub(crate) fn on_parse_stack<T: Send>(work: impl FnOnce() -> T + Send) -> T {
+    if ON_PARSE_STACK.with(std::cell::Cell::get) {
+        return work();
+    }
+    let mut work = Some(work);
+    let ran = std::thread::scope(|scope| {
+        let slot = &mut work;
+        let spawned = std::thread::Builder::new()
+            .stack_size(PARSE_STACK_SIZE)
+            .spawn_scoped(scope, move || {
+                mark_parse_stack_thread();
+                slot.take().map(|work| work())
+            });
+        match spawned {
+            Ok(thread) => thread
+                .join()
+                .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
+            Err(_) => None,
+        }
+    });
+    match ran {
+        Some(out) => out,
+        None => (work.take().expect("work runs once"))(),
+    }
+}
+
 /// Parse RST source into a doctree. Total: never panics, never errors —
 /// problems become `system_message` nodes, exactly like docutils.
 pub fn parse_rst(source: &str, opts: &ParseOptions) -> Doctree {
     parse_rst_full(source, opts).doctree
 }
 
+/// [`parse_rst`] with every record the build pipeline consumes. Runs on a
+/// [`PARSE_STACK_SIZE`] thread, whatever thread calls it.
 pub fn parse_rst_full(source: &str, opts: &ParseOptions) -> ParseOutput {
-    let mut parser = block::BlockParser::new(source, &opts.source_path);
-    parser.sphinx = opts.sphinx;
-    parser.docname = opts.docname.clone();
-    parser.found_docs = opts.found_docs.clone();
-    parser.exclude_patterns = opts.exclude_patterns.clone();
-    parser.py = opts.py.clone();
-    parser.srcdir = opts.srcdir.clone();
-    parser.source_encoding = opts.source_encoding.clone();
-    parser.config_highlight_language = opts.highlight_language.clone();
-    parser.parse_document_full()
+    on_parse_stack(|| {
+        let mut parser = block::BlockParser::new(source, &opts.source_path);
+        parser.sphinx = opts.sphinx;
+        parser.docname = opts.docname.clone();
+        parser.found_docs = opts.found_docs.clone();
+        parser.exclude_patterns = opts.exclude_patterns.clone();
+        parser.py = opts.py.clone();
+        parser.srcdir = opts.srcdir.clone();
+        parser.source_encoding = opts.source_encoding.clone();
+        parser.config_highlight_language = opts.highlight_language.clone();
+        parser.parse_document_full()
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 260 nested admonitions — the costliest nesting per level — past the
+    /// 200-level guard.
+    fn nested_admonitions() -> String {
+        let mut source = String::new();
+        for depth in 0..260 {
+            source.push_str(&"   ".repeat(depth));
+            source.push_str(".. admonition:: T\n\n");
+        }
+        source
+    }
+
+    fn guard_records(diagnostics: &[diagnostics::Diagnostic]) -> usize {
+        diagnostics
+            .iter()
+            .filter(|d| d.text == "Maximum nesting depth exceeded; deeper content skipped.")
+            .count()
+    }
+
+    /// `work` on a thread with a 512 KiB stack: far less than a debug
+    /// build's parse of [`nested_admonitions`] needs (between 4 and 5 MiB,
+    /// probed), so it reaches the guard only if the entry point moves its
+    /// work onto a [`PARSE_STACK_SIZE`] thread.
+    fn on_a_small_thread<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> T {
+        std::thread::Builder::new()
+            .stack_size(512 * 1024)
+            .spawn(work)
+            .unwrap()
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+    }
+
+    /// Every public entry point that parses or transforms runs on a
+    /// [`PARSE_STACK_SIZE`] thread whatever thread calls it, so the nesting
+    /// guard, not the caller's stack, ends deep nesting.
+    #[test]
+    fn the_entry_points_reach_the_nesting_guard_from_a_small_thread() {
+        fn opts() -> ParseOptions {
+            ParseOptions {
+                sphinx: true,
+                ..Default::default()
+            }
+        }
+        let parsed = on_a_small_thread(|| {
+            let out = parse_rst_full(&nested_admonitions(), &opts());
+            guard_records(&out.registry.diagnostics)
+        });
+        assert_eq!(parsed, 1, "parse_rst_full");
+
+        let (transformed, read) = on_a_small_thread(|| {
+            let mut out = parse_rst_full(&nested_admonitions(), &opts());
+            crate::transforms::apply_read_transforms(
+                &mut out.doctree,
+                std::mem::take(&mut out.ids),
+                out.next_seq,
+                out.end_of_input,
+                "index",
+                &crate::transforms::TransformConfig::default(),
+                &mut out.registry,
+            );
+            let (_, read) = crate::transforms::parse_and_transform(
+                &nested_admonitions(),
+                &opts(),
+                &crate::transforms::TransformConfig::default(),
+            );
+            (
+                guard_records(&out.registry.diagnostics),
+                guard_records(&read),
+            )
+        });
+        assert_eq!(transformed, 1, "apply_read_transforms");
+        assert_eq!(read, 1, "parse_and_transform");
+    }
+
+    /// The work runs exactly once, its result comes back, and a panic in it
+    /// reaches the caller with its own payload.
+    #[test]
+    fn on_parse_stack_returns_the_result_and_resumes_a_panic() {
+        assert_eq!(on_parse_stack(|| 6 * 7), 42);
+        let panic = std::panic::catch_unwind(|| on_parse_stack(|| panic!("inside")))
+            .expect_err("the panic comes back");
+        assert_eq!(panic.downcast_ref::<&str>(), Some(&"inside"));
+    }
 
     /// The complete current [`RegistryExport`] shape, with one record of
     /// every kind, so that a guard below can remove exactly ONE field and

@@ -623,6 +623,9 @@ impl<'a> TransformCtx<'a> {
 /// alone cannot say where the parse's numbering stopped: a registration
 /// (`py_objects`, `std_objects`, `glossary_terms`) can spend the last
 /// number without recording anything.
+///
+/// Runs on a [`crate::rst::PARSE_STACK_SIZE`] thread, whatever thread
+/// calls it, like the parse.
 pub fn apply_read_transforms(
     tree: &mut Doctree,
     ids: IdRegistry,
@@ -632,12 +635,14 @@ pub fn apply_read_transforms(
     config: &TransformConfig,
     registry: &mut RegistryExport,
 ) {
-    let mut ctx = TransformCtx::new(tree, ids, next_seq, end_of_input, docname, config);
-    ctx.run(READ_TRANSFORMS);
-    let (diagnostics, citations, metadata) = ctx.finish();
-    registry.diagnostics.extend(diagnostics);
-    registry.citations.extend(citations);
-    registry.metadata = metadata;
+    crate::rst::on_parse_stack(|| {
+        let mut ctx = TransformCtx::new(tree, ids, next_seq, end_of_input, docname, config);
+        ctx.run(READ_TRANSFORMS);
+        let (diagnostics, citations, metadata) = ctx.finish();
+        registry.diagnostics.extend(diagnostics);
+        registry.citations.extend(citations);
+        registry.metadata = metadata;
+    })
 }
 
 /// A standalone Sphinx read of `source`: the parse, then the read
@@ -660,22 +665,26 @@ pub fn parse_and_transform(
 /// records in `registry.diagnostics`, their registrations in
 /// `registry.citations`, the collected metadata in `registry.metadata`.
 /// The id registry the pass continued is spent, so `ids` comes back empty.
+///
+/// Both halves run on one [`crate::rst::PARSE_STACK_SIZE`] thread.
 pub fn parse_and_transform_full(
     source: &str,
     opts: &ParseOptions,
     config: &TransformConfig,
 ) -> crate::rst::ParseOutput {
-    let mut out = crate::rst::parse_rst_full(source, opts);
-    apply_read_transforms(
-        &mut out.doctree,
-        std::mem::take(&mut out.ids),
-        out.next_seq,
-        out.end_of_input,
-        &opts.docname,
-        config,
-        &mut out.registry,
-    );
-    out
+    crate::rst::on_parse_stack(|| {
+        let mut out = crate::rst::parse_rst_full(source, opts);
+        apply_read_transforms(
+            &mut out.doctree,
+            std::mem::take(&mut out.ids),
+            out.next_seq,
+            out.end_of_input,
+            &opts.docname,
+            config,
+            &mut out.registry,
+        );
+        out
+    })
 }
 
 /// Test support: [`parse_and_transform_full`] under Sphinx's default

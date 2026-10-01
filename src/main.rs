@@ -647,8 +647,26 @@ fn remove_dir_contents(dir: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+/// The whole run happens on a thread with the parse stack
+/// (`sphinx_ultra::rst::PARSE_STACK_SIZE`), not on the main thread: the
+/// build's read pool has its own, but the merge, numbering and resolution
+/// phases walk the same doctrees on the thread that drives the build, and a
+/// main thread can be as small as 1 MiB (Windows). The tokio runtime is
+/// `#[tokio::main]`'s, built on that thread instead.
+fn main() -> Result<()> {
+    let run = std::thread::Builder::new()
+        .stack_size(sphinx_ultra::rst::PARSE_STACK_SIZE)
+        .spawn(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?
+                .block_on(run_main())
+        })?;
+    run.join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
+async fn run_main() -> Result<()> {
     let raw_args: Vec<String> = std::env::args().collect();
 
     if wants_sphinx_build_mode(&raw_args) {
