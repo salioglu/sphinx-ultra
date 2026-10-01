@@ -60,9 +60,13 @@ everything forward is [ROADMAP.md](ROADMAP.md).
     more than 200 levels is cut there with `ERROR: Maximum nesting depth
     exceeded; deeper content skipped. [docutils]`, where `sphinx-build`
     dies with `RecursionError` (from 82 nested `py:function`s or 98 nested
-    `note`s); every thread that parses or walks the doctrees now has a
-    64 MiB stack (address space, committed as touched) so that the guard,
-    not a stack overflow, is what a deep document meets.
+    `note`s). The build's read pool and the thread the binary runs the
+    build on now have a 64 MiB stack (address space, committed as
+    touched), and the library's parse and transform entry points move their
+    work onto such a thread (`sphinx_ultra::rst::on_parse_stack` does the
+    same for any closure), so that the guard, not a stack overflow, is what
+    a deep document meets; where the system refuses threads that size, they
+    fall back to the default stack.
   Evidence: the read-phase doctree oracle at 697 cases (178 of them for the
   transforms, 20 for SmartQuotes), compared after the transforms and with
   each case's printed records; the docutils parse oracle at 761 cases with

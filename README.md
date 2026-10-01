@@ -67,13 +67,13 @@ full, file-and-line-level status audit lives in
   self-reference, circular toctrees, orphans, "isn't included in any
   toctree"); docutils' own diagnostics, printed in Sphinx's order and
   format (`ERROR`/`CRITICAL … [docutils]`, counted as warnings as in
-  `sphinx-build`); cross-reference resolution with Sphinx's own texts and categories — a broken reference of
-  any of Sphinx's seven `warn_dangling` std reftypes (`:ref:`, `:numref:`,
-  `:doc:`, `:term:`, `:keyword:`, `:option:`, `:confval:`) warns in a
-  default build (`unknown document:`, `undefined label:`,
-  `term not in glossary:`, …), and `-n`/nitpicky widens that to the
-  remaining reference types — all through Sphinx-style warnings, `-W`, and
-  `-w warnfile`
+  `sphinx-build`); cross-reference resolution with Sphinx's own texts and
+  categories — a broken reference of any of Sphinx's seven `warn_dangling`
+  std reftypes (`:ref:`, `:numref:`, `:doc:`, `:term:`, `:keyword:`,
+  `:option:`, `:confval:`) warns in a default build (`unknown document:`,
+  `undefined label:`, `term not in glossary:`, …), and `-n`/nitpicky widens
+  that to the remaining reference types — all through Sphinx-style
+  warnings, `-W`, and `-w warnfile`
 - **🔧 Config auto-detection**: conf.py (simple assignments only, for now) →
   sphinx-ultra.yaml → .yml → .json → defaults
 - **📊 Statistics**: `stats` command with project analysis
