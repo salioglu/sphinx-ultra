@@ -4,8 +4,9 @@
 //! the committed fixture corpus. The oracle's tree is the one Sphinx's read
 //! transforms leave, so ours is too: every case goes through
 //! [`parse_and_transform`] under the fixture's pinned
-//! [`fixture_transform_config`], and both the tree and the printed records
-//! (parse-time and transform-time) are compared.
+//! [`fixture_transform_config`], and the tree, the printed records
+//! (parse-time and transform-time) and the `env.metadata` the read
+//! collected (a case's `metadata`, absent meaning `{}`) are compared.
 //!
 //! Regenerate the fixture (manual, never in CI):
 //!     PYTHONNOUSERSITE=1 uv run --python 3.12 --with 'sphinx==9.1.0' \
@@ -40,7 +41,9 @@ use std::sync::Arc;
 use sphinx_ultra::error::BuildWarning;
 use sphinx_ultra::py::PySigConfig;
 use sphinx_ultra::rst::ParseOptions;
-use sphinx_ultra::transforms::{parse_and_transform, BuildDate, TransformConfig};
+use sphinx_ultra::transforms::{
+    parse_and_transform, parse_and_transform_full, BuildDate, TransformConfig,
+};
 
 #[derive(serde::Deserialize)]
 struct Fixture {
@@ -67,6 +70,11 @@ struct Case {
     warnings: Vec<String>,
     #[serde(default)]
     conf: BTreeMap<String, serde_json::Value>,
+    /// The `env.metadata` Sphinx's MetadataCollector read off the
+    /// document's docinfo (see the generator's docstring, "PER-CASE
+    /// METADATA"); absent when it read nothing.
+    #[serde(default)]
+    metadata: BTreeMap<String, serde_json::Value>,
 }
 
 /// Map a fixture case's `conf` dict onto the [`PySigConfig`] the parse layer
@@ -440,6 +448,76 @@ fn every_case_warns_what_sphinx_prints() {
     assert!(
         mismatches.is_empty(),
         "{} warning divergence(s) from the sphinx 9.1.0 oracle:\n\n{}",
+        mismatches.len(),
+        mismatches.join("\n\n")
+    );
+}
+
+/// The read collects the `env.metadata` Sphinx's MetadataCollector
+/// (`sphinx/environment/collectors/metadata.py:35-68`, `doctree-read` at
+/// priority 880) reads off a document's docinfo — the values DocInfo (340)
+/// left there, `tocdepth` coerced with Python's `int()` (0 on failure),
+/// `authors` a list — for every case, an empty map where the oracle
+/// recorded none. The collection rides the read's registry
+/// ([`sphinx_ultra::rst::RegistryExport::metadata`]), which the merge phase
+/// stores as `env.metadata[docname]`.
+#[test]
+fn every_case_collects_the_metadata_sphinx_collects() {
+    let raw = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/sphinx_doctree_differential.json"
+    ));
+    let fixture: Fixture = serde_json::from_str(raw).expect("fixture parses");
+    // Anti-truncation floor for the recorded key: a generator that stopped
+    // recording it would leave every case comparing two empty maps.
+    let recorded = fixture
+        .cases
+        .iter()
+        .filter(|case| !case.metadata.is_empty())
+        .count();
+    assert!(recorded >= 20, "only {recorded} cases record metadata");
+
+    let mut mismatches = Vec::new();
+    for case in &fixture.cases {
+        let (py, transforms) =
+            match configs_from_conf(&case.conf, fixture_transform_config(&fixture.settings)) {
+                Ok(configs) => configs,
+                Err(err) => {
+                    mismatches.push(format!("[{}] CONF ERROR: {err}", case.name));
+                    continue;
+                }
+            };
+        let rst = case.rst.clone();
+        let ours = std::panic::catch_unwind(move || {
+            parse_and_transform_full(
+                &rst,
+                &ParseOptions {
+                    source_path: "<snippet>".into(),
+                    sphinx: true,
+                    docname: "index".into(),
+                    py,
+                    ..Default::default()
+                },
+                &transforms,
+            )
+            .registry
+            .metadata
+            .iter()
+            .map(|(name, value)| (name.clone(), value.to_json()))
+            .collect::<BTreeMap<String, serde_json::Value>>()
+        });
+        match ours {
+            Err(_) => mismatches.push(format!("[{}] PANICKED on:\n{}", case.name, case.rst)),
+            Ok(got) if got != case.metadata => mismatches.push(format!(
+                "[{}] METADATA MISMATCH\n--- rst ---\n{}\n--- sphinx 9.1.0 ---\n{:#?}\n--- ours ---\n{:#?}",
+                case.name, case.rst, case.metadata, got
+            )),
+            Ok(_) => {}
+        }
+    }
+    assert!(
+        mismatches.is_empty(),
+        "{} metadata divergence(s) from the sphinx 9.1.0 oracle:\n\n{}",
         mismatches.len(),
         mismatches.join("\n\n")
     );

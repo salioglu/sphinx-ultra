@@ -15,7 +15,6 @@ use crate::env;
 use crate::env::citation_domain as env_citation;
 use crate::env::dependencies as env_dependencies;
 use crate::env::genindex as env_genindex;
-use crate::env::metadata as env_metadata;
 use crate::env::numbers as env_numbers;
 use crate::env::py_domain as env_py_domain;
 use crate::env::resolve as env_resolve;
@@ -1004,9 +1003,11 @@ impl SphinxBuilder {
             env.longtitles.insert(docname.to_string(), title.clone());
             env.titles.insert(docname.to_string(), title);
 
+            // What MetadataCollector read off the docinfo in the read pass,
+            // before taking it out of the tree (`env::metadata`).
             env.metadata.insert(
                 docname.to_string(),
-                env_metadata::document_metadata(&result.doctree),
+                result.document.registry.metadata.clone(),
             );
 
             // The files this document pulls in, which is what makes it

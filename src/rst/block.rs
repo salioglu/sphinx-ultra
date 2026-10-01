@@ -468,6 +468,8 @@ impl BlockParser {
             included: std::mem::take(&mut self.included_records),
             // Made by the read transforms (619), after the parse.
             citations: Vec::new(),
+            // Collected by the read pass (MetadataCollector, 880).
+            metadata: Default::default(),
         };
         super::ParseOutput {
             doctree: crate::doctree::Doctree {
@@ -2632,6 +2634,24 @@ impl BlockParser {
             fbody
                 .children
                 .extend(self.parse_nested(&body_lines, "field_body"));
+            // docutils keeps the body's text as `field_body.rawsource`
+            // (`'\n'.join(indented)`, `states.py:1592`), which DocInfo parses
+            // again when a bibliographic field's one line came out as an
+            // enumerated list — an author's initial, `:author: J. Doe`
+            // (`frontmatter.py:446-456`; `crate::transforms::frontmatter`).
+            // Kept for that shape only: a body led by an enumerated list,
+            // of a single line.
+            let mut content_lines = body_lines.iter().filter(|line| !line.is_blank());
+            if let (Some(only), None) = (content_lines.next(), content_lines.next()) {
+                if fbody
+                    .children
+                    .first()
+                    .is_some_and(|first| first.kind == kinds::ENUMERATED_LIST)
+                {
+                    let rawsource = self.sources.line_text(*only).to_string();
+                    fbody.set(crate::doctree::RAWSOURCE, AttrValue::Str(rawsource));
+                }
+            }
             field.children.push(fbody);
             fl.children.push(field);
 

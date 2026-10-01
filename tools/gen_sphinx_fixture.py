@@ -105,7 +105,9 @@ PropagateTargets, SortIds -- which also re-admitted the propagation-visible
 (AnonymousHyperlinks, IndirectHyperlinks, ExternalTargets, InternalTargets,
 SphinxDanglingReferences -- every `refname` reference), then `tx_footnotes`
 (the citation transforms, Footnotes, UnreferencedFootnotesDetector,
-FootnoteDocnameUpdater -- every footnote and citation). Later tasks
+FootnoteDocnameUpdater -- every footnote and citation), then `tx_docinfo`
+(DocInfo, and the docinfo MetadataCollector pops -- every leading field
+list). Later tasks
 extend this corpus with Sphinx-specific directives (toctree, code-block,
 versionadded/versionchanged/deprecated, seealso, only, highlight, math, index,
 rst-class, ...) once the Rust side grows the sphinx registry + env surface.
@@ -181,6 +183,19 @@ the Rust consumer hands the same instant to the transform pass
 (`TransformConfig.build_date`). No other recorded output reads the variable:
 the pin was verified inert for every case that predates it (extend-only
 regeneration, byte-identical).
+
+PER-CASE METADATA (M2 wave 5, Task 11): a case whose document opens with a
+docinfo records `metadata`, the `env.metadata['index']` Sphinx's
+MetadataCollector (`doctree-read`, priority 880) read off it before popping
+it: values are `str`, `int` (`tocdepth`, coerced with `int()`, 0 on failure)
+or a `list` of `str` (`authors`), with the warning-text path normalization
+(a malformed bibliographic field's body holds its `system_message`, whose
+`astext()` names the source). The key is emitted ONLY when the collector
+read something -- absent means `{}`, which the Rust consumer compares too.
+The harness drops the previous case's entry before each parse
+(`forget_metadata`: `env.clear_doc` does not). No case that predates the
+family opens with a field list (the corpus policy excluded them), so none
+gained the key: extend-only regeneration, byte-identical.
 """
 
 import io
@@ -1295,6 +1310,65 @@ CASES = [
     # Footnotes inside footnotes, references inside footnotes and citations.
     ('tx_footnotes', 'nested', '.. [#] outer [#]_ [*]_\n\n   .. [#] inner [#]_\n   .. [*] star\n\nSee [#]_.\n'),
     ('tx_footnotes', 'references_inside_notes', 'See [#]_ and [CIT]_.\n\n.. [#] has [CIT]_ and [1]_\n.. [CIT] has [#]_ and [1]_\n.. [1] one\n.. [#] two\n'),
+    # ===== tx_docinfo (M2 wave 5, sub-project 1, Task 11) =====
+    # docutils' DocInfo (340, `docutils/transforms/frontmatter.py:266-548`)
+    # turns the document's leading field list into a `docinfo` (plus the
+    # dedication/abstract topics), and Sphinx's MetadataCollector (880,
+    # `sphinx/environment/collectors/metadata.py:35-68`) reads it into
+    # `env.metadata` and pops it. Formerly excluded ("doc-start docinfo
+    # consumption"). Each case's `metadata` (see PER-CASE METADATA) pins
+    # what the collector read.
+    ('tx_docinfo', 'orphan', ':orphan:\n\nTitle\n=====\n\nBody.\n'),
+    ('tx_docinfo', 'tocdepth', ':tocdepth: 2\n\nTitle\n=====\n\nBody.\n'),
+    ('tx_docinfo', 'nocomments_nosearch', ':nocomments:\n:nosearch:\n\nTitle\n=====\n\nBody.\n'),
+    # Every bibliographic field (names case-insensitive): TextElement fields
+    # keyed by class name, `authors` a list, dedication/abstract topics left
+    # in the tree, a custom field keyed by its name as written.
+    ('tx_docinfo', 'bibliographic_fields', ':Author: Me\n:authors: A; B\n:organization: Org\n:address: 1 Street\n   City\n:contact: me@example.com\n:version: 1.0\n:revision: 2\n:status: draft\n:date: 2026\n:copyright: Public\n:dedication: For you.\n:abstract: Summary.\n:Custom Field: *value*\n\nTitle\n=====\n\nBody.\n'),
+    ('tx_docinfo', 'not_leading', 'Para.\n\n:orphan:\n'),
+    ('tx_docinfo', 'tocdepth_not_an_int', ':tocdepth: abc\n\nTitle\n=====\n\nBody.\n'),
+    # Sphinx sets `doctitle_xform=False`: a field list after the title stays
+    # in its section and is no metadata.
+    ('tx_docinfo', 'not_leading_after_title', 'Title\n=====\n\n:orphan:\n'),
+    ('tx_docinfo', 'field_list_only', ':orphan:\n'),
+    # The malformed bibliographic fields' warnings (located at the field),
+    # appended into the field body — whose text the collector reads.
+    ('tx_docinfo', 'empty_bibliographic_field', ':author:\n:orphan:\n\nBody.\n'),
+    ('tx_docinfo', 'compound_bibliographic_field', ':version: a\n\n   b\n:date:\n   - x\n\nBody.\n'),
+    ('tx_docinfo', 'duplicate_topic_field', ':dedication: a\n:dedication: b\n:abstract: c\n\nBody.\n'),
+    ('tx_docinfo', 'authors_bullet_list', ':authors: - A\n          - *B*\n\nBody.\n'),
+    ('tx_docinfo', 'authors_paragraphs', ':authors: A\n\n   B\n\nBody.\n'),
+    ('tx_docinfo', 'authors_separators', ':authors: A, B; C\n:organization: x\n\nBody.\n'),
+    ('tx_docinfo', 'authors_not_extractable', ':authors:\n   - a\n\n     b\n\nBody.\n'),
+    # The INFO the parse puts in the body is still there at 880.
+    ('tx_docinfo', 'authors_info_message', ':authors: ;\n\nBody.\n'),
+    ('tx_docinfo', 'rcs_keywords', ':date: $Date: 2026/09/30 12:00:00 $\n:status: $RCSfile: frontmatter.py,v $\n:version: $Revision: 1.2 $\n:custom: a $Id: x $ b\n\nBody.\n'),
+    # A single-line body parsed as an enumerated list is parsed again
+    # (`frontmatter.py:418-430`); two lines are not.
+    ('tx_docinfo', 'initials_restored', ':author: J. Doe\n:version: 1. x\n\nBody.\n'),
+    ('tx_docinfo', 'initials_not_restored', ':author: A. x\n          B. y\n\nBody.\n'),
+    # The topics go where the docinfo goes — ahead of the comment; the
+    # label propagated into the field list leaves with it.
+    ('tx_docinfo', 'comment_and_target_before', '.. a comment\n\n.. _lbl:\n\n:orphan:\n:abstract: Sum.\n\nTitle\n=====\n\nBody.\n'),
+    ('tx_docinfo', 'topic_without_docinfo', '.. c\n\n:dedication: D\n\nBody.\n'),
+    # Sphinx's `index` node is Invisible, hence PreBibliographic.
+    ('tx_docinfo', 'index_before', '.. index:: x\n\n:orphan:\n\nBody.\n'),
+    ('tx_docinfo', 'field_list_then_unindent', ':orphan:\nBody.\n'),
+    # Names are normalized on Python whitespace (NBSP, \x1f) and read from
+    # the field name's first child only.
+    ('tx_docinfo', 'field_name_nbsp', ':Author : Me\n:Custom Field: v\n:Version\x1f: 2\n\nBody.\n'),
+    ('tx_docinfo', 'field_name_markup', ':*x* y: v\n:Author *z*: w\n\nBody.\n'),
+    # Python `int()`: whitespace (NBSP), sign, underscores, Unicode digits.
+    ('tx_docinfo', 'tocdepth_python_int', ':tocdepth:  +1_0\n'),
+    ('tx_docinfo', 'tocdepth_unicode_digit', ':tocdepth: ٣\n'),
+    # The transforms after 340 see the docinfo: a footnote reference in it
+    # is numbered; a dangling reference in a bibliographic element, which
+    # has no line (nor has the docinfo), is located where the reporter's
+    # state machine stopped -- one past the input, or no line at all when
+    # the input ends in a list.
+    ('tx_docinfo', 'footnote_reference_in_author', ':author: Me [#]_\n\n.. [#] note\n'),
+    ('tx_docinfo', 'dangling_reference_in_author', ':author: See `nope`_.\n\nBody.\n'),
+    ('tx_docinfo', 'dangling_reference_in_author_ending_in_a_list', ':author: See `nope`_.\n\n- item\n'),
 ]
 
 
@@ -1379,6 +1453,36 @@ def printed_records(app: SphinxTestApp, base: Path) -> list:
         records.append(text)
     app.warning.writes.clear()
     return records
+
+
+def forget_metadata(app: SphinxTestApp, docname: str = "index") -> None:
+    """Drop what the last parse collected into `env.metadata`: `probe`'s
+    `env.clear_doc` does not (MetadataCollector's own `clear_doc` runs on
+    `env-purge-doc`, which only the builder emits), so without this a
+    case would inherit every earlier case's metadata. Inert for the tree:
+    nothing a read consults reads `env.metadata`."""
+    app.env.metadata.pop(docname, None)
+
+
+def collected_metadata(app: SphinxTestApp, base: Path, docname: str = "index") -> dict:
+    """`env.metadata[docname]` as the last parse's MetadataCollector left it
+    (empty when the document opened with no docinfo), with the warning-text
+    path normalization: a malformed bibliographic field's body holds its
+    `system_message`, whose text names the source."""
+
+    def norm(value):
+        if isinstance(value, str):
+            text = value.replace(str(base / "index.rst"), SOURCE_TOKEN)
+            assert str(base) not in text, f"srcdir path leaked into metadata:\n{text}"
+            return text
+        if isinstance(value, list):
+            return [norm(item) for item in value]
+        assert isinstance(value, int) and not isinstance(value, bool), (
+            f"unexpected metadata value {value!r}"
+        )
+        return value
+
+    return {key: norm(value) for key, value in app.env.metadata.get(docname, {}).items()}
 
 
 def make_app(base: Path, conf: dict) -> SphinxTestApp:
@@ -1514,6 +1618,7 @@ def main() -> int:
         "tx_subst": 24,
         "tx_links": 53,
         "tx_footnotes": 20,
+        "tx_docinfo": 25,
     }
     counts: dict = {}
     for case in CASES:
@@ -1553,8 +1658,10 @@ def main() -> int:
 
                 for family, name, rst in group_cases:
                     printed_records(app, base)  # drop anything printed before
+                    forget_metadata(app)
                     doctree = probe(app, base, rst)
                     warnings = printed_records(app, base)
+                    metadata = collected_metadata(app, base)
                     stray = {n.tagname for n in doctree.findall()} - SUPPORTED_KINDS
                     if stray:
                         bad.append(f"{family}.{name}: unsupported kinds {sorted(stray)}")
@@ -1572,6 +1679,8 @@ def main() -> int:
                     }
                     if conf:
                         record_case["conf"] = conf
+                    if metadata:
+                        record_case["metadata"] = metadata
                     results[f"{family}.{name}"] = record_case
 
                 # In-process determinism check: a second pass over the group
@@ -1581,8 +1690,14 @@ def main() -> int:
                     if case_name not in results:
                         continue  # scope violation above
                     printed_records(app, base)
+                    forget_metadata(app)
                     again = normalize(probe(app, base, rst).pformat(), base)
                     again_warnings = printed_records(app, base)
+                    again_metadata = collected_metadata(app, base)
+                    assert again_metadata == results[case_name].get("metadata", {}), (
+                        f"{case_name}: second parse collected different metadata "
+                        f"(cross-case state leak?)"
+                    )
                     assert again_warnings == results[case_name]["warnings"], (
                         f"{case_name}: second parse printed different records "
                         f"(cross-case state leak?)\n--- first ---\n"

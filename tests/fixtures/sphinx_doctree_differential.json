@@ -4753,6 +4753,349 @@
       "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <footnote_reference auto=\"1\" docname=\"index\" ids=\"id1\" refid=\"id3\">\n            2\n         and \n        <pending_xref ids=\"id2\" refdomain=\"citation\" reftarget=\"CIT\" reftype=\"ref\" refwarn=\"1\" support_smartquotes=\"0\">\n            <inline>\n                [CIT]\n        .\n    <footnote auto=\"1\" backrefs=\"id1\" docname=\"index\" ids=\"id3\" names=\"2\">\n        <label>\n            2\n        <paragraph>\n            has \n            <pending_xref ids=\"id4\" refdomain=\"citation\" reftarget=\"CIT\" reftype=\"ref\" refwarn=\"1\" support_smartquotes=\"0\">\n                <inline>\n                    [CIT]\n             and \n            <footnote_reference docname=\"index\" ids=\"id5\" refid=\"id8\">\n                1\n    <citation backrefs=\"id2 id4\" docname=\"index\" ids=\"cit\" names=\"cit\">\n        <label support_smartquotes=\"0\">\n            CIT\n        <paragraph>\n            has \n            <footnote_reference auto=\"1\" docname=\"index\" ids=\"id6\" refid=\"id9\">\n                3\n             and \n            <footnote_reference docname=\"index\" ids=\"id7\" refid=\"id8\">\n                1\n    <footnote backrefs=\"id5 id7\" docname=\"index\" ids=\"id8\" names=\"1\">\n        <label>\n            1\n        <paragraph>\n            one\n    <footnote auto=\"1\" backrefs=\"id6\" docname=\"index\" ids=\"id9\" names=\"3\">\n        <label>\n            3\n        <paragraph>\n            two\n",
       "rst": "See [#]_ and [CIT]_.\n\n.. [#] has [CIT]_ and [1]_\n.. [CIT] has [#]_ and [1]_\n.. [1] one\n.. [#] two\n",
       "warnings": []
+    },
+    {
+      "family": "tx_docinfo",
+      "metadata": {
+        "orphan": ""
+      },
+      "name": "tx_docinfo.orphan",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Body.\n",
+      "rst": ":orphan:\n\nTitle\n=====\n\nBody.\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_docinfo",
+      "metadata": {
+        "tocdepth": 2
+      },
+      "name": "tx_docinfo.tocdepth",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Body.\n",
+      "rst": ":tocdepth: 2\n\nTitle\n=====\n\nBody.\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_docinfo",
+      "metadata": {
+        "nocomments": "",
+        "nosearch": ""
+      },
+      "name": "tx_docinfo.nocomments_nosearch",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Body.\n",
+      "rst": ":nocomments:\n:nosearch:\n\nTitle\n=====\n\nBody.\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_docinfo",
+      "metadata": {
+        "Custom Field": "value",
+        "address": "1 Street\nCity",
+        "author": "Me",
+        "authors": [
+          "A",
+          "B"
+        ],
+        "contact": "me@example.com",
+        "copyright": "Public",
+        "date": "2026",
+        "organization": "Org",
+        "revision": "2",
+        "status": "draft",
+        "version": "1.0"
+      },
+      "name": "tx_docinfo.bibliographic_fields",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <topic classes=\"dedication\">\n        <title>\n            Dedication\n        <paragraph>\n            For you.\n    <topic classes=\"abstract\">\n        <title>\n            Abstract\n        <paragraph>\n            Summary.\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Body.\n",
+      "rst": ":Author: Me\n:authors: A; B\n:organization: Org\n:address: 1 Street\n   City\n:contact: me@example.com\n:version: 1.0\n:revision: 2\n:status: draft\n:date: 2026\n:copyright: Public\n:dedication: For you.\n:abstract: Summary.\n:Custom Field: *value*\n\nTitle\n=====\n\nBody.\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_docinfo",
+      "name": "tx_docinfo.not_leading",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <field_list>\n        <field>\n            <field_name>\n                orphan\n            <field_body>\n",
+      "rst": "Para.\n\n:orphan:\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_docinfo",
+      "metadata": {
+        "tocdepth": 0
+      },
+      "name": "tx_docinfo.tocdepth_not_an_int",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Body.\n",
+      "rst": ":tocdepth: abc\n\nTitle\n=====\n\nBody.\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_docinfo",
+      "name": "tx_docinfo.not_leading_after_title",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <field_list>\n            <field>\n                <field_name>\n                    orphan\n                <field_body>\n",
+      "rst": "Title\n=====\n\n:orphan:\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_docinfo",
+      "metadata": {
+        "orphan": ""
+      },
+      "name": "tx_docinfo.field_list_only",
+      "pseudo_xml": "<document source=\"<snippet>\">\n",
+      "rst": ":orphan:\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_docinfo",
+      "metadata": {
+        "author": "<snippet>:1: (WARNING/2) Cannot extract empty bibliographic field \"author\".",
+        "orphan": ""
+      },
+      "name": "tx_docinfo.empty_bibliographic_field",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Body.\n",
+      "rst": ":author:\n:orphan:\n\nBody.\n",
+      "warnings": [
+        "<snippet>:1: WARNING: Cannot extract empty bibliographic field \"author\". [docutils]"
+      ]
+    },
+    {
+      "family": "tx_docinfo",
+      "metadata": {
+        "date": "x\n\n<snippet>:4: (WARNING/2) Bibliographic field \"date\"\nmust contain a single <paragraph>, not a <bullet_list>.",
+        "version": "a\n\nb\n\n<snippet>:1: (WARNING/2) Bibliographic field \"version\"\nmust contain a single <paragraph>, not [<paragraph>, <paragraph>]."
+      },
+      "name": "tx_docinfo.compound_bibliographic_field",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Body.\n",
+      "rst": ":version: a\n\n   b\n:date:\n   - x\n\nBody.\n",
+      "warnings": [
+        "<snippet>:1: WARNING: Bibliographic field \"version\"\nmust contain a single <paragraph>, not [<paragraph>, <paragraph>]. [docutils]",
+        "<snippet>:4: WARNING: Bibliographic field \"date\"\nmust contain a single <paragraph>, not a <bullet_list>. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_docinfo",
+      "metadata": {
+        "dedication": "b\n\n<snippet>:2: (WARNING/2) There can only be one \"dedication\" field."
+      },
+      "name": "tx_docinfo.duplicate_topic_field",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <topic classes=\"dedication\">\n        <title>\n            Dedication\n        <paragraph>\n            a\n    <topic classes=\"abstract\">\n        <title>\n            Abstract\n        <paragraph>\n            c\n    <paragraph>\n        Body.\n",
+      "rst": ":dedication: a\n:dedication: b\n:abstract: c\n\nBody.\n",
+      "warnings": [
+        "<snippet>:2: WARNING: There can only be one \"dedication\" field. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_docinfo",
+      "metadata": {
+        "authors": [
+          "A",
+          "B"
+        ]
+      },
+      "name": "tx_docinfo.authors_bullet_list",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Body.\n",
+      "rst": ":authors: - A\n          - *B*\n\nBody.\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_docinfo",
+      "metadata": {
+        "authors": [
+          "A",
+          "B"
+        ]
+      },
+      "name": "tx_docinfo.authors_paragraphs",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Body.\n",
+      "rst": ":authors: A\n\n   B\n\nBody.\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_docinfo",
+      "metadata": {
+        "authors": [
+          "A, B",
+          "C"
+        ],
+        "organization": "x"
+      },
+      "name": "tx_docinfo.authors_separators",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Body.\n",
+      "rst": ":authors: A, B; C\n:organization: x\n\nBody.\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_docinfo",
+      "metadata": {
+        "authors": "a\n\nb\n\n<snippet>:1: (WARNING/2) Cannot extract \"authors\" from bibliographic field:\nBibliographic field \"authors\" must contain either\n a single paragraph (with author names separated by a character from the set \";,\"),\n multiple paragraphs (one per author),\n or a bullet list with one author name per item.\nNote: Leading initials can cause (mis)recognizing names as enumerated list."
+      },
+      "name": "tx_docinfo.authors_not_extractable",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Body.\n",
+      "rst": ":authors:\n   - a\n\n     b\n\nBody.\n",
+      "warnings": [
+        "<snippet>:1: WARNING: Cannot extract \"authors\" from bibliographic field:\nBibliographic field \"authors\" must contain either\n a single paragraph (with author names separated by a character from the set \";,\"),\n multiple paragraphs (one per author),\n or a bullet list with one author name per item.\nNote: Leading initials can cause (mis)recognizing names as enumerated list. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_docinfo",
+      "metadata": {
+        "authors": "<snippet>:1: (INFO/1) Unexpected possible title overline or transition.\nTreating it as ordinary text because it's so short.\n\n;\n\n<snippet>:1: (WARNING/2) Cannot extract \"authors\" from bibliographic field:\nBibliographic field \"authors\" must contain either\n a single paragraph (with author names separated by a character from the set \";,\"),\n multiple paragraphs (one per author),\n or a bullet list with one author name per item.\nNote: Leading initials can cause (mis)recognizing names as enumerated list."
+      },
+      "name": "tx_docinfo.authors_info_message",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Body.\n",
+      "rst": ":authors: ;\n\nBody.\n",
+      "warnings": [
+        "<snippet>:1: WARNING: Cannot extract \"authors\" from bibliographic field:\nBibliographic field \"authors\" must contain either\n a single paragraph (with author names separated by a character from the set \";,\"),\n multiple paragraphs (one per author),\n or a bullet list with one author name per item.\nNote: Leading initials can cause (mis)recognizing names as enumerated list. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_docinfo",
+      "metadata": {
+        "custom": "a x b",
+        "date": "2026-09-30",
+        "status": "frontmatter.py",
+        "version": "1.2"
+      },
+      "name": "tx_docinfo.rcs_keywords",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Body.\n",
+      "rst": ":date: $Date: 2026/09/30 12:00:00 $\n:status: $RCSfile: frontmatter.py,v $\n:version: $Revision: 1.2 $\n:custom: a $Id: x $ b\n\nBody.\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_docinfo",
+      "metadata": {
+        "author": "J. Doe",
+        "version": "1. x"
+      },
+      "name": "tx_docinfo.initials_restored",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Body.\n",
+      "rst": ":author: J. Doe\n:version: 1. x\n\nBody.\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_docinfo",
+      "metadata": {
+        "author": "x\n\ny\n\n<snippet>:1: (WARNING/2) Bibliographic field \"author\"\nmust contain a single <paragraph>, not a <enumerated_list>."
+      },
+      "name": "tx_docinfo.initials_not_restored",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Body.\n",
+      "rst": ":author: A. x\n          B. y\n\nBody.\n",
+      "warnings": [
+        "<snippet>:1: WARNING: Bibliographic field \"author\"\nmust contain a single <paragraph>, not a <enumerated_list>. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_docinfo",
+      "metadata": {
+        "orphan": ""
+      },
+      "name": "tx_docinfo.comment_and_target_before",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <topic classes=\"abstract\">\n        <title>\n            Abstract\n        <paragraph>\n            Sum.\n    <comment xml:space=\"preserve\">\n        a comment\n    <target refid=\"lbl\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Body.\n",
+      "rst": ".. a comment\n\n.. _lbl:\n\n:orphan:\n:abstract: Sum.\n\nTitle\n=====\n\nBody.\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_docinfo",
+      "name": "tx_docinfo.topic_without_docinfo",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <topic classes=\"dedication\">\n        <title>\n            Dedication\n        <paragraph>\n            D\n    <comment xml:space=\"preserve\">\n        c\n    <paragraph>\n        Body.\n",
+      "rst": ".. c\n\n:dedication: D\n\nBody.\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_docinfo",
+      "metadata": {
+        "orphan": ""
+      },
+      "name": "tx_docinfo.index_before",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <index entries=\"('single',\\ 'x',\\ 'index-0',\\ '',\\ None)\" inline=\"0\">\n    <target refid=\"index-0\">\n    <paragraph>\n        Body.\n",
+      "rst": ".. index:: x\n\n:orphan:\n\nBody.\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_docinfo",
+      "metadata": {
+        "orphan": ""
+      },
+      "name": "tx_docinfo.field_list_then_unindent",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"2\" line=\"2\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Field list ends without a blank line; unexpected unindent.\n    <paragraph>\n        Body.\n",
+      "rst": ":orphan:\nBody.\n",
+      "warnings": [
+        "<snippet>:2: WARNING: Field list ends without a blank line; unexpected unindent. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_docinfo",
+      "metadata": {
+        "Custom Field": "v",
+        "author": "Me",
+        "version": "2"
+      },
+      "name": "tx_docinfo.field_name_nbsp",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Body.\n",
+      "rst": ":Author : Me\n:Custom Field: v\n:Version\u001f: 2\n\nBody.\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_docinfo",
+      "metadata": {
+        "author": "w",
+        "x y": "v"
+      },
+      "name": "tx_docinfo.field_name_markup",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Body.\n",
+      "rst": ":*x* y: v\n:Author *z*: w\n\nBody.\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_docinfo",
+      "metadata": {
+        "tocdepth": 10
+      },
+      "name": "tx_docinfo.tocdepth_python_int",
+      "pseudo_xml": "<document source=\"<snippet>\">\n",
+      "rst": ":tocdepth:  +1_0\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_docinfo",
+      "metadata": {
+        "tocdepth": 3
+      },
+      "name": "tx_docinfo.tocdepth_unicode_digit",
+      "pseudo_xml": "<document source=\"<snippet>\">\n",
+      "rst": ":tocdepth: ٣\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_docinfo",
+      "metadata": {
+        "author": "Me 1"
+      },
+      "name": "tx_docinfo.footnote_reference_in_author",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <footnote auto=\"1\" backrefs=\"id1\" docname=\"index\" ids=\"id2\" names=\"1\">\n        <label>\n            1\n        <paragraph>\n            note\n",
+      "rst": ":author: Me [#]_\n\n.. [#] note\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_docinfo",
+      "metadata": {
+        "author": "See `nope`_."
+      },
+      "name": "tx_docinfo.dangling_reference_in_author",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Body.\n",
+      "rst": ":author: See `nope`_.\n\nBody.\n",
+      "warnings": [
+        "<snippet>:4: ERROR: Unknown target name: \"nope\". [docutils]"
+      ]
+    },
+    {
+      "family": "tx_docinfo",
+      "metadata": {
+        "author": "See `nope`_."
+      },
+      "name": "tx_docinfo.dangling_reference_in_author_ending_in_a_list",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                item\n",
+      "rst": ":author: See `nope`_.\n\n- item\n",
+      "warnings": [
+        "<snippet>:: ERROR: Unknown target name: \"nope\". [docutils]"
+      ]
     }
   ],
   "conf_semantics": "a case's optional 'conf' dict is confoverrides applied on top of the base settings above; absent = defaults. The consumer maps every key onto ParseOptions.py and errors on unmapped keys.",

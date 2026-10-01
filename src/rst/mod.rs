@@ -400,6 +400,16 @@ pub struct RegistryExport {
     /// `#[serde(default)]` — see [`Self::program_options`]: a stale entry
     /// decoding with no citations would register none of the document's.
     pub citations: Vec<CitationRecord>,
+    /// What MetadataCollector (`doctree-read`, priority 880) read off the
+    /// document's docinfo before taking it out of the tree — the merge
+    /// phase's `env.metadata[docname]`. Empty from the parse itself and for
+    /// a document without a docinfo;
+    /// [`crate::transforms::apply_read_transforms`] fills it, because the
+    /// read has to see the tree before FilterSystemMessages does
+    /// ([`crate::env::metadata`]). Not `#[serde(default)]` — see
+    /// [`Self::program_options`]: a stale entry decoding with no metadata
+    /// would drop a re-read document's `:orphan:` and `:tocdepth:`.
+    pub metadata: crate::env::metadata::Metadata,
 }
 
 #[cfg(test)]
@@ -489,7 +499,8 @@ mod tests {
         "diagnostics":[{"seq":0,"channel":"Logger","level":2,"category":null,"text":"m",
             "source":0,"line":2,"doc2path_location":false}],
         "dependencies":["part.rst"],"included":["part"],
-        "citations":[{"label":"CIT","node_id":"cit","source":0,"line":4,"seq":5}]}"#;
+        "citations":[{"label":"CIT","node_id":"cit","source":0,"line":4,"seq":5}],
+        "metadata":{"orphan":{"Str":""}}}"#;
 
     /// Decode [`COMPLETE_REGISTRY`] with the field `name` removed at
     /// `path` (object keys and array indices), and require the failure
@@ -560,6 +571,11 @@ mod tests {
             // register none of the document's citations — no duplicate
             // warning, and its citations missing from the environment.
             "citations",
+            // A registry from before the read pass collected the docinfo's
+            // metadata must MISS: a defaulted empty map would lose the
+            // document's `:orphan:` (a false orphan warning) and
+            // `:tocdepth:`.
+            "metadata",
         ] {
             must_miss(&[], field);
         }

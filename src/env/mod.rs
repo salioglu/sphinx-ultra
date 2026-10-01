@@ -74,7 +74,12 @@ use crate::doctree::Node;
 ///
 /// Version 4: M2 wave 5 adds the `citation` domain's registries
 /// ([`citation_domain::CitationDomainData`]), which the read transforms'
-/// citation registrations fill.
+/// citation registrations fill. The same wave later typed `metadata`'s
+/// values ([`metadata::MetadataValue`]: `tocdepth` an int, `authors` a
+/// list, as Sphinx keeps them); a v4 `env.bin` written before that is
+/// misframed from its first metadata value on (a string's length where the
+/// value's variant tag goes) and fails to decode, so it is rebuilt — only
+/// builds of this branch ever wrote one, so no second bump.
 pub const ENV_VERSION: u32 = 4;
 
 /// The `env.bin` filename inside a build's cache directory.
@@ -169,9 +174,10 @@ pub struct BuildEnvironment {
     pub included: BTreeMap<String, BTreeSet<String>>,
     /// docnames that must always be re-read (e.g. they use `today`/`now`).
     pub reread_always: BTreeSet<String>,
-    /// docname -> its bibliographic field list (`:orphan:`, `:tocdepth:`,
-    /// ...), per [`metadata::document_metadata`].
-    pub metadata: BTreeMap<String, BTreeMap<String, String>>,
+    /// docname -> what its docinfo said (`:orphan:`, `:tocdepth:`, the
+    /// bibliographic fields, ...), as MetadataCollector read it in the read
+    /// pass ([`metadata::metadata_from_docinfo`]).
+    pub metadata: BTreeMap<String, metadata::Metadata>,
     pub titles: BTreeMap<String, Node>,
     pub longtitles: BTreeMap<String, Node>,
     /// docname -> that document's local table of contents, doctree-shaped
@@ -494,7 +500,18 @@ impl BuildEnvironment {
             "root_doc": self.root_doc,
             "all_docs": self.all_docs,
             "relations": JsonValue::Object(relations),
-            "metadata": self.metadata,
+            // `env.metadata` with Sphinx's value types: str, int, list.
+            "metadata": self
+                .metadata
+                .iter()
+                .map(|(docname, values)| {
+                    let values: JsonMap<String, JsonValue> = values
+                        .iter()
+                        .map(|(name, value)| (name.clone(), value.to_json()))
+                        .collect();
+                    (docname.clone(), JsonValue::Object(values))
+                })
+                .collect::<JsonMap<String, JsonValue>>(),
             "dependencies": self.dependencies,
             "included": self.included,
             "reread_always": self.reread_always,
@@ -567,7 +584,17 @@ mod tests {
         env.all_docs.insert("index".to_string(), 1_700_000_000);
         env.metadata.insert(
             "index".to_string(),
-            BTreeMap::from([("orphan".to_string(), String::new())]),
+            BTreeMap::from([
+                (
+                    "orphan".to_string(),
+                    metadata::MetadataValue::Str(String::new()),
+                ),
+                ("tocdepth".to_string(), metadata::MetadataValue::Int(2)),
+                (
+                    "authors".to_string(),
+                    metadata::MetadataValue::List(vec!["A".to_string(), "B".to_string()]),
+                ),
+            ]),
         );
         env.dependencies.insert(
             "index".to_string(),
@@ -1108,5 +1135,60 @@ mod tests {
             snapshot["tocs_pformat"]["index"],
             JsonValue::String(sample_node().pformat())
         );
+
+        // `env.metadata` with Sphinx's value types.
+        assert_eq!(
+            snapshot["metadata"]["index"],
+            json!({"authors": ["A", "B"], "orphan": "", "tocdepth": 2})
+        );
+    }
+
+    /// A v4 `env.bin` an intermediate build of this branch wrote before
+    /// `metadata`'s values were typed — each value a bare string, here the
+    /// common `:orphan:` — is misframed from that value on and does not
+    /// decode: a cold start, with no version bump.
+    #[test]
+    fn an_environment_with_untyped_metadata_is_a_cold_start() {
+        /// The fields ahead of `metadata`, and `metadata` in its old shape.
+        #[derive(Serialize)]
+        struct Head {
+            version: u32,
+            root_doc: String,
+            all_docs: BTreeMap<String, u64>,
+            dependencies: BTreeMap<String, BTreeSet<PathBuf>>,
+            included: BTreeMap<String, BTreeSet<String>>,
+            reread_always: BTreeSet<String>,
+            metadata: BTreeMap<String, BTreeMap<String, String>>,
+        }
+        let env = BuildEnvironment {
+            metadata: BTreeMap::new(),
+            ..populated_env()
+        };
+        let head = |metadata| Head {
+            version: ENV_VERSION,
+            root_doc: env.root_doc.clone(),
+            all_docs: env.all_docs.clone(),
+            dependencies: env.dependencies.clone(),
+            included: env.included.clone(),
+            reread_always: env.reread_always.clone(),
+            metadata,
+        };
+        let config = bincode::config::standard();
+        // With no metadata the two shapes write the same bytes, so the
+        // current encoding's tail is every field after `metadata`.
+        let current = bincode::serde::encode_to_vec(&env, config).unwrap();
+        let empty_head = bincode::serde::encode_to_vec(head(BTreeMap::new()), config).unwrap();
+        assert_eq!(current[..empty_head.len()], empty_head[..]);
+        let tail = &current[empty_head.len()..];
+
+        let untyped = BTreeMap::from([(
+            "index".to_string(),
+            BTreeMap::from([("orphan".to_string(), String::new())]),
+        )]);
+        let mut bytes = bincode::serde::encode_to_vec(head(untyped), config).unwrap();
+        bytes.extend_from_slice(tail);
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(tmp.path().join(ENV_FILENAME), &bytes).unwrap();
+        assert!(BuildEnvironment::load(tmp.path()).is_none());
     }
 }

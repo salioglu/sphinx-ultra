@@ -1678,7 +1678,10 @@ mod tests {
         );
         env.metadata.insert(
             "marked".to_string(),
-            BTreeMap::from([("orphan".to_string(), String::new())]),
+            BTreeMap::from([(
+                "orphan".to_string(),
+                crate::env::metadata::MetadataValue::Str(String::new()),
+            )]),
         );
 
         let messages = check_consistency(&env, &|_| true);

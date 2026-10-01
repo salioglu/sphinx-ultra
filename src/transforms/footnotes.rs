@@ -380,8 +380,7 @@ impl FootnotePass {
         from: usize,
         skipped: impl Fn(&Node) -> bool,
     ) {
-        let (source, line) = location_at(&ctx.tree.root, at);
-        let message = ctx.message(messages::ERROR, text, source, Some(line));
+        let message = ctx.message_at(messages::ERROR, text, location_at(&ctx.tree.root, at));
         ctx.reporter.report(&message);
         let message_id = ctx.ids.allocate_auto_id();
         for path in references.iter().skip(from) {

@@ -226,9 +226,8 @@ pub(super) fn substitutions(ctx: &mut TransformCtx) {
         };
         let failure = match &key {
             None => {
-                let (source, line) = arena.location(reference);
                 let text = format!("Undefined substitution referenced: \"{refname}\".");
-                Some(ctx.message(messages::ERROR, &text, source, Some(line)))
+                Some(ctx.message_at(messages::ERROR, &text, arena.location(reference)))
             }
             Some(key) if arena.text_len(defs[key]) > LINE_LENGTH_LIMIT => {
                 let text =
@@ -408,10 +407,9 @@ fn report_circular(
             while let Some(earlier) = arena.slots[origin].origin {
                 origin = earlier;
             }
-            let (source, line) = arena.location(origin);
             let text = format!("Circular substitution definition referenced: \"{refname}\".");
             ctx.reporter
-                .report(&ctx.message(messages::ERROR, &text, source, Some(line)));
+                .report(&ctx.message_at(messages::ERROR, &text, arena.location(origin)));
             replace_with_problematic(ctx, arena, reference);
             true
         }
@@ -958,7 +956,7 @@ fn following(root: &Node, path: &[usize]) -> Option<NodePath> {
 /// Sphinx (`sphinx/addnodes.py`) element class deriving from it, as probed
 /// from the installed docutils 0.22.4 / Sphinx 9.1.0 (research
 /// `2026-09-30-m2-wave5-transforms.md` Appendix A).
-fn is_text_element(kind: &str) -> bool {
+pub(super) fn is_text_element(kind: &str) -> bool {
     matches!(
         kind,
         "abbreviation"
@@ -1404,9 +1402,8 @@ impl Links {
         let text = format!(
             "Indirect hyperlink target {naming} refers to target \"{refname}\", {explanation}."
         );
-        let (source, line) = self.target_location(target);
         ctx.reporter
-            .report(&ctx.message(messages::ERROR, &text, source, Some(line)));
+            .report(&ctx.message_at(messages::ERROR, &text, self.target_location(target)));
         let message_id = ctx.ids.allocate_auto_id();
         let mut seen = HashSet::new();
         for reference in references {
@@ -1678,8 +1675,7 @@ fn visit_dangling_reference(ctx: &mut TransformCtx, arena: &mut Arena, reference
             embedded_reference_hint(&refname),
         ),
     };
-    let (source, line) = arena.location(reference);
-    let mut message = ctx.message(messages::ERROR, &text, source, Some(line));
+    let mut message = ctx.message_at(messages::ERROR, &text, arena.location(reference));
     if let Some(hint) = hint {
         message = messages::with_paragraph(message, &hint);
     }

@@ -30,6 +30,7 @@
 
 mod dates;
 pub(crate) mod footnotes;
+pub(crate) mod frontmatter;
 pub(crate) mod misc;
 pub(crate) mod references;
 
@@ -38,6 +39,7 @@ use std::collections::BTreeMap;
 use crate::config::{BuildConfig, SmartquotesExcludes};
 use crate::doctree::ids::{fully_normalize_name, IdRegistry};
 use crate::doctree::{kinds, messages, AttrValue, Doctree, Node};
+use crate::env::metadata::Metadata;
 use crate::rst::diagnostics::{Diagnostic, Reporter};
 use crate::rst::{CitationRecord, ParseOptions, RegistryExport};
 
@@ -384,6 +386,12 @@ pub struct TransformCtx<'a> {
     /// earlier transform resolved, in document order. The walk-built lists
     /// ([`DocumentLists`]) cannot see nodes that have left the tree.
     pub(crate) replaced_citation_refs: BTreeMap<String, Vec<String>>,
+    /// `env.metadata[docname]` as MetadataCollector (880) read it off the
+    /// docinfo DocInfo (340) made ([`frontmatter::metadata_collector`]);
+    /// empty when the document has none. It leaves the pass beside the
+    /// records ([`crate::rst::RegistryExport::metadata`]) for the merge
+    /// phase to store.
+    pub(crate) metadata: Metadata,
 }
 
 /// One [`READ_TRANSFORMS`] entry: Sphinx priority, upstream class name,
@@ -422,7 +430,7 @@ static READ_TRANSFORMS: &[ReadTransform] = &[
     (261, "SortIds", misc::sort_ids),
     // 320 DocTitle, 350 SectionSubTitle: disabled by Sphinx's settings
     //     (`doctitle_xform=False`, `sectsubtitle_xform=False`).
-    // 340 DocInfo (Task 11).
+    (340, "DocInfo", frontmatter::doc_info),
     (440, "AnonymousHyperlinks", references::anonymous_hyperlinks),
     (460, "IndirectHyperlinks", references::indirect_hyperlinks),
     // 500 DoctestTransform (Task 12); GlossarySorter: applied by the
@@ -458,8 +466,13 @@ static READ_TRANSFORMS: &[ReadTransform] = &[
     ),
     // 850 SphinxDomains: the merge phase's domain hooks
     //     (`src/builder.rs`), after this pass.
-    // 880 DoctreeReadEvent: the merge phase's environment collectors;
-    //     UIDTransform: no-op for these builders.
+    // 880 DoctreeReadEvent: the merge phase's environment collectors —
+    //     but for MetadataCollector, which takes the docinfo out of the
+    //     tree and reads it before FilterSystemMessages strips the
+    //     messages in it (`crate::env::metadata`): run here, in the
+    //     collectors' slot.
+    (880, "MetadataCollector", frontmatter::metadata_collector),
+    // 880 UIDTransform: no-op for these builders.
     // 950 AddTranslationClasses: no-op by default.
     (999, "FilterSystemMessages", misc::filter_system_messages),
     // 999 RemoveTranslatableInline: its effect is the parser's docfield and
@@ -485,6 +498,7 @@ impl<'a> TransformCtx<'a> {
             reporter: Reporter::continuing_from(next_seq),
             citations: Vec::new(),
             replaced_citation_refs: BTreeMap::new(),
+            metadata: Metadata::new(),
         }
     }
 
@@ -519,6 +533,22 @@ impl<'a> TransformCtx<'a> {
         }
     }
 
+    /// [`Self::message`] for a message about a node (`base_node=`), at the
+    /// `(source, line)` of the ancestor whose line locates it
+    /// (`get_source_line`, `docutils/utils/__init__.py:645-654`). An
+    /// ancestor with no line — line 0: an element a transform built, like
+    /// DocInfo's bibliographic elements, which nothing stamps (probed:
+    /// `document.current_line` is `None` once the parse has finished) —
+    /// leaves docutils' reporter to ask the finished parse where it is
+    /// (`utils/__init__.py:195-204`): [`Self::end_of_parse_message`].
+    pub(crate) fn message_at(&self, level: u8, text: &str, (source, line): (u16, u32)) -> Node {
+        if line == 0 {
+            self.end_of_parse_message(level, text)
+        } else {
+            self.message(level, text, source, Some(line))
+        }
+    }
+
     /// The `document`'s node lists ([`DocumentLists`]) for the tree as the
     /// running transform found it: one walk the first time the transform
     /// asks, shared by its later calls. Lists collected for an earlier
@@ -549,10 +579,10 @@ impl<'a> TransformCtx<'a> {
         }
     }
 
-    /// The records the transforms made, in `seq` order, and the
-    /// registrations they made, in the order they made them.
-    fn finish(self) -> (Vec<Diagnostic>, Vec<CitationRecord>) {
-        (self.reporter.take(), self.citations)
+    /// The records the transforms made, in `seq` order, the registrations
+    /// they made, in the order they made them, and the metadata collected.
+    fn finish(self) -> (Vec<Diagnostic>, Vec<CitationRecord>, Metadata) {
+        (self.reporter.take(), self.citations, self.metadata)
     }
 }
 
@@ -565,7 +595,8 @@ impl<'a> TransformCtx<'a> {
 /// export: every record a transform makes is appended to its
 /// `diagnostics` — the document's stream — numbered from `next_seq` on,
 /// and every registration a transform makes with the environment to its
-/// own list ([`RegistryExport::citations`]), for the merge phase to replay.
+/// own list ([`RegistryExport::citations`]), for the merge phase to replay;
+/// what MetadataCollector read becomes its [`RegistryExport::metadata`].
 ///
 /// The parse's `nameids` snapshot in `registry` is not updated: the one
 /// name a transform registers is the number Footnotes (620) gives an
@@ -591,9 +622,10 @@ pub fn apply_read_transforms(
 ) {
     let mut ctx = TransformCtx::new(tree, ids, next_seq, end_of_input, docname, config);
     ctx.run(READ_TRANSFORMS);
-    let (diagnostics, citations) = ctx.finish();
+    let (diagnostics, citations, metadata) = ctx.finish();
     registry.diagnostics.extend(diagnostics);
     registry.citations.extend(citations);
+    registry.metadata = metadata;
 }
 
 /// A standalone Sphinx read of `source`: the parse, then the read
@@ -606,30 +638,20 @@ pub fn parse_and_transform(
     opts: &ParseOptions,
     config: &TransformConfig,
 ) -> (Doctree, Vec<Diagnostic>) {
-    let mut out = crate::rst::parse_rst_full(source, opts);
-    apply_read_transforms(
-        &mut out.doctree,
-        out.ids,
-        out.next_seq,
-        out.end_of_input,
-        &opts.docname,
-        config,
-        &mut out.registry,
-    );
+    let out = parse_and_transform_full(source, opts, config);
     (out.doctree, out.registry.diagnostics)
 }
 
-/// Test support: [`crate::rst::parse_rst_full`] followed by the read pass
-/// under Sphinx's default configuration, every other field of the parse
-/// output kept — the doctree and registry the build's read phase
-/// ([`crate::parser::Parser`]) hands the merge phase. The transforms'
-/// records join `registry.diagnostics`, their registrations
-/// `registry.citations`; the id registry the pass continued is spent, so
-/// `ids` comes back empty.
-#[cfg(test)]
-pub(crate) fn parse_full_and_transform(
+/// [`parse_and_transform`] with every other part of the parse output kept:
+/// the doctree and registry the build's read phase
+/// ([`crate::parser::Parser`]) hands the merge phase — the transforms'
+/// records in `registry.diagnostics`, their registrations in
+/// `registry.citations`, the collected metadata in `registry.metadata`.
+/// The id registry the pass continued is spent, so `ids` comes back empty.
+pub fn parse_and_transform_full(
     source: &str,
     opts: &ParseOptions,
+    config: &TransformConfig,
 ) -> crate::rst::ParseOutput {
     let mut out = crate::rst::parse_rst_full(source, opts);
     apply_read_transforms(
@@ -638,10 +660,20 @@ pub(crate) fn parse_full_and_transform(
         out.next_seq,
         out.end_of_input,
         &opts.docname,
-        &TransformConfig::default(),
+        config,
         &mut out.registry,
     );
     out
+}
+
+/// Test support: [`parse_and_transform_full`] under Sphinx's default
+/// configuration.
+#[cfg(test)]
+pub(crate) fn parse_full_and_transform(
+    source: &str,
+    opts: &ParseOptions,
+) -> crate::rst::ParseOutput {
+    parse_and_transform_full(source, opts, &TransformConfig::default())
 }
 
 #[cfg(test)]
@@ -784,7 +816,7 @@ mod tests {
         let order: Vec<(u16, &str)> = READ_TRANSFORMS
             .iter()
             .map(|(priority, name, _)| (*priority, *name))
-            .filter(|(priority, _)| *priority >= 340)
+            .filter(|(priority, name)| *priority >= 440 && *name != "MetadataCollector")
             .collect();
         assert_eq!(
             order,
@@ -801,6 +833,29 @@ mod tests {
                 (850, "SphinxDanglingReferences"),
                 (999, "FilterSystemMessages"),
             ]
+        );
+    }
+
+    /// DocInfo in its probed slot (research §1.2, 340-008): after the
+    /// target transforms — a label propagated into a leading field list
+    /// leaves with the list (oracle `tx_docinfo.comment_and_target_before`)
+    /// — and before the hyperlink and footnote ones, which see the
+    /// docinfo's content (`tx_docinfo.footnote_reference_in_author`).
+    /// MetadataCollector in the collectors' `doctree-read` slot (880):
+    /// after SphinxDanglingReferences (850), whose `problematic` it reads
+    /// (`tx_docinfo.dangling_reference_in_author`), and before
+    /// FilterSystemMessages (999), which would empty what it reads.
+    #[test]
+    fn the_docinfo_and_its_collector_run_in_sphinx_order() {
+        let names: Vec<&str> = READ_TRANSFORMS.iter().map(|(_, name, _)| *name).collect();
+        let neighbours = |name: &str| {
+            let at = names.iter().position(|n| *n == name).unwrap();
+            (names[at - 1], names[at + 1])
+        };
+        assert_eq!(neighbours("DocInfo"), ("SortIds", "AnonymousHyperlinks"));
+        assert_eq!(
+            neighbours("MetadataCollector"),
+            ("SphinxDanglingReferences", "FilterSystemMessages")
         );
     }
 

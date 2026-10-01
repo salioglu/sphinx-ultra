@@ -625,13 +625,6 @@ const KNOWN_RESOLVED_GAPS: &[(&str, &str, &str)] = &[
         "`image[candidates]` (see IMAGE_CANDIDATES) plus the `linenos` flag \
          a captioned `code-block` stamps onto its `literal_block`",
     ),
-    (
-        "orphan_doc",
-        "orphan",
-        "`MetadataCollector.process_doc` *removes* the docinfo field list \
-         from the doctree after reading it (`collectors/metadata.py:40`); \
-         ours reads it and leaves the node in place",
-    ),
     // Wave 4.5 py projects: toctree-bearing index documents share the
     // write-phase gap above. (The module-bearing documents compare at full
     // strength since the read pass runs MoveModuleTargets,
@@ -1708,9 +1701,9 @@ fn resolved_doctrees_match_oracle() {
 /// Update the seven constants and the doc sites together.
 const DOCUMENTED_PROJECTS: usize = 35;
 const DOCUMENTED_DOCUMENTS: usize = 95;
-const DOCUMENTED_WHOLESALE_EXEMPT_DOCUMENTS: usize = 37;
+const DOCUMENTED_WHOLESALE_EXEMPT_DOCUMENTS: usize = 36;
 const DOCUMENTED_STAMP_EXEMPT_DOCUMENTS: usize = 8;
-const DOCUMENTED_BYTE_EXACT_DOCUMENTS: usize = 50;
+const DOCUMENTED_BYTE_EXACT_DOCUMENTS: usize = 51;
 const DOCUMENTED_WARNING_EXEMPT_PROJECTS: usize = 4;
 const DOCUMENTED_BYTE_EXACT_WARNING_PROJECTS: usize = 31;
 
@@ -2481,6 +2474,31 @@ fn an_orphan_marked_after_a_raw_block_is_still_exempt() {
         warnings.is_empty(),
         "an `:orphan:` document must not warn, whatever precedes its field \
          list: {warnings:?}"
+    );
+}
+
+/// Sphinx's `index` node is `Invisible` — hence `PreBibliographic`
+/// (probed: `nodes.PreBibliographic` subclasses in docutils 0.22.4 +
+/// `sphinx.addnodes`) — so DocInfo looks past an `.. index::` (and the
+/// target it emits) for the field list, and MetadataCollector reads
+/// `:orphan:` out of it (oracle case `tx_docinfo.index_before`:
+/// `metadata = {'orphan': ''}`). `check_consistency` then does not call
+/// the document an orphan.
+#[test]
+fn an_orphan_marked_after_an_index_directive_is_still_exempt() {
+    let warnings = warnings_of(
+        &[
+            ("index", "Index\n=====\n\nRoot.\n"),
+            (
+                "aside",
+                ".. index:: aside\n\n:orphan:\n\nAside\n=====\n\nBody.\n",
+            ),
+        ],
+        BuildConfig::default(),
+    );
+    assert!(
+        warnings.is_empty(),
+        "an `:orphan:` document must not warn after an index directive: {warnings:?}"
     );
 }
 
