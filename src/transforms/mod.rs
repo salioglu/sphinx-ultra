@@ -24,9 +24,10 @@
 //!
 //! Adding a transform is registering a `fn(&mut TransformCtx)` in
 //! `READ_TRANSFORMS` at its Sphinx priority, in the slot the probed order
-//! gives it. It reads and rewrites [`TransformCtx::tree`], allocates ids
-//! from [`TransformCtx::ids`], and records what it prints through
-//! [`TransformCtx::reporter`].
+//! gives it. It reads and rewrites `TransformCtx::tree`, allocates ids
+//! from `TransformCtx::ids`, and records what it prints through
+//! `TransformCtx::reporter` (all crate-internal: transforms are registered
+//! here, not by library users).
 
 mod dates;
 pub(crate) mod footnotes;
@@ -140,10 +141,10 @@ impl From<&BuildConfig> for TransformConfig {
 /// A node's address in the doctree: the child index at each step down from
 /// the root (`[]` is the root itself). Paths compare in document order —
 /// a parent sorts before its descendants, siblings by position.
-pub type NodePath = Vec<usize>;
+pub(crate) type NodePath = Vec<usize>;
 
 /// The node at `path` below `root`, if the tree still has one there.
-pub fn node_at<'n>(root: &'n Node, path: &[usize]) -> Option<&'n Node> {
+pub(crate) fn node_at<'n>(root: &'n Node, path: &[usize]) -> Option<&'n Node> {
     path.iter()
         .try_fold(root, |node, &index| node.children.get(index))
 }
@@ -185,14 +186,14 @@ pub(crate) fn for_each_node_mut(root: &mut Node, mut visit: impl FnMut(&mut Node
 /// [`TransformCtx::lists`], which never hands it lists collected before an
 /// earlier transform ran.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct DocumentLists {
+pub(crate) struct DocumentLists {
     /// `document.ids`: each id to the node carrying it — the first, like
     /// `set_id`'s `self.ids.setdefault(id, node)` (`nodes.py:1834-1835`).
-    pub ids: BTreeMap<String, NodePath>,
+    pub(crate) ids: BTreeMap<String, NodePath>,
     /// `document.refnames`: each `refname` to the nodes referencing it —
     /// references, footnote and citation references, and named indirect
     /// targets (`note_refname`, `nodes.py:2009-2018,2043-2054`).
-    pub refnames: BTreeMap<String, Vec<NodePath>>,
+    pub(crate) refnames: BTreeMap<String, Vec<NodePath>>,
     /// `document.refids`: each `refid` to the nodes pointing at it. The
     /// parse never calls `note_refid`; PropagateTargets (260) does, for
     /// every target it points at its next node (`transforms/
@@ -206,38 +207,38 @@ pub struct DocumentLists {
     /// (IndirectHyperlinks notes the targets and references it resolves
     /// itself, `:255,259,319`, on its own lists; the transforms after it
     /// read no `refids`.)
-    pub refids: BTreeMap<String, Vec<NodePath>>,
+    pub(crate) refids: BTreeMap<String, Vec<NodePath>>,
     /// `document.indirect_targets`: every target with a `refname`
     /// (`note_indirect_target`, `states.py:977,2086`).
-    pub indirect_targets: Vec<NodePath>,
+    pub(crate) indirect_targets: Vec<NodePath>,
     /// `document.substitution_defs`: each definition name to its node; a
     /// duplicate definition has been dupnamed away by the parse, so the
     /// last named one is kept, as `note_substitution_def` keeps it
     /// (`nodes.py:2056-2073`).
-    pub substitution_defs: BTreeMap<String, NodePath>,
+    pub(crate) substitution_defs: BTreeMap<String, NodePath>,
     /// `document.substitution_names`: the case-insensitive
     /// (`fully_normalize_name`) spelling of each definition name to the
     /// name.
-    pub substitution_names: BTreeMap<String, String>,
+    pub(crate) substitution_names: BTreeMap<String, String>,
     /// `document.footnote_refs`: each `refname` to its footnote references
     /// (`note_footnote_ref`, `nodes.py:2043-2046`).
-    pub footnote_refs: BTreeMap<String, Vec<NodePath>>,
+    pub(crate) footnote_refs: BTreeMap<String, Vec<NodePath>>,
     /// `document.citation_refs` (`note_citation_ref`, `nodes.py:2051-2054`).
     /// Empty from 619 on, which replaces every one in the tree; docutils'
     /// list, which keeps them, is [`TransformCtx::replaced_citation_refs`].
-    pub citation_refs: BTreeMap<String, Vec<NodePath>>,
+    pub(crate) citation_refs: BTreeMap<String, Vec<NodePath>>,
     /// `document.autofootnotes`: the `auto=1` footnotes (`[#]`, `[#label]`).
-    pub autofootnotes: Vec<NodePath>,
+    pub(crate) autofootnotes: Vec<NodePath>,
     /// `document.autofootnote_refs`: the `auto=1` footnote references.
-    pub autofootnote_refs: Vec<NodePath>,
+    pub(crate) autofootnote_refs: Vec<NodePath>,
     /// `document.symbol_footnotes`: the `auto='*'` footnotes (`[*]`).
-    pub symbol_footnotes: Vec<NodePath>,
+    pub(crate) symbol_footnotes: Vec<NodePath>,
     /// `document.symbol_footnote_refs`.
-    pub symbol_footnote_refs: Vec<NodePath>,
+    pub(crate) symbol_footnote_refs: Vec<NodePath>,
     /// `document.footnotes`: the manually numbered footnotes.
-    pub footnotes: Vec<NodePath>,
+    pub(crate) footnotes: Vec<NodePath>,
     /// `document.citations`.
-    pub citations: Vec<NodePath>,
+    pub(crate) citations: Vec<NodePath>,
 }
 
 impl DocumentLists {
@@ -245,7 +246,7 @@ impl DocumentLists {
     /// `note_*` call for it did (`states.py:1061-1077` for footnote and
     /// citation references, `:2013-2047` for footnotes and citations,
     /// `:2179-2215` for substitution definitions).
-    pub fn collect(root: &Node) -> DocumentLists {
+    pub(crate) fn collect(root: &Node) -> DocumentLists {
         let mut lists = DocumentLists::default();
         let mut reference_refids = BTreeMap::new();
         lists.visit(root, &mut Vec::new(), &mut reference_refids);
@@ -347,23 +348,23 @@ impl DocumentLists {
 
 /// Everything a read transform works with — the analogue of the
 /// `self.document`, `self.config` and `self.env` a Sphinx transform reads.
-pub struct TransformCtx<'a> {
+pub(crate) struct TransformCtx<'a> {
     /// `self.document`: the doctree, rewritten in place.
-    pub tree: &'a mut Doctree,
+    pub(crate) tree: &'a mut Doctree,
     /// The parser's id/name registry (`document.ids`/`nameids`/
     /// `nametypes`/`id_counter`), continued rather than re-derived: an id
     /// a transform allocates (`document.set_id`, AutoNumbering's
     /// `note_implicit_target`) must come after every id the parse handed
     /// out, exactly as it does on the one `document` docutils keeps.
-    pub ids: IdRegistry,
+    pub(crate) ids: IdRegistry,
     /// The `document`'s node lists for the tree as the running transform
     /// found it, collected on first use; read through [`Self::lists`].
     /// `None` until then, and again after every transform.
     lists: Option<DocumentLists>,
     /// `self.config`.
-    pub config: &'a TransformConfig,
+    pub(crate) config: &'a TransformConfig,
     /// `self.env.docname`: the document being read.
-    pub docname: &'a str,
+    pub(crate) docname: &'a str,
     /// Where a message with no node is located
     /// ([`crate::rst::ParseOutput::end_of_input`];
     /// [`Self::end_of_parse_message`]).
@@ -378,7 +379,7 @@ pub struct TransformCtx<'a> {
     /// the place of every read transform that prints: each one runs ahead
     /// of `SphinxDomains` in the probed order (850-040; the last printer,
     /// `SphinxDanglingReferences`, is 850-039 — research §1.2).
-    pub reporter: Reporter,
+    pub(crate) reporter: Reporter,
     /// The registrations the transforms make with the environment, which
     /// leave the pass beside its records
     /// ([`crate::rst::RegistryExport::citations`]): CitationDefinitionTransform's
@@ -569,7 +570,7 @@ impl<'a> TransformCtx<'a> {
     /// know what the ones before it changed. A transform that itself
     /// restructures the tree and then needs paths into the result walks
     /// again ([`DocumentLists::collect`]).
-    pub fn lists(&mut self) -> &DocumentLists {
+    pub(crate) fn lists(&mut self) -> &DocumentLists {
         self.tree_and_lists().1
     }
 

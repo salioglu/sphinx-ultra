@@ -1364,7 +1364,9 @@ impl ConfPyConfig {
         if let Some(today) = &self.today {
             config.today = today.clone();
         }
-        config.today_fmt = self.today_fmt.clone();
+        if let Some(today_fmt) = &self.today_fmt {
+            config.today_fmt = Some(today_fmt.clone());
+        }
         if let Some(language) = &self.highlight_language {
             config.highlight_language = language.clone();
         }

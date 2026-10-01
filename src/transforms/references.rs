@@ -545,6 +545,21 @@ impl ExpansionState {
                             state.text(name);
                         }
                         None => {
+                            // An owner that is no current definition is
+                            // keyed by the order this walk first meets it,
+                            // not by its arena slot (a fresh copy each
+                            // round, so slots never repeat). Within one
+                            // digest that is a canonical relabelling —
+                            // distinct owners always get distinct keys, one
+                            // owner always the same key — so it can only
+                            // make two states that expand alike digest
+                            // differently (two references in two discarded
+                            // copies nothing reads again, against the same
+                            // two in one copy), never two states that
+                            // expand differently digest alike: no false
+                            // repeat. The backstop errs on the safe side —
+                            // at worst it notices a cycle rounds later, never
+                            // cuts an expansion docutils would finish.
                             let count = others.len();
                             state.text("other");
                             state.number(*others.entry(owner).or_insert(count));

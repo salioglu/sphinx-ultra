@@ -102,6 +102,13 @@ impl Diagnostic {
     /// and this crate's discovery order).
     pub fn rendered_path(&self, source_path: &str) -> String {
         if self.doc2path_location {
+            // TODO(source_suffix): `.rst` is hard-coded because the crate's
+            // `source_suffix` is not configurable yet. When it becomes so
+            // (wave 6, with MyST), this must append the project's *first*
+            // configured suffix — Sphinx's `Project._first_source_suffix`,
+            // `next(iter(source_suffix), '')` (`SP/project.py:34,124`) —
+            // which means threading that suffix (or the config) into this
+            // call, and the doc above stops being true as written.
             format!("{source_path}.rst")
         } else {
             source_path.to_string()
