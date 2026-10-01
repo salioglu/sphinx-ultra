@@ -23,7 +23,7 @@
 //! the documents, text and base64-decoded binary members), configured the
 //! way `sphinx-build` would be (the crate's own `conf.py` loader, then every
 //! fixture `conf` key as a `-D` override through
-//! [`BuildConfig::apply_override`], plus `builder` for the dirhtml projects),
+//! [`BuildConfig::apply_override`], and `builder` as `-b` sets it),
 //! built with [`SphinxBuilder::build`] into `build/`, and the output tree on
 //! disk is compared key by key -- one test per key, each with its own strict,
 //! self-cleaning exemption table:
@@ -74,9 +74,9 @@
 //!
 //! # Harness assumptions T6 may need to revisit
 //!
-//! * The builder kind is selected with `-D builder=dirhtml`, i.e. a
-//!   `BuildConfig` field named `builder` (design decision 3); html projects
-//!   leave it at its default.
+//! * The builder kind is selected by setting `BuildConfig::builder` (design
+//!   decision 3; `-b` on the command line — `-D builder=...` is an unknown
+//!   config value, as in Sphinx).
 //! * The warning stream mirrors the `-w` file `src/main.rs` writes: every
 //!   `BuildConfig::validate` message as `WARNING: <message>` first, then
 //!   each `BuildStats::warning_details` entry's `render()`.
@@ -912,13 +912,11 @@ fn build_project(project: &Project) -> Built {
     // `sphinx-build -b <builder> -D ... source build`: conf.py, then -D.
     let mut config = BuildConfig::from_conf_py(source_dir.join("conf.py"))
         .unwrap_or_else(|e| panic!("project {}: conf.py does not load: {e:#}", project.name));
-    let mut overrides = overrides_of(project);
-    if project.builder != "html" {
-        // Design decision 3: the builder kind is a `BuildConfig` field
-        // named `builder`, set by `-b`.
-        overrides.push(("builder".to_string(), project.builder.clone()));
-    }
-    for (key, value) in overrides {
+    // Design decision 3: the builder kind is a `BuildConfig` field named
+    // `builder`, set by `-b` — not by `-D`, which, as in Sphinx, knows no
+    // such config value.
+    config.builder = project.builder.clone();
+    for (key, value) in overrides_of(project) {
         let ignored = config
             .apply_override(&key, &value)
             .unwrap_or_else(|e| panic!("project {}: -D {key}={value}: {e:#}", project.name));

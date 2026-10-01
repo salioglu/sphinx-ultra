@@ -5369,6 +5369,171 @@
       "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para:\n    <literal_block xml:space=\"preserve\">\n        lit\n    <literal_block force=\"0\" highlight_args=\"{}\" language=\"python\" xml:space=\"preserve\">\n        x = 1\n    <highlightlang force=\"0\" lang=\"c\" linenothreshold=\"9223372036854775807\">\n    <literal_block force=\"0\" highlight_args=\"{}\" language=\"c\" xml:space=\"preserve\">\n        y\n",
       "rst": "Para::\n\n   lit\n\n.. code-block::\n\n   x = 1\n\n.. highlight:: c\n\n.. code-block::\n\n   y\n",
       "warnings": []
+    },
+    {
+      "conf": {
+        "smartquotes": true
+      },
+      "family": "sq",
+      "name": "sq.en_quotes_dashes_ellipsis",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        He said “hello” and ‘bye’. It’s the ’80s – or 1990–2000 — maybe… ok… done.\n    <paragraph>\n        He said “she said ‘hi’” – ok. x–y and 5’10” and rock ‘n’ roll. “Hello,” she said. ‘Twas.\n    <paragraph>\n        ‘Start’ and “\n        <emphasis>\n            emph\n        ” and “\n        <strong>\n            strong\n        ” end. \n        <literal>\n            code\n        ’s apostrophe. “‘Quoted’ words” – (‘paren’) [x”] {‘b’} -“y”- –‘z’–\n",
+      "rst": "He said \"hello\" and 'bye'. It's the '80s -- or 1990--2000 --- maybe... ok. . . done.\n\nHe said \"she said 'hi'\" -- ok. x--y and 5'10\" and rock 'n' roll. \"Hello,\" she said. 'Twas.\n\n'Start' and \"*emph*\" and \"**strong**\" end. ``code``'s apostrophe. \"'Quoted' words\" -- ('paren') [x\"] {'b'} -\"y\"- --'z'--\n",
+      "warnings": []
+    },
+    {
+      "conf": {
+        "smartquotes": true
+      },
+      "family": "sq",
+      "name": "sq.escaped_quote_stays_straight",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Escaped \"quote\" and 'x' and `tick` and back\\”slash” and “ab” and a”z”.\n",
+      "rst": "Escaped \\\"quote\\\" and \\'x\\' and \\`tick\\` and back\\\\\"slash\" and \"a\\ b\" and \\a\"z\".\n",
+      "warnings": []
+    },
+    {
+      "conf": {
+        "smartquotes": true
+      },
+      "family": "sq",
+      "name": "sq.escaped_dashes",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        a--b and a--b and -–x and x---y and wait... and ... and . . . and “end\".\n",
+      "rst": "a\\--b and a-\\-b and \\---x and x-\\--y and wait\\... and .\\.. and . \\. . and \"end\\\".\n",
+      "warnings": []
+    },
+    {
+      "conf": {
+        "smartquotes": true
+      },
+      "family": "sq",
+      "name": "sq.literal_untouched",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <literal>\n            \"lit\" -- x...\n         and \n        <math>\n            \"m\"\n         and \n        <emphasis>\n            “em”\n        .\n    <literal_block xml:space=\"preserve\">\n        \"block\" -- x...\n    <doctest_block classes=\"doctest\" xml:space=\"preserve\">\n        >>> \"doctest\" -- x\n    <comment xml:space=\"preserve\">\n        \"comment\" -- x\n    <raw format=\"html\" xml:space=\"preserve\">\n        <b>\"raw\" -- x</b>\n    <substitution_definition names=\"sub\">\n        \"s\" -- x\n    <paragraph>\n        A \n        “s” – x\n         here.\n    <index entries=\"('pair',\\ 'built-in\\ function;\\ f()',\\ 'f',\\ '',\\ None)\">\n    <desc classes=\"py function\" desctype=\"function\" domain=\"py\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"function\">\n        <desc_signature _toc_name=\"f()\" _toc_parts=\"('f',)\" class=\"\" classes=\"sig sig-object\" fullname=\"f\" ids=\"f\" module=\"True\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                f\n            <desc_parameterlist multi_line_parameter_list=\"0\" multi_line_trailing_comma=\"1\" xml:space=\"preserve\">\n                <desc_parameter xml:space=\"preserve\">\n                    <desc_sig_name classes=\"n\">\n                        a\n                    <desc_sig_operator classes=\"o\">\n                        =\n                    <inline classes=\"default_value\" support_smartquotes=\"0\">\n                        'x'\n                <desc_parameter xml:space=\"preserve\">\n                    <desc_sig_name classes=\"n\">\n                        b\n                    <desc_sig_operator classes=\"o\">\n                        =\n                    <inline classes=\"default_value\" support_smartquotes=\"0\">\n                        'y'\n        <desc_content>\n            <paragraph>\n                Body “text” – here.\n    <math_block docname=\"index\" label=\"True\" no-wrap=\"0\" nowrap=\"0\" number=\"True\" xml:space=\"preserve\">\n        \"x\" -- y\n",
+      "rst": "``\"lit\" -- x...`` and :math:`\"m\"` and *\"em\"*.\n\n::\n\n   \"block\" -- x...\n\n>>> \"doctest\" -- x\n\n.. \"comment\" -- x\n\n.. raw:: html\n\n   <b>\"raw\" -- x</b>\n\n.. |sub| replace:: \"s\" -- x\n\nA |sub| here.\n\n.. py:function:: f(a=\"x\", b='y')\n\n   Body \"text\" -- here.\n\n.. math::\n\n   \"x\" -- y\n",
+      "warnings": []
+    },
+    {
+      "conf": {
+        "smartquotes": true
+      },
+      "family": "sq",
+      "name": "sq.title_and_rubric",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"quoted-title-s-here\" names=\"\"quoted\"\\ title's\\ --\\ here\">\n        <title>\n            “Quoted” Title’s – here\n        <rubric>\n            “R” – r\n        <field_list>\n            <field>\n                <field_name>\n                    “Field” name\n                <field_body>\n                    <paragraph>\n                        “body” – x\n        <definition_list>\n            <definition_list_item>\n                <term>\n                    “term” – t\n                <classifier>\n                    “classifier”\n                <definition>\n                    <paragraph>\n                        “def”\n        <line_block>\n            <line>\n                “line” – one\n            <line>\n                ‘two’\n        <block_quote>\n            <paragraph>\n                “quote”\n            <attribution>\n                “attr”\n        <compound classes=\"toctree-wrapper\">\n            <toctree caption=\"\"Cap\" -- x\" entries=\"\" glob=\"0\" hidden=\"0\" includefiles=\"\" includehidden=\"0\" maxdepth=\"-1\" numbered=\"0\" parent=\"index\" rawcaption=\"\"Cap\" -- x\" rawentries=\"\" titlesonly=\"0\">\n        <glossary sorted=\"0\">\n            <definition_list classes=\"glossary\">\n                <definition_list_item>\n                    <term ids=\"term-gterm-g\">\n                        “gterm” – g\n                        <index entries=\"('single',\\ '\"gterm\"\\ --\\ g',\\ 'term-gterm-g',\\ 'main',\\ None)\">\n                    <definition>\n                        <paragraph>\n                            “gdef”\n        <note>\n            <paragraph>\n                “Note” – n\n        <versionmodified type=\"versionadded\" version=\"1.0\">\n            <paragraph translatable=\"0\">\n                <inline classes=\"versionmodified added\">\n                    Added in version 1.0: \n                “Added” – a\n        <container classes=\"literal-block-wrapper\" ids=\"id1\" literal_block=\"1\">\n            <caption>\n                “Code” – cap\n            <literal_block force=\"0\" highlight_args=\"{}\" language=\"none\" xml:space=\"preserve\">\n                \"code\"\n",
+      "rst": "\"Quoted\" Title's -- here\n========================\n\n.. rubric:: \"R\" -- r\n\n:\"Field\" name: \"body\" -- x\n\n\"term\" -- t : \"classifier\"\n   \"def\"\n\n| \"line\" -- one\n| 'two'\n\n    \"quote\"\n\n    -- \"attr\"\n\n.. toctree::\n   :caption: \"Cap\" -- x\n\n.. glossary::\n\n   \"gterm\" -- g\n      \"gdef\"\n\n.. note:: \"Note\" -- n\n\n.. versionadded:: 1.0\n   \"Added\" -- a\n\n.. code-block:: none\n   :caption: \"Code\" -- cap\n\n   \"code\"\n",
+      "warnings": []
+    },
+    {
+      "conf": {
+        "language": "de",
+        "smartquotes": true
+      },
+      "family": "sq",
+      "name": "sq.de_quotes",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        „Deutsch“ und ‚einfach‘ – x… und „‚beide‘“.\n    <paragraph classes=\"language-en\">\n        “English” ‘here’.\n",
+      "rst": "\"Deutsch\" und 'einfach' -- x... und \"'beide'\".\n\n.. rst-class:: language-en\n\n\"English\" 'here'.\n",
+      "warnings": []
+    },
+    {
+      "conf": {
+        "language": "fr",
+        "smartquotes": true
+      },
+      "family": "sq",
+      "name": "sq.fr_nbsp",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        « Bonjour » et “salut” – x… et « “les deux” ».\n    <paragraph classes=\"language-de-ch\">\n        «Schweiz» ‹x›.\n",
+      "rst": "\"Bonjour\" et 'salut' -- x... et \"'les deux'\".\n\n.. rst-class:: language-de-CH\n\n\"Schweiz\" 'x'.\n",
+      "warnings": []
+    },
+    {
+      "conf": {
+        "language": "ja",
+        "smartquotes": true
+      },
+      "family": "sq",
+      "name": "sq.ja_excluded",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        \"Quoted\" -- 'x'...\n    <paragraph classes=\"language-de\">\n        \"Deutsch\" -- x.\n",
+      "rst": "\"Quoted\" -- 'x'...\n\n.. rst-class:: language-de\n\n\"Deutsch\" -- x.\n",
+      "warnings": []
+    },
+    {
+      "conf": {
+        "smartquotes": true,
+        "smartquotes_action": "q"
+      },
+      "family": "sq",
+      "name": "sq.action_q_only",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        “Quoted” -- ‘x’... it’s --- y.\n",
+      "rst": "\"Quoted\" -- 'x'... it's --- y.\n",
+      "warnings": []
+    },
+    {
+      "conf": {
+        "smartquotes": true
+      },
+      "family": "sq",
+      "name": "sq.unknown_language",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para “one”.\n    <paragraph classes=\"language-xx\">\n        \"Quoted\" text’s – here…\n    <paragraph classes=\"language-xx\">\n        Again \"x\".\n    <paragraph classes=\"language-yy-zz\">\n        Other 'y'.\n    <container classes=\"language-xx\">\n        <paragraph>\n            Inside \"c\".\n    <paragraph classes=\"language-de-xx\">\n        „Sub“ tag.\n",
+      "rst": "Para \"one\".\n\n.. rst-class:: language-xx\n\n\"Quoted\" text's -- here...\n\n.. rst-class:: language-xx\n\nAgain \"x\".\n\n.. rst-class:: language-yy-zz\n\nOther 'y'.\n\n.. container:: language-xx\n\n   Inside \"c\".\n\n.. rst-class:: language-de-xx\n\n\"Sub\" tag.\n",
+      "warnings": [
+        "<snippet>:5: WARNING: No smart quotes defined for language \"xx\". [docutils]",
+        "<snippet>:13: WARNING: No smart quotes defined for language \"yy-zz\". [docutils]"
+      ]
+    },
+    {
+      "conf": {
+        "smartquotes": true
+      },
+      "family": "sq",
+      "name": "sq.nbsp_neighbours",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        a “b” c and ‘d’　“e” and  ‘f’  and x\u001f“g”\u001f and “h “ and ​“i” and ‌‘j’.\n",
+      "rst": "a \"b\" c and 'd'　\"e\" and  'f'  and x\u001f\"g\"\u001f and \"h \" and ​\"i\" and ‌'j'.\n",
+      "warnings": []
+    },
+    {
+      "conf": {
+        "smartquotes": true
+      },
+      "family": "sq",
+      "name": "sq.system_message_text",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown directive type “nosuch”.\n        <literal_block xml:space=\"preserve\">\n            .. nosuch:: \"x\" -- y\n    <paragraph>\n        After “z”.\n",
+      "rst": ".. nosuch:: \"x\" -- y\n\nAfter \"z\".\n",
+      "warnings": [
+        "<snippet>:1: ERROR: Unknown directive type \"nosuch\".\n\n.. nosuch:: \"x\" -- y [docutils]"
+      ]
+    },
+    {
+      "conf": {
+        "smartquotes": true
+      },
+      "family": "sq",
+      "name": "sq.nested_units_and_entities",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        A \"x\" and \n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"1\" reftarget=\"lbl\" reftype=\"ref\" refwarn=\"1\">\n            <inline classes=\"xref std std-ref\">\n                “y” – z\n         and \n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"1\" reftarget=\"x\" reftype=\"term\" refwarn=\"1\">\n            <inline classes=\"xref std std-term\">\n                “t”\n         and ‘z’ 'q'.\n",
+      "rst": "A &#34;x&#34; and :ref:`&#34;y&#34; -- z <lbl>` and :term:`\"t\" <x>` and 'z' &#39;q&#39;.\n",
+      "warnings": []
+    },
+    {
+      "conf": {
+        "smartquotes": true
+      },
+      "family": "sq",
+      "name": "sq.option_list",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <option_list>\n        <option_list_item>\n            <option_group>\n                <option>\n                    <option_string>\n                        -a\n                    <option_argument delimiter=\" \">\n                        <”x”>\n            <description>\n                <paragraph>\n                    Option “a” – desc.\n        <option_list_item>\n            <option_group>\n                <option>\n                    <option_string>\n                        -b\n                    <option_argument delimiter=\" \">\n                        <’y’>\n            <description>\n                <paragraph>\n                    Option ‘b’.\n",
+      "rst": "-a <\"x\">  Option \"a\" -- desc.\n-b <'y'>  Option 'b'.\n",
+      "warnings": []
+    },
+    {
+      "conf": {
+        "smartquotes": true,
+        "smartquotes_excludes": {
+          "builders": [
+            "dummy"
+          ],
+          "languages": []
+        }
+      },
+      "family": "sq",
+      "name": "sq.excluded_builder",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        \"Quoted\" -- 'x'...\n",
+      "rst": "\"Quoted\" -- 'x'...\n",
+      "warnings": []
     }
   ],
   "conf_semantics": "a case's optional 'conf' dict is confoverrides applied on top of the base settings above; absent = defaults. The consumer maps every key onto ParseOptions.py and errors on unmapped keys.",

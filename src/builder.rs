@@ -75,7 +75,10 @@ const DOCTREE_MAGIC: &[u8; 4] = b"SUDT";
 /// captioned figures, tables and code blocks (which the parse no longer
 /// stamps on a captioned `literalinclude`), the `doctest` class and
 /// unwrapped doctest block quotes, Transitions' moves, and the toctree's
-/// `rawentries`/`rawcaption`, which the parse no longer writes.
+/// `rawentries`/`rawcaption`, which the parse no longer writes, and
+/// SmartQuotes' educated text (a version-3 blob from before it decodes
+/// into the plain text; the builder's name entering the cache fingerprint
+/// in the same change wipes such a cache anyway).
 ///
 /// Version 3 also carries the escape field, `Node::escapes` (docutils'
 /// backslash escapes beside each text node) — the one bump of the wave is
@@ -244,7 +247,17 @@ fn suffix_rank(path: &Path) -> Option<usize> {
         .position(|suffix| *suffix == extension)
 }
 
-/// blake3 over the configuration minus [`EXCLUDED_FROM_FINGERPRINT`].
+/// blake3 over the configuration minus [`EXCLUDED_FROM_FINGERPRINT`], plus
+/// the builder's name ([`BuildConfig::builder`], which serde skips).
+///
+/// The builder takes part because a document's read depends on it:
+/// SmartQuotes stays off for a builder `smartquotes_excludes['builders']`
+/// names (`sphinx/transforms/__init__.py:392`), and the cache also keeps
+/// each document's rendered output. Sphinx does not re-read on a builder
+/// change — probed: `-b html` then `-b text` over one doctree directory
+/// serves the text build the html build's educated doctree, and the
+/// reverse order serves html the plain one — so a shared cache there holds
+/// a tree the next builder would not have read. Here it is wiped instead.
 ///
 /// The value is serialized through `serde_json::Value` before hashing, which
 /// also makes the digest order-independent: `Value::Object` is a `BTreeMap`,
@@ -256,6 +269,10 @@ fn config_fingerprint(config: &BuildConfig) -> Result<String> {
         for key in EXCLUDED_FROM_FINGERPRINT {
             map.remove(key);
         }
+        map.insert(
+            "builder".to_string(),
+            serde_json::Value::String(config.builder.clone()),
+        );
     }
     Ok(blake3::hash(serde_json::to_string(&value)?.as_bytes())
         .to_hex()
@@ -1993,6 +2010,82 @@ mod tests {
         let mut numfig = base.clone();
         numfig.numfig = true;
         assert_ne!(config_fingerprint(&numfig).unwrap(), baseline, "numfig");
+    }
+
+    /// The builder's name is skipped by serde (it is no config value) but
+    /// still fingerprinted: a document read for one builder is never
+    /// served to another (see [`config_fingerprint`]).
+    #[test]
+    fn the_builder_name_changes_the_fingerprint() {
+        let base = BuildConfig::default();
+        let baseline = config_fingerprint(&base).unwrap();
+        for builder in ["text", "dirhtml"] {
+            let other = BuildConfig {
+                builder: builder.to_string(),
+                ..base.clone()
+            };
+            assert_ne!(config_fingerprint(&other).unwrap(), baseline, "{builder}");
+        }
+    }
+
+    fn build_with(
+        config: BuildConfig,
+        source_dir: &Path,
+        output_dir: &Path,
+    ) -> (BuildStats, SphinxBuilder) {
+        let mut builder =
+            SphinxBuilder::new(config, source_dir.to_path_buf(), output_dir.to_path_buf()).unwrap();
+        builder.enable_incremental();
+        let stats = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(builder.build())
+            .unwrap();
+        (stats, builder)
+    }
+
+    /// A doctree SmartQuotes educated for `html` is not served to `text`,
+    /// which `smartquotes_excludes['builders']` names (its default), nor the
+    /// plain one back to `html`: each builder change reads afresh — where
+    /// Sphinx, sharing its doctree directory, would hand over the other
+    /// builder's tree (probed; [`config_fingerprint`]).
+    #[test]
+    fn a_document_read_for_one_builder_is_not_served_to_another() {
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("source");
+        let output_dir = tmp.path().join("build");
+        write_project(&source_dir);
+        std::fs::write(source_dir.join("a.rst"), "A\n=\n\n\"Quoted\" -- x...\n").unwrap();
+        let config = |builder: &str| BuildConfig {
+            builder: builder.to_string(),
+            ..BuildConfig::default()
+        };
+        let paragraph = |builder: &SphinxBuilder| {
+            let tree = builder.load_doctree("a").expect("doctree decodes");
+            tree.root.children[0].children[1].astext()
+        };
+
+        let (cold, html) = build_with(config("html"), &source_dir, &output_dir);
+        assert_eq!(cold.cache_hits, 0);
+        assert_eq!(
+            paragraph(&html),
+            "\u{201c}Quoted\u{201d} \u{2013} x\u{2026}"
+        );
+
+        let (text_build, text) = build_with(config("text"), &source_dir, &output_dir);
+        assert_eq!(text_build.cache_hits, 0, "read afresh for text");
+        assert_eq!(paragraph(&text), "\"Quoted\" -- x...");
+
+        let (back, html) = build_with(config("html"), &source_dir, &output_dir);
+        assert_eq!(back.cache_hits, 0, "read afresh for html again");
+        assert_eq!(
+            paragraph(&html),
+            "\u{201c}Quoted\u{201d} \u{2013} x\u{2026}"
+        );
+
+        let (warm, _) = build_with(config("html"), &source_dir, &output_dir);
+        assert_eq!(warm.cache_hits, 2, "the same builder is warm");
     }
 
     /// Serializing through `serde_json::Value` sorts every map, so a

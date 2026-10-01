@@ -88,7 +88,12 @@ use crate::doctree::Node;
 /// (`Node::escapes`), which reshapes the `titles`/`longtitles`/`tocs`
 /// trees: a v4 `env.bin` from before it fails to decode at its first node
 /// (the field comes first on the wire, and the old kind's bytes read as
-/// escape offsets out of order) and is rebuilt.
+/// escape offsets out of order) and is rebuilt. Nor for SmartQuotes (750),
+/// whose educated text the `titles`/`longtitles`/`tocs` trees and the std
+/// labels' section names now hold: a v4 `env.bin` from before it decodes
+/// into the plain text — but only builds of this branch wrote one, and the
+/// cache fingerprint that came with it (the builder's name,
+/// `crate::builder`'s `config_fingerprint`) wipes it anyway.
 pub const ENV_VERSION: u32 = 4;
 
 /// The `env.bin` filename inside a build's cache directory.

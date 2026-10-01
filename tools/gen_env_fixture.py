@@ -63,7 +63,9 @@ Harness notes:
     so a multi-line docutils message keeps its boundaries and blank lines;
     the generator asserts that splitting it reproduces `warnings`.
   - confoverrides always include `{'smartquotes': False}` (Sphinx's default
-    smartquotes rewriting is irrelevant noise for this corpus); per-project
+    smartquotes rewriting is irrelevant noise for this corpus) -- but for
+    `smartquotes_default` (M2 wave 5, Task 14), whose own `conf` turns it
+    back on to pin educated text in the environment; per-project
     extras (numfig, numfig_secnum_depth, numfig_format, ...) come from each
     corpus entry's own `conf` dict and are recorded verbatim in the fixture's
     per-project `conf` field so a later Rust consumer can replay the exact
@@ -1695,6 +1697,46 @@ See [Used]_.
         # (`location=(docname, lineno)`).
         "data_files": {
             "notes.inc": ".. [Inc] Included citation.\n\n.. [9] Unreferenced footnote.\n",
+        },
+    },
+    # -----------------------------------------------------------------------
+    # Wave 5 (sub-project 1, Task 14): SphinxSmartQuotes at Sphinx's default
+    # (`smartquotes=True`; the project's `conf` overrides the base). It
+    # runs at 750, before SphinxDomains (850) and the collectors (880), so
+    # the environment reads educated text: the toc entries (`tocs`), the
+    # std labels' section names -- a section's title and a labelled field
+    # list's first field name, which `:ref:` and `:doc:` resolve to -- and
+    # the glossary term node. What the parse computed from the raw text
+    # stays straight: section ids and names, the glossary term's std object
+    # name and index entry, and the label names themselves.
+    # -----------------------------------------------------------------------
+    {
+        "name": "smartquotes_default",
+        "conf": {"smartquotes": True},
+        "files": {
+            "index": """\
+"Smart" Quotes -- Title
+=======================
+
+.. _sub-label:
+
+Sub "section" -- it's here
+--------------------------
+
+See :ref:`sub-label`, :ref:`"Explicit" -- title <sub-label>` and :doc:`index`.
+
+.. glossary::
+
+   "Term" -- one
+      Definition "text"...
+
+Use :term:`"Term" -- one` and :ref:`field-label`.
+
+.. _field-label:
+
+:Labelled "field": value -- x
+:Other: 'y'
+""",
         },
     },
 ]

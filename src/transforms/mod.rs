@@ -33,6 +33,8 @@ pub(crate) mod footnotes;
 pub(crate) mod frontmatter;
 pub(crate) mod misc;
 pub(crate) mod references;
+pub(crate) mod smartquotes;
+mod smartquotes_tables;
 
 use std::collections::BTreeMap;
 
@@ -59,6 +61,10 @@ pub struct TransformConfig {
     pub keep_warnings: bool,
     /// `language` (`config.py:230`), which picks SmartQuotes' quote set.
     pub language: String,
+    /// The builder's name (`self.env._builder_cls.name`), which
+    /// `smartquotes_excludes['builders']` is tested against
+    /// (`transforms/__init__.py:392`): [`BuildConfig::builder`].
+    pub builder: String,
     /// `version` (`config.py:225`), the `|version|` default substitution.
     pub version: String,
     /// `release` (`config.py:226`), the `|release|` default substitution.
@@ -99,6 +105,7 @@ impl Default for TransformConfig {
             smartquotes_excludes: SmartquotesExcludes::default(),
             keep_warnings: false,
             language: "en".to_string(),
+            builder: "html".to_string(),
             version: String::new(),
             release: String::new(),
             today: String::new(),
@@ -110,16 +117,17 @@ impl Default for TransformConfig {
 
 impl From<&BuildConfig> for TransformConfig {
     /// The build configuration's values. An unset `version`/`release` is
-    /// upstream's `''` default, and an unset `language` its `'en'` — which
-    /// is also what Sphinx makes of a conf.py `language = None`
-    /// (`config.py:569-581`).
+    /// upstream's `''` default, an unset `smartquotes_excludes` its default
+    /// dict, and an unset `language` its `'en'` — which is also what Sphinx
+    /// makes of a conf.py `language = None` (`config.py:569-581`).
     fn from(config: &BuildConfig) -> Self {
         TransformConfig {
             smartquotes: config.smartquotes,
             smartquotes_action: config.smartquotes_action.clone(),
-            smartquotes_excludes: config.smartquotes_excludes.clone(),
+            smartquotes_excludes: config.smartquotes_excludes.clone().unwrap_or_default(),
             keep_warnings: config.keep_warnings,
             language: config.language.clone().unwrap_or_else(|| "en".to_string()),
+            builder: config.builder.clone(),
             version: config.version.clone().unwrap_or_default(),
             release: config.release.clone().unwrap_or_default(),
             today: config.today.clone(),
@@ -459,7 +467,7 @@ static READ_TRANSFORMS: &[ReadTransform] = &[
     (660, "InternalTargets", references::internal_targets),
     (700, "FootnoteDocnameUpdater", footnotes::footnote_docnames),
     // 740 StripComments: no-op (`strip_comments` unset).
-    // 750 SphinxSmartQuotes (Task 14).
+    (750, "SphinxSmartQuotes", smartquotes::smart_quotes),
     // 820 Decorations: no-op (no generator/datestamp/source link).
     (830, "Transitions", misc::transitions),
     // 835 Validate, 840 ExposeInternals: no-ops.
@@ -683,7 +691,7 @@ pub(crate) fn parse_full_and_transform(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{BuildConfig, SmartquotesExcludes};
+    use crate::config::{BuildConfig, ExcludeList, SmartquotesExcludes};
     use crate::doctree::{kinds, messages};
     use crate::rst::diagnostics::DiagnosticChannel;
     use crate::rst::ParseOptions;
@@ -706,6 +714,7 @@ mod tests {
             smartquotes_excludes: SmartquotesExcludes::default(),
             keep_warnings: false,
             language: "en".to_string(),
+            builder: "html".to_string(),
             version: String::new(),
             release: String::new(),
             today: String::new(),
@@ -724,12 +733,13 @@ mod tests {
         let config = BuildConfig {
             smartquotes: false,
             smartquotes_action: "q".to_string(),
-            smartquotes_excludes: SmartquotesExcludes {
-                languages: vec!["de".to_string()],
-                builders: Vec::new(),
-            },
+            smartquotes_excludes: Some(SmartquotesExcludes {
+                languages: ExcludeList::names(["de"]),
+                builders: ExcludeList::default(),
+            }),
             keep_warnings: true,
             language: Some("fr".to_string()),
+            builder: "dirhtml".to_string(),
             version: Some("1.2".to_string()),
             release: Some("1.2.3".to_string()),
             today: "Sept 30".to_string(),
@@ -742,11 +752,12 @@ mod tests {
                 smartquotes: false,
                 smartquotes_action: "q".to_string(),
                 smartquotes_excludes: SmartquotesExcludes {
-                    languages: vec!["de".to_string()],
-                    builders: Vec::new(),
+                    languages: ExcludeList::names(["de"]),
+                    builders: ExcludeList::default(),
                 },
                 keep_warnings: true,
                 language: "fr".to_string(),
+                builder: "dirhtml".to_string(),
                 version: "1.2".to_string(),
                 release: "1.2.3".to_string(),
                 today: "Sept 30".to_string(),
@@ -808,8 +819,10 @@ mod tests {
 
     /// The hyperlink and footnote families in their probed slots (research
     /// §1.2: 440-009, 460-010, 619-016, 619-017, 620-011, 622-028, 640-012,
-    /// 660-013, 700-015, 850-039), DoctestTransform (500-024) and
-    /// Transitions (830-014) among them: the anonymous pairing before the
+    /// 660-013, 700-015, 850-039), DoctestTransform (500-024),
+    /// SphinxSmartQuotes (750-029) and Transitions (830-014) among them —
+    /// SmartQuotes after every transform that makes text and before the
+    /// domains (850) and collectors (880) read it: the anonymous pairing before the
     /// indirect targets (which rewrite the anonymous references it gave a
     /// `refid`);
     /// the citation definitions before the citation references (Sphinx
@@ -841,6 +854,7 @@ mod tests {
                 (640, "ExternalTargets"),
                 (660, "InternalTargets"),
                 (700, "FootnoteDocnameUpdater"),
+                (750, "SphinxSmartQuotes"),
                 (830, "Transitions"),
                 (850, "SphinxDanglingReferences"),
                 (999, "FilterSystemMessages"),

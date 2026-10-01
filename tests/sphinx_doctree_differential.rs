@@ -1,6 +1,7 @@
 //! Differential test: our RST parser and read-transform pass vs the SPHINX
 //! ORACLE — the pseudo-XML a real `sphinx-build` 9.1.0 read phase (dummy
-//! builder, `extensions = []`, smartquotes off, keep_warnings on) produces for
+//! builder, `extensions = []`, smartquotes off but for the `sq` family,
+//! keep_warnings on) produces for
 //! the committed fixture corpus. The oracle's tree is the one Sphinx's read
 //! transforms leave, so ours is too: every case goes through
 //! [`parse_and_transform`] under the fixture's pinned
@@ -27,7 +28,9 @@
 //! `ParseOptions.py` ([`sphinx_ultra::py::PySigConfig`]) or, since M2 wave 5,
 //! onto `ParseOptions.highlight_language` or the read transforms'
 //! [`TransformConfig`] (the default substitutions' `version`/`release`/
-//! `today`/`today_fmt`); an unmapped key is a hard
+//! `today`/`today_fmt`, and the `sq` family's `smartquotes`,
+//! `smartquotes_action`, `smartquotes_excludes` and `language`, which turn
+//! SmartQuotes on over the base's `smartquotes=False`); an unmapped key is a hard
 //! error so a future generator-side conf addition fails HERE instead of
 //! silently parsing under defaults (serde ignores unknown struct fields, so
 //! without the explicit map a conf case would quietly lose its config).
@@ -41,6 +44,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use sphinx_ultra::config::{ExcludeList, SmartquotesExcludes};
 use sphinx_ultra::error::BuildWarning;
 use sphinx_ultra::py::PySigConfig;
 use sphinx_ultra::rst::ParseOptions;
@@ -120,6 +124,36 @@ fn configs_from_conf(
             other => string(key, other).map(Some),
         }
     }
+    /// A `smartquotes_excludes` dict: each half a list of strings, an
+    /// absent half `[]` (`.get(..., [])`, `transforms/__init__.py:383-384`).
+    fn excludes(key: &str, value: &Value) -> Result<SmartquotesExcludes, String> {
+        let map = value
+            .as_object()
+            .ok_or_else(|| format!("conf key {key}: expected a dict, got {value}"))?;
+        let half = |name: &str| -> Result<ExcludeList, String> {
+            match map.get(name) {
+                None => Ok(ExcludeList::default()),
+                Some(Value::Array(items)) => items
+                    .iter()
+                    .map(|item| string(key, item))
+                    .collect::<Result<_, _>>()
+                    .map(ExcludeList::Names),
+                Some(other) => Err(format!(
+                    "conf key {key}.{name}: expected a list, got {other}"
+                )),
+            }
+        };
+        if let Some(other) = map
+            .keys()
+            .find(|k| !["languages", "builders"].contains(&k.as_str()))
+        {
+            return Err(format!("conf key {key}: unmapped entry {other:?}"));
+        }
+        Ok(SmartquotesExcludes {
+            languages: half("languages")?,
+            builders: half("builders")?,
+        })
+    }
 
     let mut opts = ParseOptions::default();
     let py = &mut opts.py;
@@ -134,6 +168,11 @@ fn configs_from_conf(
             "release" => transforms.release = string(key, value)?,
             "today" => transforms.today = string(key, value)?,
             "today_fmt" => transforms.today_fmt = opt_string(key, value)?,
+            // SphinxSmartQuotes (750): the `sq` family's knobs.
+            "smartquotes" => transforms.smartquotes = boolean(key, value)?,
+            "smartquotes_action" => transforms.smartquotes_action = string(key, value)?,
+            "smartquotes_excludes" => transforms.smartquotes_excludes = excludes(key, value)?,
+            "language" => transforms.language = string(key, value)?,
             "maximum_signature_line_length" => {
                 py.maximum_signature_line_length = opt_i64(key, value)?;
             }
@@ -170,13 +209,15 @@ fn configs_from_conf(
 
 /// The read-transform configuration every fixture case was generated under:
 /// the generator's fixed `CONFOVERRIDES` (`keep_warnings=True`,
-/// `smartquotes=False`) and its pinned `SOURCE_DATE_EPOCH`, every other key
-/// at Sphinx's default. A case's own `conf` never touches these (the
-/// generator asserts it).
+/// `smartquotes=False`), its `dummy` builder and its pinned
+/// `SOURCE_DATE_EPOCH`, every other key at Sphinx's default. A case's own
+/// `conf` never touches `keep_warnings`, and only the `sq` family's
+/// `smartquotes` (the generator asserts both).
 fn fixture_transform_config(settings: &Settings) -> TransformConfig {
     TransformConfig {
         keep_warnings: true,
         smartquotes: false,
+        builder: "dummy".to_string(),
         build_date: BuildDate::Epoch(settings.source_date_epoch),
         ..TransformConfig::default()
     }
@@ -261,6 +302,48 @@ fn a_mapped_conf_translates_onto_the_transform_config() {
             ..base
         }
     );
+}
+
+/// The `sq` family's SmartQuotes knobs land on the transform
+/// configuration over the base; a `smartquotes_excludes` half it leaves
+/// out is `[]`, and an entry other than the two halves fails.
+#[test]
+fn a_mapped_smartquotes_conf_translates_onto_the_transform_config() {
+    let conf: BTreeMap<String, serde_json::Value> = serde_json::from_str(
+        r#"{"smartquotes": true, "smartquotes_action": "q", "language": "de",
+            "smartquotes_excludes": {"builders": ["dummy"]}}"#,
+    )
+    .unwrap();
+    let base = TransformConfig {
+        smartquotes: false,
+        ..TransformConfig::default()
+    };
+    let (opts, transforms) = configs_from_conf(&conf, base.clone()).unwrap();
+    assert_eq!(opts.py, PySigConfig::default());
+    assert_eq!(
+        transforms,
+        TransformConfig {
+            smartquotes: true,
+            smartquotes_action: "q".to_string(),
+            language: "de".to_string(),
+            smartquotes_excludes: SmartquotesExcludes {
+                languages: ExcludeList::default(),
+                builders: ExcludeList::Names(vec!["dummy".to_string()]),
+            },
+            ..base
+        }
+    );
+    for bad in [
+        serde_json::json!({"languages": "de"}),
+        serde_json::json!({"other": []}),
+        serde_json::json!(["de"]),
+    ] {
+        let conf = BTreeMap::from([("smartquotes_excludes".to_string(), bad.clone())]);
+        assert!(
+            configs_from_conf(&conf, TransformConfig::default()).is_err(),
+            "{bad}"
+        );
+    }
 }
 
 /// `highlight_language` lands on the parse options — CodeBlock reads it

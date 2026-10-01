@@ -287,10 +287,29 @@ impl Node {
     }
 
     /// A text node holding `text` — docutils' `astext()` — with the
-    /// [`Node::escapes`] of its `str(node)` beside it.
+    /// [`Node::escapes`] of its `str(node)` beside it: those that fit the
+    /// text. An entry past its end, inside a character, before the entry
+    /// it follows or badly tagged is dropped — in every build profile, so
+    /// that no constructed node is one the decoder rejects (a tree cached
+    /// with one would fail to load on every later build, and its document
+    /// would never be served from the cache again).
     pub fn text_node_escaped(text: impl Into<String>, escapes: Vec<u32>, span: Span) -> Node {
         let text = text.into();
-        debug_assert!(escapes_fit(&text, &escapes), "{escapes:?} beside {text:?}");
+        let escapes = if escapes_fit(&text, &escapes) {
+            escapes
+        } else {
+            let mut previous = 0;
+            escapes
+                .into_iter()
+                .filter(|&entry| match escape_entry(entry) {
+                    Some((offset, _)) if offset >= previous && text.is_char_boundary(offset) => {
+                        previous = offset;
+                        true
+                    }
+                    _ => false,
+                })
+                .collect()
+        };
         Node {
             escapes,
             ..Node::text_node(text, span)
@@ -729,6 +748,32 @@ mod tests {
         }
         let fits = text("é\"", vec![0, 2, 3 | ESCAPED_SPACE]);
         let tree = in_a_document(fits);
+        assert_eq!(from_bincode(&to_bincode(&tree)).unwrap(), tree);
+    }
+
+    /// `Node::text_node_escaped` never makes a node the decoder rejects —
+    /// in a release build too, where a tree that fails to decode would be
+    /// cached, refused on the next build, and leave its document a silent
+    /// permanent cache miss: the entries that do not fit the text (past
+    /// its end, inside a character, out of order, badly tagged) are
+    /// dropped, the ones that do kept in order.
+    #[test]
+    fn text_node_escaped_keeps_only_the_escapes_that_fit() {
+        let node = Node::text_node_escaped(
+            "é\"",
+            vec![
+                0,
+                1,
+                2,
+                1,
+                9,
+                3 | ESCAPED_SPACE | ESCAPED_NEWLINE,
+                3 | ESCAPED_SPACE,
+            ],
+            Span::ZERO,
+        );
+        assert_eq!(node.escapes, [0, 2, 3 | ESCAPED_SPACE]);
+        let tree = in_a_document(node);
         assert_eq!(from_bincode(&to_bincode(&tree)).unwrap(), tree);
     }
 

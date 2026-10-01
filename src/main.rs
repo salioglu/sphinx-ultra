@@ -248,6 +248,9 @@ struct RunArgs {
     warning_file: Option<PathBuf>,
     /// Print sphinx-build's closing "The HTML pages are in …" line
     print_final_location: bool,
+    /// The builder's name (`-b`, or make-mode's target):
+    /// `BuildConfig::builder`.
+    builder: String,
 }
 
 impl RunArgs {
@@ -271,6 +274,7 @@ impl RunArgs {
             fail_on_warning: false,
             warning_file: None,
             print_final_location: false,
+            builder: "html".to_string(),
         }
     }
 }
@@ -319,6 +323,7 @@ async fn run_build(args: RunArgs) -> Result<i32> {
     if args.doctree_dir.is_some() {
         config.doctree_dir = args.doctree_dir.clone();
     }
+    config.builder = args.builder.clone();
     if args.fail_on_warning {
         config.fail_on_warning = true;
     }
@@ -587,6 +592,8 @@ async fn run_sphinx_build_mode(sb: SphinxBuildCli) -> i32 {
         fail_on_warning: sb.fail_on_warning,
         warning_file: sb.warning_file.clone(),
         print_final_location: !sb.quiet,
+        // Only `html` gets this far (`-b` and `-M` are checked above).
+        builder: sb.make_mode.clone().unwrap_or_else(|| sb.builder.clone()),
         ..RunArgs::base(sb.sourcedir.clone(), output)
     };
 

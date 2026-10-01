@@ -38,7 +38,8 @@ produces (probes doc, "TRAP" finding).
 Pinned configuration (recorded in the fixture header, asserted at runtime):
   - conf.py: extensions=[], master_doc='index', exclude_patterns=['_build']
   - confoverrides: smartquotes=False  (Sphinx enables docutils smartquotes by
-    default; disabling keeps wave-1/2 text conventions -- probes doc gotcha)
+    default; disabling keeps wave-1/2 text conventions -- probes doc gotcha;
+    the `sq` family alone turns it back on, see "SMARTQUOTES FAMILY")
   - confoverrides: keep_warnings=True (FilterSystemMessages keeps WARNING(2)/
     ERROR(3)/SEVERE(4) system_messages in-tree like the wave-1/2 fixtures;
     DEBUG(0)/INFO(1) are still stripped -- probes doc FilterSystemMessages
@@ -86,7 +87,8 @@ CORPUS POLICY (merge bar): every emitted case is byte-identical between this
 Sphinx oracle and the crate's parse layer FOLLOWED BY its read-transform pass
 (`sphinx_ultra::transforms::parse_and_transform`, which
 tests/sphinx_doctree_differential.rs runs under this fixture's
-keep_warnings=True / smartquotes=False), in its tree and in its printed
+keep_warnings=True / smartquotes=False, and each case's own conf -- the `sq`
+family's smartquotes=True), in its tree and in its printed
 records, hence zero-divergence against the Rust pipeline. (Until M2 wave 5 the
 bar was the bare wave-1/2/3 docutils parse layer: the crate ran no transform.)
 Candidate cases whose tree a read transform the crate does not run yet
@@ -164,7 +166,8 @@ re-parse must print the same records.
 
 PER-CASE CONFOVERRIDES (wave-4.5 task 8): a case tuple may carry a fourth
 element, a dict of confoverrides applied ON TOP of the fixed CONFOVERRIDES
-base (smartquotes/keep_warnings are never overridden per-case). One
+base (keep_warnings is never overridden per-case, and smartquotes only by
+the `sq` family -- see "SMARTQUOTES FAMILY"). One
 SphinxTestApp is constructed per DISTINCT conf dict (cases grouped by their
 JSON-serialized conf, mirroring the [SIG] appendix probe scripts) so fifty
 conf cases do not spin fifty apps; the base settings assertions run against
@@ -172,6 +175,21 @@ every app. The fixture schema emits "conf" on a case ONLY when non-empty —
 absent means defaults — and the Rust consumer maps every conf key onto
 ParseOptions.py (PySigConfig), ERRORING on unmapped keys so a future conf
 addition here fails loudly there instead of silently parsing under defaults.
+
+SMARTQUOTES FAMILY (M2 wave 5, Task 14): Sphinx's default is
+`smartquotes=True`, so an oracle that never ran SphinxSmartQuotes (750,
+`sphinx/transforms/__init__.py:361-415`) would bless output no default
+build produces. The structural families keep the base `smartquotes=False`
+(typography must not mask a writer or transform failure, and their trees
+stay comparable to the docutils/env fixtures); the `sq` family -- and only
+it (asserted in main()) -- carries `smartquotes: True` in its per-case conf,
+next to the knobs SmartQuotes reads: `language` (the document language and
+`smartquotes_excludes['languages']` test), `smartquotes_action`, and
+`smartquotes_excludes`. The harness builder is `dummy`, so a
+`smartquotes_excludes['builders']` naming it switches the transform off.
+check_effective_settings expects each group's own `language`/`smartquotes`;
+the header record is still the default group's, unchanged. Research:
+docs/superpowers/research/2026-09-30-m2-wave5-transforms.md section 5.
 
 WAVE-4.5 EXCLUSIONS (py-domain corpus; every entry in EXCLUDED below carries
 its reason and the assert keeps CASES disjoint from it — see that dict).
@@ -254,6 +272,12 @@ CONF_PY = (
 )
 
 CONFOVERRIDES = {"smartquotes": False, "keep_warnings": True}
+
+# The `sq` family (module docstring, "SMARTQUOTES FAMILY"): the one family
+# whose per-case conf may override a base key (`smartquotes`), and the
+# SmartQuotes knobs only its cases may set.
+SQ_FAMILY = "sq"
+SQ_CONF_KEYS = {"smartquotes", "smartquotes_action", "smartquotes_excludes", "language"}
 
 # Node kinds the corpus may produce (post-transform tagnames). A snippet
 # producing anything else is a generator ERROR: the corpus must stay inside
@@ -389,6 +413,10 @@ SUPPORTED_KINDS = {
     # HandleCodeBlocks unwraps, and the figures AutoNumbering numbers.
     "doctest_block",
     "figure",
+    # M2 wave 5, Task 14: the FixedTextElement/Special `raw` and the
+    # option-list argument SmartQuotes educates as a unit of its own.
+    "raw",
+    "option_argument",
 }
 
 CASES = [
@@ -1445,6 +1473,69 @@ CASES = [
     # the `.. highlight::` in force, else `highlight_language`; a `::`
     # block has none until the write phase.
     ('tx_misc', 'highlight_language_default_from_config', 'Para::\n\n   lit\n\n.. code-block::\n\n   x = 1\n\n.. highlight:: c\n\n.. code-block::\n\n   y\n', {'highlight_language': 'python'}),
+    # ===== sq (M2 wave 5, sub-project 1, Task 14) =====
+    # SphinxSmartQuotes (750, `sphinx/transforms/__init__.py:361-415`) at
+    # Sphinx's defaults (module docstring, "SMARTQUOTES FAMILY"): docutils'
+    # `SmartQuotes.apply` (`docutils/transforms/universal.py:280-340`) over
+    # every TextElement whose parent is none, `educate_tokens` with
+    # `smartquotes_action` (`docutils/utils/smartquotes.py:565-675`).
+    # Quotes in context across inline nodes, apostrophes, decades, adjacent
+    # and bracketed quotes, `--`/`---`/`...`/`. . .`.
+    ('sq', 'en_quotes_dashes_ellipsis', 'He said "hello" and \'bye\'. It\'s the \'80s -- or 1990--2000 --- maybe... ok. . . done.\n\nHe said "she said \'hi\'" -- ok. x--y and 5\'10" and rock \'n\' roll. "Hello," she said. \'Twas.\n\n\'Start\' and "*emph*" and "**strong**" end. ``code``\'s apostrophe. "\'Quoted\' words" -- (\'paren\') [x"] {\'b\'} -"y"- --\'z\'--\n', {'smartquotes': True}),
+    # The escape side channel (Task 13): `str(node)` keeps a null before
+    # each escaped character, Sphinx's `get_tokens` turns it into a
+    # backslash escape `processEscapes` protects -- an escaped quote, dash
+    # or dot stays plain, an escaped backslash keeps the quote after it
+    # educated, an escaped space is still whitespace.
+    ('sq', 'escaped_quote_stays_straight', 'Escaped \\"quote\\" and \\\'x\\\' and \\`tick\\` and back\\\\"slash" and "a\\ b" and \\a"z".\n', {'smartquotes': True}),
+    ('sq', 'escaped_dashes', 'a\\--b and a-\\-b and \\---x and x-\\--y and wait\\... and .\\.. and . \\. . and "end\\".\n', {'smartquotes': True}),
+    # FixedTextElement and Special units are skipped (literal and doctest
+    # blocks, comments, raw, substitution definitions, math blocks, the
+    # signature's desc_name/desc_parameterlist), and a Text under a literal,
+    # math or not_smartquotable node or a `support_smartquotes=False` one
+    # (the py default value) is a literal token (`sphinx/util/nodes.py:
+    # 697-716`); the substituted text and the desc_content are educated.
+    ('sq', 'literal_untouched', '``"lit" -- x...`` and :math:`"m"` and *"em"*.\n\n::\n\n   "block" -- x...\n\n>>> "doctest" -- x\n\n.. "comment" -- x\n\n.. raw:: html\n\n   <b>"raw" -- x</b>\n\n.. |sub| replace:: "s" -- x\n\nA |sub| here.\n\n.. py:function:: f(a="x", b=\'y\')\n\n   Body "text" -- here.\n\n.. math::\n\n   "x" -- y\n', {'smartquotes': True}),
+    # Titles, rubric, field name, term and classifier, line block,
+    # attribution, glossary term, admonition, versionmodified, code-block
+    # caption: educated in the tree -- while the section's ids/names, the
+    # glossary's index entry and the toctree's caption (attributes made at
+    # parse time) stay straight.
+    ('sq', 'title_and_rubric', '"Quoted" Title\'s -- here\n========================\n\n.. rubric:: "R" -- r\n\n:"Field" name: "body" -- x\n\n"term" -- t : "classifier"\n   "def"\n\n| "line" -- one\n| \'two\'\n\n    "quote"\n\n    -- "attr"\n\n.. toctree::\n   :caption: "Cap" -- x\n\n.. glossary::\n\n   "gterm" -- g\n      "gdef"\n\n.. note:: "Note" -- n\n\n.. versionadded:: 1.0\n   "Added" -- a\n\n.. code-block:: none\n   :caption: "Code" -- cap\n\n   "code"\n', {'smartquotes': True}),
+    # The document language picks the quotes (`normalize_language_tag`,
+    # `docutils/utils/__init__.py:741-765`); a `language-xx` class on the
+    # unit or an ancestor overrides it (`nodes.py:773-786`). French quotes
+    # carry a no-break space; `de-CH` normalizes to its own set.
+    ('sq', 'de_quotes', '"Deutsch" und \'einfach\' -- x... und "\'beide\'".\n\n.. rst-class:: language-en\n\n"English" \'here\'.\n', {'smartquotes': True, 'language': 'de'}),
+    ('sq', 'fr_nbsp', '"Bonjour" et \'salut\' -- x... et "\'les deux\'".\n\n.. rst-class:: language-de-CH\n\n"Schweiz" \'x\'.\n', {'smartquotes': True, 'language': 'fr'}),
+    # `smartquotes_excludes['languages']` holds 'ja' (`config.py:291-295`):
+    # nothing is educated, not even a `language-de` paragraph.
+    ('sq', 'ja_excluded', '"Quoted" -- \'x\'...\n\n.. rst-class:: language-de\n\n"Deutsch" -- x.\n', {'smartquotes': True, 'language': 'ja'}),
+    ('sq', 'action_q_only', '"Quoted" -- \'x\'... it\'s --- y.\n', {'smartquotes': True, 'smartquotes_action': 'q'}),
+    # A `language-xx` with no quote set: one WARNING per language per
+    # document, at the unit's line (`universal.py:319-330`), and ASCII
+    # quotes -- but apostrophes, dashes and ellipses are still educated. A
+    # subtag the table lacks falls back to its base (`de-xx` -> `de`).
+    ('sq', 'unknown_language', 'Para "one".\n\n.. rst-class:: language-xx\n\n"Quoted" text\'s -- here...\n\n.. rst-class:: language-xx\n\nAgain "x".\n\n.. rst-class:: language-yy-zz\n\nOther \'y\'.\n\n.. container:: language-xx\n\n   Inside "c".\n\n.. rst-class:: language-de-xx\n\n"Sub" tag.\n', {'smartquotes': True}),
+    # Python `re`'s `\s` (NBSP, ideographic and em spaces, `\x1f`) and the
+    # `sep` class's ZWSP/ZWNJ beside quotes -- and a space is `punct` there.
+    ('sq', 'nbsp_neighbours', 'a\u00a0"b"\u00a0c and \'d\'\u3000"e" and \u2003\'f\'\u2003 and x\u001f"g"\u001f and "h\u00a0" and \u200b"i" and \u200c\'j\'.\n', {'smartquotes': True}),
+    # An in-tree system_message (kept by keep_warnings) is Special but no
+    # literal: its paragraph is educated, its literal_block (Fixed) is not;
+    # the printed record keeps its straight quotes.
+    ('sq', 'system_message_text', '.. nosuch:: "x" -- y\n\nAfter "z".\n', {'smartquotes': True}),
+    # A TextElement under a non-TextElement is a unit of its own even
+    # inside a paragraph: the xref's `inline` is educated twice -- with the
+    # paragraph, then alone -- which shows in `&#34;`, which the first
+    # pass's `processEscapes(restore=True)` turns into a plain `"` that the
+    # second educates (the paragraph's own stays straight).
+    ('sq', 'nested_units_and_entities', 'A &#34;x&#34; and :ref:`&#34;y&#34; -- z <lbl>` and :term:`"t" <x>` and \'z\' &#39;q&#39;.\n', {'smartquotes': True}),
+    # An option_string's Text is no token at all (`universal.py:305-308`);
+    # the option_argument is a unit.
+    ('sq', 'option_list', '-a <"x">  Option "a" -- desc.\n-b <\'y\'>  Option \'b\'.\n', {'smartquotes': True}),
+    # `smartquotes_excludes['builders']` naming the harness's builder
+    # (`dummy`) switches the transform off (`transforms/__init__.py:392`).
+    ('sq', 'excluded_builder', '"Quoted" -- \'x\'...\n', {'smartquotes': True, 'smartquotes_excludes': {'languages': [], 'builders': ['dummy']}}),
 ]
 
 
@@ -1567,7 +1658,7 @@ def make_app(base: Path, conf: dict) -> SphinxTestApp:
     base.mkdir(parents=True)
     (base / "conf.py").write_text(CONF_PY, encoding="utf-8")
     (base / "index.rst").write_text("Placeholder\n===========\n", encoding="utf-8")
-    assert not (set(conf) & set(CONFOVERRIDES)), (
+    assert set(conf) & set(CONFOVERRIDES) <= {"smartquotes"}, (
         f"per-case conf must not override the fixture base settings: {conf}"
     )
     return SphinxTestApp(
@@ -1616,13 +1707,14 @@ def normalize(pseudo_xml: str, base: Path) -> str:
     return text
 
 
-def check_effective_settings(app: SphinxTestApp, doctree) -> dict:
+def check_effective_settings(app: SphinxTestApp, doctree, conf: dict) -> dict:
     """Assert the settings combination this fixture claims, and return the
     header record. Guards against a future Sphinx/docutils default shifting
     silently underneath the harness. NOTE: smartquotes is a Sphinx CONFIG
     gate (SphinxSmartQuotes.is_available checks config.smartquotes); the
     docutils settings.smart_quotes value stays True and is intentionally
-    not what we assert."""
+    not what we assert. An `sq` group's own `language`/`smartquotes` are
+    what its app must run with (module docstring, "SMARTQUOTES FAMILY")."""
     s = doctree.settings
     effective = {
         "report_level": s.report_level,
@@ -1639,8 +1731,8 @@ def check_effective_settings(app: SphinxTestApp, doctree) -> dict:
         "halt_level": 5,
         "auto_id_prefix": "id",
         "id_prefix": "",
-        "language": "en",
-        "smartquotes": False,
+        "language": conf.get("language", "en"),
+        "smartquotes": conf.get("smartquotes", False),
         "doctitle_xform": False,
         "sectsubtitle_xform": False,
     }
@@ -1696,11 +1788,21 @@ def main() -> int:
         "tx_footnotes": 20,
         "tx_docinfo": 25,
         "tx_misc": 22,
+        "sq": 15,
     }
     counts: dict = {}
     for case in CASES:
         counts[case[0]] = counts.get(case[0], 0) + 1
     assert set(counts) == set(floors), f"unexpected families: {sorted(counts)}"
+    # SmartQuotes runs in the `sq` family and nowhere else.
+    for case in CASES:
+        family, name, _, conf = case_parts(case)
+        if family == SQ_FAMILY:
+            assert conf.get("smartquotes") is True, f"{family}.{name}: sq runs smartquotes=True"
+        else:
+            assert not (set(conf) & SQ_CONF_KEYS), (
+                f"{family}.{name}: only the sq family sets {sorted(SQ_CONF_KEYS)}"
+            )
     for family, floor in floors.items():
         assert counts.get(family, 0) >= floor, (
             f"family {family}: {counts.get(family, 0)} < floor {floor}"
@@ -1729,7 +1831,7 @@ def main() -> int:
             try:
                 # The base settings assertions hold for EVERY app: per-case
                 # conf keys never touch the pinned docutils settings.
-                record = check_effective_settings(app, probe(app, base, "sanity\n"))
+                record = check_effective_settings(app, probe(app, base, "sanity\n"), conf)
                 if key == "{}":
                     settings_record = record
 

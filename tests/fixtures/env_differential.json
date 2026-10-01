@@ -7249,6 +7249,151 @@
         "index": "Index\n=====\n\n.. toctree::\n\n   a\n   b\n   c\n"
       },
       "name": "citations"
+    },
+    {
+      "conf": {
+        "smartquotes": true
+      },
+      "expect": {
+        "dependencies": {},
+        "files_to_rebuild": {},
+        "genindex": [
+          {
+            "entries": [
+              {
+                "category_key": null,
+                "name": "\"Term\" -- one",
+                "subitems": [],
+                "targets": [
+                  [
+                    "main",
+                    "#term-Term-one"
+                  ]
+                ]
+              }
+            ],
+            "group": "Symbols"
+          }
+        ],
+        "included": {},
+        "index_entries": {
+          "index": [
+            [
+              "single",
+              "\"Term\" -- one",
+              "term-Term-one",
+              "main",
+              null
+            ]
+          ]
+        },
+        "py_modindex": {
+          "collapse": false,
+          "groups": []
+        },
+        "py_modules": [],
+        "py_objects": [],
+        "relations": {
+          "index": [
+            null,
+            null,
+            null
+          ]
+        },
+        "resolved_pformat": {
+          "index": "<document source=\"<project>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"smart-quotes-title\" names=\"\"smart\"\\ quotes\\ --\\ title\">\n        <title>\n            “Smart” Quotes – Title\n        <target refid=\"sub-label\">\n        <section ids=\"sub-section-it-s-here sub-label\" names=\"sub\\ \"section\"\\ --\\ it's\\ here sub-label\">\n            <title>\n                Sub “section” – it’s here\n            <paragraph>\n                See \n                <reference internal=\"1\" refid=\"sub-label\">\n                    <inline classes=\"std std-ref\">\n                        Sub “section” – it’s here\n                , \n                <reference internal=\"1\" refid=\"sub-label\">\n                    <inline classes=\"std std-ref\">\n                        “Explicit” – title\n                 and \n                <reference internal=\"1\" refuri=\"\">\n                    <inline classes=\"doc\">\n                        “Smart” Quotes – Title\n                .\n            <glossary sorted=\"0\">\n                <definition_list classes=\"glossary\">\n                    <definition_list_item>\n                        <term ids=\"term-Term-one\">\n                            “Term” – one\n                            <index entries=\"('single',\\ '\"Term\"\\ --\\ one',\\ 'term-Term-one',\\ 'main',\\ None)\">\n                        <definition>\n                            <paragraph>\n                                Definition “text”…\n            <paragraph>\n                Use \n                <reference internal=\"1\" refid=\"term-Term-one\">\n                    <inline classes=\"xref std std-term\">\n                        “Term” – one\n                 and \n                <reference internal=\"1\" refid=\"field-label\">\n                    <inline classes=\"std std-ref\">\n                        Labelled “field”\n                .\n            <target refid=\"field-label\">\n            <field_list ids=\"field-label\" names=\"field-label\">\n                <field>\n                    <field_name>\n                        Labelled “field”\n                    <field_body>\n                        <paragraph>\n                            value – x\n                <field>\n                    <field_name>\n                        Other\n                    <field_body>\n                        <paragraph>\n                            ‘y’\n"
+        },
+        "std": {
+          "anonlabels": {
+            "field-label": [
+              "index",
+              "field-label"
+            ],
+            "genindex": [
+              "genindex",
+              ""
+            ],
+            "modindex": [
+              "py-modindex",
+              ""
+            ],
+            "py-modindex": [
+              "py-modindex",
+              ""
+            ],
+            "search": [
+              "search",
+              ""
+            ],
+            "sub-label": [
+              "index",
+              "sub-label"
+            ]
+          },
+          "labels": {
+            "field-label": [
+              "index",
+              "field-label",
+              "Labelled “field”"
+            ],
+            "genindex": [
+              "genindex",
+              "",
+              "Index"
+            ],
+            "modindex": [
+              "py-modindex",
+              "",
+              "Module Index"
+            ],
+            "py-modindex": [
+              "py-modindex",
+              "",
+              "Python Module Index"
+            ],
+            "search": [
+              "search",
+              "",
+              "Search Page"
+            ],
+            "sub-label": [
+              "index",
+              "sub-label",
+              "Sub “section” – it’s here"
+            ]
+          },
+          "objects": [
+            {
+              "docname": "index",
+              "labelid": "term-Term-one",
+              "name": "\"Term\" -- one",
+              "objtype": "term"
+            }
+          ],
+          "progoptions": [],
+          "terms": {
+            "\"term\" -- one": [
+              "index",
+              "term-Term-one"
+            ]
+          }
+        },
+        "toc_fignumbers": {},
+        "toc_num_entries": {
+          "index": 2
+        },
+        "toc_secnumbers": {},
+        "tocs_pformat": {
+          "index": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"index\">\n                “Smart” Quotes – Title\n        <bullet_list>\n            <list_item>\n                <compact_paragraph>\n                    <reference anchorname=\"#sub-section-it-s-here\" internal=\"1\" refuri=\"index\">\n                        Sub “section” – it’s here\n"
+        },
+        "toctree_includes": {},
+        "warning_records": [],
+        "warnings": []
+      },
+      "files": {
+        "index": "\"Smart\" Quotes -- Title\n=======================\n\n.. _sub-label:\n\nSub \"section\" -- it's here\n--------------------------\n\nSee :ref:`sub-label`, :ref:`\"Explicit\" -- title <sub-label>` and :doc:`index`.\n\n.. glossary::\n\n   \"Term\" -- one\n      Definition \"text\"...\n\nUse :term:`\"Term\" -- one` and :ref:`field-label`.\n\n.. _field-label:\n\n:Labelled \"field\": value -- x\n:Other: 'y'\n"
+      },
+      "name": "smartquotes_default"
     }
   ],
   "sphinx_version": "9.1.0"

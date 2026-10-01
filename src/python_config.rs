@@ -443,9 +443,11 @@ impl PythonConfigParser {
         config.source_encoding = extract_string("source_encoding");
 
         // Read-transform keys. `smartquotes_excludes` is a dict whose two
-        // halves upstream reads with `.get(..., [])`
-        // (`transforms/__init__.py:383-384`), so a dict that omits one names
-        // an empty list for it; anything that is not a dict is left unset.
+        // halves upstream reads with `.get(..., [])` and tests with `in`
+        // (`transforms/__init__.py:383-397`), so a dict that omits one names
+        // an empty list for it, and a string half is a substring test
+        // ([`crate::config::ExcludeList`]); anything that is not a dict is
+        // left unset.
         config.smartquotes = extract_bool("smartquotes");
         config.smartquotes_action = extract_string("smartquotes_action");
         config.smartquotes_excludes = self
@@ -453,20 +455,22 @@ impl PythonConfigParser {
             .get("smartquotes_excludes")
             .and_then(serde_json::Value::as_object)
             .map(|map| {
-                let list = |key: &str| -> Vec<String> {
-                    map.get(key)
-                        .and_then(serde_json::Value::as_array)
-                        .map(|items| {
+                use crate::config::ExcludeList;
+                let half = |key: &str| -> ExcludeList {
+                    match map.get(key) {
+                        Some(serde_json::Value::String(text)) => ExcludeList::Text(text.clone()),
+                        Some(serde_json::Value::Array(items)) => ExcludeList::Names(
                             items
                                 .iter()
                                 .filter_map(|v| v.as_str().map(str::to_string))
-                                .collect()
-                        })
-                        .unwrap_or_default()
+                                .collect(),
+                        ),
+                        _ => ExcludeList::default(),
+                    }
                 };
                 crate::config::SmartquotesExcludes {
-                    languages: list("languages"),
-                    builders: list("builders"),
+                    languages: half("languages"),
+                    builders: half("builders"),
                 }
             });
         config.keep_warnings = extract_bool("keep_warnings");
@@ -1352,7 +1356,7 @@ impl ConfPyConfig {
             config.smartquotes_action = action.clone();
         }
         if let Some(excludes) = &self.smartquotes_excludes {
-            config.smartquotes_excludes = excludes.clone();
+            config.smartquotes_excludes = Some(excludes.clone());
         }
         if let Some(keep_warnings) = self.keep_warnings {
             config.keep_warnings = keep_warnings;
@@ -1427,6 +1431,7 @@ impl ConfPyConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{ExcludeList, SmartquotesExcludes};
 
     fn parse(content: &str) -> PythonConfigParser {
         let mut parser = PythonConfigParser::new().unwrap();
@@ -1898,10 +1903,12 @@ e = 'esc\n'
         assert!(!config.smartquotes);
         assert_eq!(config.smartquotes_action, "De");
         assert_eq!(
-            config.smartquotes_excludes.languages,
-            vec!["de".to_string()]
+            config.smartquotes_excludes,
+            Some(SmartquotesExcludes {
+                languages: ExcludeList::names(["de"]),
+                builders: ExcludeList::default(),
+            })
         );
-        assert!(config.smartquotes_excludes.builders.is_empty());
         assert!(config.keep_warnings);
         assert_eq!(config.today, "X");
         assert_eq!(config.today_fmt.as_deref(), Some("%d"));
@@ -1910,18 +1917,24 @@ e = 'esc\n'
         assert_eq!(config.release.as_deref(), Some("1.2.3"));
 
         // `today_fmt = None` is the default spelled out; half a dict leaves
-        // the other half empty, exactly as upstream's `.get(..., [])` does.
-        let p = parse("today_fmt = None\nsmartquotes_excludes = {'builders': ['html']}\n");
+        // the other half empty, exactly as upstream's `.get(..., [])` does,
+        // and a string half is kept as the string `in` tests substrings of.
+        let p = parse(
+            "today_fmt = None\n\
+             smartquotes_excludes = {'builders': ['html'], 'languages': 'xdex', 'x': 1}\n",
+        );
         let config = p
             .extract_configuration()
             .unwrap()
             .to_build_config()
             .unwrap();
         assert_eq!(config.today_fmt, None);
-        assert!(config.smartquotes_excludes.languages.is_empty());
         assert_eq!(
-            config.smartquotes_excludes.builders,
-            vec!["html".to_string()]
+            config.smartquotes_excludes,
+            Some(SmartquotesExcludes {
+                languages: ExcludeList::Text("xdex".to_string()),
+                builders: ExcludeList::names(["html"]),
+            })
         );
 
         // Naming none of them keeps the defaults.
@@ -1933,6 +1946,7 @@ e = 'esc\n'
         let defaults = BuildConfig::default();
         assert!(config.smartquotes);
         assert_eq!(config.smartquotes_action, "qDe");
+        assert_eq!(config.smartquotes_excludes, None);
         assert_eq!(config.smartquotes_excludes, defaults.smartquotes_excludes);
         assert!(!config.keep_warnings);
         assert_eq!(config.today, "");

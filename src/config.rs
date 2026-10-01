@@ -308,8 +308,12 @@ pub struct BuildConfig {
     pub smartquotes_action: String,
 
     /// `smartquotes_excludes` (`config.py:291-295`): the languages and
-    /// builders the transform stays off for.
-    pub smartquotes_excludes: SmartquotesExcludes,
+    /// builders the transform stays off for. `None` is a configuration that
+    /// never set the dict, which reads as Sphinx's default
+    /// ([`SmartquotesExcludes::default`]) — and which a dotted `-D` override
+    /// replaces with a fresh dict holding only the half it names
+    /// ([`Self::apply_override`]).
+    pub smartquotes_excludes: Option<SmartquotesExcludes>,
 
     /// `keep_warnings`, default `False` (`config.py:261`): the level
     /// `FilterSystemMessages` filters `system_message` nodes below — 5
@@ -332,6 +336,23 @@ pub struct BuildConfig {
     /// language applied to every literal block that names none
     /// (`transforms/post_transforms/code.py:31-42`).
     pub highlight_language: String,
+
+    /// The builder's name — `sphinx-build -b`'s, `'html'` by default — which
+    /// is no config value in Sphinx (`self.env._builder_cls.name`) but is
+    /// read like one: SmartQuotes stays off for a builder
+    /// `smartquotes_excludes['builders']` names (`transforms/__init__.py:
+    /// 392`). Set from the command line, never from a configuration file:
+    /// skipped by serde, so `-D builder=...` is an unknown config value as
+    /// in Sphinx. It still enters the cache fingerprint
+    /// (`crate::builder`'s `config_fingerprint`), so a document read — and
+    /// rendered — for one builder is never served to another.
+    #[serde(skip, default = "default_builder")]
+    pub builder: String,
+}
+
+/// [`BuildConfig::builder`]'s default: sphinx-build's `-b html`.
+fn default_builder() -> String {
+    "html".to_string()
 }
 
 /// `smartquotes_excludes` (`config.py:291-295`): a dict of two lists that
@@ -346,26 +367,76 @@ pub struct BuildConfig {
 /// it from the default dict.
 ///
 /// `-D smartquotes_excludes=...` is not expressible (sphinx's
-/// `convert_overrides` rejects a dict-valued key the same way,
-/// `config.py:375-381`): `apply_override` answers it with its usual
-/// whole-dict warning, while `-D smartquotes_excludes.languages=de,fr`
-/// reaches one list.
+/// `convert_overrides` rejects a dict-valued key, `config.py:375-381`):
+/// `apply_override` answers it with Sphinx's whole-dict warning. A dotted
+/// `-D smartquotes_excludes.languages=de,fr` is Sphinx's
+/// `raw_config.setdefault('smartquotes_excludes', {})['languages'] =
+/// 'de,fr'` (`config.py:310-312`): the raw string, never split, written
+/// into the dict conf.py set — or into a new, otherwise empty one
+/// ([`Self::empty`]), which drops the default `builders` (probed: `-b text`
+/// then educates).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SmartquotesExcludes {
     /// Language codes (`config.language`) the transform is disabled for.
     #[serde(default)]
-    pub languages: Vec<String>,
+    pub languages: ExcludeList,
 
     /// Builder names the transform is disabled for.
     #[serde(default)]
-    pub builders: Vec<String>,
+    pub builders: ExcludeList,
 }
 
 impl Default for SmartquotesExcludes {
     fn default() -> Self {
         Self {
-            languages: ["ja", "zh_CN", "zh_TW"].map(String::from).to_vec(),
-            builders: ["man", "text"].map(String::from).to_vec(),
+            languages: ExcludeList::names(["ja", "zh_CN", "zh_TW"]),
+            builders: ExcludeList::names(["man", "text"]),
+        }
+    }
+}
+
+impl SmartquotesExcludes {
+    /// The dict with neither key (`{}`): nothing excluded.
+    pub fn empty() -> Self {
+        Self {
+            languages: ExcludeList::default(),
+            builders: ExcludeList::default(),
+        }
+    }
+}
+
+/// One half of `smartquotes_excludes`, as SmartQuotes tests a name against
+/// it: Python's `in` (`transforms/__init__.py:392,395`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum ExcludeList {
+    /// A list: a name is in it when it equals an item.
+    Names(Vec<String>),
+    /// A string — what a dotted `-D` override stores, or a conf.py string:
+    /// `in` is then Python's substring test (probed: `language = 'de'` is
+    /// excluded by `-D smartquotes_excludes.languages=xdex`, and the html
+    /// builder by `-D smartquotes_excludes.builders=dirhtml`).
+    Text(String),
+}
+
+impl Default for ExcludeList {
+    /// The `[]` of upstream's `.get(..., [])`.
+    fn default() -> Self {
+        ExcludeList::Names(Vec::new())
+    }
+}
+
+impl ExcludeList {
+    /// A list of `names`.
+    pub fn names<const N: usize>(names: [&str; N]) -> Self {
+        ExcludeList::Names(names.map(String::from).to_vec())
+    }
+
+    /// Python's `name in self`.
+    pub fn contains(&self, name: &str) -> bool {
+        match self {
+            ExcludeList::Names(names) => names.iter().any(|item| item == name),
+            ExcludeList::Text(text) => text.contains(name),
         }
     }
 }
@@ -551,11 +622,12 @@ impl Default for BuildConfig {
             // Read-transform keys (sphinx 9.1 `config.py:225-291`).
             smartquotes: true,
             smartquotes_action: "qDe".to_string(),
-            smartquotes_excludes: SmartquotesExcludes::default(),
+            smartquotes_excludes: None,
             keep_warnings: false,
             today: String::new(),
             today_fmt: None,
             highlight_language: "default".to_string(),
+            builder: default_builder(),
         }
     }
 }
@@ -814,6 +886,29 @@ impl BuildConfig {
             return Ok(None);
         }
 
+        // `smartquotes_excludes` (`config.py:291-295`) is unset until
+        // something writes it, and Sphinx's dotted override writes the raw
+        // string into the dict conf.py made, or into a new one — dropping
+        // the half it does not name, defaults included (`config.py:310-312`;
+        // [`SmartquotesExcludes`]). No warning: Sphinx pops the dotted name
+        // before reporting unknown overrides. A key SmartQuotes never reads
+        // still makes the dict.
+        if key == "smartquotes_excludes" {
+            return Ok(Some(Self::dictionary_override_warning(key)));
+        }
+        if let Some(entry) = key.strip_prefix("smartquotes_excludes.") {
+            let excludes = self
+                .smartquotes_excludes
+                .get_or_insert_with(SmartquotesExcludes::empty);
+            let value = ExcludeList::Text(value.to_string());
+            match entry {
+                "languages" => excludes.languages = value,
+                "builders" => excludes.builders = value,
+                _ => {}
+            }
+            return Ok(None);
+        }
+
         let mut tree = serde_json::to_value(&*self)?;
 
         // Resolve the dotted path. A key missing from its parent object is
@@ -838,10 +933,7 @@ impl BuildConfig {
         // Whole-dict overrides are not expressible on the command line
         // (sphinx-build warns and continues too).
         if slot.is_object() {
-            return Ok(Some(format!(
-                "cannot override dictionary config setting '{}', ignoring (use -D {}.key=value)",
-                key, key
-            )));
+            return Ok(Some(Self::dictionary_override_warning(key)));
         }
 
         let coerced = Self::coerce_override_value(slot, key, value)?;
@@ -892,8 +984,18 @@ impl BuildConfig {
 
         // Serde-skipped state does not survive the round trip; carry it.
         applied.confval_type_mismatches = std::mem::take(&mut self.confval_type_mismatches);
+        applied.builder = std::mem::take(&mut self.builder);
         *self = applied;
         Ok(None)
+    }
+
+    /// `convert_overrides`' answer to a `-D` naming a whole dict-valued key
+    /// (`config.py:375-381`), which Sphinx logs and ignores.
+    fn dictionary_override_warning(key: &str) -> String {
+        format!(
+            "cannot override dictionary config setting '{key}', ignoring \
+             (use '{key}.key=value' to set individual elements)"
+        )
     }
 
     /// Coerce a CLI string to the JSON type currently occupying the slot.
@@ -1353,19 +1455,22 @@ output:
 
     /// The read-transform keys at Sphinx 9.1's defaults (`config.py:225-291`):
     /// `version`/`release` are `''` upstream, carried here as `None` and read
-    /// as `''` by consumers.
+    /// as `''` by consumers, and `smartquotes_excludes` unset, which reads as
+    /// the default dict.
     #[test]
     fn sphinx_defaults_for_the_read_transform_keys() {
         let config = BuildConfig::default();
         assert!(config.smartquotes);
         assert_eq!(config.smartquotes_action, "qDe");
+        assert_eq!(config.smartquotes_excludes, None);
         assert_eq!(
-            config.smartquotes_excludes,
+            SmartquotesExcludes::default(),
             SmartquotesExcludes {
-                languages: vec!["ja".into(), "zh_CN".into(), "zh_TW".into()],
-                builders: vec!["man".into(), "text".into()],
+                languages: ExcludeList::Names(vec!["ja".into(), "zh_CN".into(), "zh_TW".into()]),
+                builders: ExcludeList::Names(vec!["man".into(), "text".into()]),
             }
         );
+        assert_eq!(config.builder, "html");
         assert!(!config.keep_warnings);
         assert_eq!(config.today, "");
         assert_eq!(config.today_fmt, None);
@@ -1375,9 +1480,9 @@ output:
     }
 
     /// Each scalar key coerces from its `-D` string to the type the field
-    /// already has; the dict-valued `smartquotes_excludes` takes the same
-    /// whole-dict warning every dict-valued key gets (`-D` has no syntax
-    /// for it), and a dotted member reaches a list inside it.
+    /// already has; the dict-valued `smartquotes_excludes` takes Sphinx's
+    /// whole-dict warning (`config.py:375-381`), and a dotted member stores
+    /// its raw string in the dict (`config.py:310-312`).
     #[test]
     fn read_transform_keys_are_d_overridable() {
         let mut config = BuildConfig::default();
@@ -1404,18 +1509,87 @@ output:
         let before = config.clone();
         let warning = config.apply_override("smartquotes_excludes", "de").unwrap();
         assert_eq!(config, before);
-        assert!(warning
-            .unwrap()
-            .contains("cannot override dictionary config setting 'smartquotes_excludes'"));
+        assert_eq!(
+            warning.as_deref(),
+            Some(
+                "cannot override dictionary config setting 'smartquotes_excludes', \
+                 ignoring (use 'smartquotes_excludes.key=value' to set individual elements)"
+            )
+        );
 
         assert!(config
             .apply_override("smartquotes_excludes.languages", "de,fr")
             .unwrap()
             .is_none());
         assert_eq!(
-            config.smartquotes_excludes.languages,
-            vec!["de".to_string(), "fr".to_string()]
+            config.smartquotes_excludes,
+            Some(SmartquotesExcludes {
+                languages: ExcludeList::Text("de,fr".to_string()),
+                builders: ExcludeList::default(),
+            })
         );
+    }
+
+    /// A dotted `-D smartquotes_excludes.<key>=<value>` is Sphinx's
+    /// `raw_config.setdefault('smartquotes_excludes', {})[key] = value`
+    /// (`config.py:310-312`), probed under sphinx-build 9.1: the raw
+    /// string, in the dict conf.py set (its other half kept) or in a new
+    /// dict holding nothing else — so the default `builders` are gone and
+    /// `-b text` educates; a key SmartQuotes never reads still makes the
+    /// empty dict; and `in` on the string is a substring test.
+    #[test]
+    fn a_dotted_smartquotes_excludes_override_stores_the_raw_string() {
+        let mut unset = BuildConfig::default();
+        assert!(unset
+            .apply_override("smartquotes_excludes.builders", "dirhtml")
+            .unwrap()
+            .is_none());
+        let excludes = unset.smartquotes_excludes.clone().unwrap();
+        assert_eq!(excludes.languages, ExcludeList::default());
+        assert!(excludes.builders.contains("html"), "'html' in 'dirhtml'");
+        assert!(!excludes.builders.contains("text"));
+        assert!(!excludes.languages.contains("ja"));
+
+        let mut set = BuildConfig {
+            smartquotes_excludes: Some(SmartquotesExcludes {
+                languages: ExcludeList::names(["ja"]),
+                builders: ExcludeList::names(["text"]),
+            }),
+            ..BuildConfig::default()
+        };
+        set.apply_override("smartquotes_excludes.languages", "xdex")
+            .unwrap();
+        let excludes = set.smartquotes_excludes.clone().unwrap();
+        assert!(excludes.languages.contains("de"));
+        assert!(!excludes.languages.contains("ja"));
+        assert_eq!(excludes.builders, ExcludeList::names(["text"]));
+
+        let mut other = BuildConfig::default();
+        assert!(other
+            .apply_override("smartquotes_excludes.foo", "bar")
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            other.smartquotes_excludes,
+            Some(SmartquotesExcludes::empty())
+        );
+    }
+
+    /// The builder's name comes from the command line, not the
+    /// configuration: `-D builder=...` is an unknown config value, as in
+    /// Sphinx, and an override of anything else keeps it.
+    #[test]
+    fn the_builder_name_is_no_config_value() {
+        let mut config = BuildConfig {
+            builder: "dirhtml".to_string(),
+            ..BuildConfig::default()
+        };
+        assert_eq!(
+            config.apply_override("builder", "text").unwrap().as_deref(),
+            Some("unknown config value 'builder' in override, ignoring")
+        );
+        assert!(config.apply_override("smartquotes", "0").unwrap().is_none());
+        assert_eq!(config.builder, "dirhtml");
     }
 
     /// `version`/`release` default to `None` now, so `-D version=1.0` meets a
@@ -1452,15 +1626,17 @@ output:
         assert_eq!(config.highlight_language, "python");
         assert_eq!(config.smartquotes_action, "qDe");
         assert_eq!(
-            config.smartquotes_excludes.languages,
-            vec!["de".to_string()]
+            config.smartquotes_excludes,
+            Some(SmartquotesExcludes {
+                languages: ExcludeList::names(["de"]),
+                builders: ExcludeList::default(),
+            })
         );
-        assert!(config.smartquotes_excludes.builders.is_empty());
 
-        // The key left out altogether keeps the whole default dict.
+        // The key left out altogether leaves the dict unset (the default).
         fs::write(&p, "project: 'Tiny'\n").unwrap();
         let config = BuildConfig::from_file(&p).unwrap();
-        assert_eq!(config.smartquotes_excludes, SmartquotesExcludes::default());
+        assert_eq!(config.smartquotes_excludes, None);
     }
 
     #[test]
