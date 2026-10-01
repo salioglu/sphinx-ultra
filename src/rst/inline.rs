@@ -2416,7 +2416,7 @@ mod tests {
     /// `unescape` removes an escaped space or newline outright, but the
     /// Text keeps it — SmartQuotes reads `x\ "y"` as `'x\x00 "y"'`, the
     /// quote after a space (probed) — and `implicit_inline` drops only an
-    /// empty null-escaped string (`states.py:1150-1151`): an escaped space
+    /// empty null-escaped string (`states.py:1147-1148`): an escaped space
     /// between two inline constructs, or a trailing backslash, is a Text
     /// that unescapes to nothing (probed: `*a*\ *b*`, `*a*\`).
     #[test]

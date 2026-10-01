@@ -132,8 +132,10 @@ fn escapes_roundtrip_through_bincode() {
     }
 }
 
-/// Only the inline parser writes escapes: a document without a backslash
-/// has none anywhere, and an element never has any.
+/// Escapes come only from backslashes in the source — the inline parser
+/// records them, and the block parser's term split keeps the ones in the
+/// text it splits: a document without a backslash has none anywhere, and
+/// an element never has any.
 #[test]
 fn an_escape_free_document_has_no_escape_offsets() {
     for (raw, sphinx) in [(DOCUTILS_FIXTURE, false), (SPHINX_FIXTURE, true)] {

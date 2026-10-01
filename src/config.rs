@@ -145,7 +145,11 @@ pub struct BuildConfig {
     /// build for any project that sets two or more `html_context` keys.
     pub html_context: std::collections::BTreeMap<String, serde_json::Value>,
 
-    /// Run directive/role validation during the build
+    /// Run the directive/role validation pass during the build. On by
+    /// default (decision D1 kept it), though since the M2 wave 5 audit the
+    /// built-in validators make no checks — each repeated a report docutils
+    /// or Sphinx prints, or fired on markup `sphinx-build` accepts — so the
+    /// pass reports nothing; turning it off only skips the work.
     pub validate_directives: bool,
 
     /// Number figures, tables and code blocks (`numfig`, `config.py:275`).

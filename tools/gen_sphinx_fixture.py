@@ -173,8 +173,11 @@ JSON-serialized conf, mirroring the [SIG] appendix probe scripts) so fifty
 conf cases do not spin fifty apps; the base settings assertions run against
 every app. The fixture schema emits "conf" on a case ONLY when non-empty —
 absent means defaults — and the Rust consumer maps every conf key onto
-ParseOptions.py (PySigConfig), ERRORING on unmapped keys so a future conf
-addition here fails loudly there instead of silently parsing under defaults.
+ParseOptions.py (PySigConfig), ParseOptions.highlight_language or the read
+transforms' TransformConfig (version/release/today/today_fmt, and the `sq`
+family's smartquotes keys and language), ERRORING on unmapped keys so a
+future conf addition here fails loudly there instead of silently parsing
+under defaults.
 
 SMARTQUOTES FAMILY (M2 wave 5, Task 14): Sphinx's default is
 `smartquotes=True`, so an oracle that never ran SphinxSmartQuotes (750,
@@ -1382,7 +1385,7 @@ CASES = [
     ('tx_docinfo', 'authors_info_message', ':authors: ;\n\nBody.\n'),
     ('tx_docinfo', 'rcs_keywords', ':date: $Date: 2026/09/30 12:00:00 $\n:status: $RCSfile: frontmatter.py,v $\n:version: $Revision: 1.2 $\n:custom: a $Id: x $ b\n\nBody.\n'),
     # A single-line body parsed as an enumerated list is parsed again
-    # (`frontmatter.py:418-430`); two lines are not.
+    # (`frontmatter.py:446-456`); two lines are not.
     ('tx_docinfo', 'initials_restored', ':author: J. Doe\n:version: 1. x\n\nBody.\n'),
     ('tx_docinfo', 'initials_not_restored', ':author: A. x\n          B. y\n\nBody.\n'),
     # The topics go where the docinfo goes — ahead of the comment; the

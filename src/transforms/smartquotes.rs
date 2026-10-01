@@ -134,7 +134,9 @@ pub(crate) fn smart_quotes(ctx: &mut TransformCtx) {
 /// earlier token rebuilt into that very string, the node itself then
 /// keeping its old text — for a later token, or a nested unit's pass, to
 /// find. One always lies at or before the node's own slot: every equal
-/// text before it took at most one of the equal originals up to it.
+/// text before it took at most one of the equal originals up to it. Each
+/// call scans the siblings up to that slot, so a unit of `k` Text
+/// siblings costs `O(k²)` — as upstream's `list.index` does.
 fn replace_first_equal(
     unit: &mut Node,
     at: &[usize],
@@ -802,9 +804,8 @@ pub(crate) fn educate_quotes(text: &str, language: &str) -> String {
     // does (punctuation next, no boundary after it). Checked against
     // docutils itself: every quote-led string of up to 5 characters over
     // `'"`.-_ ax1\B–(\u{a0};,s8` in 6 languages, 1,650,732 evaluations,
-    // no difference (and the review's 360,000 × 6). Inside `educate_tokens`
-    // position 0 is the context character, never a quote, so neither
-    // reading ever fires there.
+    // no difference. Inside `educate_tokens` position 0 is the context
+    // character, never a quote, so neither reading ever fires there.
     for (quote, replacement) in [('\'', csquote), ('"', cpquote)] {
         s = sub(
             &s,

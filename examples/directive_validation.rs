@@ -1,8 +1,19 @@
 //! Directive & Role Validation System Example
 //!
-//! This example demonstrates the comprehensive directive and role validation system,
-//! showing how to validate RST content, detect errors and warnings, and get suggestions
-//! for fixing issues.
+//! This example walks the directive and role validation framework: the
+//! statistical parser extracts the directives and roles of a sample
+//! document, the registries list what is registered, each item is
+//! validated, and unknown names get suggestions.
+//!
+//! Since the M2 wave 5 validator audit (decision D1) the built-in
+//! validators make no checks — each one repeated a report docutils or
+//! Sphinx prints itself, or fired on markup `sphinx-build` accepts — so
+//! every registered directive and role validates as `Valid`, the
+//! "Problematic Examples" below included (`sphinx-build` diagnoses those
+//! itself). Only the unregistered names (`unknowndirective`, `unknownrole`)
+//! come back `Unknown`, which makes the example exit 1. The `Warning` and
+//! `Error` arms are what a validator added through the registry's
+//! `register_validator` would reach.
 
 use sphinx_ultra::directives::validation::{
     DirectiveValidationResult, DirectiveValidationSystem, RoleValidationResult,

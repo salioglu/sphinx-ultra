@@ -148,8 +148,9 @@ const LINE_LENGTH_LIMIT: usize = 10_000;
 /// [`Arena`] that keeps all of that.
 ///
 /// Where docutils never finishes, or aborts the Sphinx build, the port
-/// ends instead — and only there; every document docutils finishes gets
-/// docutils' records and tree:
+/// departs from it — and only there; every document docutils finishes gets
+/// docutils' records and tree. Two of the departures end the expansion;
+/// the third reports and carries on:
 ///
 /// * **Never finishes.** docutils files a nested reference under its
 ///   case-folded name's definition (`normed`, the last of the names that

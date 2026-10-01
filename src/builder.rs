@@ -1713,10 +1713,15 @@ impl SphinxBuilder {
 
     /// Run the directive/role validation system over every RST document.
     ///
-    /// Findings surface as build *warnings* (so `-W`/`-w` govern promotion);
-    /// `Unknown` results stay silent — the built-in validators cover a
-    /// fraction of real Sphinx, and reporting the rest would drown every
-    /// real project in noise.
+    /// The pass reports nothing today: every check the built-in validators
+    /// made was removed in the M2 wave 5 audit (decision D1 — each repeated
+    /// a report docutils or Sphinx prints, or fired on markup `sphinx-build`
+    /// accepts), so each of them validates anything as `Valid`, and this
+    /// pass registers no others. It stays as the framework's extension
+    /// point: a `Warning` or `Error` a validator returned would surface as a
+    /// build *warning* (so `-W`/`-w` govern promotion), and `Unknown`
+    /// results — a directive or role no validator is registered for — stay
+    /// silent, counted only in a debug log line.
     fn validate_directives_and_roles(&self, processed_docs: &[Document], doctrees: &[Doctree]) {
         use crate::directives::validation::{
             DirectiveValidationResult, DirectiveValidationSystem, ParsedDirective, ParsedRole,

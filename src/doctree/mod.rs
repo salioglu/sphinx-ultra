@@ -149,8 +149,10 @@ pub struct Node {
     /// names (`docutils/transforms/frontmatter.py:516-526`).
     ///
     /// The inline parser writes it ([`Node::text_from_null_escaped`]), as do
-    /// the transforms that rebuild a text node from its `str()`; `pformat`
-    /// and `astext` ignore it, as docutils prints `astext()`.
+    /// the block parser's term split (a definition-list term splitting off
+    /// its classifiers in `str()`, `states.py:3001-3022`) and the transforms
+    /// that rebuild a text node from its `str()`; `pformat` and `astext`
+    /// ignore it, as docutils prints `astext()`.
     ///
     /// It is the first field on the wire: a tree in the shape before it —
     /// what a doctree file or `env.bin` of the same format version written

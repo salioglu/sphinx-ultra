@@ -58,7 +58,7 @@ pub(super) fn preserve_translatable_messages(ctx: &mut TransformCtx) {
 
 /// `HandleCodeBlocks` (`sphinx/transforms/__init__.py:178-197`, priority
 /// 210): a `block_quote` whose children are all `doctest_block`s is
-/// replaced by them (`:186-188`) — an indented `>>>` block becomes a plain
+/// replaced by them (`:185-187`) — an indented `>>>` block becomes a plain
 /// doctest block. `replace_self` hands the quote's ids, classes, names and
 /// dupnames to the first of them (`update_basic_atts`, `docutils/
 /// nodes.py:1120-1132`). `all()` of no children is true, so an empty block
@@ -134,42 +134,48 @@ pub(super) fn doctest_transform(ctx: &mut TransformCtx) {
 }
 
 /// `Transition must be child of <document> or <section>.`
-/// (`docutils/transforms/misc.py:105-106`).
+/// (`docutils/transforms/misc.py:98-99`).
 const NOT_IN_A_SECTION: &str = "Transition must be child of <document> or <section>.";
-/// `misc.py:107-111`.
+/// `misc.py:100-104`.
 const BEGINS_A_SECTION: &str = "Document or section may not begin with a transition.";
-/// `misc.py:112-114`.
+/// `misc.py:105-107`.
 const FOLLOWS_A_TRANSITION: &str =
     "At least one body element must separate transitions; adjacent transitions are not allowed.";
-/// `misc.py:133-135`.
+/// `misc.py:134-136`.
 const ENDS_THE_DOCUMENT: &str = "Document may not end with a transition.";
 
 /// docutils' `Transitions` (`docutils/transforms/misc.py:64-143`, priority
 /// 830): each `transition`, in document order, is checked where it stands
 /// and, ending a section, moved up.
 ///
-/// Misplaced — not a child of the document or a section (`:105-106`),
+/// Misplaced — not a child of the document or a section (`:98-99`),
 /// first in its parent or right after a title, subtitle, meta or
-/// decoration (`:107-111`), or right after another transition
-/// (`:112-114`) — it warns, `base_node=` the transition, so the reporter
+/// decoration (`:100-104`), or right after another transition
+/// (`:105-107`) — it warns, `base_node=` the transition, so the reporter
 /// prints the record at the transition's line when it is created
-/// (`:116`). The message goes into the tree right after the transition
+/// (`:109`). The message goes into the tree right after the transition
 /// only if the parent validates with a paragraph in the transition's
-/// place (`:117-126`; [`takes_a_body_element_at`]); FilterSystemMessages
+/// place (`:110-119`; [`takes_a_body_element_at`]); FilterSystemMessages
 /// (999) strips it again unless `keep_warnings`.
 ///
 /// A document's or section's last child (counting its message) moves up
 /// past every ancestor it also ends, to right after the first one with a
-/// following sibling (`:127-143`); one that ends the document stays, and
+/// following sibling (`:120-143`); one that ends the document stays, and
 /// `Document may not end with a transition.` is appended to its parent
-/// unvalidated (`:133-137`).
+/// unvalidated (`:131-138`).
 ///
 /// Upstream iterates the live tree, so a transition it moved up is met
-/// again in its new place — after the section it left, with something
-/// following it: nothing to report, nowhere to move. Moving never changes
-/// the transitions' document order (a moved one ended the subtree it
-/// leaves, and lands right after it), so each one is found as the first
-/// transition after the last one handled, and handled exactly once.
+/// again in its new place, right after the section it left. Here each
+/// one is handled once: moving never changes the transitions' document
+/// order (a moved one ended the subtree it leaves, and lands right after
+/// it), so each one is found as the first transition after the last one
+/// handled. Upstream's second visit finds nothing to report or move when
+/// the new parent is a document or a section — always so for the trees
+/// this parser builds, whose nested parses reject section titles (inside
+/// `only` or an object description's content, where Sphinx takes them).
+/// Once they take them, a transition moved into such a non-structural
+/// parent must be visited again at its new place, where upstream warns
+/// `Transition must be child of <document> or <section>.` (ledgered).
 pub(super) fn transitions(ctx: &mut TransformCtx) {
     let mut after = None;
     while let Some(path) = next_transition(&ctx.tree.root, after.as_deref()) {
@@ -209,7 +215,7 @@ fn next_transition(root: &Node, after: Option<&[usize]>) -> Option<NodePath> {
     None
 }
 
-/// `Transitions.visit_transition` (`misc.py:98-143`) for the transition at
+/// `Transitions.visit_transition` (`misc.py:94-143`) for the transition at
 /// `path`; returns where it is afterwards.
 fn visit_transition(ctx: &mut TransformCtx, path: NodePath) -> NodePath {
     let Some((&at, parent_path)) = path.split_last() else {
@@ -285,7 +291,7 @@ fn visit_transition(ctx: &mut TransformCtx, path: NodePath) -> NodePath {
 /// Whether `parent` would validate (`Element.validate(recursive=False)`,
 /// `docutils/nodes.py:1330-1356`) with a paragraph in place of its child
 /// at `index` — Transitions' test for attaching its message there
-/// (`misc.py:117-126`).
+/// (`misc.py:110-119`).
 ///
 /// A `document` never does in a Sphinx build: `TranslationProgressTotaliser`
 /// (25) has given it a `translation_progress` attribute, which is no valid
@@ -677,7 +683,7 @@ mod tests {
     /// (999) strips them again under the default `keep_warnings=False` —
     /// but the reporter printed each when Transitions created it
     /// (`docutils/utils/__init__.py:213-215`): one record, located at the
-    /// transition (`base_node=node`, `misc.py:113,135-137`), either way.
+    /// transition (`base_node=node`, `misc.py:109,134-136`), either way.
     #[test]
     fn transition_warnings_print_whatever_keep_warnings_keeps() {
         let src = "Para.\n\n----\n";
@@ -698,7 +704,7 @@ mod tests {
 
     /// A transition ending a section moves up past every ancestor it also
     /// ends, to right after the first one that has a following sibling
-    /// (`misc.py:124-143`) — here four levels, to the document.
+    /// (`misc.py:122-143`) — here four levels, to the document.
     #[test]
     fn a_transition_ending_nested_sections_moves_past_them_all() {
         let src = "A\n=\n\nB\n-\n\nC\n~\n\nD\n+\n\nd\n\n----\n\nE\n=\n\ne\n";
@@ -737,10 +743,10 @@ mod tests {
     }
 
     /// `Transition must be child of <document> or <section>.`
-    /// (`misc.py:105-106`): printed, and nothing else — no Sphinx parent of
+    /// (`misc.py:98-99`): printed, and nothing else — no Sphinx parent of
     /// a transition other than a document or section validates with a
     /// paragraph in its place, so the message is not attached, and only a
-    /// document's or section's transition ever moves (`:118-119`). (The
+    /// document's or section's transition ever moves (`:120-121`). (The
     /// parser never builds this tree — a nested transition is a parse-time
     /// error — so it is built by hand.)
     #[test]
@@ -784,7 +790,7 @@ mod tests {
     }
 
     /// HandleCodeBlocks (210) unwraps a block quote whose children are all
-    /// doctest blocks (`transforms/__init__.py:186-188`) — vacuously, one
+    /// doctest blocks (`transforms/__init__.py:185-187`) — vacuously, one
     /// with no children at all, which it replaces with nothing. (The parser
     /// never builds an empty block quote; built by hand.)
     #[test]

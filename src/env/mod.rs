@@ -76,10 +76,13 @@ use crate::doctree::Node;
 /// ([`citation_domain::CitationDomainData`]), which the read transforms'
 /// citation registrations fill. The same wave later typed `metadata`'s
 /// values ([`metadata::MetadataValue`]: `tocdepth` an int, `authors` a
-/// list, as Sphinx keeps them); a v4 `env.bin` written before that is
-/// misframed from its first metadata value on (a string's length where the
-/// value's variant tag goes) and fails to decode, so it is rebuilt — only
-/// builds of this branch ever wrote one, so no second bump. Nor for the
+/// list, as Sphinx keeps them); a v4 `env.bin` written before that is read
+/// with a string's length where the value's variant tag goes. Mostly that
+/// fails to decode and the file is rebuilt, but not always: a
+/// one-character value reads as an `Int` and the rest stays in frame
+/// (`{"tocdepth": "2"}` decodes as `Int(25)`, the length 1 taken for the
+/// `Int` tag and the `2` for a zigzag varint) — only builds of this branch
+/// ever wrote one, so no second bump. Nor for the
 /// read transforms that landed after it, whose trees the `tocs` copy and
 /// whose ids `toc_fignumbers` keys by (AutoNumbering files a labelled
 /// captioned node under its auto id): a v4 `env.bin` from before them
