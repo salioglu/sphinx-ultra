@@ -287,7 +287,10 @@ fn config_fingerprint(config: &BuildConfig) -> Result<String> {
 /// the system refuse threads that size (a strict overcommit policy, an
 /// address-space limit), the pool is built with the default stack instead:
 /// each parse then asks for a parse-stack thread of its own, and runs in
-/// place if that is refused too.
+/// place if that is refused too ([`crate::rst::on_parse_stack`], which
+/// warns once when it is). The fallback warns: a system that refuses the
+/// pool's stacks is likely to refuse those too, and a deep document would
+/// then abort the build with no hint why.
 fn read_pool(jobs: usize, stack: usize) -> Result<rayon::ThreadPool> {
     let sized = rayon::ThreadPoolBuilder::new()
         .num_threads(jobs)
@@ -297,7 +300,14 @@ fn read_pool(jobs: usize, stack: usize) -> Result<rayon::ThreadPool> {
     match sized {
         Ok(pool) => Ok(pool),
         Err(error) => {
-            debug!("read pool with {stack}-byte stacks refused ({error}); using the default stack");
+            log::warn!(
+                "the system refused {jobs} read threads with {} MiB stacks ({error}), so the \
+                 read pool uses the default stack: each document asks for a thread of that size \
+                 of its own, and should that be refused too, a deeply nested document can \
+                 overflow the default stack and abort the build before the parser's 200-level \
+                 nesting guard reports it",
+                stack / (1024 * 1024)
+            );
             Ok(rayon::ThreadPoolBuilder::new().num_threads(jobs).build()?)
         }
     }
@@ -1987,10 +1997,17 @@ mod tests {
     /// stack, and its threads do not claim the parse stack.
     #[test]
     fn the_read_pool_has_the_parse_stack_or_falls_back() {
-        let pool = read_pool(2, crate::rst::PARSE_STACK_SIZE).unwrap();
+        let (pool, logged) =
+            crate::rst::capture_warnings(|| read_pool(2, crate::rst::PARSE_STACK_SIZE).unwrap());
         assert!(pool.install(crate::rst::has_parse_stack));
-        let fallback = read_pool(2, 1 << 60).unwrap();
+        assert_eq!(logged, Vec::<String>::new(), "nothing to say");
+        let (fallback, logged) = crate::rst::capture_warnings(|| read_pool(2, 1 << 60).unwrap());
         assert!(!fallback.install(crate::rst::has_parse_stack));
+        assert_eq!(logged.len(), 1, "the fallback warns: {logged:?}");
+        assert!(
+            logged[0].contains("nest") && logged[0].contains("overflow"),
+            "says what the fallback risks: {logged:?}"
+        );
     }
 
     fn write_project(source_dir: &Path) {

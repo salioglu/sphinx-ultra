@@ -511,7 +511,14 @@ pub(crate) fn mark_parse_stack_thread() {
 /// nesting guard. Should the system refuse a thread that size (a strict
 /// overcommit policy, an address-space limit), `work` runs here, on
 /// whatever stack this thread has — as it did before the guard needed the
-/// room.
+/// room — and the first refusal in a process logs a warning that deep
+/// nesting can now overflow that stack.
+///
+/// It is also the batching idiom: an entry point called from a thread
+/// without the stack starts a thread per call, while a whole loop of
+/// calls inside one `on_parse_stack` —
+/// `on_parse_stack(|| sources.iter().map(|s| parse_rst(s, &opts)).collect::<Vec<_>>())`
+/// — starts one thread for the batch, every call in it running in place.
 pub fn on_parse_stack<T: Send>(work: impl FnOnce() -> T + Send) -> T {
     if ON_PARSE_STACK.with(std::cell::Cell::get) {
         return work();
@@ -521,8 +528,10 @@ pub fn on_parse_stack<T: Send>(work: impl FnOnce() -> T + Send) -> T {
 
 /// [`on_parse_stack`]'s spawn: `work` on a scoped thread with `stack`
 /// bytes, marked as having the parse stack — or here, if the system
-/// refuses the thread.
+/// refuses the thread ([`report_refused_stack`] says so, once).
 fn on_new_stack<T: Send>(stack: usize, work: impl FnOnce() -> T + Send) -> T {
+    #[cfg(test)]
+    THREADS_STARTED.with(|count| count.set(count.get() + 1));
     let mut work = Some(work);
     let ran = std::thread::scope(|scope| {
         let slot = &mut work;
@@ -537,13 +546,42 @@ fn on_new_stack<T: Send>(stack: usize, work: impl FnOnce() -> T + Send) -> T {
             Ok(thread) => thread
                 .join()
                 .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
-            Err(_) => None,
+            Err(error) => {
+                report_refused_stack(&REFUSED_STACK_REPORTED, stack, &error);
+                None
+            }
         }
     });
     match ran {
         Some(out) => out,
         None => (work.take().expect("work runs once"))(),
     }
+}
+
+/// Whether [`on_new_stack`] has warned about a refused thread yet: it says
+/// so once a process, not once a parse.
+static REFUSED_STACK_REPORTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Warn, unless `reported` says it was done already, that a thread with
+/// `stack` bytes was refused and the work runs on the caller's own stack —
+/// which may be too small for the nesting guard, so the warning is the one
+/// hint a user gets before a deep document aborts the process.
+fn report_refused_stack(
+    reported: &std::sync::atomic::AtomicBool,
+    stack: usize,
+    error: &std::io::Error,
+) {
+    if reported.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    log::warn!(
+        "the system refused a thread with a {} MiB stack to parse on ({error}), so parsing \
+         runs on the calling thread's own stack: a deeply nested document (on the order of a \
+         hundred nested directives) can now overflow it and abort the process before the \
+         parser's 200-level nesting guard reports it. Reported once per process.",
+        stack / (1024 * 1024)
+    );
 }
 
 /// Whether the current thread has the parse stack, for the tests of the
@@ -553,14 +591,75 @@ pub(crate) fn has_parse_stack() -> bool {
     ON_PARSE_STACK.with(std::cell::Cell::get)
 }
 
+#[cfg(test)]
+thread_local! {
+    /// How many times [`on_new_stack`] was entered from this thread — each
+    /// entry starts (or tries to start) one thread — for the tests that
+    /// count them.
+    static THREADS_STARTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// [`THREADS_STARTED`] for the current thread.
+#[cfg(test)]
+fn threads_started() -> usize {
+    THREADS_STARTED.with(std::cell::Cell::get)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The `warn!`/`error!` records [`capture_warnings`] collected on this
+    /// thread.
+    static CAPTURED: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The test logger: keeps each thread's WARN-and-above records apart, so
+/// tests running in parallel never see each other's.
+#[cfg(test)]
+struct CaptureLogger;
+
+#[cfg(test)]
+impl log::Log for CaptureLogger {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        metadata.level() <= log::Level::Warn
+    }
+
+    fn log(&self, record: &log::Record) {
+        if self.enabled(record.metadata()) {
+            CAPTURED.with(|captured| captured.borrow_mut().push(record.args().to_string()));
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+/// Run `work` and return what it logged at WARN or above on this thread.
+/// Installs [`CaptureLogger`] for the test process on first use.
+#[cfg(test)]
+pub(crate) fn capture_warnings<T>(work: impl FnOnce() -> T) -> (T, Vec<String>) {
+    static INSTALL: std::sync::Once = std::sync::Once::new();
+    INSTALL.call_once(|| {
+        log::set_logger(&CaptureLogger).expect("no other test installs a logger");
+        log::set_max_level(log::LevelFilter::Warn);
+    });
+    CAPTURED.with(|captured| captured.borrow_mut().clear());
+    let out = work();
+    (out, CAPTURED.with(|captured| captured.take()))
+}
+
 /// Parse RST source into a doctree. Total: never panics, never errors —
 /// problems become `system_message` nodes, exactly like docutils.
+///
+/// Like [`parse_rst_full`], it starts a [`PARSE_STACK_SIZE`] thread per
+/// call from a thread without one; to parse many documents, run the loop
+/// inside [`on_parse_stack`] and every call in it runs in place.
 pub fn parse_rst(source: &str, opts: &ParseOptions) -> Doctree {
     parse_rst_full(source, opts).doctree
 }
 
 /// [`parse_rst`] with every record the build pipeline consumes. Runs on a
-/// [`PARSE_STACK_SIZE`] thread, whatever thread calls it.
+/// [`PARSE_STACK_SIZE`] thread, whatever thread calls it — a new one per
+/// call unless the caller's thread has the stack, so a batch of documents
+/// belongs inside one [`on_parse_stack`], where every call runs in place.
 pub fn parse_rst_full(source: &str, opts: &ParseOptions) -> ParseOutput {
     on_parse_stack(|| {
         let mut parser = block::BlockParser::new(source, &opts.source_path);
@@ -692,12 +791,82 @@ mod tests {
         assert!(nested, "a marked thread keeps the work");
     }
 
+    /// The batching idiom the entry points' docs name: called from a thread
+    /// without the stack, each call starts a thread of its own; a whole
+    /// batch inside one `on_parse_stack` starts one thread, and every call
+    /// in it — the parse, the read transforms, both together — runs in
+    /// place on it.
+    #[test]
+    fn a_batch_inside_on_parse_stack_starts_one_thread() {
+        let opts = ParseOptions {
+            sphinx: true,
+            ..Default::default()
+        };
+        let config = crate::transforms::TransformConfig::default();
+        let sources = ["A\n=\n\nOne.\n", "B\n=\n\nTwo.\n", "C\n=\n\nThree.\n"];
+
+        // One call from this (unmarked) test thread: one thread started.
+        let before = threads_started();
+        parse_rst(sources[0], &opts);
+        assert_eq!(threads_started(), before + 1, "a lone call starts a thread");
+
+        let before = threads_started();
+        let (trees, started_inside) = on_parse_stack(|| {
+            let inside = threads_started();
+            let trees: Vec<String> = sources
+                .iter()
+                .map(|source| {
+                    let mut out = parse_rst_full(source, &opts);
+                    crate::transforms::apply_read_transforms(
+                        &mut out.doctree,
+                        std::mem::take(&mut out.ids),
+                        out.next_seq,
+                        out.end_of_input,
+                        "index",
+                        &config,
+                        &mut out.registry,
+                    );
+                    let (doctree, _) =
+                        crate::transforms::parse_and_transform(source, &opts, &config);
+                    assert_eq!(doctree.root.pformat(), out.doctree.root.pformat());
+                    parse_rst(source, &opts).root.pformat()
+                })
+                .collect();
+            (trees, threads_started() - inside)
+        });
+        assert_eq!(threads_started(), before + 1, "the batch starts one thread");
+        assert_eq!(started_inside, 0, "every call in the batch runs in place");
+        assert_eq!(trees.len(), sources.len());
+    }
+
     /// When the system refuses a thread that size, the work runs in place
     /// rather than failing: a 2^60-byte stack cannot be mapped anywhere.
     #[test]
     fn a_refused_stack_runs_the_work_in_place() {
         let here = std::thread::current().id();
         assert_eq!(on_new_stack(1 << 60, || std::thread::current().id()), here);
+    }
+
+    /// A refused parse stack is not silent: the first refusal in a process
+    /// warns that deep nesting can now overflow the stack, and why; every
+    /// later one stays quiet (one warning per process, not one per parse).
+    /// Driven through its own flag, since the process-wide one is shared
+    /// with every other test that refuses a stack.
+    #[test]
+    fn a_refused_stack_warns_once() {
+        let reported = std::sync::atomic::AtomicBool::new(false);
+        let refused = std::io::Error::other("refused");
+        let ((), logged) = capture_warnings(|| {
+            report_refused_stack(&reported, 1 << 60, &refused);
+            report_refused_stack(&reported, 1 << 60, &refused);
+        });
+        assert_eq!(logged.len(), 1, "{logged:?}");
+        assert!(
+            logged[0].contains("refused")
+                && logged[0].contains("nest")
+                && logged[0].contains("overflow"),
+            "names the cause and the risk: {logged:?}"
+        );
     }
 
     /// The work runs exactly once, its result comes back, and a panic in it

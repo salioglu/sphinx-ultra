@@ -625,7 +625,9 @@ impl<'a> TransformCtx<'a> {
 /// number without recording anything.
 ///
 /// Runs on a [`crate::rst::PARSE_STACK_SIZE`] thread, whatever thread
-/// calls it, like the parse.
+/// calls it, like the parse — a new one per call unless the caller's
+/// thread has the stack, so a batch of documents belongs inside one
+/// [`crate::rst::on_parse_stack`], where every call runs in place.
 pub fn apply_read_transforms(
     tree: &mut Doctree,
     ids: IdRegistry,
@@ -650,6 +652,11 @@ pub fn apply_read_transforms(
 /// printed stream — the parse's records, then the transforms' — in `seq`
 /// order. Registrations whose duplicate warnings the merge phase replays
 /// are not in it (they need the environment).
+///
+/// Like [`parse_and_transform_full`], it starts a
+/// [`crate::rst::PARSE_STACK_SIZE`] thread per call from a thread without
+/// one; to read many documents, run the loop inside
+/// [`crate::rst::on_parse_stack`] and every call in it runs in place.
 pub fn parse_and_transform(
     source: &str,
     opts: &ParseOptions,
@@ -666,7 +673,10 @@ pub fn parse_and_transform(
 /// `registry.citations`, the collected metadata in `registry.metadata`.
 /// The id registry the pass continued is spent, so `ids` comes back empty.
 ///
-/// Both halves run on one [`crate::rst::PARSE_STACK_SIZE`] thread.
+/// Both halves run on one [`crate::rst::PARSE_STACK_SIZE`] thread — a new
+/// one per call unless the caller's thread has the stack, so a batch of
+/// documents belongs inside one [`crate::rst::on_parse_stack`], where every
+/// call runs in place.
 pub fn parse_and_transform_full(
     source: &str,
     opts: &ParseOptions,

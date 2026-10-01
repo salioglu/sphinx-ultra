@@ -78,6 +78,13 @@ impl Parser {
         self
     }
 
+    /// Parse one source file into a [`Document`] ([`Self::parse_full`]
+    /// without the doctree).
+    ///
+    /// Like [`Self::parse_full`], it starts a
+    /// [`crate::rst::PARSE_STACK_SIZE`] thread per call from a thread
+    /// without one; to parse many files, run the loop inside
+    /// [`crate::rst::on_parse_stack`] and every call in it runs in place.
     pub fn parse(&self, file_path: &Path, content: &str, docname: &str) -> Result<Document> {
         Ok(self.parse_full(file_path, content, docname, None)?.document)
     }
@@ -92,7 +99,9 @@ impl Parser {
     /// The parse, the read transforms and the walks that derive the
     /// [`Document`] from the tree all run on a
     /// [`crate::rst::PARSE_STACK_SIZE`] thread: the build's read pool
-    /// threads have it, and any other caller's work moves onto one.
+    /// threads have it, and any other caller's work moves onto a new one
+    /// per call — so a batch of files belongs inside one
+    /// [`crate::rst::on_parse_stack`], where every call runs in place.
     pub fn parse_full(
         &self,
         file_path: &Path,
