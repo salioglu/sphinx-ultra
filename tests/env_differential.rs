@@ -423,15 +423,20 @@ fn build_project(project: &Project) -> Built {
 /// override, so a fixture project that starts setting something the
 /// harness cannot apply fails loudly here.
 fn config_of(project: &Project) -> BuildConfig {
+    config_from_conf(&project.name, &project.conf)
+}
+
+/// [`config_of`] for the conf dict of the project named `project`.
+fn config_from_conf(project: &str, conf: &serde_json::Value) -> BuildConfig {
     let mut config = BuildConfig::default();
-    let conf = project.conf.as_object().expect("conf is an object");
+    let conf = conf.as_object().expect("conf is an object");
     for (key, value) in conf {
         if KNOWN_INERT_CONF.contains(&key.as_str()) {
-            assert_inert_conf_is_sound(&project.name, key, value);
+            assert_inert_conf_is_sound(project, key, value);
             continue;
         }
         if key == "smartquotes_excludes" {
-            config.smartquotes_excludes = Some(smartquotes_excludes_of(&project.name, value));
+            config.smartquotes_excludes = Some(smartquotes_excludes_of(project, value));
             continue;
         }
         // A dict-valued setting is applied key by key (`-D numfig_format.figure=...`),
@@ -441,20 +446,19 @@ fn config_of(project: &Project) -> BuildConfig {
                 .iter()
                 .map(|(sub, v)| {
                     let key = format!("{key}.{sub}");
-                    let value = scalar_override(&project.name, &key, v);
+                    let value = scalar_override(project, &key, v);
                     (key, value)
                 })
                 .collect(),
-            other => vec![(key.clone(), scalar_override(&project.name, key, other))],
+            other => vec![(key.clone(), scalar_override(project, key, other))],
         };
         for (key, value) in overrides {
             let ignored = config
                 .apply_override(&key, &value)
-                .unwrap_or_else(|e| panic!("project {}: -D {key}={value}: {e:#}", project.name));
+                .unwrap_or_else(|e| panic!("project {project}: -D {key}={value}: {e:#}"));
             assert!(
                 ignored.is_none(),
-                "project {}: -D {key}={value} was ignored: {}",
-                project.name,
+                "project {project}: -D {key}={value} was ignored: {}",
                 ignored.unwrap()
             );
         }
@@ -474,10 +478,14 @@ fn smartquotes_excludes_of(project: &str, value: &serde_json::Value) -> Smartquo
     })
 }
 
+/// The harness routes a conf `smartquotes_excludes` to
+/// [`smartquotes_excludes_of`], not through the dotted `-D` path.
 #[test]
 fn a_conf_smartquotes_excludes_keeps_its_lists() {
-    let excludes =
-        smartquotes_excludes_of("test", &serde_json::json!({"languages": ["ja", "zh_CN"]}));
+    let conf = serde_json::json!({"smartquotes_excludes": {"languages": ["ja", "zh_CN"]}});
+    let excludes = config_from_conf("test", &conf)
+        .smartquotes_excludes
+        .expect("smartquotes_excludes is set");
     assert_eq!(
         excludes,
         SmartquotesExcludes {
