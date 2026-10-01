@@ -23,7 +23,7 @@ use std::collections::BTreeSet;
 
 use super::references::{collect_paths, is_text_element};
 use super::smartquotes_tables as tables;
-use super::{node_at_mut, TransformConfig, TransformCtx};
+use super::{node_at, node_at_mut, NodePath, TransformConfig, TransformCtx};
 use crate::doctree::{kinds, messages, AttrValue, Node};
 
 /// The transform. A unit is every `TextElement` in document order
@@ -33,8 +33,9 @@ use crate::doctree::{kinds, messages, AttrValue, Node};
 /// (an xref's `inline` under its `pending_xref`) is a unit of its own,
 /// educated a second time after its paragraph. Its tokens are its Text
 /// descendants but those of an `option_string` (`:305-308`), educated
-/// together in its language (`:310-331`); each Text is then rebuilt from
-/// what came back (`:333-338`).
+/// together in its language (`:310-331`); each token's educated text then
+/// replaces the first Text sibling equal to its node — not always the node
+/// itself ([`replace_first_equal`], `:333-338`).
 pub(crate) fn smart_quotes(ctx: &mut TransformCtx) {
     if !is_available(ctx.config) {
         return;
@@ -84,28 +85,78 @@ pub(crate) fn smart_quotes(ctx: &mut TransformCtx) {
             continue;
         };
         let texts = unit_texts(unit, outer_literal);
+        // Each Text's `str()`, which the replacement below compares.
+        let originals: Vec<String> = texts
+            .iter()
+            .map(|(at, _)| {
+                node_at(unit, at)
+                    .and_then(Node::null_escaped)
+                    .unwrap_or_default()
+                    .into_owned()
+            })
+            .collect();
         let tokens: Vec<(TokenKind, String)> = texts
             .iter()
-            .map(|(text, literal)| {
+            .zip(&originals)
+            .map(|((at, literal), original)| {
                 if *literal {
-                    (TokenKind::Literal, text.astext())
+                    let text = node_at(unit, at).map(Node::astext).unwrap_or_default();
+                    (TokenKind::Literal, text)
                 } else {
-                    let null_escaped = text.null_escaped().unwrap_or_default();
-                    (TokenKind::Plain, backslash_escaped(&null_escaped))
+                    (TokenKind::Plain, backslash_escaped(original))
                 }
             })
             .collect();
         let educated = educate_tokens(tokens, &config.smartquotes_action, language);
-        for ((text, literal), new) in texts.into_iter().zip(educated) {
-            let span = text.span;
-            // `nodes.Text(newtext)`: a literal token's is its `astext()`,
-            // which holds no null; a plain one keeps every null it had.
-            *text = if literal {
-                Node::text_node(new, span)
-            } else {
-                Node::text_from_null_escaped(&new, span)
-            };
+        for (((at, literal), original), new) in texts.iter().zip(&originals).zip(educated) {
+            replace_first_equal(unit, at, original, |span| {
+                // `nodes.Text(newtext)`: a literal token's is its
+                // `astext()`, which holds no null; a plain one keeps every
+                // null it had.
+                if *literal {
+                    Node::text_node(new, span)
+                } else {
+                    Node::text_from_null_escaped(&new, span)
+                }
+            });
         }
+    }
+}
+
+/// `txtnode.parent.replace(txtnode, nodes.Text(newtext))`
+/// (`universal.py:338`) for the Text at `at` below `unit`, whose `str()`
+/// was `original`. `Element.replace` finds its child with `Element.index`
+/// — `list.index`, the first child that IS the node or EQUALS it — and a
+/// docutils `Text` is a `str`, equal by value, nulls included, while an
+/// element equals only itself (`docutils/nodes.py:405,809-810,1101-1108`;
+/// no node class defines `__eq__`). So the child replaced is the first
+/// Text sibling whose `str()` is `original`: perhaps an earlier one an
+/// earlier token rebuilt into that very string, the node itself then
+/// keeping its old text — for a later token, or a nested unit's pass, to
+/// find. One always lies at or before the node's own slot: every equal
+/// text before it took at most one of the equal originals up to it.
+fn replace_first_equal(
+    unit: &mut Node,
+    at: &[usize],
+    original: &str,
+    new: impl FnOnce(crate::doctree::Span) -> Node,
+) {
+    let Some((&own, parent_path)) = at.split_last() else {
+        return;
+    };
+    let Some(parent) = node_at_mut(unit, parent_path) else {
+        return;
+    };
+    let slot = parent
+        .children
+        .iter()
+        .take(own + 1)
+        .position(|child| {
+            child.kind == kinds::TEXT && child.null_escaped().as_deref() == Some(original)
+        })
+        .unwrap_or(own);
+    if let Some(child) = parent.children.get_mut(slot) {
+        *child = new(child.span);
     }
 }
 
@@ -157,30 +208,45 @@ fn language_code<'n>(chain: &[&'n Node], fallback: &'n str) -> &'n str {
         .unwrap_or(fallback)
 }
 
-/// The unit's tokens (`:305-308`): every Text below `unit` in document
-/// order but those whose parent is an `option_string`, each with whether
-/// `is_smartquotable` refuses it (`sphinx/util/nodes.py:708-716`) — a
-/// non-smartquotable node among its ancestors, `outer_literal` standing for
-/// the unit's own and those above it. An explicit stack: no nesting depth
-/// overflows the call stack.
-fn unit_texts(unit: &mut Node, outer_literal: bool) -> Vec<(&mut Node, bool)> {
+/// The unit's tokens (`:305-308`): the path below `unit` of every Text in
+/// document order but those whose parent is an `option_string`, each with
+/// whether `is_smartquotable` refuses it (`sphinx/util/nodes.py:708-716`)
+/// — a non-smartquotable node among its ancestors, `outer_literal`
+/// standing for the unit's own and those above it. An explicit stack of
+/// sibling cursors: no nesting depth overflows the call stack.
+fn unit_texts(unit: &Node, outer_literal: bool) -> Vec<(NodePath, bool)> {
     let mut texts = Vec::new();
-    let in_option_string = unit.kind == kinds::OPTION_STRING;
-    let mut stack = vec![(unit.children.iter_mut(), outer_literal, in_option_string)];
-    while let Some((children, literal, in_option_string)) = stack.last_mut() {
-        let (literal, in_option_string) = (*literal, *in_option_string);
-        let Some(child) = children.next() else {
-            stack.pop();
+    // Each frame: a sibling list, the next index in it, and what its
+    // parent hands down; `path` is the path of that parent.
+    let mut frames = vec![(
+        unit.children.as_slice(),
+        0,
+        outer_literal,
+        unit.kind == kinds::OPTION_STRING,
+    )];
+    let mut path: NodePath = Vec::new();
+    while let Some(frame) = frames.last_mut() {
+        let (siblings, index, literal, in_option_string) = *frame;
+        let Some(child) = siblings.get(index) else {
+            frames.pop();
+            path.pop();
             continue;
         };
+        frame.1 += 1;
         if child.kind == kinds::TEXT {
             if !in_option_string {
-                texts.push((child, literal));
+                let mut at = path.clone();
+                at.push(index);
+                texts.push((at, literal));
             }
         } else {
-            let literal = literal || non_smartquotable(child);
-            let in_option_string = child.kind == kinds::OPTION_STRING;
-            stack.push((child.children.iter_mut(), literal, in_option_string));
+            path.push(index);
+            frames.push((
+                child.children.as_slice(),
+                0,
+                literal || non_smartquotable(child),
+                child.kind == kinds::OPTION_STRING,
+            ));
         }
     }
     texts
@@ -702,7 +768,8 @@ fn keep_first_then(quote: &str) -> impl Fn(&[char], usize, &mut Vec<char>) + '_ 
 
 /// `\B` at `at` (Python 3.12 `SRE_AT_UNI_NON_BOUNDARY`): never in an empty
 /// string, else the characters either side equally word or non-word (a
-/// missing one non-word).
+/// missing one non-word). Only START_SINGLE/START_DOUBLE use it, in the
+/// reading [`educate_quotes`] gives them — not upstream's literal pattern.
 fn non_boundary(text: &[char], at: usize) -> bool {
     if text.is_empty() {
         return false;
@@ -723,8 +790,21 @@ pub(crate) fn educate_quotes(text: &str, language: &str) -> String {
     let at = |text: &[char], index: usize| text.get(index).copied();
     let mut s: Vec<char> = text.chars().collect();
 
-    // START_SINGLE / START_DOUBLE: `^'(?=P\B)`, `^"(?=P\B)` — a quote first,
-    // then punctuation at a non-word-boundary: closing.
+    // START_SINGLE / START_DOUBLE (`smartquotes.py:516-517`): upstream's
+    // pattern is `r"^'(?=%s\\B)" % punct` — punctuation, then a LITERAL
+    // backslash and `B` (in the raw string, `\\` is `re`'s escaped
+    // backslash), not the non-word-boundary `\B`.
+    // Read here as `\B`, a non-word-boundary, with the same outcome: a
+    // quote at position 0 that either reading closes is closed anyway by
+    // CLOSING_SECONDARY/CLOSING_PRIMARY (nothing precedes it), and the only
+    // rules that would treat it otherwise — ADJACENT_* (a word character
+    // two along) and DECADE (a digit next) — never fire where this reading
+    // does (punctuation next, no boundary after it). Checked against
+    // docutils itself: every quote-led string of up to 5 characters over
+    // `'"`.-_ ax1\B–(\u{a0};,s8` in 6 languages, 1,650,732 evaluations,
+    // no difference (and the review's 360,000 × 6). Inside `educate_tokens`
+    // position 0 is the context character, never a quote, so neither
+    // reading ever fires there.
     for (quote, replacement) in [('\'', csquote), ('"', cpquote)] {
         s = sub(
             &s,
@@ -1095,6 +1175,46 @@ mod tests {
                 "Again \"a\".",
                 "Empty \u{201c}e\u{201d}."
             ]
+        );
+    }
+
+    /// `parent.replace(txtnode, Text(newtext))` replaces the first child
+    /// equal to the node (`list.index`; a docutils `Text` is a `str`):
+    /// probed under Sphinx 9.1, `&#34;x *a*"x *b*"x *c*"x` gives `”x a ”x
+    /// b "x c ”x` — the first text came back as `"x ` (its entity
+    /// restored), which the second text's educated `”x ` then replaced,
+    /// the third took the second's slot and kept its own straight one. The
+    /// compared `str()` keeps its nulls: an escaped `\"x ` is no `"x `
+    /// (`"x a ”x b`).
+    #[test]
+    fn the_first_equal_text_is_replaced() {
+        let paragraph = |source: &str| {
+            let (tree, _) = crate::transforms::parse_and_transform(
+                source,
+                &sq_opts(),
+                &TransformConfig::default(),
+            );
+            tree.root.children[0]
+                .children
+                .iter()
+                .map(Node::astext)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            paragraph("&#34;x *a*\"x *b*\"x *c*\"x\n"),
+            [
+                "\u{201d}x ",
+                "a",
+                "\u{201d}x ",
+                "b",
+                "\"x ",
+                "c",
+                "\u{201d}x"
+            ]
+        );
+        assert_eq!(
+            paragraph("\\\"x *a*\"x *b*\n"),
+            ["\"x ", "a", "\u{201d}x ", "b"]
         );
     }
 

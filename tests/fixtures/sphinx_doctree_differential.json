@@ -5534,6 +5534,58 @@
       "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        \"Quoted\" -- 'x'...\n",
       "rst": "\"Quoted\" -- 'x'...\n",
       "warnings": []
+    },
+    {
+      "conf": {
+        "smartquotes": true
+      },
+      "family": "sq",
+      "name": "sq.equal_text_siblings_entity",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        ”x \n        <emphasis>\n            a\n        \"x \n        <emphasis>\n            b\n",
+      "rst": "&#34;x *a*\"x *b*\n",
+      "warnings": []
+    },
+    {
+      "conf": {
+        "smartquotes": true
+      },
+      "family": "sq",
+      "name": "sq.equal_text_siblings_apostrophe",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        ’s \n        <emphasis>\n            a\n        's \n        <emphasis>\n            b\n",
+      "rst": "&#39;s *a*'s *b*\n",
+      "warnings": []
+    },
+    {
+      "conf": {
+        "smartquotes": true
+      },
+      "family": "sq",
+      "name": "sq.equal_text_siblings_unknown_language",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph classes=\"language-xx\">\n        ’s \n        <emphasis>\n            x\n        's \n        <emphasis>\n            y\n",
+      "rst": ".. rst-class:: language-xx\n\n's *x*'s *y*\n",
+      "warnings": [
+        "<snippet>:3: WARNING: No smart quotes defined for language \"xx\". [docutils]"
+      ]
+    },
+    {
+      "conf": {
+        "smartquotes": true
+      },
+      "family": "sq",
+      "name": "sq.equal_text_siblings_chain",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        ”x \n        <emphasis>\n            a\n        ”x \n        <emphasis>\n            b\n        \"x \n        <emphasis>\n            c\n        ”x\n",
+      "rst": "&#34;x *a*\"x *b*\"x *c*\"x\n",
+      "warnings": []
+    },
+    {
+      "conf": {
+        "smartquotes": true
+      },
+      "family": "sq",
+      "name": "sq.equal_text_siblings_nulls_count",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        \"x \n        <emphasis>\n            a\n        ”x \n        <emphasis>\n            b\n",
+      "rst": "\\\"x *a*\"x *b*\n",
+      "warnings": []
     }
   ],
   "conf_semantics": "a case's optional 'conf' dict is confoverrides applied on top of the base settings above; absent = defaults. The consumer maps every key onto ParseOptions.py and errors on unmapped keys.",

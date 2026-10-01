@@ -35,6 +35,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::OnceLock;
 
+use sphinx_ultra::config::{ExcludeList, SmartquotesExcludes};
 use sphinx_ultra::error::BuildWarning;
 use sphinx_ultra::{BuildConfig, SphinxBuilder};
 
@@ -417,15 +418,20 @@ fn build_project(project: &Project) -> Built {
 /// way `sphinx-build -D key=value` applies them.
 ///
 /// Keys listed in [`KNOWN_INERT_CONF`] are skipped (nothing in this crate
-/// reads them); every other key must be expressible as an override, so a
-/// fixture project that starts setting something the harness cannot apply
-/// fails loudly here.
+/// reads them) and `smartquotes_excludes` is set as the dict it is
+/// ([`smartquotes_excludes_of`]); every other key must be expressible as an
+/// override, so a fixture project that starts setting something the
+/// harness cannot apply fails loudly here.
 fn config_of(project: &Project) -> BuildConfig {
     let mut config = BuildConfig::default();
     let conf = project.conf.as_object().expect("conf is an object");
     for (key, value) in conf {
         if KNOWN_INERT_CONF.contains(&key.as_str()) {
             assert_inert_conf_is_sound(&project.name, key, value);
+            continue;
+        }
+        if key == "smartquotes_excludes" {
+            config.smartquotes_excludes = Some(smartquotes_excludes_of(&project.name, value));
             continue;
         }
         // A dict-valued setting is applied key by key (`-D numfig_format.figure=...`),
@@ -454,6 +460,33 @@ fn config_of(project: &Project) -> BuildConfig {
         }
     }
     config
+}
+
+/// A conf `smartquotes_excludes` as the oracle's `SphinxTestApp` hands it to
+/// Sphinx: a real dict, its lists tested by membership — not the
+/// comma-joined dotted `-D` this harness gives other dicts, which Sphinx
+/// (and so this crate) keeps as one string tested by substring
+/// (`config.py:310-312`; `"ja,zh_CN"` contains `"zh"`). Set the way a
+/// conf.py dict is: a half it leaves out is `[]`.
+fn smartquotes_excludes_of(project: &str, value: &serde_json::Value) -> SmartquotesExcludes {
+    serde_json::from_value(value.clone()).unwrap_or_else(|e| {
+        panic!("project {project:?}: smartquotes_excludes {value} is no dict of lists: {e}")
+    })
+}
+
+#[test]
+fn a_conf_smartquotes_excludes_keeps_its_lists() {
+    let excludes =
+        smartquotes_excludes_of("test", &serde_json::json!({"languages": ["ja", "zh_CN"]}));
+    assert_eq!(
+        excludes,
+        SmartquotesExcludes {
+            languages: ExcludeList::Names(vec!["ja".to_string(), "zh_CN".to_string()]),
+            builders: ExcludeList::default(),
+        }
+    );
+    assert!(!excludes.languages.contains("zh"));
+    assert!(excludes.languages.contains("zh_CN"));
 }
 
 /// One conf value rendered as the string a `-D` override carries.

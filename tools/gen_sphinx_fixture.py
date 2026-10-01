@@ -1536,6 +1536,20 @@ CASES = [
     # `smartquotes_excludes['builders']` naming the harness's builder
     # (`dummy`) switches the transform off (`transforms/__init__.py:392`).
     ('sq', 'excluded_builder', '"Quoted" -- \'x\'...\n', {'smartquotes': True, 'smartquotes_excludes': {'languages': [], 'builders': ['dummy']}}),
+    # `txtnode.parent.replace(txtnode, Text(newtext))` (`universal.py:338`)
+    # finds the child by `list.index`, and a `Text` is a `str` equal by
+    # value (`nodes.py:809-810,1101-1108`): the FIRST sibling whose str()
+    # equals the node's is replaced -- here the earlier sibling an earlier
+    # token rebuilt into that very text (`&#34;x ` came back as `"x `, the
+    # entity restored; `'s ` came back unchanged), and the node itself keeps
+    # its old, straight text. In a run, each replacement takes the next
+    # equal original.
+    ('sq', 'equal_text_siblings_entity', '&#34;x *a*"x *b*\n', {'smartquotes': True}),
+    ('sq', 'equal_text_siblings_apostrophe', '&#39;s *a*\'s *b*\n', {'smartquotes': True}),
+    ('sq', 'equal_text_siblings_unknown_language', '.. rst-class:: language-xx\n\n\'s *x*\'s *y*\n', {'smartquotes': True}),
+    ('sq', 'equal_text_siblings_chain', '&#34;x *a*"x *b*"x *c*"x\n', {'smartquotes': True}),
+    # The str() compared keeps its nulls: an escaped `\"x ` is no `"x `.
+    ('sq', 'equal_text_siblings_nulls_count', '\\"x *a*"x *b*\n', {'smartquotes': True}),
 ]
 
 
@@ -1788,7 +1802,7 @@ def main() -> int:
         "tx_footnotes": 20,
         "tx_docinfo": 25,
         "tx_misc": 22,
-        "sq": 15,
+        "sq": 20,
     }
     counts: dict = {}
     for case in CASES:
