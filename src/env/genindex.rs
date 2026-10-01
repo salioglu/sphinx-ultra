@@ -195,76 +195,24 @@ pub(crate) fn parse_index_entries(items: &[String], docname: &str) -> Vec<IndexE
         .collect()
 }
 
-/// `('single', 'Alpha', 'index-0', '', None)` -> one record.
+/// `('single', 'Alpha', 'index-0', '', None)` -> one record, read by
+/// [`crate::utils::parse_py_str_tuple`] — the inverse of the
+/// [`crate::utils::py_repr_str`] every field was written with, so every
+/// escape it writes reads back (`\xa0`, `\x1f`, `\u2028`, not only
+/// `\n\r\t`).
 fn parse_tuple(item: &str) -> Option<IndexEntryRecord> {
-    let chars: Vec<char> = item.chars().collect();
-    let mut at = 0usize;
-    expect(&chars, &mut at, '(')?;
-    let mut fields: Vec<Option<String>> = Vec::with_capacity(5);
-    for field in 0..5 {
-        fields.push(parse_literal(&chars, &mut at)?);
-        if field < 4 {
-            expect(&chars, &mut at, ',')?;
-            while chars.get(at) == Some(&' ') {
-                at += 1;
-            }
-        }
-    }
-    expect(&chars, &mut at, ')')?;
-    if at != chars.len() {
-        return None;
-    }
-    let main = fields[3].clone()?;
+    let fields = crate::utils::parse_py_str_tuple(item)?;
+    let [entry_type, value, target_id, main, category_key] =
+        <[Option<String>; 5]>::try_from(fields).ok()?;
     Some(IndexEntryRecord {
-        entry_type: fields[0].clone()?,
-        value: fields[1].clone()?,
-        target_id: fields[2].clone()?,
+        entry_type: entry_type?,
+        value: value?,
+        target_id: target_id?,
         // Sphinx stores the literal marker string; only `'main'` and `''`
         // are ever produced, and everything downstream tests it for truth.
-        main: !main.is_empty(),
-        category_key: fields[4].clone(),
+        main: !main?.is_empty(),
+        category_key,
     })
-}
-
-fn expect(chars: &[char], at: &mut usize, want: char) -> Option<()> {
-    if chars.get(*at) == Some(&want) {
-        *at += 1;
-        Some(())
-    } else {
-        None
-    }
-}
-
-/// `None`, or a `'`/`"`-quoted string with Python's repr escapes.
-fn parse_literal(chars: &[char], at: &mut usize) -> Option<Option<String>> {
-    if chars[*at..].starts_with(&['N', 'o', 'n', 'e']) {
-        *at += 4;
-        return Some(None);
-    }
-    let quote = *chars.get(*at)?;
-    if quote != '\'' && quote != '"' {
-        return None;
-    }
-    *at += 1;
-    let mut out = String::new();
-    loop {
-        let c = *chars.get(*at)?;
-        *at += 1;
-        match c {
-            _ if c == quote => return Some(Some(out)),
-            '\\' => {
-                let escaped = *chars.get(*at)?;
-                *at += 1;
-                out.push(match escaped {
-                    'n' => '\n',
-                    'r' => '\r',
-                    't' => '\t',
-                    other => other,
-                });
-            }
-            other => out.push(other),
-        }
-    }
 }
 
 /// `split_index_msg` (`util/index_entries.py:4-18`). `Err` carries the
@@ -744,6 +692,13 @@ mod tests {
             ("single", "carriage\rreturn", "id", "", None),
             ("single", "", "id", "", Some("")),
             ("single", "(None, 'not a tuple')", "id", "", None),
+            // The escapes `py_repr_str` writes for Python-non-printable
+            // characters: `\xa0` (NBSP), `\x1f`, `\x85`, ` ` (ledger
+            // L242: an NBSP read back as `axa0b`).
+            ("single", "a\u{a0}b", "id", "", None),
+            ("single", "x\u{1f}y", "id\u{a0}2", "", Some("k\u{85}")),
+            ("pair", "p\u{2028}q; r", "id", "main", None),
+            ("single", "it's \\ and \u{a0}", "id", "", None),
         ];
         for (entry_type, value, target_id, main, key) in cases {
             let rendered = index_entry_tuple(entry_type, value, target_id, main, key);

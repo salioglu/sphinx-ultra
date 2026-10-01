@@ -2277,6 +2277,78 @@ fn citation_registrations_across_incremental_rebuilds_match_sphinx_s_clear_and_r
     );
 }
 
+/// An index entry whose text holds a character `py_repr_str` escapes — a
+/// no-break space, written `\xa0` into the `index` node's `entries` — reaches
+/// the environment and the general index intact. Byte-pinned to a sphinx
+/// 9.1.0 dummy build of this project (`env.domaindata['index']['entries']`
+/// and `IndexEntries(env).create_index(builder)`, probe of 2026-10-01): no
+/// warning; `a\xa0b` under `A`; `x\xa0y` and `z`, each the other's
+/// subitem. The entries decoder knew only `\n\r\t` and read the NBSP back
+/// as `axa0b` (ledger L242).
+#[test]
+fn an_index_entry_with_a_no_break_space_reaches_the_general_index_intact() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let source_dir = tmp.path().join("source");
+    std::fs::create_dir_all(&source_dir).unwrap();
+    write(
+        &source_dir,
+        "index",
+        "Index\n=====\n\n.. toctree::\n\n   a\n",
+    );
+    write(
+        &source_dir,
+        "a",
+        "A\n=\n\n.. index::\n   single: a\u{a0}b\n   pair: x\u{a0}y; z\n\nBody.\n",
+    );
+    let source_dir = sphinx_ultra::utils::canonicalize_simplified(&source_dir).unwrap();
+
+    let (_, env, warnings) = incremental_build(&source_dir, &tmp.path().join("out"));
+    assert_eq!(warnings, Vec::<String>::new());
+    assert_eq!(
+        env["index_entries"],
+        serde_json::json!({
+            "a": [
+                ["single", "a\u{a0}b", "index-0", "", null],
+                ["pair", "x\u{a0}y; z", "index-0", "", null],
+            ],
+            "index": [],
+        })
+    );
+    let entry = |name: &str, targets: serde_json::Value, subitems: serde_json::Value| {
+        serde_json::json!({
+            "name": name,
+            "targets": targets,
+            "subitems": subitems,
+            "category_key": null,
+        })
+    };
+    assert_eq!(
+        env["genindex"],
+        serde_json::json!([
+            {
+                "group": "A",
+                "entries": [entry("a\u{a0}b", serde_json::json!([["", "#index-0"]]), serde_json::json!([]))],
+            },
+            {
+                "group": "X",
+                "entries": [entry(
+                    "x\u{a0}y",
+                    serde_json::json!([]),
+                    serde_json::json!([{"name": "z", "targets": [["", "#index-0"]]}]),
+                )],
+            },
+            {
+                "group": "Z",
+                "entries": [entry(
+                    "z",
+                    serde_json::json!([]),
+                    serde_json::json!([{"name": "x\u{a0}y", "targets": [["", "#index-0"]]}]),
+                )],
+            },
+        ])
+    );
+}
+
 /// A document that disappears is cleared from the environment, and both
 /// diagnostics a cold build would now report show up: the reference into
 /// the deleted document dangles (resolution, recomputed for every document
