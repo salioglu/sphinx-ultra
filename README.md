@@ -55,7 +55,7 @@ full, file-and-line-level status audit lives in
   numbering, the std domain (labels, glossary terms, `option`/`envvar`/
   `confval`), general-index data, an `objects.inv` reader/writer, and
   **intersphinx** resolution incl. the `:external:` roles — verified against a
-  real `sphinx-build` 9.1.0 across a 29-project / 84-document environment
+  real `sphinx-build` 9.1.0 across a 36-project / 96-document environment
   oracle
 - **🐍 Python domain & file inclusion**: the fourteen `py:*` directives with
   a real signature grammar (defaults, annotations, PEP 695 type parameters,
@@ -65,8 +65,9 @@ full, file-and-line-level status audit lives in
   `:pyobject:`) — verified against the same oracles
 - **⚠️ Build validation**: toctree consistency (nonexisting/excluded entries,
   self-reference, circular toctrees, orphans, "isn't included in any
-  toctree"); directive/role validation on every build; cross-reference
-  resolution with Sphinx's own texts and categories — a broken reference of
+  toctree"); docutils' own diagnostics, printed in Sphinx's order and
+  format (`ERROR`/`CRITICAL … [docutils]`, counted as warnings as in
+  `sphinx-build`); cross-reference resolution with Sphinx's own texts and categories — a broken reference of
   any of Sphinx's seven `warn_dangling` std reftypes (`:ref:`, `:numref:`,
   `:doc:`, `:term:`, `:keyword:`, `:option:`, `:confval:`) warns in a
   default build (`unknown document:`, `undefined label:`,

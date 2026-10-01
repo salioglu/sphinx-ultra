@@ -13,6 +13,69 @@ everything forward is [ROADMAP.md](ROADMAP.md).
 
 ### Added
 
+- **M2 wave 5, sub-project 1: docutils' diagnostics print, and Sphinx's read
+  transforms run.** What a document's read phase prints and stores is now
+  what `sphinx-build` 9.1.0's is, but for the divergences listed below.
+  - **docutils diagnostics print.** Every message docutils' reporter raises
+    at level 2 or above — a missing `include`, a directive error, an unknown
+    target, an undefined substitution, malformed markup — is recorded when
+    the parser creates it and printed in Sphinx's read order and format:
+    `index.rst:14: CRITICAL: Problems with "include" directive path:` plus
+    the reason and ` [docutils]` (`WARNING`, `ERROR`, or `CRITICAL` for
+    docutils' SEVERE; a message without a line prints `index.rst::`). A
+    document's records print in creation order, interleaved with the
+    directives' and domains' own warnings; a multi-line message prints whole,
+    on stderr and in the `-w` file alike. A document served from the cache
+    prints nothing, as `sphinx-build` does not re-read it. This closes wave
+    4.5's known limitation: a broken `include`/`literalinclude` path no
+    longer drops its content silently.
+  - **The read transforms run** on every document, in Sphinx's order, before
+    it is stored: `|version|`, `|release|`, `|today|` and every other
+    substitution, with docutils' circular, undefined and line-length errors;
+    named, anonymous, indirect, external and internal hyperlinks, and
+    `Unknown target name` errors for dangling ones; label targets moved onto
+    the node they label, and a `py:module` target onto its section;
+    auto-numbered, labelled, symbol and manual footnotes, with `Footnote [..]
+    is not referenced.`; citations (`duplicate citation …`, `Citation [..]
+    is not referenced.` — resolving a citation reference waits for
+    sub-project 2); a leading field list (`:orphan:`, `:tocdepth:`,
+    `:nocomments:`, bibliographic fields) read into the document's metadata
+    and taken out of the tree; doctest blocks, auto-numbered figure, table
+    and code-block ids, misplaced-transition warnings; and in-tree messages
+    removed below `keep_warnings`' level.
+  - **SmartQuotes, on by default as in Sphinx**: straight quotes become
+    typographic ones, `--`/`---` dashes and `...` an ellipsis — in titles,
+    paragraphs, label texts and the table of contents — per `language`,
+    honouring `smartquotes_action`, `smartquotes_excludes` and
+    `language-xx` classes; backslash-escaped characters stay plain and
+    literals untouched; a language without quote data warns `No smart
+    quotes defined for language "xx".` Set `smartquotes = False` to keep
+    straight quotes.
+  - **Deliberate divergences and known limitations** are listed in
+    [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md): where
+    `sphinx-build` crashes, hangs or fetches over the network (content
+    nested past 200 levels, `include`'s `:parser:`, `raw`'s `:url:`, a
+    `SOURCE_DATE_EPOCH` Python cannot read, a case-folded substitution
+    cycle, …) this build prints a record and carries on. One gap remains in
+    that guard: a chain of directives nested close to it (199 nested
+    `.. py:function::`) can exhaust a read thread's stack and abort a
+    release build — on a document `sphinx-build` already crashes on (from
+    82 nested `py:function`s).
+  Evidence: the read-phase doctree oracle at 697 cases (178 of them for the
+  transforms, 20 for SmartQuotes), compared after the transforms and with
+  each case's printed records; the docutils parse oracle at 761 cases with
+  each case's message stream; the environment oracle at 36 projects / 96
+  documents, warnings compared record by record — all at zero divergence
+  against a real `sphinx-build` 9.1.0 — and a parse + transforms totality
+  sweep green at `PROPTEST_CASES=2048`.
+- New configuration keys for the read transforms, readable from `conf.py`,
+  YAML/JSON and `-D`, at Sphinx 9.1's defaults: `smartquotes` (`True`),
+  `smartquotes_action` (`'qDe'`), `smartquotes_excludes` (languages `ja`,
+  `zh_CN`, `zh_TW`; builders `man`, `text`), `keep_warnings` (`False`),
+  `today` (`''`), `today_fmt` (unset, meaning `'%b %d, %Y'`) and
+  `highlight_language` (`'default'`; the language of a `code-block` that
+  names none).
+
 - **M2 wave 4.5: the Python domain, and files can include files.**
   `.. py:function::` and its thirteen siblings are no longer unknown
   directives, and `include`/`literalinclude` work — which also means a
@@ -58,17 +121,13 @@ everything forward is [ROADMAP.md](ROADMAP.md).
   - **glossary**: the three misformat diagnostics Sphinx raises
     (`glossary term must be preceded by empty line`, `glossary terms must
     not be separated by empty lines`, `glossary seems to be misformatted,
-    check indentation`) are recorded in the doctree (not yet printed — see
-    the known limitation below).
-  - **Known limitation — `include`/`literalinclude` diagnostics are not
-    printed yet.** The diagnostics these directives raise (a missing or
-    unreadable file, the refused `:parser:`, a circular inclusion) are
-    docutils *reporter* messages, which this build records in the doctree
-    but does not yet stream to stderr or to the `-w` file — a pre-existing
-    reporter-channel gap the wave-5 diagnostics work closes. Until then a
-    broken include path drops its content **silently**, and `-W` stays
-    green where `sphinx-build` fails. The glossary diagnostics above take
-    the same channel.
+    check indentation`) are recorded in the doctree, and print since M2
+    wave 5.
+  - **`include`/`literalinclude` diagnostics** (a missing or unreadable
+    file, the refused `:parser:`, a circular inclusion) are docutils
+    *reporter* messages. Wave 4.5 recorded them in the doctree only — a
+    broken include path dropped its content silently and `-W` stayed green
+    — until M2 wave 5's reporter channel printed them (above).
   Evidence: the environment oracle grew to 29 projects / 84 documents and
   the read-phase doctree oracle to 489 cases, both at zero divergence
   against a real `sphinx-build` 9.1.0; `:pyobject:`'s tokenizer was checked
@@ -213,6 +272,39 @@ everything forward is [ROADMAP.md](ROADMAP.md).
 
 ### Changed
 
+- **Breaking: the doctree and environment cache formats changed again (M2
+  wave 5).** `DOCTREE_FORMAT_VERSION` went 2 → 3 (a stored doctree now
+  means the post-transform tree) and `ENV_VERSION` 3 → 4 (the citation
+  domain's registries; typed metadata values), and the builder's name
+  joined the cache fingerprint. Old caches are an honest **miss**, so **the
+  first build after upgrading is a full cold build**. No action is
+  required.
+- **docutils' diagnostics now print, and they are warnings (decision D2).**
+  A docutils `WARNING`, `ERROR` or `CRITICAL` record exits 0 without `-W`
+  and 1 with it, exactly as `sphinx-build` does; only this build's own read
+  failures (an unreadable source) still exit 1 on their own. **This can
+  turn a passing `-W` build into a failing one** for any project whose
+  documents now earn read-phase records — docutils' (a broken include, an
+  unknown target or substitution, a misplaced transition) or the read
+  transforms' (an unreferenced footnote, a duplicate citation) — as it
+  fails under `sphinx-build`. Build once without `-W` before upgrading a CI
+  job that uses it.
+- **The directive/role validators no longer report (decision D1).** With
+  docutils' own messages printing, every validator check that repeated one
+  (a missing argument or content block, an unknown option, a flag given a
+  value, an invalid image width, height, scale or alignment, an empty
+  `:doc:`/`:ref:`/`:download:` target) or fired on markup `sphinx-build`
+  accepts (`Unusual image extension`, `Toctree directive is empty`, an
+  empty or brace-unbalanced `math`, the house-style checks on `:doc:`,
+  `:download:`, `:math:`, `:abbr:`, `:command:`, `:file:` and `:guilabel:`)
+  is gone, and Sphinx's own message prints where Sphinx has one.
+  `validate_directives` stays (default on) and reports nothing; anything
+  that grepped for the old texts sees Sphinx's.
+- **Text output changes with SmartQuotes on** (Sphinx's default): titles,
+  paragraphs, label texts and the table of contents carry typographic
+  quotes, dashes and ellipses where earlier builds kept the straight ones.
+- `version` and `release` default to empty, Sphinx's `''`, instead of
+  `1.0.0`.
 - **Breaking: the doctree and environment cache formats both changed
   (M2 wave 4.5).** `DOCTREE_FORMAT_VERSION` went 1 → 2 and `ENV_VERSION`
   2 → 3, because both structures gained fields (per-line source provenance

@@ -13,14 +13,114 @@
 //! shape these multi-line grammars are least likely to break on. Every
 //! free-text generator below is either `(?s)`-flagged or built by joining
 //! generated lines with `\n`.
+//!
+//! M2 wave 5 sub-project 1 (the read transforms) made the property the
+//! Sphinx read's: every generator's input also goes through
+//! [`parse_and_transform`] — the parse, then every read transform — under
+//! a drawn [`TransformConfig`], and the result is printed ([`sphinx_read`]).
+//! Two generators are new: transform-shaped documents whose names collide
+//! (substitution, target, footnote and citation definitions and references,
+//! cycles and case variants included), and the deep-nesting sweep, which
+//! nests containers past the parser's 200-level guard and hands the
+//! transforms the deepest trees the parser builds. Termination is part of
+//! the property — a transform that never ends is as much a bug as one that
+//! panics — so every case runs under a per-case time bound
+//! ([`CASE_TIMEOUT_MS`]).
 
 use std::path::Path;
 use std::sync::OnceLock;
 
 use proptest::prelude::*;
+use sphinx_ultra::error::BuildWarning;
 use sphinx_ultra::py::annotations::{parse_annotation, PyRefContext};
 use sphinx_ultra::py::PySigConfig;
-use sphinx_ultra::rst::{parse_rst, ParseOptions};
+use sphinx_ultra::rst::{parse_rst, parse_rst_full, ParseOptions};
+use sphinx_ultra::transforms::{
+    apply_read_transforms, parse_and_transform, BuildDate, TransformConfig,
+};
+
+/// The time one case may take before proptest kills it and reports it — a
+/// hang, as no case takes more than a few seconds even in a debug build.
+/// Setting it runs each test's cases in a forked child process
+/// (proptest's `timeout`, which implies `fork`).
+const CASE_TIMEOUT_MS: u32 = 60_000;
+
+/// The Sphinx read of `s` under `config`: the parse, then the read
+/// transforms ([`parse_and_transform`]), the tree printed as `pformat` and
+/// each record as the build renders it. Totality is the whole property:
+/// whatever the parser made of `s`, every transform runs to its end.
+fn sphinx_read(s: &str, o: &ParseOptions, config: &TransformConfig) {
+    let (tree, records) = parse_and_transform(s, o, config);
+    let _ = tree.root.pformat();
+    for record in &records {
+        let _ = BuildWarning::from_diagnostic(record, "index.rst".into()).render();
+    }
+}
+
+/// The read transforms' configuration, drawn over every key a transform
+/// branches on: `keep_warnings` (FilterSystemMessages); SmartQuotes on or
+/// off, with actions docutils knows and arbitrary ones; a language with a
+/// quote table, a regional one, one `smartquotes_excludes` names, one with
+/// no table (the `No smart quotes defined` warning) and arbitrary text; a
+/// builder the excludes name; `|version|`/`|release|`/`|today|` text, an
+/// arbitrary `today_fmt` and any instant as the build date.
+fn transform_config() -> impl Strategy<Value = TransformConfig> {
+    (
+        (any::<bool>(), any::<bool>()),
+        prop_oneof![
+            Just("qDe".to_string()),
+            Just("q".to_string()),
+            Just("De".to_string()),
+            Just("1".to_string()),
+            Just("2".to_string()),
+            Just("3".to_string()),
+            Just("-1".to_string()),
+            Just("0".to_string()),
+            Just("qbBdDiew".to_string()),
+            "(?s).{0,6}",
+        ],
+        prop_oneof![
+            Just("en".to_string()),
+            Just("de".to_string()),
+            Just("fr".to_string()),
+            Just("de-CH".to_string()),
+            Just("ja".to_string()),
+            Just("zh_CN".to_string()),
+            Just("xx".to_string()),
+            Just(String::new()),
+            "(?s).{0,12}",
+        ],
+        prop_oneof![Just("html"), Just("dirhtml"), Just("text"), Just("man")],
+        ("(?s).{0,6}", "(?s).{0,6}"),
+        prop_oneof![Just(String::new()), "(?s).{0,6}"],
+        proptest::option::of("(?s)(%-?[a-zA-Z%]|.){0,6}"),
+        any::<i64>(),
+    )
+        .prop_map(
+            |(
+                (keep_warnings, smartquotes),
+                smartquotes_action,
+                language,
+                builder,
+                (version, release),
+                today,
+                today_fmt,
+                epoch,
+            )| TransformConfig {
+                smartquotes,
+                smartquotes_action,
+                keep_warnings,
+                language,
+                builder: builder.to_string(),
+                version,
+                release,
+                today,
+                today_fmt,
+                build_date: BuildDate::Epoch(epoch),
+                ..TransformConfig::default()
+            },
+        )
+}
 
 fn opts() -> ParseOptions {
     ParseOptions {
@@ -75,10 +175,12 @@ fn opts_in(srcdir: &Path) -> ParseOptions {
 /// A scratch project the include sweeps read from: built once and never
 /// mutated. It lives in a `static`, and Rust never drops statics, so the
 /// `TempDir` guard's cleanup does not run at exit: one directory per test
-/// run is deliberately LEAKED in the system temp dir (panel fix round B,
-/// minor — an earlier comment claimed it was dropped with the process). It
-/// carries the `sphinx-ultra-proptest-` prefix so the leftovers are
-/// recognizable and greppable. Its members cover the shapes the filter
+/// process is deliberately LEAKED in the system temp dir (panel fix round
+/// B, minor — an earlier comment claimed it was dropped with the process):
+/// one for each include sweep, whose cases run in a forked child of their
+/// own ([`CASE_TIMEOUT_MS`]), and one more for each child a timed-out case
+/// replaces. It carries the `sphinx-ultra-proptest-` prefix so the
+/// leftovers are recognizable and greppable. Its members cover the shapes the filter
 /// chain branches on — markers for `:start-after:`/`:end-before:`, python
 /// definitions for `:pyobject:`, an empty file (the zero-line
 /// `:number-lines:` width edge), a tab-indented file (`:tab-width:` and
@@ -190,11 +292,16 @@ fn include_target() -> impl Strategy<Value = String> {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig { cases: 512, ..ProptestConfig::default() })]
+    #![proptest_config(ProptestConfig {
+        cases: 512,
+        timeout: CASE_TIMEOUT_MS,
+        ..ProptestConfig::default()
+    })]
 
     #[test]
-    fn parse_never_panics_on_arbitrary_input(s in "\\PC*") {
+    fn parse_never_panics_on_arbitrary_input(s in "\\PC*", config in transform_config()) {
         let _ = parse_rst(&s, &opts());
+        sphinx_read(&s, &opts(), &config);
     }
 
     #[test]
@@ -248,28 +355,37 @@ proptest! {
                 Just("\t\ttabs\n".to_string()),
                 Just("> quoted\n".to_string()),
                 Just("text\n".to_string()),
-            ], 0..40).prop_map(|v| v.concat())
+            ], 0..40).prop_map(|v| v.concat()),
+        config in transform_config(),
     ) {
         let _ = parse_rst(&s, &opts());
+        sphinx_read(&s, &opts(), &config);
     }
 
     #[test]
-    fn parse_handles_multibyte_boundaries(s in "[αβ✓🎉a\\-=\\n \\|•‣⁃ß]{0,200}") {
+    fn parse_handles_multibyte_boundaries(
+        s in "[αβ✓🎉a\\-=\\n \\|•‣⁃ß]{0,200}",
+        config in transform_config(),
+    ) {
         let _ = parse_rst(&s, &opts());
+        sphinx_read(&s, &opts(), &config);
     }
 
     #[test]
-    fn pformat_never_panics_after_parse(s in "\\PC{0,300}") {
+    fn pformat_never_panics_after_parse(s in "\\PC{0,300}", config in transform_config()) {
         let tree = parse_rst(&s, &opts());
         let _ = tree.root.pformat();
+        sphinx_read(&s, &opts(), &config);
     }
 
     #[test]
     fn parse_never_panics_on_multiline_arbitrary_input(
-        v in proptest::collection::vec("\\PC{0,40}", 0..30)
+        v in proptest::collection::vec("\\PC{0,40}", 0..30),
+        config in transform_config(),
     ) {
         let s = v.join("\n");
         let _ = parse_rst(&s, &opts());
+        sphinx_read(&s, &opts(), &config);
     }
 
     // ------------------------------------------------------------------
@@ -329,6 +445,7 @@ proptest! {
                 Just("   body paragraph\n".to_string()),
                 Just("\n".to_string()),
             ], 0..6),
+        config in transform_config(),
     ) {
         let mut src = format!(".. {kind}:: {sig}\n");
         for line in &options {
@@ -340,6 +457,7 @@ proptest! {
         }
         let tree = parse_rst(&src, &opts());
         let _ = tree.root.pformat();
+        sphinx_read(&src, &opts(), &config);
     }
 
     /// The wave-4 std-domain description surface, which the totality sweep
@@ -376,6 +494,7 @@ proptest! {
                 (1usize..10, "[a-zé漢🐍 .:]{0,10}")
                     .prop_map(|(n, t)| format!("{}{t}\n", " ".repeat(n))),
             ], 0..8),
+        config in transform_config(),
     ) {
         let mut src = format!(".. {kind}:: {sig}\n\n");
         for line in &body {
@@ -383,13 +502,15 @@ proptest! {
         }
         let tree = parse_rst(&src, &opts());
         let _ = tree.root.pformat();
+        sphinx_read(&src, &opts(), &config);
     }
 
     /// The annotation parser reached directly, without a directive around
     /// it: `parse_annotation` runs the py expression parser and falls back
-    /// to a plain-text node, and neither path may panic.
+    /// to a plain-text node, and neither path may panic. The Sphinx read
+    /// reaches it through a `:type:` option.
     #[test]
-    fn parse_annotation_never_panics(s in "(?s).{0,80}") {
+    fn parse_annotation_never_panics(s in "(?s).{0,80}", config in transform_config()) {
         let ctx = PyRefContext { module: Some("m".into()), class_: Some("C".into()), ..Default::default() };
         for cfg in [PySigConfig::default(), PySigConfig {
             python_use_unqualified_type_names: true,
@@ -400,12 +521,16 @@ proptest! {
                 let _ = node.pformat();
             }
         }
+        sphinx_read(&format!(".. py:data:: x\n   :type: {s}\n"), &opts(), &config);
     }
 
     /// Signature text reached through the directive with the two config
     /// families that change the signature grammar's output shape.
     #[test]
-    fn py_signature_config_variants_never_panic(sig in "(?s).{0,60}") {
+    fn py_signature_config_variants_never_panic(
+        sig in "(?s).{0,60}",
+        config in transform_config(),
+    ) {
         let mut o = opts();
         o.py = PySigConfig {
             maximum_signature_line_length: Some(1),
@@ -415,8 +540,10 @@ proptest! {
             python_display_short_literal_types: true,
             ..PySigConfig::default()
         };
-        let tree = parse_rst(&format!(".. py:function:: {sig}\n"), &o);
+        let src = format!(".. py:function:: {sig}\n");
+        let tree = parse_rst(&src, &o);
         let _ = tree.root.pformat();
+        sphinx_read(&src, &o, &config);
     }
 
     // ------------------------------------------------------------------
@@ -432,6 +559,7 @@ proptest! {
         target in include_target(),
         options in proptest::collection::vec(option_line(), 0..6),
         tail in "(?s).{0,40}",
+        config in transform_config(),
     ) {
         let mut src = format!(".. include:: {target}\n");
         for line in &options {
@@ -441,6 +569,7 @@ proptest! {
         src.push_str(&tail);
         let tree = parse_rst(&src, &opts_in(scratch()));
         let _ = tree.root.pformat();
+        sphinx_read(&src, &opts_in(scratch()), &config);
     }
 
     /// The same sweep for `literalinclude`, whose filter chain (`:lines:`,
@@ -450,6 +579,7 @@ proptest! {
     fn literalinclude_never_panics_on_arbitrary_option_blocks(
         target in include_target(),
         options in proptest::collection::vec(option_line(), 0..6),
+        config in transform_config(),
     ) {
         let mut src = format!(".. literalinclude:: {target}\n");
         for line in &options {
@@ -457,6 +587,7 @@ proptest! {
         }
         let tree = parse_rst(&src, &opts_in(scratch()));
         let _ = tree.root.pformat();
+        sphinx_read(&src, &opts_in(scratch()), &config);
     }
 
     /// Arbitrary text as the include argument, against a real srcdir. The
@@ -472,10 +603,352 @@ proptest! {
     /// traversal case is drawn here precisely so the read path past the
     /// srcdir is exercised.
     #[test]
-    fn include_never_panics_on_arbitrary_paths(arg in include_argument()) {
+    fn include_never_panics_on_arbitrary_paths(
+        arg in include_argument(),
+        config in transform_config(),
+    ) {
         let src = format!(".. include:: {arg}\n");
         let tree = parse_rst(&src, &opts_in(scratch()));
         let _ = tree.root.pformat();
+        sphinx_read(&src, &opts_in(scratch()), &config);
+    }
+}
+
+// ----------------------------------------------------------------------
+// M2 wave 5 sub-project 1: the read transforms
+// ----------------------------------------------------------------------
+
+/// A name the transform-shaped snippets share, so that definitions,
+/// targets, labels and references collide: case variants (a substitution
+/// falls back to its case-insensitive match, and a cycle through two names
+/// that fold alike is docutils' endless one), names that normalize alike
+/// (a space, an NBSP, a doubled space), a number (a manual footnote's
+/// label) and nothing at all.
+fn name() -> impl Strategy<Value = &'static str> {
+    prop_oneof![
+        Just("a"),
+        Just("A"),
+        Just("b"),
+        Just("B"),
+        Just("a b"),
+        Just("a\u{a0}b"),
+        Just("a  b"),
+        Just("1"),
+        Just(""),
+    ]
+}
+
+/// Three [`name`]s.
+fn names() -> impl Strategy<Value = (&'static str, &'static str, &'static str)> {
+    (name(), name(), name())
+}
+
+/// One transform-shaped block: what every read transform reads or
+/// rewrites, its names drawn from [`name`]. Substitution definitions that
+/// nest, cycle, trim and fold case; substitution, hyperlink, anonymous,
+/// footnote and citation references, wrapped and embedded; explicit,
+/// indirect, external and anonymous targets; auto-numbered, labelled,
+/// symbol and manual footnotes and citations; bibliographic fields (DocInfo
+/// reads only a leading field list); transitions; doctest blocks, bare and
+/// quoted; quotes, dashes and ellipses, escaped and literal; language
+/// classes; module targets, index entries, captioned figures, tables and
+/// code blocks, toctrees, terms; the default substitutions.
+fn transform_block() -> impl Strategy<Value = String> {
+    prop_oneof![
+        names().prop_map(|(n, m, k)| format!(".. |{n}| replace:: {m} |{k}| \"q\"\n")),
+        names().prop_map(|(n, _, k)| format!(".. |{n}| replace:: |{k}|_ x\n")),
+        names().prop_map(|(n, m, _)| format!(".. |{n}| replace:: `{m}`_ *e* |{n}|\n")),
+        (
+            name(),
+            prop_oneof![Just(":trim:"), Just(":ltrim:"), Just(":rtrim:")]
+        )
+            .prop_map(|(n, opt)| format!(".. |{n}| unicode:: U+2014 U+00A0\n   {opt}\n")),
+        name().prop_map(|n| format!(".. |{n}| image:: x.png\n   :target: {n}_\n")),
+        names().prop_map(|(n, m, k)| format!("See |{n}| and |{m}|_ and |{k}|__ and \\|{n}|.\n")),
+        name().prop_map(|n| format!(".. _{n}:\n")),
+        names().prop_map(|(n, m, _)| format!(".. _{n}: {m}_\n")),
+        names().prop_map(|(n, m, _)| format!(".. _{n}: `{m}`_\n")),
+        names().prop_map(|(n, m, _)| format!(".. _{n}: http://x.example/{m}\n")),
+        Just(".. __: http://anon.example/\n".to_string()),
+        name().prop_map(|n| format!(".. __: {n}_\n")),
+        names().prop_map(|(n, m, k)| {
+            format!("`{n}`_ and `{m}`__ and `t <{k}_>`_ and `u <http://x>`__ and {n}_\n")
+        }),
+        name().prop_map(|n| format!("An _`{n}` inline target and _`{n}` again.\n")),
+        name().prop_map(|n| format!(".. [#{n}] Labelled.\n")),
+        Just(".. [#] Auto.\n".to_string()),
+        Just(".. [*] Symbol.\n".to_string()),
+        Just(".. [1] Manual.\n".to_string()),
+        Just(".. [cite] Citation.\n".to_string()),
+        name().prop_map(|n| format!("Refs [#{n}]_ [#]_ [*]_ [1]_ [cite]_ [nocite]_.\n")),
+        Just(":orphan:\n:tocdepth: 2\n:nocomments:\n".to_string()),
+        Just(":author: J. Doe\n:authors: A; B, C\n:version: 1. x\n".to_string()),
+        Just(":date: $Date: 2026/09/30 $\n:abstract: Sum.\n:dedication: D\n".to_string()),
+        name().prop_map(|n| format!(":field: |{n}| `{n}`_\n:tocdepth: x\n")),
+        Just("----\n".to_string()),
+        Just(">>> 1 + 1\n2\n".to_string()),
+        Just("Quote:\n\n   >>> x\n   >>> y\n".to_string()),
+        Just("Title\n=====\n".to_string()),
+        Just("Sub\n---\n".to_string()),
+        Just(
+            "\"Quotes\" -- dashes --- and... 'single' ``\"lit\"`` \\\"esc\\\" \\--.\n".to_string()
+        ),
+        Just("'80s \"a 'b' c\" x\u{a0}\"y\" \u{2013}\"z\"\n".to_string()),
+        prop_oneof![Just("de"), Just("fr"), Just("ja"), Just("xx"), Just("")]
+            .prop_map(|l| format!(".. rst-class:: language-{l}\n\n\"Q\" -- 'q'\n")),
+        Just(".. py:module:: m\n".to_string()),
+        Just(".. index:: single: x\n".to_string()),
+        Just(".. figure:: x.png\n\n   \"Caption\"\n".to_string()),
+        Just(".. table:: Cap\n\n   = =\n   a b\n   = =\n".to_string()),
+        Just(".. code-block:: python\n   :caption: c\n\n   x = 1\n".to_string()),
+        Just(".. toctree::\n   :caption: \"C\"\n\n   T <doc>\n".to_string()),
+        Just("term : classifier\n   \"def\"\n".to_string()),
+        Just("|today| |version| |release| |translation progress|\n".to_string()),
+        Just(".. only:: html\n\n   ----\n\n   S\n   -\n".to_string()),
+        Just(".. note::\n\n   |a| `a`_ [#]_ \"n\"\n".to_string()),
+        Just("\n".to_string()),
+        Just("\n\n".to_string()),
+    ]
+}
+
+/// One level of the deep-nesting sweep: how it opens, and how far in its
+/// content — the next level — is indented. `\n` ends an opener that takes
+/// no text on its line (the level's text becomes its first paragraph); an
+/// empty opener is a paragraph whose block quote the next level is; `term`
+/// is a definition-list item, its definition following with no blank line.
+fn opener() -> impl Strategy<Value = (&'static str, usize)> {
+    prop_oneof![
+        Just(("- ", 2)),
+        Just(("#. ", 3)),
+        Just(("(i) ", 4)),
+        Just(("", 3)),
+        Just((":f: ", 3)),
+        Just(("term", 3)),
+        Just((".. [#] ", 3)),
+        Just((".. [c] ", 3)),
+        Just((".. note:: ", 3)),
+        Just((".. admonition:: ", 3)),
+        Just((".. topic:: ", 3)),
+        Just((".. sidebar:: ", 3)),
+        Just((".. versionadded:: 1.0 ", 3)),
+        Just((".. container:: c\n", 3)),
+        Just((".. only:: html\n", 3)),
+        Just((".. compound::\n", 3)),
+        Just((".. py:function:: f()\n", 3)),
+    ]
+}
+
+/// One line of text the transforms read, for a nesting level.
+fn inline_payload() -> impl Strategy<Value = &'static str> {
+    prop_oneof![
+        Just("\"q\" -- x..."),
+        Just("|s| and |c0|_"),
+        Just("`t`_ and anon__"),
+        Just("[#]_ [*]_ [cite]_"),
+        Just("_`inner` target"),
+        Just("|today|"),
+        Just("plain"),
+    ]
+}
+
+/// The tree the deep-nesting sweep reads: `levels` nested containers, each
+/// with its text and the transform-shaped blocks beside its content, and a
+/// substitution chain whose every link wraps the next in a reference
+/// (`.. |cK| replace:: |cK+1|_`) — nesting inline as deep as the chain is
+/// long, as substitution expansion builds it (docutils' expansion grows
+/// with the square of a chain's length, so a short one).
+fn nested_document(
+    levels: &[((&'static str, usize), &'static str, Vec<String>)],
+    chain: usize,
+    tail: &[String],
+) -> String {
+    let mut src = String::new();
+    let mut indent = 0usize;
+    for ((open, width), text, blocks) in levels {
+        let pad = " ".repeat(indent);
+        let inner = " ".repeat(indent + width);
+        match *open {
+            "term" => src.push_str(&format!("{pad}term {text}\n")),
+            open if open.ends_with('\n') => {
+                src.push_str(&format!("{pad}{open}\n{inner}{text}\n\n"));
+            }
+            open => src.push_str(&format!("{pad}{open}{text}\n\n")),
+        }
+        for block in blocks {
+            for line in block.lines() {
+                if !line.is_empty() {
+                    src.push_str(&inner);
+                }
+                src.push_str(line);
+                src.push('\n');
+            }
+            src.push('\n');
+        }
+        indent += width;
+    }
+    src.push('\n');
+    for link in 0..chain {
+        src.push_str(&format!(".. |c{link}| replace:: \"x\" |c{}|_\n", link + 1));
+    }
+    src.push_str(&format!(
+        ".. |c{chain}| replace:: end\n.. |s| replace:: S\n"
+    ));
+    src.push_str(".. _t: http://x.example/\n.. [cite] C\n.. [#] F\n.. [*] G\n\n");
+    for block in tail {
+        src.push_str(block);
+        src.push('\n');
+    }
+    src
+}
+
+/// The stack the deep-nesting sweep parses on. The parser recurses once a
+/// nesting level and gives up at 200 levels, and a directive level is
+/// costly: in a debug build 199 nested admonitions, containers or
+/// `py:function`s need more than 4 MiB and fit in 8, and 100 nested
+/// `note`s already overflow 2 MiB (probed) — more than a read-pool thread
+/// or a test thread has. That is a known limitation, recorded in
+/// `docs/IMPLEMENTATION_STATUS.md`; the sweep is about the transforms, so
+/// the parse gets room.
+const PARSE_STACK: usize = 64 * 1024 * 1024;
+
+/// The stack the deep-nesting sweep runs the transforms on: the build's
+/// read pool runs them on its threads after the parse returns, and those
+/// have Rust's default 2 MiB (rayon spawns them without a size).
+const TRANSFORM_STACK: usize = 2 * 1024 * 1024;
+
+proptest! {
+    #![proptest_config(ProptestConfig {
+        cases: 512,
+        timeout: CASE_TIMEOUT_MS,
+        ..ProptestConfig::default()
+    })]
+
+    /// Transform-shaped documents: [`transform_block`]s in any order, any
+    /// number of times, so that each kind of definition meets its
+    /// references before and after it, defined twice or never, and the
+    /// names collide across kinds.
+    #[test]
+    fn transforms_never_panic_on_transform_shaped_input(
+        blocks in proptest::collection::vec(transform_block(), 0..24),
+        separators in proptest::collection::vec(prop_oneof![Just(""), Just("\n")], 24),
+        config in transform_config(),
+    ) {
+        let mut src = String::new();
+        for (block, separator) in blocks.iter().zip(&separators) {
+            src.push_str(block);
+            src.push_str(separator);
+        }
+        sphinx_read(&src, &opts(), &config);
+    }
+
+    /// The deepest trees the parser builds, through the transforms: up to
+    /// 260 nested containers — past the parser's 200-level guard, which
+    /// replaces deeper content with an ERROR — drawn from every kind that
+    /// nests and three that refuse to inside body elements (`topic`,
+    /// `sidebar`, `versionadded`), with transform-shaped blocks at every
+    /// level and an inline chain of wrapped substitution references. The parse runs on
+    /// [`PARSE_STACK`]; the transforms on [`TRANSFORM_STACK`], the stack
+    /// the build gives them, which a transform recursing once a level
+    /// would have to fit in.
+    #[test]
+    fn transforms_survive_the_deep_nesting_sweep(
+        levels in (prop_oneof![3 => 1usize..40, 1 => 190usize..=260]).prop_flat_map(|depth| {
+            proptest::collection::vec(
+                (
+                    opener(),
+                    inline_payload(),
+                    proptest::collection::vec(transform_block(), 0..2),
+                ),
+                depth,
+            )
+        }),
+        chain in 0usize..24,
+        tail in proptest::collection::vec(transform_block(), 0..6),
+        config in transform_config(),
+    ) {
+        let src = nested_document(&levels, chain, &tail);
+        let _ = read_on_the_build_stacks(src, config);
+    }
+}
+
+/// [`sphinx_read`] the way the deep-nesting sweep needs it: the parse on
+/// [`PARSE_STACK`], the transforms on [`TRANSFORM_STACK`], then the print
+/// (`pformat` and the tree's drop recurse once a level — test-side work)
+/// on [`PARSE_STACK`] again. Returns the printed records' texts.
+fn read_on_the_build_stacks(src: String, config: TransformConfig) -> Vec<String> {
+    fn on_stack<T: Send + 'static>(stack: usize, work: impl FnOnce() -> T + Send + 'static) -> T {
+        std::thread::Builder::new()
+            .stack_size(stack)
+            .spawn(work)
+            .expect("the thread starts")
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+    }
+    let parsed = on_stack(PARSE_STACK, move || parse_rst_full(&src, &opts()));
+    let transformed = on_stack(TRANSFORM_STACK, move || {
+        let mut out = parsed;
+        apply_read_transforms(
+            &mut out.doctree,
+            std::mem::take(&mut out.ids),
+            out.next_seq,
+            out.end_of_input,
+            "index",
+            &config,
+            &mut out.registry,
+        );
+        out
+    });
+    on_stack(PARSE_STACK, move || {
+        let _ = transformed.doctree.root.pformat();
+        transformed
+            .registry
+            .diagnostics
+            .iter()
+            .map(|record| {
+                let _ = BuildWarning::from_diagnostic(record, "index.rst".into()).render();
+                record.text.clone()
+            })
+            .collect()
+    })
+}
+
+/// The deep-nesting sweep's documents do reach the parser's guard: 260
+/// levels of any one opener that may nest in itself print the guard's
+/// ERROR exactly once, and the transforms then run over the deepest tree
+/// that opener builds. (`topic` and `sidebar` are refused inside body
+/// elements — docutils' "may not be used within topics or body elements"
+/// — so a chain of them stops at the second level; `versionadded` joins
+/// its content into one paragraph where Sphinx parses it as body elements
+/// — a known parser gap — so a chain of it does not nest at all.)
+#[test]
+fn the_deep_nesting_documents_reach_the_guard() {
+    let openers = [
+        ("- ", 2),
+        ("#. ", 3),
+        ("(i) ", 4),
+        ("", 3),
+        (":f: ", 3),
+        ("term", 3),
+        (".. [#] ", 3),
+        (".. [c] ", 3),
+        (".. note:: ", 3),
+        (".. admonition:: ", 3),
+        (".. container:: c\n", 3),
+        (".. only:: html\n", 3),
+        (".. compound::\n", 3),
+        (".. py:function:: f()\n", 3),
+    ];
+    for opener in openers {
+        let levels = vec![(opener, "\"q\" |s| `t`_ [#]_", Vec::new()); 260];
+        let records =
+            read_on_the_build_stacks(nested_document(&levels, 8, &[]), TransformConfig::default());
+        let guard = records
+            .iter()
+            .filter(|text| {
+                text.as_str() == "Maximum nesting depth exceeded; deeper content skipped."
+            })
+            .count();
+        assert_eq!(guard, 1, "{opener:?}: {records:?}");
     }
 }
 
