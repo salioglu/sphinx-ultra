@@ -2186,7 +2186,7 @@ fn py_registrations_across_incremental_rebuilds_match_sphinx_s_clear_and_replay(
 ///   is referenced nowhere (`check_consistency`);
 /// - steady: nothing is read, so no duplicate warning re-fires, and
 ///   nothing is checked: `check_consistency` runs only after a build that
-///   read or renumbered a document (`builders/__init__.py:418-433`), so
+///   read or renumbered a document (`builders/__init__.py:420-433`), so
 ///   the steady build prints nothing at all;
 /// - touch `a` (whose registration lost): clearing `a` leaves `b`'s `Dup`,
 ///   so the replay warns from `a`, at `a`'s line, naming `b`;

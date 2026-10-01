@@ -66,14 +66,21 @@ everything forward is [ROADMAP.md](ROADMAP.md).
     work onto such a thread (`sphinx_ultra::rst::on_parse_stack` does the
     same for any closure), so that the guard, not a stack overflow, is what
     a deep document meets; where the system refuses threads that size, they
-    fall back to the default stack. A reference to a substitution definition
-    that expansion has grown 1,000 levels deep (one wrapping a reference to
-    itself, under a name another definition folds onto, doubles at each
-    expansion) is not expanded: `ERROR: Substitution definition "a" exceeds
-    the maximum nesting depth. [docutils]`, where `sphinx-build` dies with
-    `RecursionError` measuring the definition. Without the limit such a
-    definition made every later transform quadratic in its depth, or
-    exhausted memory.
+    fall back to the default stack, with a warning that deep nesting can now
+    overflow it. Called from a thread without that stack, each entry point
+    (`parse_rst`, `parse_rst_full`, `apply_read_transforms`,
+    `parse_and_transform(_full)`, `Parser::parse(_full)`) starts a thread
+    per call; a library caller reading many documents runs the loop inside
+    one `on_parse_stack` — `on_parse_stack(|| sources.iter().map(|s|
+    parse_rst(s, &opts)).collect::<Vec<_>>())` — and every call in it runs
+    in place, on the one thread the batch started. A reference to a
+    substitution definition that expansion has grown 1,000 levels deep (one
+    wrapping a reference to itself, under a name another definition folds
+    onto, doubles at each expansion) is not expanded: `ERROR: Substitution
+    definition "a" exceeds the maximum nesting depth. [docutils]`, where
+    `sphinx-build` dies with `RecursionError` measuring the definition.
+    Without the limit such a definition made every later transform
+    quadratic in its depth, or exhausted memory.
   Evidence: the read-phase doctree oracle at 697 cases (178 of them for the
   transforms, 20 for SmartQuotes), compared after the transforms and with
   each case's printed records; the docutils parse oracle at 761 cases with
@@ -420,6 +427,22 @@ surface. The binary's CLI is unaffected.
 
 ### Fixed
 
+- **A rebuild that reads nothing no longer repeats the consistency
+  warnings (M2 wave 5, final fix wave).** Sphinx checks the environment's
+  consistency — `document isn't included in any toctree`, the
+  multiple-toctree-parents note, `Citation [..] is not referenced.` — only
+  after a build that read a document or moved one's section or figure
+  numbers (`sphinx/builders/__init__.py:420-433`); this build checked after
+  every build. `sphinx-build` mode is incremental by default, so a second
+  `-W` build of an unchanged project printed those warnings again and
+  exited 1 where `sphinx-build -W` exits 0. A rebuild that reads no
+  document now prints none of them (a deletion counts only through the
+  documents it makes the build re-read); one that reads or renumbers
+  anything prints them all, as before.
+  Probed against `sphinx-build -W` 9.1.0 into one output directory over
+  cold, unchanged, touched, added, deleted, glob-toctree, dangling-entry
+  and config-change rebuilds; the remaining warm-build differences are
+  listed in [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md).
 - **Glossary terms are verbatim, definition-list terms are `rstrip()`ped,
   toctree entries are not trimmed (M2 wave 4.5, panel fix round F).**
   Sphinx's `split_term_classifiers` takes a glossary term and its first

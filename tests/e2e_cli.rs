@@ -1180,7 +1180,7 @@ fn sphinx_build_incremental_by_default_and_fresh_env() {
 /// Sphinx checks the environment's consistency — the orphan check, the
 /// multiple-parents note and the citation domain's `Citation [..] is not
 /// referenced.` — only after a build that read or renumbered a document
-/// (`if updated_docnames:`, `sphinx/builders/__init__.py:418-433`), so a
+/// (`if updated_docnames:`, `sphinx/builders/__init__.py:420-433`), so a
 /// rebuild that reads nothing prints none of it and passes `-W`. Every
 /// step is pinned to `sphinx-build -W` 9.1.0 run the same way, into one
 /// shared output dir (probe matrix of 2026-10-01): cold, both warnings,

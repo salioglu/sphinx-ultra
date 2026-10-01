@@ -1299,7 +1299,7 @@ impl SphinxBuilder {
         // it read) plus what `check_dependents` added (the documents whose
         // numbering moved) — and only when that set is non-empty does it
         // check the environment's consistency (`if updated_docnames:`,
-        // `builders/__init__.py:410-433`). A rebuild that reads nothing —
+        // `builders/__init__.py:409-433`). A rebuild that reads nothing —
         // nothing changed, or only a removal (`removed` is not part of the
         // set) — prints neither orphans nor unreferenced citations, and
         // passes `-W` as `sphinx-build -W` does. "Read" is this build's own
@@ -1307,9 +1307,9 @@ impl SphinxBuilder {
         // which also covers a document re-read because its cached copy
         // could not be recovered, and a toctree container re-read because
         // an entry of it was deleted (the deliberate divergence in
-        // [`Self::plan_read`] — Sphinx, which does not re-read it, prints
-        // the dangling entry from its write phase instead and, nothing
-        // read, no consistency check).
+        // [`Self::plan_read`] — Sphinx, which does not re-read it, reports
+        // the dangling entry from its write phase if at all, and, having
+        // read nothing, checks no consistency).
         let updated =
             results.iter().any(|result| result.read_time_us.is_some()) || !renumbered.is_empty();
         if updated {
