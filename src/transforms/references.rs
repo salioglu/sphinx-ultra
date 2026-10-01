@@ -140,17 +140,22 @@ const LINE_LENGTH_LIMIT: usize = 10_000;
 ///   docutils loops for ever. The backstop ([`ExpansionState`]) ends the
 ///   expansion once its state repeats — which is proof that docutils would
 ///   loop for ever, so no document docutils finishes can reach it — each
-///   pending reference then taking the circular branch.
-/// * **Aborts.** Where docutils raises, the Sphinx build aborts, and the
-///   expansion stops there too — the same records printed, the references
-///   not yet reached left in the tree unexpanded (expanding on can loop for
-///   ever, or run to thousands of records Sphinx never prints): a copy
-///   holding a reference to no definition (`normed[...]` raises
-///   `KeyError`, `:726`), and a "detected" message that cannot take its
+///   pending reference then taking the circular branch, up to the first
+///   "detected" message that cannot take its definition's place (below).
+/// * **Aborts, stopped.** A "detected" message that cannot take its
 ///   definition's place — the definition already replaced by an earlier
 ///   one (`parent.index(old)` raises `ValueError`, `nodes.py:1101-1103`)
-///   or a discarded copy (no parent: `AttributeError`), the message
-///   printed first.
+///   or a discarded copy (no parent: `AttributeError`) — is where the
+///   Sphinx build aborts, having printed it. The expansion stops there too:
+///   the same records printed, the references not yet reached left in the
+///   tree unexpanded (expanding on can loop for ever).
+/// * **Aborts, reported and carried on.** A copy holding a reference to no
+///   definition (`normed[...]` raises `KeyError`, `:726` — a typo inside a
+///   definition used before it) is queued like any other reference, with
+///   no circularity bookkeeping, and fails as docutils fails an undefined
+///   reference in its turn: `Undefined substitution referenced: "%s".` at
+///   the reference's place, a `problematic` in its stead; everything else
+///   is expanded as usual.
 pub(super) fn substitutions(ctx: &mut TransformCtx) {
     if !contains_substitution_reference(&ctx.tree.root) {
         return;
@@ -180,7 +185,9 @@ pub(super) fn substitutions(ctx: &mut TransformCtx) {
             if !states.insert(ExpansionState::digest(&arena, &defs, &nested, pending)) {
                 for &reference in pending {
                     let refname = arena.str_attr(reference, "refname").to_string();
-                    report_circular(ctx, &mut arena, reference, &refname);
+                    if !report_circular(ctx, &mut arena, reference, &refname) {
+                        break; // as below, where docutils raises
+                    }
                 }
                 break;
             }
@@ -221,25 +228,20 @@ pub(super) fn substitutions(ctx: &mut TransformCtx) {
         trim_around(&mut arena, reference, definition);
         let copy = arena.deepcopy(definition);
         let mut circular = false;
-        let mut aborted = false;
         for nested_reference in arena.findall(copy, kinds::SUBSTITUTION_REFERENCE) {
             let nested_refname = arena.str_attr(nested_reference, "refname").to_lowercase();
-            let Some(nested_name) = normed.get(&nested_refname) else {
-                // `KeyError`: where the Sphinx build aborts (see above).
-                aborted = true;
-                break;
-            };
-            let seen = nested.entry(nested_name.clone()).or_default();
-            if seen.contains(nested_name) {
-                circular = true;
-                break;
+            // No definition: docutils' `KeyError` (see above) — queued all
+            // the same, to fail as undefined in its turn.
+            if let Some(nested_name) = normed.get(&nested_refname) {
+                let seen = nested.entry(nested_name.clone()).or_default();
+                if seen.contains(nested_name) {
+                    circular = true;
+                    break;
+                }
+                seen.push(key.clone());
             }
-            seen.push(key.clone());
             arena.slots[nested_reference].origin = Some(reference);
             worklist.push(nested_reference);
-        }
-        if aborted {
-            break;
         }
         if circular {
             if !report_circular(ctx, &mut arena, reference, &refname) {
@@ -1034,25 +1036,46 @@ mod tests {
         );
     }
 
-    /// A definition holding an undefined reference, expanded before its own
-    /// reference is reached: docutils looks the nested name up without a
-    /// default (`normed[...]`, `references.py:726`), and the `KeyError`
-    /// aborts the Sphinx build, after the records before it (probed). The
-    /// pass stops there too — carrying on can run for thousands of records
-    /// Sphinx never prints — and leaves the references not yet reached.
+    /// A typo inside a definition placed after its use (review, fix round
+    /// 3): expanding `|prod|` meets `|vresion|`, a name no definition has;
+    /// docutils looks it up without a default (`normed[...]`,
+    /// `references.py:726`) and the `KeyError` aborts the Sphinx build — a
+    /// loud failure. The pass queues the nested reference instead, like any
+    /// other, so it fails as docutils fails an undefined reference: the
+    /// definition's own `|vresion|` first (at the definition's line), then
+    /// the copy in the paragraph (at the paragraph's), each a `problematic`
+    /// — and everything else, `|ver|` included, is expanded.
     #[test]
-    fn a_nested_undefined_reference_ends_the_expansion_where_sphinx_aborts() {
-        let (tree, records) = read_bounded("See |u|.\n\n|a|\n\n.. |a| replace:: x |nope|\n");
-        assert_eq!(records, [(Some(1), undefined("u"))]);
-        assert_eq!(
-            tree.root.children[1].children[0].kind,
-            kinds::SUBSTITUTION_REFERENCE,
-            "`|a|` was being expanded"
+    fn a_nested_undefined_reference_is_reported_and_the_rest_expanded() {
+        let (tree, records) = read_bounded(
+            "Use |prod| and |ver|.\n\n.. |prod| replace:: Foo |vresion|\n\
+             .. |ver| replace:: 1.0\n",
         );
-        assert!(contains_kind(
-            &tree.root.children[2],
-            kinds::SUBSTITUTION_REFERENCE
-        ));
+        assert_eq!(
+            records,
+            [
+                (Some(3), undefined("vresion")),
+                (Some(1), undefined("vresion"))
+            ]
+        );
+        assert_eq!(
+            tree.root.pformat(),
+            "<document source=\"<snippet>\">\n\
+             \x20   <paragraph>\n\
+             \x20       Use \n\
+             \x20       Foo \n\
+             \x20       <problematic ids=\"id4\" refid=\"id3\">\n\
+             \x20           |vresion|\n\
+             \x20        and \n\
+             \x20       1.0\n\
+             \x20       .\n\
+             \x20   <substitution_definition names=\"prod\">\n\
+             \x20       Foo \n\
+             \x20       <problematic ids=\"id2\" refid=\"id1\">\n\
+             \x20           |vresion|\n\
+             \x20   <substitution_definition names=\"ver\">\n\
+             \x20       1.0\n"
+        );
     }
 
     /// [`read`] on a thread, given five seconds: a pass that never ends
@@ -1127,6 +1150,30 @@ mod tests {
              \x20           |A|\n\
              \x20       .\n"
         );
+    }
+
+    /// The backstop's circular branch can meet a definition its own earlier
+    /// "detected" message already replaced — where docutils' `parent.index(
+    /// old)` raises (`nodes.py:1101-1103`). It stops there, as the expansion
+    /// does: no third "detected" for `a`, and the paragraph's `|B|` stays.
+    /// (A fuzz document docutils never finishes: no oracle case.)
+    #[test]
+    fn the_backstop_stops_at_a_replaced_definition_too() {
+        let (tree, records) = read_bounded(
+            ".. |B| replace:: |B|\n.. |b| replace:: x\n.. |a| replace:: |a| |d| |B|\n\
+             .. |d| replace:: x |b|\n\nSee |B|.\n\nSee |a|.\n",
+        );
+        let a = detected(3, ".. |a| replace:: |a| |d| |B|");
+        assert_eq!(
+            records,
+            [
+                referenced(8, "a"),
+                a.clone(),
+                detected(1, ".. |B| replace:: |B|"),
+                a
+            ]
+        );
+        assert!(contains_kind(&tree.root, kinds::SUBSTITUTION_REFERENCE));
     }
 
     /// A definition referencing itself twice: its first reference replaces
