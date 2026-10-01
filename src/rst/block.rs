@@ -347,6 +347,33 @@ pub(crate) struct BlockParser {
     /// last line (see [`super::ParseOutput::end_of_input`]), set when
     /// [`Self::parse_document_impl`] has consumed it.
     end_of_input: Option<(u16, u32)>,
+    /// Where the top-level element parsed last left docutils' top-level
+    /// cursor ([`TopCursor`]), which [`Self::end_of_input`] reports.
+    top_cursor: TopCursor,
+}
+
+/// Where docutils' top-level state machine leaves its cursor after the
+/// last top-level element — what a message raised with no node is located
+/// by once the parse is over (`Reporter.get_source_and_line`, bound to that
+/// machine at `states.py:244-246`, reads `StringList.info(line_offset)`,
+/// `statemachine.py:358-377,1299-1307`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum TopCursor {
+    /// One past the last line ("just past the end"): the location is the
+    /// last line's source, one line on. The run loop's last `next_line`
+    /// stops there.
+    #[default]
+    JustPast,
+    /// Further on: the element's nested list parse (`nested_list_parse`,
+    /// `states.py:382-424`) ran to the end of the input and `goto_line`
+    /// moved the cursor there, so the run loop's `next_line` steps beyond
+    /// it and `info()` raises `IndexError` — no source, no line.
+    Beyond,
+    /// On the last line: a `::` paragraph that is the input's last line
+    /// expects a literal block, and the empty quoted-literal parse steps
+    /// back a line before handing its offset back (`QuotedLiteralBlock.
+    /// eof`, `:3211-3225`; `Text.eof` ends the run there, `:2854-2857`).
+    LastLine,
 }
 
 #[derive(Debug, Default)]
@@ -413,6 +440,7 @@ impl BlockParser {
             dependency_records: Vec::new(),
             included_records: Vec::new(),
             end_of_input: None,
+            top_cursor: TopCursor::JustPast,
         }
     }
 
@@ -832,6 +860,7 @@ impl BlockParser {
                 continue;
             }
             let mut out = Vec::new();
+            self.top_cursor = TopCursor::JustPast;
             let section = self.parse_element(&lines, &mut pos, true, &mut out);
             self.apply_pending_classes(&mut out, 0);
             for node in out {
@@ -852,8 +881,13 @@ impl BlockParser {
         // docutils' `StringList.info` "just past the end" (`statemachine.py:
         // 1299-1307`) through `get_source_and_line` (`:358-377`): the last
         // input line's source, one line on — spliced `include` lines count,
-        // as they do in docutils' input list.
-        self.end_of_input = lines.last().map(|line| (line.source, line.lineno + 1));
+        // as they do in docutils' input list. Unless the last top-level
+        // element left the cursor elsewhere ([`TopCursor`]).
+        self.end_of_input = match self.top_cursor {
+            TopCursor::JustPast => lines.last().map(|line| (line.source, line.lineno + 1)),
+            TopCursor::Beyond => None,
+            TopCursor::LastLine => lines.last().map(|line| (line.source, line.lineno)),
+        };
 
         let fixups = self.registry.take_fixups();
         ids::apply_dupname_fixups(&mut root, &fixups);
@@ -868,6 +902,17 @@ impl BlockParser {
             }
         }
         root
+    }
+
+    /// The element being parsed is one whose nested list parse, at the top
+    /// level, runs on to the end of the input — or stops early, in which
+    /// case the next top-level element resets the cursor
+    /// ([`TopCursor::Beyond`]). Nested parses (depth above 0) move only a
+    /// nested machine's cursor.
+    fn note_cursor_beyond(&mut self) {
+        if self.depth == 0 {
+            self.top_cursor = TopCursor::Beyond;
+        }
     }
 
     fn container<'r>(root: &'r mut Node, stack: &'r mut [Node]) -> &'r mut Node {
@@ -1066,21 +1111,30 @@ impl BlockParser {
         let src = self.sources.arc(line.source);
         let text = line.slice(&src);
 
+        // `bullet`, `enumerator`, `field_marker`, `option_marker`,
+        // `explicit_markup`/`anonymous` and `Text.indent` (a definition
+        // list) each parse the rest of their list with `nested_list_parse`
+        // and `goto_line` past it (`states.py:1373-1387,1407-1439,
+        // 1564-1576,1607-1634,2508-2527,2859-2874`).
         if let Some(bullet) = Self::bullet_marker(text) {
+            self.note_cursor_beyond();
             self.parse_bullet_list(lines, pos, bullet, out);
             return None;
         }
         if let Some(e) = parse_enumerator(text) {
             if self.try_enumerated_list(lines, pos, &e, out) {
+                self.note_cursor_beyond();
                 return None;
             }
             // invalid list start: fall through to the text path
         }
         if field_marker(text).is_some() {
+            self.note_cursor_beyond();
             self.parse_field_list(lines, pos, out);
             return None;
         }
         if option_group_marker(text).is_some() && self.option_item_viable(lines, *pos) {
+            self.note_cursor_beyond();
             self.parse_option_list(lines, pos, out);
             return None;
         }
@@ -1101,15 +1155,18 @@ impl BlockParser {
             return None;
         }
         if text == ".." || text.starts_with(".. ") {
+            self.note_cursor_beyond();
             self.parse_explicit(lines, pos, out);
             return None;
         }
         if let Some(rest) = text.strip_prefix("__ ") {
+            self.note_cursor_beyond();
             self.parse_anonymous_shortcut(lines, pos, rest, out);
             return None;
         }
         if text == "__" {
             // Bare `__`: anonymous internal target (fixture-verified).
+            self.note_cursor_beyond();
             self.parse_anonymous_shortcut(lines, pos, "", out);
             return None;
         }
@@ -1403,6 +1460,7 @@ impl BlockParser {
             }
             if !next.is_blank() && next.indent() > 0 {
                 // Single line + immediately indented block: definition list.
+                self.note_cursor_beyond();
                 self.parse_definition_list(lines, pos, out);
                 return None;
             }
@@ -1476,7 +1534,12 @@ impl BlockParser {
         }
         if p >= lines.len() {
             // Probe-verified: at EOF the warning still fires, anchored to
-            // the line after the last one.
+            // the line after the last one. With no line at all after the
+            // `::` paragraph, docutils' cursor ends on the last line
+            // ([`TopCursor::LastLine`]); after blank lines, one past them.
+            if *pos >= lines.len() && self.depth == 0 {
+                self.top_cursor = TopCursor::LastLine;
+            }
             let anchor = lines
                 .last()
                 .map(|l| (l.source, l.lineno + 1))
@@ -1526,6 +1589,13 @@ impl BlockParser {
                 && self.sources.line_text(lines[endq]).starts_with(qc)
             {
                 endq += 1;
+            }
+            // `quoted_literal_block` (`states.py:2961-2970`) parses on with
+            // `nested_parse` and `goto_line`: run to the end of the input,
+            // that leaves docutils' cursor past it; a blank line, an indent
+            // or another quote character ends the nested parse first.
+            if endq == lines.len() {
+                self.note_cursor_beyond();
             }
             let text = self.join_lines(&lines[p..endq]);
             let span = self.span_of(lines, p, endq - 1);
@@ -2022,6 +2092,21 @@ impl BlockParser {
 
     fn parse_line_block(&mut self, lines: &[LineRec], pos: &mut usize, out: &mut Vec<Node>) {
         let start = *pos;
+        // `line_block` (`states.py:1708-1725`) parses the lines after the
+        // first with `nested_list_parse` and `goto_line` only when the
+        // first line's block — the line and its indented continuation,
+        // `get_first_known_indented(until_blank=True)` — is not
+        // blank-finished: when a non-blank line directly follows it.
+        let mut first_end = start + 1;
+        while first_end < lines.len()
+            && !lines[first_end].is_blank()
+            && lines[first_end].indent() > 0
+        {
+            first_end += 1;
+        }
+        if first_end < lines.len() && !lines[first_end].is_blank() {
+            self.note_cursor_beyond();
+        }
         // (depth, text): depth None on bare `|` lines inherits the previous
         // line's depth (fixture-verified). Continuations dedent by the FIRST
         // continuation line's indent, preserving deeper relative indents.
@@ -2189,6 +2274,15 @@ impl BlockParser {
                         link_block.push(l.clone());
                     }
                     let mut target = Node::elem(kinds::TARGET, span);
+                    // `nodes.target(block_text, ...)` (`make_target`,
+                    // `states.py:2080-2090`): `match.string[:match.end()]`
+                    // plus the block — the target's lines as they stand.
+                    let blocktext = lines[start..=start + consumed]
+                        .iter()
+                        .map(|l| self.sources.line_text(*l))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    target.set(crate::doctree::RAWSOURCE, AttrValue::Str(blocktext));
                     let mut internal = false;
                     let mut refuri_val: Option<String> = None;
                     let anonymous = name.is_none();
@@ -8147,6 +8241,17 @@ impl BlockParser {
         *pos = start + 1 + consumed;
         let mut target = Node::elem(kinds::TARGET, span);
         target.set("anonymous", AttrValue::Int(1));
+        // `blocktext = match.string[:match.end()] + '\n'.join(block)`
+        // (`anonymous_target`, `states.py:2530-2538`): the `__ ` line, then
+        // the continuation lines with their common indentation stripped.
+        let continuation = &lines[start + 1..start + 1 + consumed];
+        let dedent = continuation.iter().map(|l| l.indent()).min().unwrap_or(0);
+        let mut blocktext = self.sources.line_text(lines[start]).to_string();
+        for l in continuation {
+            blocktext.push('\n');
+            blocktext.push_str(&self.sources.line_text(*l)[dedent..]);
+        }
+        target.set(crate::doctree::RAWSOURCE, AttrValue::Str(blocktext));
         if !link.is_empty() {
             // `anonymous_target` (states.py:2530-2537) hands the escaped
             // block straight to `make_target(..., '')`.
@@ -13771,6 +13876,116 @@ mod tests {
             definition.get(crate::doctree::RAWSOURCE),
             Some(&AttrValue::Str(".. |a| replace::\n   x |a|".to_string()))
         );
+    }
+
+    /// A hyperlink target keeps docutils' `rawsource`, the `blocktext` it
+    /// is created from (`hyperlink_target`, `states.py:2055-2078`: the
+    /// marker line from its start, then the block's further lines with
+    /// their indentation; `anonymous_target`, `:2530-2538`: the `__ ` line,
+    /// the block dedented) — what IndirectHyperlinks prints in the
+    /// `problematic` that replaces a target referring to a failed one
+    /// (oracle `tx_links.indirect_circular`: `.. _b: a_`).
+    #[test]
+    fn a_hyperlink_target_keeps_its_rawsource() {
+        let tree = parse_rst(
+            ".. _a: b_\n.. _c:\n   https://x.example/\n.. __: d_\n\n__ e_\n\nPara.\n",
+            &ParseOptions::default(),
+        );
+        let rawsources: Vec<Option<&AttrValue>> = tree
+            .root
+            .children
+            .iter()
+            .filter(|node| node.kind == kinds::TARGET)
+            .map(|node| node.get(crate::doctree::RAWSOURCE))
+            .collect();
+        let raw = |text: &str| Some(AttrValue::Str(text.to_string()));
+        assert_eq!(
+            rawsources,
+            [
+                raw(".. _a: b_").as_ref(),
+                raw(".. _c:\n   https://x.example/").as_ref(),
+                raw(".. __: d_").as_ref(),
+                raw("__ e_").as_ref(),
+            ]
+        );
+    }
+
+    /// Where docutils' reporter locates a message raised after the parse
+    /// with no node (research §9.3): its `get_source_and_line()` is the
+    /// finished top-level state machine's, whose cursor stops one past the
+    /// last line ("just past the end", `statemachine.py:1299-1307`) —
+    /// unless the last construct was one whose nested list parse ran to the
+    /// end of the input and moved the cursor there with `goto_line`, after
+    /// which the run loop's `next_line` steps beyond it and `info()` raises
+    /// `IndexError`: no source, no line (`:369-377`). Those constructs are
+    /// the explicit markup list (`states.py:2508-2519`), bullet, enumerated,
+    /// field and option lists (`:1373-1387,1407-1439,1564-1576,1607-1634`),
+    /// a line block whose first line is not blank-finished (`:1708-1725`),
+    /// a definition list (`:2859-2874`) and a quoted literal block running
+    /// to the end of the input (`:2961-2970`; a blank line after it ends
+    /// its nested parse early, `:3205-3209`); a block quote, a table, a
+    /// doctest block, a paragraph, a literal block and a section title
+    /// leave the cursor at the end. One more: a `::` paragraph with no line
+    /// at all after it finds no literal block, and the empty quoted parse
+    /// steps back (`previous_line`, `:3211-3225`) onto the last line — the
+    /// location is that line. Only the top level counts: a section's
+    /// content is parsed by the top-level machine itself (`new_subsection`,
+    /// `:494-508`), and a list inside a block quote or a table cell moves
+    /// only a nested machine's cursor. Probed (oracle
+    /// `tx_links.anonymous_mismatch_*`).
+    #[test]
+    fn the_end_of_input_has_no_line_after_a_nested_list_parse_ran_to_the_end() {
+        let end = |source: &str| {
+            crate::rst::parse_rst_full(source, &ParseOptions::default()).end_of_input
+        };
+        for source in [
+            "Para.\n\n.. comment\n",
+            "Para.\n\n.. _t: https://x/\n",
+            "Para.\n\n.. note:: y\n",
+            "Para.\n\n.. |s| replace:: s\n",
+            "Para.\n\n__ https://x/\n",
+            "Para.\n\n.. comment\n\n\n",
+            "Title\n=====\n\n.. _t:\n",
+            "Para.\n\n- a\n- b\n",
+            "Para.\n\n- a\n\n",
+            "Para.\n\n#. one\n",
+            "Para.\n\n:f: v\n",
+            "Para.\n\n-o  opt\n",
+            "Para.\n\nterm\n   def\n",
+            "Para.\n\n| one\n| two\n",
+            "Para.\n\n::\n\n> quoted\n",
+            "---\n    x\n",
+        ] {
+            assert_eq!(end(source), None, "{source:?}");
+        }
+        for (source, line) in [
+            ("Para.\n", 2),
+            ("Para.", 2),
+            ("Para.\n\n\n\n", 5),
+            ("Title\n=====\n", 3),
+            ("Para.\n\n| one\n", 4),
+            ("Para.\n\n| one\n\n", 5),
+            ("Para.\n\n| one\n   cont\n", 5),
+            ("Para.\n\n>>> 1\n1\n", 5),
+            ("Para.\n\n+---+\n| a |\n+---+\n", 6),
+            ("Para.\n\n===  ===\na    b\n===  ===\n", 6),
+            ("Para::\n\n    code\n", 4),
+            ("Para.\n\n    quote\n", 4),
+            ("Para.\n\n    - a\n", 4),
+            ("Para.\n\n+-----+\n| - a |\n+-----+\n", 6),
+            ("- a\n\nPara.\n", 4),
+            (".. note:: y\n\nPara.\n", 4),
+            ("* a\n\n  .. c\n\nTitle\n=====\n\ntext\n", 9),
+            ("Para.\n\n::\n\n> quoted\n\n", 7),
+            ("Para.\n\n::\n\n> a\n< b\n", 7),
+            ("Para.\n\n::\n\n> a\n    b\n", 7),
+            ("Para::\n\n", 3),
+            ("Para.\n\nB::\n\n\n", 6),
+            ("Para.\n\nB::\n", 3),
+            ("Para::\n", 1),
+        ] {
+            assert_eq!(end(source), Some((0, line)), "{source:?}");
+        }
     }
 
     /// Run `explicit.patterns.target` over the text after the construct's

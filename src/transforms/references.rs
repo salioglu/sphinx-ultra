@@ -1,7 +1,24 @@
 //! docutils' reference transforms (`docutils/transforms/references.py`),
 //! which Sphinx's read phase inherits from the standalone reader, and
-//! Sphinx's DefaultSubstitutions, which feeds the first of them. Today:
-//! DefaultSubstitutions, Substitutions, PropagateTargets.
+//! Sphinx's DefaultSubstitutions, which feeds the first of them, and its
+//! SphinxDanglingReferences, which ends them: DefaultSubstitutions,
+//! Substitutions, PropagateTargets, AnonymousHyperlinks,
+//! IndirectHyperlinks, ExternalTargets, InternalTargets,
+//! SphinxDanglingReferences.
+//!
+//! The hyperlink transforms mark what they resolve `resolved`, a Python
+//! attribute outside the tree, which later ones test before touching a
+//! reference again. Nothing here keeps it from one transform to the next:
+//! every node they mark had no `refname` to begin with (an anonymous
+//! reference) or loses its `refname` (or `refid`) in the same step
+//! (`references.py:146-159,315-335,371-373,411-413,945-948`, and
+//! Footnotes', `:524-529,630-634`), and the walk-built lists the next
+//! transform reads ([`super::DocumentLists`]) hold only nodes that still
+//! carry one. The two exceptions are a target IndirectHyperlinks failed,
+//! which keeps its `refname` (`:296-298`) — the transforms after it skip
+//! every `target` still carrying one — and InternalTargets' name without an
+//! id (`:409-413`), which is unreachable: every name left in a target's
+//! `names` maps to an id (`nodes.py:1929-1990` dupnames the others).
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -315,14 +332,46 @@ fn trim_around(arena: &mut Arena, reference: usize, definition: usize) {
 /// problematic is not kept: the message is not in the tree.
 fn replace_with_problematic(ctx: &mut TransformCtx, arena: &mut Arena, reference: usize) {
     let message_id = ctx.ids.allocate_auto_id();
-    let span = arena.slots[reference].node.span;
-    let rawsource = arena.str_attr(reference, RAWSOURCE).to_string();
-    let mut problematic = Node::elem(kinds::PROBLEMATIC, span);
-    problematic.set("refid", AttrValue::Str(message_id));
-    problematic.children.push(Node::text_node(rawsource, span));
+    let mut problematic = problematic_for(&arena.slots[reference].node, message_id);
     problematic.attrs.ids.push(ctx.ids.allocate_auto_id());
     let problematic = arena.adopt(problematic, None);
     arena.replace_self(reference, vec![problematic]);
+}
+
+/// `nodes.problematic(node.rawsource, node.rawsource, refid=msgid)`
+/// (`references.py:148-149,292-293,981`, and Substitutions' `:702-703`):
+/// the node as written ([`RAWSOURCE`]), pointing at its message. Its own id
+/// is the caller's to give.
+fn problematic_for(node: &Node, message_id: String) -> Node {
+    let rawsource = match node.get(RAWSOURCE) {
+        Some(AttrValue::Str(rawsource)) => rawsource.clone(),
+        _ => String::new(),
+    };
+    let mut problematic = Node::elem(kinds::PROBLEMATIC, node.span);
+    problematic.set("refid", AttrValue::Str(message_id));
+    problematic
+        .children
+        .push(Node::text_node(rawsource, node.span));
+    problematic
+}
+
+/// `update_basic_atts` (`nodes.py:850-869`) as `replace_self` calls it
+/// (`:1120-1132`): the element replacing `old` takes on `old`'s ids,
+/// classes, names and dupnames, after its own, skipping values it has.
+fn update_basic_atts(new: &mut Node, old: &Node) {
+    let attrs = &mut new.attrs;
+    for (list, values) in [
+        (&mut attrs.ids, &old.attrs.ids),
+        (&mut attrs.classes, &old.attrs.classes),
+        (&mut attrs.names, &old.attrs.names),
+        (&mut attrs.dupnames, &old.attrs.dupnames),
+    ] {
+        for value in values {
+            if !list.contains(value) {
+                list.push(value.clone());
+            }
+        }
+    }
 }
 
 /// The `CircularSubstitutionDefinitionError` branch (`references.py:
@@ -485,7 +534,10 @@ impl ExpansionState {
 /// out of its parent's children still points at it. Substitutions
 /// (`references.py:674-764`) depends on that: it expands references inside
 /// copies and definitions that are no longer in the tree, and locates
-/// references by ancestors they have left. Every walk is by explicit stack.
+/// references by ancestors they have left. So do IndirectHyperlinks, which
+/// goes on resolving targets a `problematic` replaced (`:244-265`), and
+/// DanglingReferences, which walks into a replaced reference's children
+/// (`Node.walk`, `nodes.py:193-195`). Every walk is by explicit stack.
 struct Arena {
     slots: Vec<Slot>,
 }
@@ -591,13 +643,31 @@ impl Arena {
     }
 
     fn str_attr(&self, id: usize, key: &'static str) -> &str {
-        match self.slots[id].node.get(key) {
-            Some(AttrValue::Str(value)) => value,
-            _ => "",
-        }
+        self.get_str(id, key).unwrap_or_default()
     }
 
-    /// Where docutils locates a substitution reference: `get_source_line`
+    fn get_str(&self, id: usize, key: &'static str) -> Option<&str> {
+        str_value(&self.slots[id].node, key)
+    }
+
+    fn has(&self, id: usize, key: &'static str) -> bool {
+        self.slots[id].node.get(key).is_some()
+    }
+
+    fn set(&mut self, id: usize, key: &'static str, value: String) {
+        self.slots[id].node.set(key, AttrValue::Str(value));
+    }
+
+    fn remove(&mut self, id: usize, key: &str) {
+        self.slots[id].node.remove(key);
+    }
+
+    fn kind(&self, id: usize) -> &'static str {
+        self.slots[id].node.kind
+    }
+
+    /// Where docutils locates a substitution, hyperlink or footnote
+    /// reference (or an embedded alias's target): `get_source_line`
     /// (`docutils/utils/__init__.py:645-654`) walks up to the first
     /// ancestor carrying a line, the inliner stamping none on the reference
     /// or on the `reference` a `|name|_` wraps it in — a paragraph, a
@@ -642,20 +712,8 @@ impl Arena {
         };
         if let Some(&first) = new.first() {
             if self.slots[first].node.kind != kinds::TEXT {
-                let old_attrs = self.slots[old].node.attrs.clone();
-                let attrs = &mut self.slots[first].node.attrs;
-                for (list, values) in [
-                    (&mut attrs.ids, &old_attrs.ids),
-                    (&mut attrs.classes, &old_attrs.classes),
-                    (&mut attrs.names, &old_attrs.names),
-                    (&mut attrs.dupnames, &old_attrs.dupnames),
-                ] {
-                    for value in values {
-                        if !list.contains(value) {
-                            list.push(value.clone());
-                        }
-                    }
-                }
+                let old_node = self.slots[old].node.shallow_copy();
+                update_basic_atts(&mut self.slots[first].node, &old_node);
             }
         }
         for &node in &new {
@@ -798,22 +856,44 @@ pub(super) fn propagate_targets(ctx: &mut TransformCtx) {
     }
 }
 
-/// Every `target` below `root`, in document order (pre-order, by an
-/// explicit stack rather than recursion).
+/// Every `target` below `root`, in document order.
 fn collect_targets(root: &Node) -> Vec<NodePath> {
-    let mut targets = Vec::new();
-    let mut stack: Vec<(&Node, NodePath)> = vec![(root, Vec::new())];
-    while let Some((node, path)) = stack.pop() {
-        for (index, child) in node.children.iter().enumerate().rev() {
-            let mut child_path = path.clone();
-            child_path.push(index);
-            stack.push((child, child_path));
+    collect_paths(root, |node| node.kind == kinds::TARGET)
+}
+
+/// `findall(condition)` from the root, as paths: every node below `root`
+/// (`root` included) that `wanted` accepts, in document order — pre-order,
+/// by an explicit stack of sibling cursors rather than recursion, building
+/// a path only for the nodes it keeps.
+fn collect_paths(root: &Node, wanted: impl Fn(&Node) -> bool) -> Vec<NodePath> {
+    let mut found = Vec::new();
+    if wanted(root) {
+        found.push(Vec::new());
+    }
+    // Each frame: a sibling list and the next index in it; `path` is the
+    // path of the node whose children the top frame walks.
+    let mut frames: Vec<(&[Node], usize)> = vec![(root.children.as_slice(), 0)];
+    let mut path: NodePath = Vec::new();
+    while let Some(frame) = frames.last_mut() {
+        let (siblings, index) = (frame.0, frame.1);
+        if index == siblings.len() {
+            frames.pop();
+            path.pop();
+            continue;
         }
-        if node.kind == kinds::TARGET {
-            targets.push(path);
+        frame.1 += 1;
+        let node = &siblings[index];
+        path.push(index);
+        if wanted(node) {
+            found.push(path.clone());
+        }
+        if node.children.is_empty() {
+            path.pop();
+        } else {
+            frames.push((node.children.as_slice(), 0));
         }
     }
-    targets
+    found
 }
 
 fn parent_of<'n>(root: &'n Node, path: &[usize]) -> Option<&'n Node> {
@@ -939,10 +1019,650 @@ fn is_targetable(kind: &str) -> bool {
     matches!(kind, kinds::FOOTNOTE | kinds::CITATION | kinds::TARGET)
 }
 
+/// `node.get(key)` as a string.
+fn str_value<'n>(node: &'n Node, key: &'static str) -> Option<&'n str> {
+    match node.get(key) {
+        Some(AttrValue::Str(value)) => Some(value),
+        _ => None,
+    }
+}
+
+/// `node.replace_self(new)` for the node at `path` (`nodes.py:1110-1132`):
+/// `new` takes `old`'s place and its basic attributes
+/// ([`update_basic_atts`]).
+fn replace_at(root: &mut Node, path: &[usize], mut new: Node) {
+    let Some((&index, parent)) = path.split_last() else {
+        return;
+    };
+    let Some(old) = node_at_mut(root, parent).and_then(|parent| parent.children.get_mut(index))
+    else {
+        return;
+    };
+    update_basic_atts(&mut new, old);
+    *old = new;
+}
+
+/// `AnonymousHyperlinks` (`docutils/transforms/references.py:98-160`,
+/// priority 440): the anonymous references (`` `x`__ ``, `x__`, `|x|__`)
+/// and the anonymous targets (`__ uri`, `.. __: uri`), each in document
+/// order (`findall`, `:127-132`), are paired one to one. (No anonymous
+/// reference sits in a substitution definition, or in a copy of one: the
+/// parse refuses them there, `Anonymous references are not supported in a
+/// substitution definition.`, probed.)
+///
+/// * Counts that differ give one ERROR, `Anonymous hyperlink mismatch: %s
+///   references but %s targets.\nSee "backrefs" attribute for IDs.`, with
+///   no node to locate it by ([`TransformCtx::end_of_parse_message`],
+///   research §9.3); its id is spent, and every anonymous reference is
+///   replaced by a `problematic` pointing at it, each with the next id
+///   (`:133-145`). The message stays out of the tree.
+/// * Otherwise each reference without a `refid`/`refuri` of its own takes
+///   its target's `refuri`; or, from a target PropagateTargets emptied,
+///   the node its id moved to (`document.ids[target['refid']]`, `:155-157`)
+///   — that node's `refuri`, else its first id; or the target's first id
+///   (`:146-160`). A reference given a `refid` is noted in
+///   `document.refids` (`:159`), where IndirectHyperlinks finds it again:
+///   the walk-built lists do that ([`super::DocumentLists::refids`]).
+pub(super) fn anonymous_hyperlinks(ctx: &mut TransformCtx) {
+    let anonymous = |kind: &'static str| {
+        move |node: &Node| node.kind == kind && node.get("anonymous").is_some()
+    };
+    let references = collect_paths(&ctx.tree.root, anonymous(kinds::REFERENCE));
+    let targets = collect_paths(&ctx.tree.root, anonymous(kinds::TARGET));
+    if references.is_empty() && targets.is_empty() {
+        return;
+    }
+    if references.len() != targets.len() {
+        let text = format!(
+            "Anonymous hyperlink mismatch: {} references but {} targets.\n\
+             See \"backrefs\" attribute for IDs.",
+            references.len(),
+            targets.len()
+        );
+        let message = ctx.end_of_parse_message(messages::ERROR, &text);
+        ctx.reporter.report(&message);
+        let message_id = ctx.ids.allocate_auto_id();
+        let mut problematics = Vec::with_capacity(references.len());
+        for path in &references {
+            let reference = node_at(&ctx.tree.root, path).expect("a path just collected");
+            let mut problematic = problematic_for(reference, message_id.clone());
+            problematic.attrs.ids.push(ctx.ids.allocate_auto_id());
+            problematics.push(problematic);
+        }
+        // The ids go out in document order; the replacements are made last
+        // first, so that no path could run through a node already replaced
+        // (none does: no anonymous reference holds another).
+        for (path, problematic) in references.iter().zip(problematics).rev() {
+            replace_at(&mut ctx.tree.root, path, problematic);
+        }
+        return;
+    }
+    let (tree, lists) = ctx.tree_and_lists();
+    let mut links: Vec<(&NodePath, &'static str, String)> = Vec::new();
+    for (reference_path, target_path) in references.iter().zip(&targets) {
+        let (Some(reference), Some(mut target)) = (
+            node_at(&tree.root, reference_path),
+            node_at(&tree.root, target_path),
+        ) else {
+            continue;
+        };
+        if reference.get("refid").is_some() || reference.get("refuri").is_some() {
+            continue;
+        }
+        if target.get("refuri").is_none() && target.attrs.ids.is_empty() {
+            // A propagated target: the node carrying the id it handed on.
+            // (Upstream raises `KeyError` where there is none.)
+            let Some(moved) = str_value(target, "refid")
+                .and_then(|refid| lists.ids.get(refid))
+                .and_then(|path| node_at(&tree.root, path))
+            else {
+                continue;
+            };
+            target = moved;
+        }
+        if let Some(refuri) = str_value(target, "refuri") {
+            links.push((reference_path, "refuri", refuri.to_string()));
+        } else if let Some(id) = target.attrs.ids.first() {
+            links.push((reference_path, "refid", id.clone()));
+        }
+    }
+    for (path, key, value) in links {
+        if let Some(reference) = node_at_mut(&mut tree.root, path) {
+            reference.set(key, AttrValue::Str(value));
+        }
+    }
+}
+
+/// `IndirectHyperlinks` (`docutils/transforms/references.py:163-338`,
+/// priority 460): every indirect target — a target with a `refname`
+/// (`.. _a: b_`, `__ b_`, an embedded alias's `` `a <b_>`_ ``), in
+/// `document.indirect_targets` order — is resolved unless it already is,
+/// then hands what it resolved to on to the references naming it
+/// (`:216-220`). See [`Links`] for the two steps and their errors.
+pub(super) fn indirect_hyperlinks(ctx: &mut TransformCtx) {
+    let lists = ctx.lists();
+    if lists.indirect_targets.is_empty() {
+        return;
+    }
+    let indirect_paths = lists.indirect_targets.clone();
+    let refname_paths = lists.refnames.clone();
+    let refid_paths = lists.refids.clone();
+    let id_paths = lists.ids.clone();
+    let root = std::mem::replace(&mut ctx.tree.root, Node::elem(kinds::DOCUMENT, Span::ZERO));
+    let arena = Arena::new(root);
+    let at = |paths: Vec<NodePath>| -> Vec<usize> {
+        paths
+            .iter()
+            .filter_map(|path| arena.at_path(path))
+            .collect()
+    };
+    let indirect = at(indirect_paths);
+    let refnames = refname_paths
+        .into_iter()
+        .map(|(name, paths)| (name, at(paths)))
+        .collect();
+    let refids = refid_paths
+        .into_iter()
+        .map(|(id, paths)| (id, at(paths)))
+        .collect();
+    let ids = id_paths
+        .into_iter()
+        .filter_map(|(id, path)| Some((id, arena.at_path(&path)?)))
+        .collect();
+    let mut links = Links {
+        arena,
+        refnames,
+        refids,
+        ids,
+        resolved: HashSet::new(),
+        multiply_indirect: HashSet::new(),
+    };
+    for target in indirect {
+        if !links.resolved.contains(&target) {
+            links.resolve_indirect_target(ctx, target);
+        }
+        links.resolve_indirect_references(target);
+    }
+    ctx.tree.root = links.arena.into_tree();
+}
+
+/// IndirectHyperlinks' state: the tree as docutils holds it (an [`Arena`]:
+/// a target or reference a `problematic` replaced keeps being resolved and
+/// read, as in docutils), the `document` lists it reads and adds to
+/// (`refnames`, `refids` — which `note_refid` grows — and `ids`), and the
+/// two Python attributes it sets on nodes, `resolved` and
+/// `multiply_indirect`. Both of docutils' recursions run on explicit
+/// stacks, so no chain of targets is too long.
+struct Links {
+    arena: Arena,
+    refnames: HashMap<String, Vec<usize>>,
+    refids: HashMap<String, Vec<usize>>,
+    ids: HashMap<String, usize>,
+    resolved: HashSet<usize>,
+    multiply_indirect: HashSet<usize>,
+}
+
+/// One step of `resolve_indirect_target`'s recursion, on an explicit stack.
+enum Resolve {
+    /// Look the target's `refname` up and, when it names an unresolved
+    /// indirect target, resolve that one first.
+    Enter(usize),
+    /// Take over what the named node resolved to.
+    Finish {
+        target: usize,
+        reftarget_id: String,
+        reftarget: usize,
+        had_refname: bool,
+        recursed: bool,
+    },
+}
+
+/// A target whose references `resolve_indirect_references` is rewriting:
+/// the attribute and value they take, whether each is noted in `refids`,
+/// and the references still to visit — `(node, found by id)`, those named
+/// by the target's names first, then those pointing at its ids.
+struct Rewrite {
+    attname: &'static str,
+    attval: String,
+    note: bool,
+    references: Vec<(usize, bool)>,
+    next: usize,
+}
+
+impl Links {
+    /// `resolve_indirect_target` (`references.py:222-265`): the node the
+    /// target's `refname` names (`document.nameids`, then `document.ids`)
+    /// — an unresolved indirect target resolved first, with the target
+    /// marked `multiply_indirect` meanwhile, so meeting it again on the way
+    /// is a circular reference (`:240-249`) — gives the target its
+    /// `refuri` (dropping any `refid`), its `refid`, or, when it has
+    /// neither but carries ids, its own id as `refid` (`:250-262`; each
+    /// `refid` noted in `refids`); the `refname` goes (`:263-265`).
+    /// Errors: an unknown or duplicate name, or a node with nothing to
+    /// point at ([`Self::nonexistent_indirect_target`]), and the circle
+    /// ([`Self::indirect_target_error`]). Where upstream raises
+    /// `KeyError` — a target with neither `refname` nor `refid` (none
+    /// reaches here), an id no node in the tree carries (docutils' `ids`
+    /// still holds a node a transform took out, such as an inline target in
+    /// a circular substitution definition; the walk-built one does not) —
+    /// the target is left as it is.
+    fn resolve_indirect_target(&mut self, ctx: &mut TransformCtx, start: usize) {
+        let mut stack = vec![Resolve::Enter(start)];
+        while let Some(step) = stack.pop() {
+            match step {
+                Resolve::Enter(target) => {
+                    let refname = self.arena.get_str(target, "refname").map(str::to_string);
+                    let reftarget_id = match &refname {
+                        None => match self.arena.get_str(target, "refid") {
+                            Some(refid) => refid.to_string(),
+                            None => continue,
+                        },
+                        Some(refname) => match ctx.ids.name_id(refname) {
+                            Some(Some(id)) if !id.is_empty() => id.to_string(),
+                            // The unknown-reference resolvers come first
+                            // (`:230-235`); Sphinx registers none.
+                            _ => {
+                                self.nonexistent_indirect_target(ctx, target);
+                                continue;
+                            }
+                        },
+                    };
+                    let Some(&reftarget) = self.ids.get(&reftarget_id) else {
+                        continue;
+                    };
+                    let recurse = self.arena.kind(reftarget) == kinds::TARGET
+                        && !self.resolved.contains(&reftarget)
+                        && self.arena.has(reftarget, "refname");
+                    if recurse && self.multiply_indirect.contains(&target) {
+                        self.indirect_target_error(ctx, target, "forming a circular reference");
+                        continue;
+                    }
+                    if recurse {
+                        self.multiply_indirect.insert(target);
+                    }
+                    stack.push(Resolve::Finish {
+                        target,
+                        reftarget_id,
+                        reftarget,
+                        had_refname: refname.is_some(),
+                        recursed: recurse,
+                    });
+                    if recurse {
+                        stack.push(Resolve::Enter(reftarget));
+                    }
+                }
+                Resolve::Finish {
+                    target,
+                    reftarget_id,
+                    reftarget,
+                    had_refname,
+                    recursed,
+                } => {
+                    if recursed {
+                        self.multiply_indirect.remove(&target);
+                    }
+                    if let Some(refuri) = self.arena.get_str(reftarget, "refuri") {
+                        let refuri = refuri.to_string();
+                        self.arena.set(target, "refuri", refuri);
+                        self.arena.remove(target, "refid");
+                    } else if let Some(refid) = self.arena.get_str(reftarget, "refid") {
+                        let refid = refid.to_string();
+                        self.arena.set(target, "refid", refid);
+                        self.note_refid(target);
+                    } else if !self.arena.slots[reftarget].node.attrs.ids.is_empty() {
+                        self.arena.set(target, "refid", reftarget_id);
+                        self.note_refid(target);
+                    } else {
+                        self.nonexistent_indirect_target(ctx, target);
+                        continue;
+                    }
+                    if had_refname {
+                        self.arena.remove(target, "refname");
+                    }
+                    self.resolved.insert(target);
+                }
+            }
+        }
+    }
+
+    /// `nonexistent_indirect_target` (`references.py:267-272`).
+    fn nonexistent_indirect_target(&mut self, ctx: &mut TransformCtx, target: usize) {
+        let refname = self.arena.get_str(target, "refname").unwrap_or_default();
+        let explanation = if ctx.ids.name_id(refname).is_some() {
+            "which is a duplicate, and cannot be used as a unique reference"
+        } else {
+            "which does not exist"
+        };
+        self.indirect_target_error(ctx, target, explanation);
+    }
+
+    /// `indirect_target_error` (`references.py:277-298`): ERROR `Indirect
+    /// hyperlink target %s refers to target "%s", %s.`, naming the target
+    /// `"<first name>" (id="<first id>")` (either part only when it has
+    /// one), at the target (`base_node=target`: an explicit target's own
+    /// line, an inline one's nearest stamped ancestor's); its id is spent,
+    /// and every node naming the target or pointing at one of its ids —
+    /// references, and indirect or propagated targets too — is replaced by
+    /// a `problematic` pointing at it, each with the next id. The target
+    /// counts as resolved. A node docutils would replace a second time (out
+    /// of its parent by now, where `parent.index` raises) is left alone.
+    fn indirect_target_error(&mut self, ctx: &mut TransformCtx, target: usize, explanation: &str) {
+        let node = &self.arena.slots[target].node;
+        let mut naming = String::new();
+        if let Some(name) = node.attrs.names.first() {
+            naming = format!("\"{name}\" ");
+        }
+        let mut references: Vec<usize> = Vec::new();
+        for name in &node.attrs.names {
+            references.extend(self.refnames.get(name).into_iter().flatten());
+        }
+        for id in &node.attrs.ids {
+            references.extend(self.refids.get(id).into_iter().flatten());
+        }
+        if let Some(id) = node.attrs.ids.first() {
+            naming.push_str(&format!("(id=\"{id}\")"));
+        }
+        let refname = str_value(node, "refname").unwrap_or_default();
+        let text = format!(
+            "Indirect hyperlink target {naming} refers to target \"{refname}\", {explanation}."
+        );
+        let (source, line) = self.target_location(target);
+        ctx.reporter
+            .report(&ctx.message(messages::ERROR, &text, source, Some(line)));
+        let message_id = ctx.ids.allocate_auto_id();
+        let mut seen = HashSet::new();
+        for reference in references {
+            if !seen.insert(reference) {
+                continue; // `utils.uniq`
+            }
+            let mut problematic =
+                problematic_for(&self.arena.slots[reference].node, message_id.clone());
+            problematic.attrs.ids.push(ctx.ids.allocate_auto_id());
+            let problematic = self.arena.adopt(problematic, None);
+            self.arena.replace_self(reference, vec![problematic]);
+        }
+        self.resolved.insert(target);
+    }
+
+    /// Where docutils locates a message about a target: its own line —
+    /// `add_target` stamps an explicit target's (`states.py:2121`) — or,
+    /// for the target an embedded alias puts inside a paragraph, which has
+    /// none, the nearest stamped ancestor's (`get_source_line`).
+    fn target_location(&self, target: usize) -> (u16, u32) {
+        let inline = self.arena.slots[target]
+            .parent
+            .is_some_and(|parent| is_text_element(self.arena.kind(parent)));
+        if inline {
+            self.arena.location(target)
+        } else {
+            let span = self.arena.slots[target].node.span;
+            (span.source, span.line)
+        }
+    }
+
+    /// `resolve_indirect_references` (`references.py:300-338`): a target
+    /// with a `refid` (else a `refuri`; else nothing to hand on) gives it
+    /// to every unresolved node named by its names (`refnames`, dropping
+    /// their `refname`) and then pointing at its ids (`refids`, dropping
+    /// their `refid`), marking each resolved and noting each new `refid`;
+    /// a target among them hands it on in turn, before the next node.
+    /// Each target's list is read when it is reached; what `note_refid`
+    /// adds to a list meanwhile is always resolved already, so reading it
+    /// whole up front skips the same nodes.
+    fn resolve_indirect_references(&mut self, start: usize) {
+        let mut stack: Vec<Rewrite> = self.rewrite(start).into_iter().collect();
+        while let Some(rewrite) = stack.last_mut() {
+            let Some(&(node, by_id)) = rewrite.references.get(rewrite.next) else {
+                stack.pop();
+                continue;
+            };
+            rewrite.next += 1;
+            if !self.resolved.insert(node) {
+                continue;
+            }
+            let (attname, attval, note) = (rewrite.attname, rewrite.attval.clone(), rewrite.note);
+            self.arena
+                .remove(node, if by_id { "refid" } else { "refname" });
+            self.arena.set(node, attname, attval);
+            if note {
+                self.note_refid(node);
+            }
+            if self.arena.kind(node) == kinds::TARGET {
+                stack.extend(self.rewrite(node));
+            }
+        }
+    }
+
+    /// The [`Rewrite`] `target` starts, if it has anything to hand on.
+    fn rewrite(&self, target: usize) -> Option<Rewrite> {
+        let (attname, note) = if self.arena.has(target, "refid") {
+            ("refid", true)
+        } else if self.arena.has(target, "refuri") {
+            ("refuri", false)
+        } else {
+            return None;
+        };
+        let attval = self.arena.get_str(target, attname)?.to_string();
+        let attrs = &self.arena.slots[target].node.attrs;
+        let mut references: Vec<(usize, bool)> = Vec::new();
+        for name in &attrs.names {
+            let named = self.refnames.get(name).into_iter().flatten();
+            references.extend(named.map(|&node| (node, false)));
+        }
+        for id in &attrs.ids {
+            let pointing = self.refids.get(id).into_iter().flatten();
+            references.extend(pointing.map(|&node| (node, true)));
+        }
+        Some(Rewrite {
+            attname,
+            attval,
+            note,
+            references,
+            next: 0,
+        })
+    }
+
+    /// `document.note_refid(node)` (`nodes.py:2012-2013`).
+    fn note_refid(&mut self, node: usize) {
+        if let Some(refid) = self.arena.get_str(node, "refid") {
+            let refid = refid.to_string();
+            self.refids.entry(refid).or_default().push(node);
+        }
+    }
+}
+
+/// Whether a node in `document.refnames` is still to be resolved by the
+/// transforms after IndirectHyperlinks: it carries its `refname` and is not
+/// a target — the only targets that still carry one are those
+/// IndirectHyperlinks failed, which it marked resolved (`references.py:
+/// 298`).
+fn awaits_resolution(node: &Node) -> bool {
+    node.kind != kinds::TARGET && node.get("refname").is_some()
+}
+
+/// `ExternalTargets` (`docutils/transforms/references.py:340-373`,
+/// priority 640): for each target with a `refuri`, in document order, every
+/// unresolved node named by one of its names (`document.refnames`: hyperlink,
+/// footnote and citation references) drops its `refname` and takes the
+/// `refuri`.
+pub(super) fn external_targets(ctx: &mut TransformCtx) {
+    let (tree, lists) = ctx.tree_and_lists();
+    let mut links: Vec<(&NodePath, String)> = Vec::new();
+    for path in collect_targets(&tree.root) {
+        let Some(target) = node_at(&tree.root, &path) else {
+            continue;
+        };
+        let Some(refuri) = str_value(target, "refuri") else {
+            continue;
+        };
+        for name in &target.attrs.names {
+            for reference in lists.refnames.get(name).into_iter().flatten() {
+                links.push((reference, refuri.to_string()));
+            }
+        }
+    }
+    for (path, refuri) in links {
+        if let Some(node) = node_at_mut(&mut tree.root, path).filter(|node| awaits_resolution(node))
+        {
+            node.remove("refname");
+            node.set("refuri", AttrValue::Str(refuri));
+        }
+    }
+}
+
+/// `InternalTargets` (`docutils/transforms/references.py:376-411`, priority
+/// 660): for each target with neither `refuri` nor `refid` — an internal
+/// target PropagateTargets left in place (at the end of its section, before
+/// an invisible node, inside a paragraph: `` _`inline` ``) — every
+/// unresolved node named by one of its names drops its `refname` and takes
+/// `refid = document.nameids[name]`. (A name without an id would leave the
+/// node unchanged but resolved; no target's name is one, see the module
+/// docs.) References to a section, a propagated target or a directive's
+/// `:name:` are not a target's: DanglingReferences resolves them.
+pub(super) fn internal_targets(ctx: &mut TransformCtx) {
+    let root = &ctx.tree.root;
+    let mut names: Vec<String> = Vec::new();
+    for path in collect_targets(root) {
+        if let Some(target) = node_at(root, &path) {
+            if target.get("refuri").is_none() && target.get("refid").is_none() {
+                names.extend(target.attrs.names.iter().cloned());
+            }
+        }
+    }
+    if names.is_empty() {
+        return;
+    }
+    let refids: Vec<Option<String>> = names
+        .iter()
+        .map(|name| ctx.ids.name_id(name).flatten().map(str::to_string))
+        .collect();
+    let (tree, lists) = ctx.tree_and_lists();
+    let mut links: Vec<(&NodePath, &str)> = Vec::new();
+    for (name, refid) in names.iter().zip(&refids) {
+        let Some(refid) = refid.as_deref().filter(|refid| !refid.is_empty()) else {
+            continue;
+        };
+        for reference in lists.refnames.get(name).into_iter().flatten() {
+            links.push((reference, refid));
+        }
+    }
+    for (path, refid) in links {
+        if let Some(node) = node_at_mut(&mut tree.root, path).filter(|node| awaits_resolution(node))
+        {
+            node.remove("refname");
+            node.set("refid", AttrValue::Str(refid.to_string()));
+        }
+    }
+}
+
+/// `SphinxDanglingReferences` (`sphinx/transforms/references.py:18-30`,
+/// priority 850): docutils' `DanglingReferences` (`docutils/transforms/
+/// references.py:878-990`) with the reporter's level raised to WARNING
+/// meanwhile, so its INFO `Hyperlink target "%s" is not referenced.`
+/// (`:900-919`, a message it neither keeps nor marks in the tree) never
+/// prints — and is not made here.
+///
+/// The visitor walks the whole tree in document order (`document.walk`) —
+/// substitution definitions included, and the children of a node it has
+/// just replaced, which it reaches out of the tree — and stops at every
+/// `reference` and `footnote_reference` still carrying a `refname`
+/// (`:937-940`; `citation_reference` too upstream, but Sphinx's
+/// CitationReferenceTransform (619) has replaced every one by then,
+/// `sphinx/domains/citation.py:150-177`):
+///
+/// * a name `document.nameids` maps to an id: the `refname` gives way to
+///   that `refid` (`:941-949`);
+/// * otherwise ERROR at the reference (its nearest stamped ancestor) —
+///   `Duplicate target name, cannot be used as a unique reference: "%s".`
+///   for a name duplicated away, else `Unknown target name: "%s".`, with a
+///   paragraph of hints when the name holds `<` or `>` (`:954-980`) — and
+///   the reference is replaced by a `problematic` pointing at the message,
+///   which spends the next id; the `problematic` takes the reference's own
+///   first id if it has one (a footnote reference), else the next
+///   (`:981-990`).
+pub(super) fn dangling_references(ctx: &mut TransformCtx) {
+    let dangling = |node: &Node| {
+        matches!(node.kind, kinds::REFERENCE | kinds::FOOTNOTE_REFERENCE)
+            && node.get("refname").is_some()
+    };
+    if collect_paths(&ctx.tree.root, dangling).is_empty() {
+        return;
+    }
+    let root = std::mem::replace(&mut ctx.tree.root, Node::elem(kinds::DOCUMENT, Span::ZERO));
+    let mut arena = Arena::new(root);
+    let mut stack = vec![Arena::ROOT];
+    while let Some(id) = stack.pop() {
+        if dangling(&arena.slots[id].node) {
+            visit_dangling_reference(ctx, &mut arena, id);
+        }
+        // `children[:]` after the visit: a replaced reference's own.
+        stack.extend(arena.slots[id].kids.iter().rev());
+    }
+    ctx.tree.root = arena.into_tree();
+}
+
+/// `DanglingReferencesVisitor.visit_reference` (`references.py:937-990`)
+/// for a reference that still carries its `refname`.
+fn visit_dangling_reference(ctx: &mut TransformCtx, arena: &mut Arena, reference: usize) {
+    let refname = arena.str_attr(reference, "refname").to_string();
+    let (text, hint) = match ctx.ids.name_id(&refname) {
+        Some(Some(id)) => {
+            let id = id.to_string();
+            arena.remove(reference, "refname");
+            arena.set(reference, "refid", id);
+            return;
+        }
+        Some(None) => (
+            format!("Duplicate target name, cannot be used as a unique reference: \"{refname}\"."),
+            None,
+        ),
+        None => (
+            format!("Unknown target name: \"{refname}\"."),
+            embedded_reference_hint(&refname),
+        ),
+    };
+    let (source, line) = arena.location(reference);
+    let mut message = ctx.message(messages::ERROR, &text, source, Some(line));
+    if let Some(hint) = hint {
+        message = messages::with_paragraph(message, &hint);
+    }
+    ctx.reporter.report(&message);
+    let message_id = ctx.ids.allocate_auto_id();
+    let mut problematic = problematic_for(&arena.slots[reference].node, message_id);
+    if arena.slots[reference].node.attrs.ids.is_empty() {
+        problematic.attrs.ids.push(ctx.ids.allocate_auto_id());
+    }
+    let problematic = arena.adopt(problematic, None);
+    arena.replace_self(reference, vec![problematic]);
+}
+
+/// The hint DanglingReferences adds to an unknown name holding `<` or `>`
+/// (`references.py:959-976`): a mistyped embedded URI or alias.
+fn embedded_reference_hint(refname: &str) -> Option<String> {
+    if !refname.contains(['<', '>']) {
+        return None;
+    }
+    let mut hint = String::from("Did you want to embed a URI or alias?");
+    if !refname.contains('<') {
+        hint.push_str("\nOpening bracket missing.");
+    } else if !refname.contains(" <") {
+        hint.push_str("\nThe embedded reference must be preceded by whitespace.");
+    }
+    if !refname.contains('>') {
+        hint.push_str("\nClosing bracket missing.");
+    } else if !refname.ends_with('>') {
+        hint.push_str("\nThe embedded reference must be the last text before the end string.");
+    }
+    if refname.contains("< ") || refname.contains(" >") {
+        hint.push_str("\nWhitespace around the embedded reference is not allowed.");
+    }
+    Some(hint)
+}
+
 #[cfg(test)]
 mod tests {
     use crate::doctree::ids::IdRegistry;
-    use crate::doctree::{kinds, Doctree, Node, Span};
+    use crate::doctree::{kinds, AttrValue, Doctree, Node, Span};
     use crate::rst::ParseOptions;
     use crate::transforms::{apply_read_transforms, parse_and_transform, TransformConfig};
 
@@ -1079,11 +1799,14 @@ mod tests {
     }
 
     /// [`read`] on a thread, given five seconds: a pass that never ends
-    /// fails the test instead of hanging it.
-    fn read_bounded(source: &'static str) -> (Doctree, Vec<(Option<u32>, String)>) {
+    /// fails the test instead of hanging it. The thread has the default
+    /// spawned-thread stack (2 MiB), so a pass recursing as deep as its
+    /// input is long overflows it.
+    fn read_bounded(source: impl Into<String>) -> (Doctree, Vec<(Option<u32>, String)>) {
+        let source = source.into();
         let (sender, receiver) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let _ = sender.send(read(source));
+            let _ = sender.send(read(&source));
         });
         receiver
             .recv_timeout(std::time::Duration::from_secs(5))
@@ -1216,6 +1939,73 @@ mod tests {
         );
         let c = detected(2, ".. |c| replace:: |b| |a|");
         assert_eq!(records, [c.clone(), c]);
+    }
+
+    /// The paragraph's references' `refuri`s, and whether every target
+    /// ended with `refuri` and no `refname`.
+    fn resolved_uris(tree: &Doctree) -> (Vec<Option<String>>, bool) {
+        let uri = |node: &Node| match node.get("refuri") {
+            Some(AttrValue::Str(uri)) => Some(uri.clone()),
+            _ => None,
+        };
+        let references = tree.root.children[0]
+            .children
+            .iter()
+            .filter(|node| node.kind == kinds::REFERENCE)
+            .map(uri)
+            .collect();
+        let targets_resolved = tree
+            .root
+            .children
+            .iter()
+            .filter(|node| node.kind == kinds::TARGET)
+            .all(|target| uri(target).is_some() && target.get("refname").is_none());
+        (references, targets_resolved)
+    }
+
+    /// IndirectHyperlinks resolves a chain of indirect targets by recursion
+    /// (`resolve_indirect_target`, `references.py:236-246`), as deep as the
+    /// chain is long — here the first target names the second, and so on,
+    /// so resolving the first descends through all of them. The port walks
+    /// the chain with an explicit stack: twenty thousand targets resolve on
+    /// a 2 MiB thread. (CPython stops at its recursion limit; ledgered with
+    /// the other Sphinx crashes the pass carries on through.) A paragraph
+    /// separates each target from the next: ReorderConsecutiveTargetAndIndex
+    /// Nodes (220) takes time quadratic in a run of adjacent targets
+    /// (ledgered), which this test is not about.
+    #[test]
+    fn a_long_indirect_chain_resolves_without_recursion() {
+        const N: usize = 20_000;
+        let mut source = String::from("See `a0`_.\n\n");
+        for k in 0..N {
+            source.push_str(&format!(".. _a{k}: a{}_\n\nP.\n\n", k + 1));
+        }
+        source.push_str(&format!(".. _a{N}: https://x.example/\n"));
+        let (tree, records) = read_bounded(source);
+        assert_eq!(records, []);
+        let (references, targets_resolved) = resolved_uris(&tree);
+        assert_eq!(references, [Some("https://x.example/".to_string())]);
+        assert!(targets_resolved);
+    }
+
+    /// The other recursion: `resolve_indirect_references` (`references.py:
+    /// 301-338`) hands a resolved target's `refuri` on to every target
+    /// naming it, and from each of those to the targets naming *it* — here
+    /// each target names the one before, so resolving the first (to the
+    /// external `a0`) rewrites the whole chain from the inside out.
+    #[test]
+    fn a_long_chain_of_referring_targets_rewrites_without_recursion() {
+        const N: usize = 20_000;
+        let mut source = format!("See `a{N}`_.\n\n");
+        for k in 1..=N {
+            source.push_str(&format!(".. _a{k}: a{}_\n\nP.\n\n", k - 1));
+        }
+        source.push_str(".. _a0: https://x.example/\n");
+        let (tree, records) = read_bounded(source);
+        assert_eq!(records, []);
+        let (references, targets_resolved) = resolved_uris(&tree);
+        assert_eq!(references, [Some("https://x.example/".to_string())]);
+        assert!(targets_resolved);
     }
 
     fn elem(kind: &'static str, children: Vec<Node>) -> Node {

@@ -97,9 +97,12 @@ pub struct Attrs {
 /// written) and a `substitution_definition` (its explicit-markup block),
 /// from which Substitutions builds its `problematic` and a circular
 /// definition's literal (`docutils/transforms/references.py:702-704,
-/// 735-738`). docutils keeps `rawsource` beside `Element.attributes`, not
-/// in them, so `attlist()` never prints it, and neither does
-/// [`Node::pformat`].
+/// 735-738`); a hyperlink, footnote or citation reference (as written)
+/// and a hyperlink target (its explicit-markup block, or an embedded
+/// alias's `<…>`), from which the hyperlink transforms build theirs
+/// (`:149-150,293-294,983`). docutils keeps `rawsource` beside
+/// `Element.attributes`, not in them, so `attlist()` never prints it, and
+/// neither does [`Node::pformat`].
 pub const RAWSOURCE: &str = "rawsource";
 
 /// One doctree node. Element nodes have `text == None`; text leaves have
@@ -189,6 +192,16 @@ impl Node {
             Ok(i) => self.attrs.extra[i].1 = value,
             Err(i) => self.attrs.extra.insert(i, (key, value)),
         }
+    }
+
+    /// Remove a scalar attribute (`del node[key]`), returning its value.
+    pub fn remove(&mut self, key: &str) -> Option<AttrValue> {
+        let index = self
+            .attrs
+            .extra
+            .binary_search_by(|(k, _)| (*k).cmp(key))
+            .ok()?;
+        Some(self.attrs.extra.remove(index).1)
     }
 
     pub fn get(&self, key: &'static str) -> Option<&AttrValue> {

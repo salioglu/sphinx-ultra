@@ -4058,6 +4058,425 @@
         "<snippet>:3: ERROR: Circular substitution definition referenced: \"A\". [docutils]",
         "<snippet>:5: ERROR: Circular substitution definition detected:\n\n.. |a| replace:: |a| [docutils]"
       ]
+    },
+    {
+      "family": "tx_subst",
+      "name": "tx_subst.expansion_exceeds_line_length_limit_ending_in_explicit_markup",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition names=\"a\">\n        xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n    <substitution_definition names=\"b\">\n        xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n         \n        xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n         \n        xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n         \n        xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n         \n        xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n         \n        xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n         \n        xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n         \n        xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n         \n        xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n         \n        xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n         \n        xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n    <paragraph>\n        See \n        <problematic ids=\"id2\" refid=\"id1\">\n            |b|\n         here.\n    <comment xml:space=\"preserve\">\n        end comment\n",
+      "rst": ".. |a| replace:: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n.. |b| replace:: |a| |a| |a| |a| |a| |a| |a| |a| |a| |a| |a|\n\nSee |b| here.\n\n.. end comment\n",
+      "warnings": [
+        "<snippet>:: ERROR: Substitution definition \"b\" exceeds the line-length-limit. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.named_external",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <reference name=\"ext\" refuri=\"https://example.com\">\n            ext\n         here.\n    <target ids=\"ext\" names=\"ext\" refuri=\"https://example.com\">\n",
+      "rst": "See `ext`_ here.\n\n.. _ext: https://example.com\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.named_internal",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <reference name=\"sec\" refid=\"sec\">\n            sec\n         and \n        <reference name=\"Section\" refid=\"section\">\n            Section\n        .\n    <target refid=\"sec\">\n    <section ids=\"section sec\" names=\"section sec\">\n        <title>\n            Section\n        <paragraph>\n            text\n",
+      "rst": "See sec_ and `Section`_.\n\n.. _sec:\n\nSection\n=======\n\ntext\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.anonymous_pair",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Anonymous \n        <reference anonymous=\"1\" name=\"one\" refuri=\"https://one.example\">\n            one\n         and \n        <reference anonymous=\"1\" name=\"two\" refid=\"id2\">\n            two\n         and \n        <reference anonymous=\"1\" name=\"three\" refuri=\"https://two.example\">\n            three\n        .\n    <target anonymous=\"1\" ids=\"id1\" refuri=\"https://one.example\">\n    <target anonymous=\"1\" refid=\"id2\">\n    <paragraph ids=\"id2\">\n        Para.\n    <target anonymous=\"1\" ids=\"id3\" refuri=\"https://two.example\">\n    <target ids=\"two\" names=\"two\" refuri=\"https://two.example\">\n",
+      "rst": "Anonymous `one`__ and `two`__ and `three`__.\n\n__ https://one.example\n\n.. __:\n\nPara.\n\n__ two_\n\n.. _two: https://two.example\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.anonymous_mismatch",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        A \n        <problematic ids=\"id3\" refid=\"id2\">\n            `x`__\n         and \n        <problematic ids=\"id4\" refid=\"id2\">\n            `y`__\n        .\n    <target anonymous=\"1\" ids=\"id1\" refuri=\"https://only.example\">\n",
+      "rst": "A `x`__ and `y`__.\n\n__ https://only.example\n",
+      "warnings": [
+        "<snippet>:: ERROR: Anonymous hyperlink mismatch: 2 references but 1 targets.\nSee \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.indirect_chain",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <reference name=\"a\" refuri=\"https://example.com\">\n            a\n         and \n        <reference name=\"d\" refid=\"e\">\n            d\n        .\n    <target ids=\"a\" names=\"a\" refuri=\"https://example.com\">\n    <target ids=\"b\" names=\"b\" refuri=\"https://example.com\">\n    <target ids=\"c\" names=\"c\" refuri=\"https://example.com\">\n    <target ids=\"d\" names=\"d\" refid=\"e\">\n    <target refid=\"e\">\n    <paragraph ids=\"e\" names=\"e\">\n        Para.\n",
+      "rst": "See `a`_ and `d`_.\n\n.. _a: b_\n.. _b: c_\n.. _c: https://example.com\n.. _d: e_\n.. _e:\n\nPara.\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.indirect_circular",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <problematic ids=\"id2\" refid=\"id1\">\n            `a`_\n         and \n        <reference name=\"b\" refid=\"a\">\n            b\n        .\n    <target ids=\"a\" names=\"a\" refid=\"a\">\n    <problematic ids=\"id3 b\" names=\"b\" refid=\"id1\">\n        .. _b: a_\n",
+      "rst": "See `a`_ and `b`_.\n\n.. _a: b_\n.. _b: a_\n",
+      "warnings": [
+        "<snippet>:3: ERROR: Indirect hyperlink target \"a\" (id=\"a\") refers to target \"b\", forming a circular reference. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.indirect_unknown",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <problematic ids=\"id2\" refid=\"id1\">\n            `ind`_\n        .\n    <target ids=\"ind\" names=\"ind\" refname=\"missing\">\n",
+      "rst": "See `ind`_.\n\n.. _ind: missing_\n",
+      "warnings": [
+        "<snippet>:3: ERROR: Indirect hyperlink target \"ind\" (id=\"ind\") refers to target \"missing\", which does not exist. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.embedded_uri",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <reference name=\"Python\" refuri=\"https://python.org\">\n            Python\n        <target ids=\"python\" names=\"python\" refuri=\"https://python.org\">\n         and \n        <reference name=\"alias\" refuri=\"https://python.org\">\n            alias\n        <target ids=\"alias\" names=\"alias\" refuri=\"https://python.org\">\n         and \n        <reference name=\"python\" refuri=\"https://python.org\">\n            python\n        .\n",
+      "rst": "`Python <https://python.org>`_ and `alias <python_>`_ and python_.\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.duplicate_target_reference",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <problematic ids=\"id3\" refid=\"id2\">\n            `d`_\n        .\n    <target dupnames=\"d\" ids=\"d\" refuri=\"https://1\">\n    <system_message level=\"2\" line=\"4\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Duplicate explicit target name: \"d\".\n    <target dupnames=\"d\" ids=\"id1\" refuri=\"https://2\">\n",
+      "rst": "See `d`_.\n\n.. _d: https://1\n.. _d: https://2\n",
+      "warnings": [
+        "<snippet>:4: WARNING: Duplicate explicit target name: \"d\". [docutils]",
+        "<snippet>:1: ERROR: Duplicate target name, cannot be used as a unique reference: \"d\". [docutils]"
+      ]
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.dangling_reference",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <problematic ids=\"id2\" refid=\"id1\">\n            `nope`_\n         and \n        <problematic ids=\"id4\" refid=\"id3\">\n            `a<b`_\n         here.\n    <target refid=\"unused\">\n    <section ids=\"section unused\" names=\"section unused\">\n        <title>\n            Section\n        <paragraph>\n            text\n",
+      "rst": "See `nope`_ and `a<b`_ here.\n\n.. _unused:\n\nSection\n=======\n\ntext\n",
+      "warnings": [
+        "<snippet>:1: ERROR: Unknown target name: \"nope\". [docutils]",
+        "<snippet>:1: ERROR: Unknown target name: \"a<b\".\n\nDid you want to embed a URI or alias?\nThe embedded reference must be preceded by whitespace.\nClosing bracket missing. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.name_nbsp",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <reference name=\"a b\" refuri=\"https://nbsp.example\">\n            a b\n         and \n        <reference name=\"c d\" refuri=\"https://us.example\">\n            c\u001fd\n        .\n    <target ids=\"a-b\" names=\"a\\ b\" refuri=\"https://nbsp.example\">\n    <target ids=\"c-d\" names=\"c\\ d\" refuri=\"https://us.example\">\n",
+      "rst": "See `a b`_ and `c\u001fd`_.\n\n.. _a b: https://nbsp.example\n.. _c\u001fd: https://us.example\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.anonymous_mismatch_in_nested_directive",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        A \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <note>\n        <paragraph>\n            y\n",
+      "rst": "A `x`__.\n\n.. note::\n\n   y\n",
+      "warnings": [
+        "<snippet>:: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.\nSee \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.anonymous_mismatch_ends_with_paragraph",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        A \n        <problematic ids=\"id3\" refid=\"id2\">\n            `x`__\n         and \n        <problematic ids=\"id4\" refid=\"id2\">\n            `y`__\n        .\n    <target anonymous=\"1\" ids=\"id1\" refuri=\"https://only.example\">\n    <paragraph>\n        End.\n",
+      "rst": "A `x`__ and `y`__.\n\n__ https://only.example\n\nEnd.\n",
+      "warnings": [
+        "<snippet>:6: ERROR: Anonymous hyperlink mismatch: 2 references but 1 targets.\nSee \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.anonymous_mismatch_ends_with_bullet_list",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        A \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                item\n",
+      "rst": "A `x`__.\n\n- item\n",
+      "warnings": [
+        "<snippet>:: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.\nSee \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.anonymous_mismatch_ends_with_enumerated_list",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        A \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <enumerated_list enumtype=\"arabic\" prefix=\"\" suffix=\".\">\n        <list_item>\n            <paragraph>\n                one\n",
+      "rst": "A `x`__.\n\n#. one\n",
+      "warnings": [
+        "<snippet>:: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.\nSee \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.anonymous_mismatch_ends_with_field_list",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        A \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <field_list>\n        <field>\n            <field_name>\n                f\n            <field_body>\n                <paragraph>\n                    v\n",
+      "rst": "A `x`__.\n\n:f: v\n",
+      "warnings": [
+        "<snippet>:: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.\nSee \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.anonymous_mismatch_ends_with_option_list",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        A \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <option_list>\n        <option_list_item>\n            <option_group>\n                <option>\n                    <option_string>\n                        -o\n            <description>\n                <paragraph>\n                    opt\n",
+      "rst": "A `x`__.\n\n-o  opt\n",
+      "warnings": [
+        "<snippet>:: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.\nSee \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.anonymous_mismatch_ends_with_definition_list",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        A \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <definition_list>\n        <definition_list_item>\n            <term>\n                term\n            <definition>\n                <paragraph>\n                    def\n",
+      "rst": "A `x`__.\n\nterm\n   def\n",
+      "warnings": [
+        "<snippet>:: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.\nSee \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.anonymous_mismatch_ends_with_line_block",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        A \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <line_block>\n        <line>\n            one\n        <line>\n            two\n",
+      "rst": "A `x`__.\n\n| one\n| two\n",
+      "warnings": [
+        "<snippet>:: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.\nSee \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.anonymous_mismatch_ends_with_one_line_block",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        A \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <line_block>\n        <line>\n            one\n",
+      "rst": "A `x`__.\n\n| one\n",
+      "warnings": [
+        "<snippet>:4: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.\nSee \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.anonymous_mismatch_ends_with_quoted_literal",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        A \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <literal_block xml:space=\"preserve\">\n        > quoted\n",
+      "rst": "A `x`__.\n\n::\n\n> quoted\n",
+      "warnings": [
+        "<snippet>:: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.\nSee \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.anonymous_mismatch_ends_with_quoted_literal_and_blank",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        A \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <literal_block xml:space=\"preserve\">\n        > quoted\n",
+      "rst": "A `x`__.\n\n::\n\n> quoted\n\n",
+      "warnings": [
+        "<snippet>:7: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.\nSee \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.anonymous_mismatch_ends_expecting_a_literal_block",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        A \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <paragraph>\n        B:\n    <system_message level=\"2\" line=\"4\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Literal block expected; none found.\n",
+      "rst": "A `x`__.\n\nB::\n",
+      "warnings": [
+        "<snippet>:4: WARNING: Literal block expected; none found. [docutils]",
+        "<snippet>:3: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.\nSee \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.anonymous_mismatch_ends_expecting_a_literal_block_after_blanks",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        A \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <paragraph>\n        B:\n    <system_message level=\"2\" line=\"6\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Literal block expected; none found.\n",
+      "rst": "A `x`__.\n\nB::\n\n\n",
+      "warnings": [
+        "<snippet>:6: WARNING: Literal block expected; none found. [docutils]",
+        "<snippet>:6: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.\nSee \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.anonymous_mismatch_ends_with_block_quote",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        A \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <block_quote>\n        <bullet_list bullet=\"-\">\n            <list_item>\n                <paragraph>\n                    a\n",
+      "rst": "A `x`__.\n\n    - a\n",
+      "warnings": [
+        "<snippet>:4: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.\nSee \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.anonymous_mismatch_ends_with_table",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        A \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <table>\n        <tgroup cols=\"1\">\n            <colspec colwidth=\"5\">\n            <tbody>\n                <row>\n                    <entry>\n                        <bullet_list bullet=\"-\">\n                            <list_item>\n                                <paragraph>\n                                    a\n",
+      "rst": "A `x`__.\n\n+-----+\n| - a |\n+-----+\n",
+      "warnings": [
+        "<snippet>:6: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.\nSee \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.indirect_to_duplicate",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <problematic ids=\"id3\" refid=\"id2\">\n            `x`_\n        .\n    <target ids=\"x\" names=\"x\" refname=\"d\">\n    <target dupnames=\"d\" ids=\"d\" refuri=\"https://1\">\n    <system_message level=\"2\" line=\"5\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Duplicate explicit target name: \"d\".\n    <target dupnames=\"d\" ids=\"id1\" refuri=\"https://2\">\n",
+      "rst": "See `x`_.\n\n.. _x: d_\n.. _d: https://1\n.. _d: https://2\n",
+      "warnings": [
+        "<snippet>:5: WARNING: Duplicate explicit target name: \"d\". [docutils]",
+        "<snippet>:3: ERROR: Indirect hyperlink target \"x\" (id=\"x\") refers to target \"d\", which is a duplicate, and cannot be used as a unique reference. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.indirect_embedded_alias_unknown",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <problematic ids=\"id4\" refid=\"id3\">\n            `x <nope_>`_\n        <target ids=\"x\" names=\"x\" refname=\"nope\">\n         and \n        <problematic ids=\"id2\" refid=\"id1\">\n            x_\n        .\n",
+      "rst": "See `x <nope_>`_ and x_.\n",
+      "warnings": [
+        "<snippet>:1: ERROR: Indirect hyperlink target \"x\" (id=\"x\") refers to target \"nope\", which does not exist. [docutils]",
+        "<snippet>:1: ERROR: Unknown target name: \"nope\". [docutils]"
+      ]
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.substitution_reference_links",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <reference refuri=\"https://x.example\">\n            X\n         and \n        <reference anonymous=\"1\" refuri=\"https://y.example\">\n            Y\n        .\n    <target ids=\"x\" names=\"x\" refuri=\"https://x.example\">\n    <target anonymous=\"1\" ids=\"id1\" refuri=\"https://y.example\">\n    <substitution_definition names=\"x\">\n        X\n    <substitution_definition names=\"y\">\n        Y\n",
+      "rst": "See |x|_ and |y|__.\n\n.. _x: https://x.example\n\n__ https://y.example\n\n.. |x| replace:: X\n.. |y| replace:: Y\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.inline_internal_target",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <reference name=\"t\" refid=\"t\">\n            t\n         and \n        <target ids=\"t\" names=\"t\">\n            t\n         here.\n",
+      "rst": "See t_ and _`t` here.\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.dangling_inside_substitution",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <problematic ids=\"id2\" refid=\"id1\">\n            `nope`_\n        .\n    <substitution_definition names=\"s\">\n        <problematic ids=\"id4\" refid=\"id3\">\n            `nope`_\n",
+      "rst": "See |s|.\n\n.. |s| replace:: `nope`_\n",
+      "warnings": [
+        "<snippet>:1: ERROR: Unknown target name: \"nope\". [docutils]",
+        "<snippet>:3: ERROR: Unknown target name: \"nope\". [docutils]"
+      ]
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.dangling_footnote_reference",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <problematic ids=\"id1\" refid=\"id2\">\n            [1]_\n         here.\n",
+      "rst": "See [1]_ here.\n",
+      "warnings": [
+        "<snippet>:1: ERROR: Unknown target name: \"1\". [docutils]"
+      ]
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.duplicate_section_name_reference",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section dupnames=\"sec\" ids=\"sec\">\n        <title>\n            Sec\n        <paragraph>\n            x\n    <section dupnames=\"sec\" ids=\"id1\">\n        <title>\n            Sec\n        <paragraph>\n            y\n        <paragraph>\n            See \n            <problematic ids=\"id3\" refid=\"id2\">\n                `Sec`_\n            .\n",
+      "rst": "Sec\n===\n\nx\n\nSec\n===\n\ny\n\nSee `Sec`_.\n",
+      "warnings": [
+        "<snippet>:11: ERROR: Duplicate target name, cannot be used as a unique reference: \"sec\". [docutils]"
+      ]
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.indirect_error_replaces_referring_target",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <reference name=\"u\" refid=\"t\">\n            u\n         and \n        <problematic ids=\"id2\" refid=\"id1\">\n            `t`_\n        .\n    <target ids=\"t\" names=\"t\" refname=\"missing\">\n    <problematic ids=\"id3 u\" names=\"u\" refid=\"id1\">\n        .. _u: t_\n",
+      "rst": "See `u`_ and `t`_.\n\n.. _t: missing_\n.. _u: t_\n",
+      "warnings": [
+        "<snippet>:3: ERROR: Indirect hyperlink target \"t\" (id=\"t\") refers to target \"missing\", which does not exist. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.indirect_error_through_recursion",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <reference name=\"u\" refid=\"t\">\n            u\n         and \n        <problematic ids=\"id2\" refid=\"id1\">\n            `t`_\n        .\n    <problematic ids=\"id3 u\" names=\"u\" refid=\"id1\">\n        .. _u: t_\n    <target ids=\"t\" names=\"t\" refname=\"missing\">\n",
+      "rst": "See `u`_ and `t`_.\n\n.. _u: t_\n.. _t: missing_\n",
+      "warnings": [
+        "<snippet>:4: ERROR: Indirect hyperlink target \"t\" (id=\"t\") refers to target \"missing\", which does not exist. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.propagated_target_into_indirect",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <reference name=\"p\" refuri=\"https://ext\">\n            p\n        .\n    <target refuri=\"https://ext\">\n    <target ids=\"t p\" names=\"t p\" refuri=\"https://ext\">\n    <target ids=\"ext\" names=\"ext\" refuri=\"https://ext\">\n",
+      "rst": "See `p`_.\n\n.. _p:\n.. _t: ext_\n.. _ext: https://ext\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.indirect_circular_three",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <problematic ids=\"id2\" refid=\"id1\">\n            `a`_\n        , \n        <reference name=\"b\" refid=\"a\">\n            b\n         and \n        <reference name=\"c\" refid=\"a\">\n            c\n        .\n    <target ids=\"a\" names=\"a\" refid=\"a\">\n    <target ids=\"b\" names=\"b\" refid=\"a\">\n    <problematic ids=\"id3 c\" names=\"c\" refid=\"id1\">\n        .. _c: a_\n",
+      "rst": "See `a`_, `b`_ and `c`_.\n\n.. _a: b_\n.. _b: c_\n.. _c: a_\n",
+      "warnings": [
+        "<snippet>:3: ERROR: Indirect hyperlink target \"a\" (id=\"a\") refers to target \"b\", forming a circular reference. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.dangling_reference_hints",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <problematic ids=\"id2\" refid=\"id1\">\n            `a>`_\n        , \n        <problematic ids=\"id4\" refid=\"id3\">\n            `x<y`_\n        , \n        <problematic ids=\"id6\" refid=\"id5\">\n            `x <y> z`_\n         and \n        <problematic ids=\"id8\" refid=\"id7\">\n            `x < y >`_\n        .\n",
+      "rst": "See `a>`_, `x<y`_, `x <y> z`_ and `x < y >`_.\n",
+      "warnings": [
+        "<snippet>:1: ERROR: Unknown target name: \"a>\".\n\nDid you want to embed a URI or alias?\nOpening bracket missing. [docutils]",
+        "<snippet>:1: ERROR: Unknown target name: \"x<y\".\n\nDid you want to embed a URI or alias?\nThe embedded reference must be preceded by whitespace.\nClosing bracket missing. [docutils]",
+        "<snippet>:1: ERROR: Unknown target name: \"x <y> z\".\n\nDid you want to embed a URI or alias?\nThe embedded reference must be the last text before the end string. [docutils]",
+        "<snippet>:1: ERROR: Unknown target name: \"x < y >\".\n\nDid you want to embed a URI or alias?\nWhitespace around the embedded reference is not allowed. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.dangling_resolves_directive_name",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <reference name=\"box\" refid=\"box\">\n            box\n        .\n    <rubric ids=\"box\" names=\"box\">\n        Heading\n",
+      "rst": "See `box`_.\n\n.. rubric:: Heading\n   :name: box\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.dangling_inside_replaced_reference",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition names=\"x\">\n        <problematic ids=\"id2\" refid=\"id1\">\n            `nope`_\n    <paragraph>\n        See \n        <problematic ids=\"id4\" refid=\"id3\">\n            |x|_\n         and \n        <problematic ids=\"id8\" refid=\"id7\">\n            `other`_\n        .\n",
+      "rst": ".. |x| replace:: `nope`_\n\nSee |x|_ and `other`_.\n",
+      "warnings": [
+        "<snippet>:1: ERROR: Unknown target name: \"nope\". [docutils]",
+        "<snippet>:3: ERROR: Unknown target name: \"x\". [docutils]",
+        "<snippet>:3: ERROR: Unknown target name: \"nope\". [docutils]",
+        "<snippet>:3: ERROR: Unknown target name: \"other\". [docutils]"
+      ]
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.indirect_self_reference",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <problematic ids=\"id2\" refid=\"id1\">\n            `a`_\n        .\n    <problematic ids=\"id3 a\" names=\"a\" refid=\"id1\">\n        .. _a: a_\n",
+      "rst": "See `a`_.\n\n.. _a: a_\n",
+      "warnings": [
+        "<snippet>:3: ERROR: Indirect hyperlink target \"a\" (id=\"a\") refers to target \"a\", forming a circular reference. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.anonymous_indirect_unknown",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <problematic ids=\"id3\" refid=\"id2\">\n            `x`__\n        .\n    <target anonymous=\"1\" ids=\"id1\" refname=\"missing\">\n",
+      "rst": "See `x`__.\n\n__ missing_\n",
+      "warnings": [
+        "<snippet>:3: ERROR: Indirect hyperlink target (id=\"id1\") refers to target \"missing\", which does not exist. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.duplicate_embedded_uri_reference",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <reference name=\"Python\" refuri=\"https://python.org\">\n            Python\n        <target ids=\"python\" names=\"python\" refuri=\"https://python.org\">\n         and \n        <reference name=\"Python\" refuri=\"https://python.org\">\n            Python\n        <target dupnames=\"python\" ids=\"id1\" refuri=\"https://python.org\">\n         and \n        <reference name=\"Python\" refuri=\"https://python.org\">\n            Python\n        .\n",
+      "rst": "`Python <https://python.org>`_ and `Python <https://python.org>`_ and Python_.\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.duplicate_external_same_refuri",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <reference name=\"x\" refuri=\"https://same\">\n            x\n        .\n    <target ids=\"x\" names=\"x\" refuri=\"https://same\">\n    <target dupnames=\"x\" ids=\"id1\" refuri=\"https://same\">\n",
+      "rst": "See x_.\n\n.. _x: https://same\n.. _x: https://same\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.duplicate_indirect_same_refname",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <reference name=\"x\" refuri=\"https://y\">\n            x\n        .\n    <target ids=\"x\" names=\"x\" refuri=\"https://y\">\n    <target dupnames=\"x\" ids=\"id1\" refuri=\"https://y\">\n    <target ids=\"y\" names=\"y\" refuri=\"https://y\">\n",
+      "rst": "See x_.\n\n.. _x: y_\n.. _x: y_\n\n.. _y: https://y\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_links",
+      "name": "tx_links.dangling_reference_locations",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"title-a\" names=\"title\\ a\">\n        <title>\n            Title \n            <problematic ids=\"id2\" refid=\"id1\">\n                a_\n        <bullet_list bullet=\"-\">\n            <list_item>\n                <paragraph>\n                    item \n                    <problematic ids=\"id4\" refid=\"id3\">\n                        b_\n                <paragraph>\n                    more \n                    <problematic ids=\"id6\" refid=\"id5\">\n                        c_\n        <table>\n            <tgroup cols=\"1\">\n                <colspec colwidth=\"6\">\n                <tbody>\n                    <row>\n                        <entry>\n                            <paragraph>\n                                <problematic ids=\"id8\" refid=\"id7\">\n                                    d_\n        <block_quote>\n            <paragraph>\n                quote \n                <problematic ids=\"id10\" refid=\"id9\">\n                    e_\n        <definition_list>\n            <definition_list_item>\n                <term>\n                    term \n                    <problematic ids=\"id12\" refid=\"id11\">\n                        f_\n                <definition>\n                    <paragraph>\n                        def \n                        <problematic ids=\"id14\" refid=\"id13\">\n                            g_\n        <field_list>\n            <field>\n                <field_name>\n                    field\n                <field_body>\n                    <paragraph>\n                        body \n                        <problematic ids=\"id16\" refid=\"id15\">\n                            i_\n        <note>\n            <paragraph>\n                note \n                <problematic ids=\"id18\" refid=\"id17\">\n                    j_\n        <line_block>\n            <line>\n                line \n                <problematic ids=\"id20\" refid=\"id19\">\n                    k_\n",
+      "rst": "Title a_\n========\n\n- item b_\n\n  more c_\n\n+------+\n| d_   |\n+------+\n\n    quote e_\n\nterm f_\n   def g_\n\n:field: body i_\n\n.. note:: note j_\n\n| line k_\n",
+      "warnings": [
+        "<snippet>:2: ERROR: Unknown target name: \"a\". [docutils]",
+        "<snippet>:4: ERROR: Unknown target name: \"b\". [docutils]",
+        "<snippet>:6: ERROR: Unknown target name: \"c\". [docutils]",
+        "<snippet>:9: ERROR: Unknown target name: \"d\". [docutils]",
+        "<snippet>:12: ERROR: Unknown target name: \"e\". [docutils]",
+        "<snippet>:14: ERROR: Unknown target name: \"f\". [docutils]",
+        "<snippet>:15: ERROR: Unknown target name: \"g\". [docutils]",
+        "<snippet>:17: ERROR: Unknown target name: \"i\". [docutils]",
+        "<snippet>:19: ERROR: Unknown target name: \"j\". [docutils]",
+        "<snippet>:21: ERROR: Unknown target name: \"k\". [docutils]"
+      ]
     }
   ],
   "conf_semantics": "a case's optional 'conf' dict is confoverrides applied on top of the base settings above; absent = defaults. The consumer maps every key onto ParseOptions.py and errors on unmapped keys.",

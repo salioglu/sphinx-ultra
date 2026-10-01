@@ -101,7 +101,9 @@ own: `tx_filter` (FilterSystemMessages -- INFO stripping) first, then
 `tx_targets` (MoveModuleTargets, ReorderConsecutiveTargetAndIndexNodes,
 PropagateTargets, SortIds -- which also re-admitted the propagation-visible
 `py.module_basic`/`py.duplicate_modules` from EXCLUDED), then `tx_subst`
-(DefaultSubstitutions, docutils Substitutions). Later tasks
+(DefaultSubstitutions, docutils Substitutions), then `tx_links`
+(AnonymousHyperlinks, IndirectHyperlinks, ExternalTargets, InternalTargets,
+SphinxDanglingReferences -- every `refname` reference). Later tasks
 extend this corpus with Sphinx-specific directives (toctree, code-block,
 versionadded/versionchanged/deprecated, seealso, only, highlight, math, index,
 rst-class, ...) once the Rust side grows the sphinx registry + env surface.
@@ -345,6 +347,14 @@ SUPPORTED_KINDS = {
     # M2 wave 5, Task 8: the definitions Substitutions leaves in the tree
     # (`Invisible`; the writers skip them).
     "substitution_definition",
+    # M2 wave 5, Task 9: an option list ending a document (where the
+    # anonymous-mismatch error is located).
+    "option_list",
+    "option_list_item",
+    "option_group",
+    "option",
+    "option_string",
+    "description",
 }
 
 CASES = [
@@ -1095,7 +1105,110 @@ CASES = [
     ('tx_subst', 'case_clash_circular_order', '.. |B| replace:: |B|\n.. |b| replace:: |B|\n\nSee |b|.\n'),
     ('tx_subst', 'case_clash_growth_ends_at_line_length_limit', '.. |a| replace:: |A| |a|\n.. |A| replace:: x\n\nSee |A|.\n'),
     ('tx_subst', 'case_clash_cycle_cut_by_folded_definition', '.. |A| replace:: |A|\n\nSee |A|.\n\n.. |a| replace:: |a|\n'),
-
+    # The line-length error's no-node location when the document ends in
+    # explicit markup (M2 wave 5, Task 9): docutils' top-level cursor has
+    # been moved past the end of the input by the explicit list's nested
+    # parse, so the message has no line at all (`<snippet>::`).
+    ('tx_subst', 'expansion_exceeds_line_length_limit_ending_in_explicit_markup', '.. |a| replace:: ' + 'x' * 1000 + '\n.. |b| replace:: ' + ' '.join(['|a|'] * 11) + '\n\nSee |b| here.\n\n.. end comment\n'),
+    # ===== tx_links (M2 wave 5, sub-project 1, Task 9) =====
+    # docutils' AnonymousHyperlinks (440), IndirectHyperlinks (460),
+    # ExternalTargets (640), InternalTargets (660) and Sphinx's
+    # SphinxDanglingReferences (850) (`docutils/transforms/references.py:
+    # 98-411,878-990`, `sphinx/transforms/references.py:18-30`). Formerly
+    # excluded: every `refname` reference is resolved or replaced by them.
+    ('tx_links', 'named_external', 'See `ext`_ here.\n\n.. _ext: https://example.com\n'),
+    # `sec_` names a propagated target and `Section`_ the section's implicit
+    # name: InternalTargets skips both (the target has a `refid` by now, the
+    # section is no target) and DanglingReferences resolves them by name.
+    ('tx_links', 'named_internal', 'See sec_ and `Section`_.\n\n.. _sec:\n\nSection\n=======\n\ntext\n'),
+    # An external anonymous target, a propagated one (followed to the
+    # paragraph it moved onto) and an indirect one (`refid` first, then
+    # rewritten by IndirectHyperlinks through `document.refids`).
+    ('tx_links', 'anonymous_pair', 'Anonymous `one`__ and `two`__ and `three`__.\n\n__ https://one.example\n\n.. __:\n\nPara.\n\n__ two_\n\n.. _two: https://two.example\n'),
+    # The mismatch error has no node: the document ends in explicit markup,
+    # so docutils' cursor is past the end and the record has no line.
+    ('tx_links', 'anonymous_mismatch', 'A `x`__ and `y`__.\n\n__ https://only.example\n'),
+    ('tx_links', 'indirect_chain', 'See `a`_ and `d`_.\n\n.. _a: b_\n.. _b: c_\n.. _c: https://example.com\n.. _d: e_\n.. _e:\n\nPara.\n'),
+    # The error names `a`; `b` itself is in `refnames['a']`, so it is
+    # replaced by a `problematic` too, and `b`_ still resolves (to `a`).
+    ('tx_links', 'indirect_circular', 'See `a`_ and `b`_.\n\n.. _a: b_\n.. _b: a_\n'),
+    ('tx_links', 'indirect_unknown', 'See `ind`_.\n\n.. _ind: missing_\n'),
+    ('tx_links', 'embedded_uri', '`Python <https://python.org>`_ and `alias <python_>`_ and python_.\n'),
+    ('tx_links', 'duplicate_target_reference', 'See `d`_.\n\n.. _d: https://1\n.. _d: https://2\n'),
+    # Two unknown names, one with the embedded-reference hint; the
+    # unreferenced target's INFO is suppressed by SphinxDanglingReferences.
+    ('tx_links', 'dangling_reference', 'See `nope`_ and `a<b`_ here.\n\n.. _unused:\n\nSection\n=======\n\ntext\n'),
+    # U+00A0 and U+001F are Python whitespace: each name normalizes with a
+    # plain space, in the reference and in the target alike.
+    ('tx_links', 'name_nbsp', 'See `a\u00a0b`_ and `c\u001fd`_.\n\n.. _a\u00a0b: https://nbsp.example\n.. _c\u001fd: https://us.example\n'),
+    ('tx_links', 'anonymous_mismatch_in_nested_directive', 'A `x`__.\n\n.. note::\n\n   y\n'),
+    # The edges (new inputs). Where the mismatch is located, by how the
+    # document ends: one past the last line, or (after a construct whose
+    # nested parse ran to the end of the input) no line.
+    ('tx_links', 'anonymous_mismatch_ends_with_paragraph', 'A `x`__ and `y`__.\n\n__ https://only.example\n\nEnd.\n'),
+    ('tx_links', 'anonymous_mismatch_ends_with_bullet_list', 'A `x`__.\n\n- item\n'),
+    ('tx_links', 'anonymous_mismatch_ends_with_enumerated_list', 'A `x`__.\n\n#. one\n'),
+    ('tx_links', 'anonymous_mismatch_ends_with_field_list', 'A `x`__.\n\n:f: v\n'),
+    ('tx_links', 'anonymous_mismatch_ends_with_option_list', 'A `x`__.\n\n-o  opt\n'),
+    ('tx_links', 'anonymous_mismatch_ends_with_definition_list', 'A `x`__.\n\nterm\n   def\n'),
+    ('tx_links', 'anonymous_mismatch_ends_with_line_block', 'A `x`__.\n\n| one\n| two\n'),
+    # A one-line line block is blank-finished: no nested parse.
+    ('tx_links', 'anonymous_mismatch_ends_with_one_line_block', 'A `x`__.\n\n| one\n'),
+    ('tx_links', 'anonymous_mismatch_ends_with_quoted_literal', 'A `x`__.\n\n::\n\n> quoted\n'),
+    # A blank line ends the quoted block's nested parse early (`blank`
+    # raises EOFError there), and the top level eats it: one past the end.
+    ('tx_links', 'anonymous_mismatch_ends_with_quoted_literal_and_blank', 'A `x`__.\n\n::\n\n> quoted\n\n'),
+    # `::` with nothing after it: the empty quoted parse steps back a line
+    # (`previous_line`), leaving the cursor ON the last line.
+    ('tx_links', 'anonymous_mismatch_ends_expecting_a_literal_block', 'A `x`__.\n\nB::\n'),
+    ('tx_links', 'anonymous_mismatch_ends_expecting_a_literal_block_after_blanks', 'A `x`__.\n\nB::\n\n\n'),
+    ('tx_links', 'anonymous_mismatch_ends_with_block_quote', 'A `x`__.\n\n    - a\n'),
+    ('tx_links', 'anonymous_mismatch_ends_with_table', 'A `x`__.\n\n+-----+\n| - a |\n+-----+\n'),
+    ('tx_links', 'indirect_to_duplicate', 'See `x`_.\n\n.. _x: d_\n.. _d: https://1\n.. _d: https://2\n'),
+    # The inline target `x` is indirect (to "nope"); the reference itself
+    # names "nope" and is left to DanglingReferences.
+    ('tx_links', 'indirect_embedded_alias_unknown', 'See `x <nope_>`_ and x_.\n'),
+    ('tx_links', 'substitution_reference_links', 'See |x|_ and |y|__.\n\n.. _x: https://x.example\n\n__ https://y.example\n\n.. |x| replace:: X\n.. |y| replace:: Y\n'),
+    ('tx_links', 'inline_internal_target', 'See t_ and _`t` here.\n'),
+    # The definition's reference and its copy each fail, in walk order.
+    ('tx_links', 'dangling_inside_substitution', 'See |s|.\n\n.. |s| replace:: `nope`_\n'),
+    # A footnote reference's `problematic` takes the reference's own id.
+    ('tx_links', 'dangling_footnote_reference', 'See [1]_ here.\n'),
+    ('tx_links', 'duplicate_section_name_reference', 'Sec\n===\n\nx\n\nSec\n===\n\ny\n\nSee `Sec`_.\n'),
+    # `u` refers to the failing `t`: it is in `refnames['t']` and replaced,
+    # and then resolved all the same (to `t`'s id), with its references.
+    ('tx_links', 'indirect_error_replaces_referring_target', 'See `u`_ and `t`_.\n\n.. _t: missing_\n.. _u: t_\n'),
+    ('tx_links', 'indirect_error_through_recursion', 'See `u`_ and `t`_.\n\n.. _u: t_\n.. _t: missing_\n'),
+    # `p` propagates into the indirect target `t`; resolving `t` rewrites
+    # `p` (in `document.refids`) to the final `refuri`.
+    ('tx_links', 'propagated_target_into_indirect', 'See `p`_.\n\n.. _p:\n.. _t: ext_\n.. _ext: https://ext\n'),
+    ('tx_links', 'indirect_circular_three', 'See `a`_, `b`_ and `c`_.\n\n.. _a: b_\n.. _b: c_\n.. _c: a_\n'),
+    # The other four hints of the embedded-reference diagnosis.
+    ('tx_links', 'dangling_reference_hints', 'See `a>`_, `x<y`_, `x <y> z`_ and `x < y >`_.\n'),
+    # A directive's `:name:` is only in `document.nameids`: DanglingReferences
+    # resolves it.
+    ('tx_links', 'dangling_resolves_directive_name', 'See `box`_.\n\n.. rubric:: Heading\n   :name: box\n'),
+    # The walk goes on into a replaced reference's children: the copy of
+    # `nope`_ inside `|x|_` fails out of the tree, spending ids 5 and 6.
+    ('tx_links', 'dangling_inside_replaced_reference', '.. |x| replace:: `nope`_\n\nSee |x|_ and `other`_.\n'),
+    # A target naming itself: circular, and in its own `refnames` entry.
+    ('tx_links', 'indirect_self_reference', 'See `a`_.\n\n.. _a: a_\n'),
+    # An anonymous indirect target: no name in the message, and the
+    # anonymous reference (in `document.refids` since 440) is replaced.
+    ('tx_links', 'anonymous_indirect_unknown', 'See `x`__.\n\n__ missing_\n'),
+    # A second target referring where the first one does keeps the first
+    # its name (`set_duplicate_name_id`, `nodes.py:1944-1951`: an INFO,
+    # which never prints): the name still resolves.
+    ('tx_links', 'duplicate_embedded_uri_reference', '`Python <https://python.org>`_ and `Python <https://python.org>`_ and Python_.\n'),
+    ('tx_links', 'duplicate_external_same_refuri', 'See x_.\n\n.. _x: https://same\n.. _x: https://same\n'),
+    ('tx_links', 'duplicate_indirect_same_refname', 'See x_.\n\n.. _x: y_\n.. _x: y_\n\n.. _y: https://y\n'),
+    # Where an unknown name is reported: the reference's nearest stamped
+    # ancestor (`get_source_line`) — a section title's section, a list
+    # item's paragraphs, a table cell's, a block quote's, a definition
+    # list's term and definition, a field body's, an admonition's, a line
+    # block's line. (Not a field name, `:0:` in docutils, nor a line
+    # block's later lines, each stamped with its own line: ledgered.)
+    ('tx_links', 'dangling_reference_locations', 'Title a_\n========\n\n- item b_\n\n  more c_\n\n+------+\n| d_   |\n+------+\n\n    quote e_\n\nterm f_\n   def g_\n\n:field: body i_\n\n.. note:: note j_\n\n| line k_\n'),
 ]
 
 
@@ -1312,7 +1425,8 @@ def main() -> int:
         "pyconf": 30,
         "tx_filter": 1,
         "tx_targets": 16,
-        "tx_subst": 22,
+        "tx_subst": 23,
+        "tx_links": 46,
     }
     counts: dict = {}
     for case in CASES:

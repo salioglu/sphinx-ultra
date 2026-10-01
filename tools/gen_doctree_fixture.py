@@ -1048,6 +1048,16 @@ CASES = [
     # ones counted — inline-parsed at `self.lineno + self.content_offset`.
     ("reporter", "line_block_directive_name_then_lines_at_lineno_plus_offset",
      ".. _x:\n\nPara.\n\n.. line-block::\n   :name: x\n\n   *a\n\n   *b\n"),
+    # M2 wave 5, Task 9: a duplicate target referring where the name's
+    # holder refers (`set_duplicate_name_id`, `nodes.py:1944-1951`) loses
+    # only its own name, with an INFO (backrefs unless it has a `refuri`);
+    # the name keeps its id, which the hyperlink transforms resolve by.
+    ("comment_target", "duplicate_external_target_same_uri", ".. _x: https://same\n.. _x: https://same\n"),
+    ("comment_target", "duplicate_external_target_same_uri_thrice", ".. _x: https://same\n.. _x: https://same\n.. _x: https://same\n"),
+    ("comment_target", "duplicate_indirect_target_same_name", ".. _x: y_\n.. _x: y_\n"),
+    # Once the name is duplicated away, a third target with the second's
+    # URI is an ordinary explicit duplicate.
+    ("comment_target", "duplicate_external_target_after_a_conflict", ".. _x: https://a\n.. _x: https://b\n.. _x: https://b\n"),
 
 ]
 

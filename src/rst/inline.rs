@@ -592,6 +592,9 @@ impl<'a> Inliner<'a> {
         }
         self.flush_text();
         let mut r = Node::elem(kinds::REFERENCE, self.span);
+        // `referencename + match.group('refend')` (`states.py:1085-1086`).
+        let written: String = self.chars[i..end].iter().collect();
+        r.set(crate::doctree::RAWSOURCE, AttrValue::Str(written));
         if underscores == 2 {
             r.set("anonymous", AttrValue::Int(1));
             r.set(
@@ -700,7 +703,10 @@ impl<'a> Inliner<'a> {
         };
         let raw: String = self.chars[content_from..end].iter().collect();
         if underscores > 0 && prefix_role.is_none() {
-            self.phrase_reference(&raw, underscores);
+            // `rawsource = unescape(string[matchstart:textend], True)`
+            // (`states.py:890`): the reference as written.
+            let written: String = self.chars[i..end + 1 + underscores].iter().collect();
+            self.phrase_reference(&raw, underscores, unescape(&written, true));
             return end + 1 + underscores;
         }
         // Suffix role `text`:name: (only when no trailing underscores).
@@ -1593,7 +1599,7 @@ impl<'a> Inliner<'a> {
     }
 
     /// Phrase reference body handling incl. embedded `<uri>`/`<alias_>`.
-    fn phrase_reference(&mut self, raw: &str, underscores: usize) {
+    fn phrase_reference(&mut self, raw: &str, underscores: usize, rawsource: String) {
         self.flush_text();
         let ids = |s: &str| crate::doctree::ids::fully_normalize_name(s);
         let wsn = |s: &str| crate::doctree::ids::whitespace_normalize_name(s);
@@ -1602,8 +1608,13 @@ impl<'a> Inliner<'a> {
         // whitespace (or the whole content).
         let embedded = find_embedded_link(raw);
         let mut r = Node::elem(kinds::REFERENCE, self.span);
+        r.set(crate::doctree::RAWSOURCE, AttrValue::Str(rawsource));
         match embedded {
             Some((text_part, link)) => {
+                // `match.group(1)` (`states.py:929`): the escaped `<…>`
+                // with the whitespace run before it — everything past the
+                // reference text.
+                let group1: String = raw.chars().skip(text_part.chars().count()).collect();
                 let is_alias = link.ends_with('_')
                     && !link.ends_with("\u{0}_")
                     && !link
@@ -1627,15 +1638,19 @@ impl<'a> Inliner<'a> {
                         .push(Node::text_node(display_text.clone(), self.span));
                     self.nodes.push(r);
                     if underscores == 1 {
+                        // `nodes.target(match.group(1), refname=alias)`
+                        // (`states.py:929`), then `note_implicit_target`
+                        // (`:982`), which compares where it refers.
                         let mut t = Node::elem(kinds::TARGET, self.span);
                         t.attrs.names.push(ids(&display_text));
+                        t.set("refname", AttrValue::Str(alias));
+                        t.set(crate::doctree::RAWSOURCE, AttrValue::Str(group1));
                         let msg = self.registry.set_id_implicit(
                             &mut t,
                             self.lineno,
                             self.span.source,
                             self.source_path,
                         );
-                        t.set("refname", AttrValue::Str(alias));
                         self.nodes.push(t);
                         if let Some(m) = msg {
                             self.messages.push(m);
@@ -1673,15 +1688,17 @@ impl<'a> Inliner<'a> {
                         .push(Node::text_node(display_text.clone(), self.span));
                     self.nodes.push(r);
                     if underscores == 1 {
+                        // `nodes.target(match.group(1), refuri=alias)`
+                        // (`states.py:941`), then `note_implicit_target`.
                         let mut t = Node::elem(kinds::TARGET, self.span);
                         t.attrs.names.push(ids(&display_text));
+                        t.set("refuri", AttrValue::Str(uri));
                         let msg = self.registry.set_id_implicit(
                             &mut t,
                             self.lineno,
                             self.span.source,
                             self.source_path,
                         );
-                        t.set("refuri", AttrValue::Str(uri));
                         self.nodes.push(t);
                         if let Some(m) = msg {
                             self.messages.push(m);
@@ -1732,6 +1749,7 @@ impl<'a> Inliner<'a> {
         let is_citation =
             !label.starts_with('#') && label != "*" && !label.chars().all(|c| c.is_ascii_digit());
         let id = self.registry.allocate_auto_id();
+        let written = format!("[{label}]_");
         let mut node = if is_citation {
             let mut c = Node::elem(kinds::CITATION_REFERENCE, self.span);
             c.set(
@@ -1761,6 +1779,8 @@ impl<'a> Inliner<'a> {
             }
             f
         };
+        // `'[%s]_' % label` (`states.py:1058,1063`).
+        node.set(crate::doctree::RAWSOURCE, AttrValue::Str(written));
         node.attrs.ids.push(id);
         self.nodes.push(node);
         Some(after)
@@ -1800,6 +1820,12 @@ impl<'a> Inliner<'a> {
             self.nodes.push(subref);
         } else {
             let mut outer = Node::elem(kinds::REFERENCE, self.span);
+            // `'|%s%s' % (subref_text, endstring)` (`states.py:1036-1037`):
+            // the substitution's unescaped text.
+            outer.set(
+                crate::doctree::RAWSOURCE,
+                AttrValue::Str(format!("|{text}|{}", "_".repeat(underscores))),
+            );
             if underscores == 2 {
                 outer.set("anonymous", AttrValue::Int(1));
             } else {
@@ -2101,6 +2127,75 @@ mod tests {
         assert_eq!(rawsource("See |a\\*b| here."), expect("|a\\*b|"));
         assert_eq!(rawsource("|x|_"), expect("|x|_"));
         assert_eq!(rawsource("|x|__ and"), expect("|x|__"));
+    }
+
+    /// Every hyperlink, footnote and citation reference keeps docutils'
+    /// `rawsource`, which DanglingReferences, IndirectHyperlinks and the
+    /// anonymous-mismatch error print in the `problematic` that replaces
+    /// it (`references.py:149-150,293-294,983`): a word reference's name
+    /// and underscores (`reference`, `states.py:1082-1097`), a phrase
+    /// reference as written, backslashes restored (`:890`), a
+    /// substitution's link wrapper `'|%s%s' % (subref_text, endstring)` —
+    /// the substitution's *unescaped* text (`:1036-1037`) — and a footnote
+    /// or citation reference `'[%s]_' % label` (`:1058,1063`). An embedded
+    /// alias's inline target keeps `match.group(1)`: the escaped `<…>` with
+    /// the whitespace before it (`:929`). Probed from docutils 0.22.4's
+    /// parser, no transforms.
+    #[test]
+    fn a_reference_keeps_its_rawsource() {
+        let rawsources = |text: &str| {
+            let (nodes, _) = pi(text);
+            let mut found = Vec::new();
+            let mut stack: Vec<&Node> = nodes.iter().rev().collect();
+            while let Some(node) = stack.pop() {
+                if matches!(
+                    node.kind,
+                    kinds::REFERENCE
+                        | kinds::FOOTNOTE_REFERENCE
+                        | kinds::CITATION_REFERENCE
+                        | kinds::TARGET
+                ) {
+                    found.push((node.kind, node.get(crate::doctree::RAWSOURCE).cloned()));
+                }
+                stack.extend(node.children.iter().rev());
+            }
+            found
+        };
+        let raw = |kind: &'static str, text: &str| (kind, Some(AttrValue::Str(text.to_string())));
+        let reference = |text: &str| raw(kinds::REFERENCE, text);
+        assert_eq!(
+            rawsources("See word_ and anon__ and `c\\ d`_ and `e\\*f`__ and |a\\ b|_ and |s|__."),
+            [
+                reference("word_"),
+                reference("anon__"),
+                reference("`c\\ d`_"),
+                reference("`e\\*f`__"),
+                reference("|ab|_"),
+                reference("|s|__"),
+            ]
+        );
+        assert_eq!(
+            rawsources("`y <a\\_b_>`_ and `z  <al_>`__ and `<only_>`_ and `x\n<al_>`_."),
+            [
+                reference("`y <a\\_b_>`_"),
+                raw(kinds::TARGET, " <a\u{0}_b_>"),
+                reference("`z  <al_>`__"),
+                reference("`<only_>`_"),
+                raw(kinds::TARGET, "<only_>"),
+                reference("`x\n<al_>`_"),
+                raw(kinds::TARGET, "\n<al_>"),
+            ]
+        );
+        assert_eq!(
+            rawsources("[1]_ [#]_ [#l]_ [*]_ [CIT]_"),
+            [
+                raw(kinds::FOOTNOTE_REFERENCE, "[1]_"),
+                raw(kinds::FOOTNOTE_REFERENCE, "[#]_"),
+                raw(kinds::FOOTNOTE_REFERENCE, "[#l]_"),
+                raw(kinds::FOOTNOTE_REFERENCE, "[*]_"),
+                raw(kinds::CITATION_REFERENCE, "[CIT]_"),
+            ]
+        );
     }
 
     #[test]

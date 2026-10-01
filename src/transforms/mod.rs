@@ -182,13 +182,19 @@ pub struct DocumentLists {
     /// references, footnote and citation references, and named indirect
     /// targets (`note_refname`, `nodes.py:2009-2018,2043-2054`).
     pub refnames: BTreeMap<String, Vec<NodePath>>,
-    /// `document.refids`: each `refid` to the targets pointing at it. The
+    /// `document.refids`: each `refid` to the nodes pointing at it. The
     /// parse never calls `note_refid`; PropagateTargets (260) does, for
     /// every target it points at its next node (`transforms/
-    /// references.py:95`), so the walk notes each target with a `refid` —
-    /// which before 260 are only the crate's parse-time `math` label
-    /// targets, already in their post-propagation shape. (The later
-    /// reference transforms note references too, `:159,...`.)
+    /// references.py:95`), and AnonymousHyperlinks (440), for every
+    /// anonymous reference it gives a `refid` (`:159`) — the two lists
+    /// IndirectHyperlinks (460) reads (`:285,325`). So the walk notes each
+    /// target with a `refid` (before 260 only the crate's parse-time `math`
+    /// label targets, already in their post-propagation shape), then each
+    /// `reference` with one: under every id, the targets in document order
+    /// first, then the references — the order docutils noted them in.
+    /// (IndirectHyperlinks notes the targets and references it resolves
+    /// itself, `:255,259,319`, on its own lists; the transforms after it
+    /// read no `refids`.)
     pub refids: BTreeMap<String, Vec<NodePath>>,
     /// `document.indirect_targets`: every target with a `refname`
     /// (`note_indirect_target`, `states.py:977,2086`).
@@ -228,20 +234,34 @@ impl DocumentLists {
     /// `:2179-2215` for substitution definitions).
     pub fn collect(root: &Node) -> DocumentLists {
         let mut lists = DocumentLists::default();
-        lists.visit(root, &mut Vec::new());
+        let mut reference_refids = BTreeMap::new();
+        lists.visit(root, &mut Vec::new(), &mut reference_refids);
+        for (refid, paths) in reference_refids {
+            lists.refids.entry(refid).or_default().extend(paths);
+        }
         lists
     }
 
-    fn visit(&mut self, node: &Node, path: &mut NodePath) {
-        self.note(node, path);
+    fn visit(
+        &mut self,
+        node: &Node,
+        path: &mut NodePath,
+        reference_refids: &mut BTreeMap<String, Vec<NodePath>>,
+    ) {
+        self.note(node, path, reference_refids);
         for (index, child) in node.children.iter().enumerate() {
             path.push(index);
-            self.visit(child, path);
+            self.visit(child, path, reference_refids);
             path.pop();
         }
     }
 
-    fn note(&mut self, node: &Node, path: &[usize]) {
+    fn note(
+        &mut self,
+        node: &Node,
+        path: &[usize],
+        reference_refids: &mut BTreeMap<String, Vec<NodePath>>,
+    ) {
         for id in &node.attrs.ids {
             self.ids.entry(id.clone()).or_insert_with(|| path.to_vec());
         }
@@ -257,6 +277,9 @@ impl DocumentLists {
             kinds::REFERENCE => {
                 if let Some(refname) = refname {
                     push(&mut self.refnames, refname);
+                }
+                if let Some(AttrValue::Str(refid)) = node.get("refid") {
+                    push(reference_refids, refid);
                 }
             }
             kinds::TARGET => {
@@ -382,20 +405,27 @@ static READ_TRANSFORMS: &[ReadTransform] = &[
     // 320 DocTitle, 350 SectionSubTitle: disabled by Sphinx's settings
     //     (`doctitle_xform=False`, `sectsubtitle_xform=False`).
     // 340 DocInfo (Task 11).
-    // 440 AnonymousHyperlinks, 460 IndirectHyperlinks (Task 9).
+    (440, "AnonymousHyperlinks", references::anonymous_hyperlinks),
+    (460, "IndirectHyperlinks", references::indirect_hyperlinks),
     // 500 DoctestTransform (Task 12); GlossarySorter: applied by the
     //     parser's `glossary` directive.
     // 619 CitationDefinitionTransform, CitationReferenceTransform;
     // 620 Footnotes; 622 UnreferencedFootnotesDetector (Task 10).
-    // 640 ExternalTargets, 660 InternalTargets (Task 9).
+    (640, "ExternalTargets", references::external_targets),
+    (660, "InternalTargets", references::internal_targets),
     // 700 FootnoteDocnameUpdater (Task 10).
     // 740 StripComments: no-op (`strip_comments` unset).
     // 750 SphinxSmartQuotes (Task 14).
     // 820 Decorations: no-op (no generator/datestamp/source link).
     // 830 Transitions (Task 12).
     // 835 Validate, 840 ExposeInternals: no-ops.
-    // 850 SphinxDanglingReferences (Task 9); SphinxDomains: the merge
-    //     phase's domain hooks (`src/builder.rs`), after this pass.
+    (
+        850,
+        "SphinxDanglingReferences",
+        references::dangling_references,
+    ),
+    // 850 SphinxDomains: the merge phase's domain hooks
+    //     (`src/builder.rs`), after this pass.
     // 880 DoctreeReadEvent: the merge phase's environment collectors;
     //     UIDTransform: no-op for these builders.
     // 950 AddTranslationClasses: no-op by default.
@@ -464,9 +494,18 @@ impl<'a> TransformCtx<'a> {
     /// restructures the tree and then needs paths into the result walks
     /// again ([`DocumentLists::collect`]).
     pub fn lists(&mut self) -> &DocumentLists {
-        let tree = &*self.tree;
-        self.lists
-            .get_or_insert_with(|| DocumentLists::collect(&tree.root))
+        self.tree_and_lists().1
+    }
+
+    /// [`Self::lists`] beside the tree, for a transform that reads both at
+    /// once — the lists still address the tree as the transform found it,
+    /// so it changes the tree's structure only after its last read.
+    pub(crate) fn tree_and_lists(&mut self) -> (&mut Doctree, &DocumentLists) {
+        let tree = &mut *self.tree;
+        let lists = self
+            .lists
+            .get_or_insert_with(|| DocumentLists::collect(&tree.root));
+        (tree, lists)
     }
 
     fn run(&mut self, table: &[ReadTransform]) {
@@ -677,6 +716,59 @@ mod tests {
                 (260, "PropagateTargets"),
                 (261, "SortIds"),
             ]
+        );
+    }
+
+    /// The hyperlink family in its probed slots (research §1.2: 440-009,
+    /// 460-010, 640-012, 660-013, 850-039): the anonymous pairing before the
+    /// indirect targets (which rewrite the anonymous references it gave a
+    /// `refid`), the external and internal targets after the footnotes'
+    /// 620, and the dangling references last before FilterSystemMessages.
+    #[test]
+    fn the_hyperlink_transforms_run_in_sphinx_order() {
+        let order: Vec<(u16, &str)> = READ_TRANSFORMS
+            .iter()
+            .map(|(priority, name, _)| (*priority, *name))
+            .filter(|(priority, _)| *priority >= 340)
+            .collect();
+        assert_eq!(
+            order,
+            [
+                (440, "AnonymousHyperlinks"),
+                (460, "IndirectHyperlinks"),
+                (640, "ExternalTargets"),
+                (660, "InternalTargets"),
+                (850, "SphinxDanglingReferences"),
+                (999, "FilterSystemMessages"),
+            ]
+        );
+    }
+
+    /// `document.refids` at IndirectHyperlinks (460), which reads it
+    /// (`references.py:285,325`): the targets PropagateTargets (260) noted,
+    /// then the anonymous references AnonymousHyperlinks (440) gave a
+    /// `refid` (`note_refid(ref)`, `:159`) — the order docutils noted
+    /// them in, whatever the document order: here the reference comes
+    /// first in the document but last under `id1`.
+    #[test]
+    fn a_reference_given_a_refid_is_noted_after_the_targets() {
+        let (tree, records) = parse_and_transform(
+            "See `x`__.\n\n.. _t:\n.. __:\n\nPara.\n",
+            &sphinx_opts(),
+            &TransformConfig::default(),
+        );
+        assert_eq!(records, []);
+        let lists = DocumentLists::collect(&tree.root);
+        let expected: BTreeMap<String, Vec<NodePath>> = [
+            ("id1".to_string(), vec![vec![2], vec![0, 1]]),
+            ("t".to_string(), vec![vec![1]]),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(lists.refids, expected);
+        assert_eq!(
+            node_at(&tree.root, &[0, 1]).and_then(|r| r.get("refid")),
+            Some(&AttrValue::Str("id1".to_string()))
         );
     }
 

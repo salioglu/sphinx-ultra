@@ -5712,6 +5712,37 @@
         "12: (WARNING/2) Inline emphasis start-string without end-string.",
         "14: (WARNING/2) Inline emphasis start-string without end-string."
       ]
+    },
+    {
+      "family": "comment_target",
+      "name": "comment_target.duplicate_external_target_same_uri",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target ids=\"x\" names=\"x\" refuri=\"https://same\">\n    <system_message level=\"1\" line=\"2\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            Duplicate name \"x\" for external target \"https://same\".\n    <target dupnames=\"x\" ids=\"id1\" refuri=\"https://same\">\n",
+      "rst": ".. _x: https://same\n.. _x: https://same\n",
+      "stream": []
+    },
+    {
+      "family": "comment_target",
+      "name": "comment_target.duplicate_external_target_same_uri_thrice",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target ids=\"x\" names=\"x\" refuri=\"https://same\">\n    <system_message level=\"1\" line=\"2\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            Duplicate name \"x\" for external target \"https://same\".\n    <target dupnames=\"x\" ids=\"id1\" refuri=\"https://same\">\n    <system_message level=\"1\" line=\"3\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            Duplicate name \"x\" for external target \"https://same\".\n    <target dupnames=\"x\" ids=\"id2\" refuri=\"https://same\">\n",
+      "rst": ".. _x: https://same\n.. _x: https://same\n.. _x: https://same\n",
+      "stream": []
+    },
+    {
+      "family": "comment_target",
+      "name": "comment_target.duplicate_indirect_target_same_name",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target ids=\"x\" names=\"x\" refname=\"y\">\n    <system_message backrefs=\"id1\" level=\"1\" line=\"2\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            Duplicate name \"x\" for external target \"y\".\n    <target dupnames=\"x\" ids=\"id1\" refname=\"y\">\n",
+      "rst": ".. _x: y_\n.. _x: y_\n",
+      "stream": []
+    },
+    {
+      "family": "comment_target",
+      "name": "comment_target.duplicate_external_target_after_a_conflict",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target dupnames=\"x\" ids=\"x\" refuri=\"https://a\">\n    <system_message level=\"2\" line=\"2\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Duplicate explicit target name: \"x\".\n    <target dupnames=\"x\" ids=\"id1\" refuri=\"https://b\">\n    <system_message level=\"2\" line=\"3\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Duplicate explicit target name: \"x\".\n    <target dupnames=\"x\" ids=\"id2\" refuri=\"https://b\">\n",
+      "rst": ".. _x: https://a\n.. _x: https://b\n.. _x: https://b\n",
+      "stream": [
+        "2: (WARNING/2) Duplicate explicit target name: \"x\".",
+        "3: (WARNING/2) Duplicate explicit target name: \"x\"."
+      ]
     }
   ],
   "docutils_version": "0.22.4",

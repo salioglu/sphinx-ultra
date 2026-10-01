@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet};
 use unicode_normalization::UnicodeNormalization;
 
 use super::messages;
-use super::Node;
+use super::{kinds, AttrValue, Node};
 use crate::utils::py_isspace;
 
 /// docutils `_non_id_translate_digraphs` (applied after lowercasing).
@@ -200,7 +200,11 @@ struct NameEntry {
     /// Some(id) while the name maps uniquely; None once duplicated away.
     id: Option<String>,
     explicit: bool,
+    /// Where the node holding the id refers — its `refuri` and `refname`
+    /// (`old_node.get(...)`, `nodes.py:1944-1947`); `None` once the name
+    /// is duplicated away.
     refuri: Option<String>,
+    refname: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -318,12 +322,21 @@ impl IdRegistry {
 
     /// docutils `set_name_id_map`/`set_duplicate_name_id` with the
     /// explicit-vs-implicit precedence table (fixture-verified):
+    /// - first, whatever either's explicitness: a new node referring where
+    ///   the name's holder refers (the same `refname`, or the same
+    ///   `refuri`, `nodes.py:1944-1951`): only the NEW node dupname'd, the
+    ///   name keeps its id, INFO "Duplicate name … for external target …"
+    ///   (backrefs unless the new node is a target with a `refuri`)
     /// - implicit vs implicit: BOTH dupname'd, INFO "Duplicate implicit …"
     /// - explicit vs explicit: BOTH dupname'd, WARNING "Duplicate explicit …"
-    ///   (unless both share an identical refuri: new dupname'd silently)
     /// - new implicit vs old explicit: only the NEW node dupname'd, INFO
     /// - new explicit vs old implicit: OLD dupname'd, new KEEPS the name,
     ///   INFO "Target name overrides implicit target name …"
+    ///
+    /// Where a node refers is read off its `refname` and `refuri`
+    /// attributes (or the `refuri` handed in), so a caller sets them first,
+    /// as docutils creates the target with them (`states.py:929,941,
+    /// 2083-2089`).
     ///
     /// The message is returned, not attached or recorded: docutils'
     /// `set_duplicate_name_id` creates it through the Reporter — which
@@ -344,6 +357,13 @@ impl IdRegistry {
     ) -> Option<Node> {
         let id = self.allocate_id(&node.attrs.names);
         node.attrs.ids.push(id.clone());
+        let attribute = |key| match node.get(key) {
+            Some(AttrValue::Str(value)) => Some(value.clone()),
+            _ => None,
+        };
+        let node_refname = attribute("refname");
+        let node_refuri = attribute("refuri").or_else(|| refuri.map(str::to_string));
+        let is_external_target = node.kind == kinds::TARGET && node_refuri.is_some();
 
         let mut message = None;
         let names = node.attrs.names.clone();
@@ -354,7 +374,8 @@ impl IdRegistry {
                     NameEntry {
                         id: Some(id.clone()),
                         explicit,
-                        refuri: refuri.map(str::to_string),
+                        refuri: node_refuri.clone(),
+                        refname: node_refname.clone(),
                     },
                 );
                 continue;
@@ -366,13 +387,32 @@ impl IdRegistry {
                 }
                 msg
             };
+            let same_reference = entry.id.is_some()
+                && ((node_refname.is_some() && node_refname == entry.refname)
+                    || (node_refuri.is_some() && node_refuri == entry.refuri));
+            if same_reference {
+                // `nametypes[name] = old_explicit or explicit`; the holder
+                // keeps the name and its id.
+                if let Some(held) = self.nameids.get_mut(&name) {
+                    held.explicit |= explicit;
+                }
+                Self::dupname_new(node, &name);
+                // `node.get('refuri') or node.get('refname')`.
+                let reference = node_refuri
+                    .iter()
+                    .chain(&node_refname)
+                    .find(|value| !value.is_empty())
+                    .cloned()
+                    .unwrap_or_default();
+                message = Some(dup_info(
+                    messages::INFO,
+                    format!("Duplicate name \"{name}\" for external target \"{reference}\"."),
+                    !is_external_target,
+                ));
+                continue;
+            }
             match (entry.explicit, explicit) {
                 (true, true) => {
-                    if refuri.is_some() && entry.refuri.as_deref() == refuri {
-                        // Identical external duplicate: silent, new dupname'd.
-                        Self::dupname_new(node, &name);
-                        continue;
-                    }
                     if let Some(old_id) = entry.id.clone() {
                         self.fixups.push(DupnameFixup {
                             name: name.clone(),
@@ -385,6 +425,7 @@ impl IdRegistry {
                             id: None,
                             explicit: true,
                             refuri: None,
+                            refname: None,
                         },
                     );
                     Self::dupname_new(node, &name);
@@ -416,7 +457,8 @@ impl IdRegistry {
                         NameEntry {
                             id: Some(id.clone()),
                             explicit: true,
-                            refuri: refuri.map(str::to_string),
+                            refuri: node_refuri.clone(),
+                            refname: node_refname.clone(),
                         },
                     );
                     message = Some(dup_info(
@@ -438,6 +480,7 @@ impl IdRegistry {
                             id: None,
                             explicit: false,
                             refuri: None,
+                            refname: None,
                         },
                     );
                     Self::dupname_new(node, &name);
@@ -508,6 +551,14 @@ impl IdRegistry {
             .collect()
     }
 
+    /// `document.nameids.get(name)`, the lookup the reference transforms
+    /// make (`docutils/transforms/references.py:228,403,942,955`): `None`
+    /// when no node has the name, `Some(None)` once it has been duplicated
+    /// away (see [`Self::register`]), else `Some(Some(id))`.
+    pub(crate) fn name_id(&self, name: &str) -> Option<Option<&str>> {
+        self.nameids.get(name).map(|entry| entry.id.as_deref())
+    }
+
     /// Current value of the `env.new_serialno('index')` counter (see
     /// [`Self::new_index_serialno`]).
     pub fn index_serial(&self) -> u32 {
@@ -561,6 +612,93 @@ mod tests {
         assert_eq!(make_id("\x1fa\x1f"), "a");
         assert_eq!(sphinx_make_id("envvar-FOO\x1fBAR"), "envvar-FOO-BAR");
         assert_eq!(sphinx_make_id("\x1fA.b\x1f"), "A.b");
+    }
+
+    /// `set_duplicate_name_id` (`docutils/nodes.py:1929-1990`) tests one
+    /// thing before the explicit/implicit table: a new node referring where
+    /// the name's current holder refers — the same `refname`, or the same
+    /// `refuri` — whatever either's explicitness (`:1944-1951`). Only the
+    /// new node loses the name, with an INFO `Duplicate name "%s" for
+    /// external target "%s".` (backrefs to the new id unless it is a target
+    /// with a `refuri`), and the name keeps its id — which the hyperlink
+    /// transforms resolve references by. Probed (docutils 0.22.4, oracle
+    /// cases `comment_target.duplicate_*`, `tx_links.duplicate_*`): an
+    /// embedded URI used twice, `.. _x: y_` twice.
+    #[test]
+    fn a_duplicate_referring_where_the_holder_refers_keeps_the_holder() {
+        let target = |refname: Option<&str>, refuri: Option<&str>| {
+            let mut node = Node::elem(kinds::TARGET, Span::ZERO);
+            node.attrs.names.push("x".to_string());
+            if let Some(refname) = refname {
+                node.set("refname", AttrValue::Str(refname.to_string()));
+            }
+            if let Some(refuri) = refuri {
+                node.set("refuri", AttrValue::Str(refuri.to_string()));
+            }
+            node
+        };
+        let info = |message: Option<Node>| {
+            message.map(|m| {
+                (
+                    m.get("level").cloned(),
+                    m.attrs.backrefs.clone(),
+                    m.astext(),
+                )
+            })
+        };
+
+        // Two implicit targets of embedded URIs.
+        let mut registry = IdRegistry::new();
+        let mut first = target(None, Some("https://u"));
+        let mut second = target(None, Some("https://u"));
+        assert!(registry.set_id_implicit(&mut first, 1, 0, "<s>").is_none());
+        let message = registry.set_id_implicit(&mut second, 1, 0, "<s>");
+        assert_eq!(
+            info(message),
+            Some((
+                Some(AttrValue::Int(1)),
+                vec![],
+                "Duplicate name \"x\" for external target \"https://u\".".to_string()
+            ))
+        );
+        assert_eq!(
+            (first.attrs.names.clone(), second.attrs.dupnames.clone()),
+            (vec!["x".to_string()], vec!["x".to_string()])
+        );
+        assert_eq!(registry.name_id("x"), Some(Some("x")));
+
+        // Two explicit indirect targets naming the same target.
+        let mut registry = IdRegistry::new();
+        let mut first = target(Some("y"), None);
+        let mut second = target(Some("y"), None);
+        assert!(registry
+            .set_id_explicit(&mut first, 1, 0, "<s>", false, None)
+            .is_none());
+        let message = registry.set_id_explicit(&mut second, 2, 0, "<s>", false, None);
+        assert_eq!(
+            info(message),
+            Some((
+                Some(AttrValue::Int(1)),
+                vec!["id1".to_string()],
+                "Duplicate name \"x\" for external target \"y\".".to_string()
+            ))
+        );
+        assert_eq!(registry.name_id("x"), Some(Some("x")));
+
+        // Different references: an ordinary explicit duplicate.
+        let mut registry = IdRegistry::new();
+        let mut first = target(None, Some("https://a"));
+        let mut second = target(None, Some("https://b"));
+        registry.set_id_explicit(&mut first, 1, 0, "<s>", false, Some("https://a"));
+        let message = registry.set_id_explicit(&mut second, 2, 0, "<s>", false, Some("https://b"));
+        assert_eq!(
+            info(message).map(|(level, _, text)| (level, text)),
+            Some((
+                Some(AttrValue::Int(2)),
+                "Duplicate explicit target name: \"x\".".to_string()
+            ))
+        );
+        assert_eq!(registry.name_id("x"), Some(None));
     }
 
     #[test]
