@@ -5098,6 +5098,63 @@
       ]
     },
     {
+      "family": "tx_docinfo",
+      "metadata": {
+        "authors": [
+          "A; B"
+        ]
+      },
+      "name": "tx_docinfo.authors_escaped_semicolon",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Body.\n",
+      "rst": ":authors: A\\; B\n\nBody.\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_docinfo",
+      "metadata": {
+        "authors": [
+          "A, B"
+        ]
+      },
+      "name": "tx_docinfo.authors_escaped_comma",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Body.\n",
+      "rst": ":authors: A\\, B\n\nBody.\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_docinfo",
+      "metadata": {
+        "authors": [
+          "A; B",
+          "C"
+        ]
+      },
+      "name": "tx_docinfo.authors_escaped_semicolon_then_comma",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Body.\n",
+      "rst": ":authors: A\\; B, C\n\nBody.\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_docinfo",
+      "metadata": {
+        "authors": [
+          "A",
+          " B"
+        ]
+      },
+      "name": "tx_docinfo.authors_escaped_space_after_separator",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Body.\n",
+      "rst": ":authors: A ;\\  B\n\nBody.\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_subst",
+      "name": "tx_subst.trim_stops_at_an_escaped_space",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <substitution_definition ltrim=\"1\" names=\"s\" rtrim=\"1\">\n        —\n    <paragraph>\n        a \n        —\n        b\n",
+      "rst": ".. |s| unicode:: U+2014\n   :trim:\n\na \\  |s|  \\ b\n",
+      "warnings": []
+    },
+    {
       "family": "tx_misc",
       "name": "tx_misc.transition_at_start",
       "pseudo_xml": "<document source=\"<snippet>\">\n    <transition>\n    <paragraph>\n        Para.\n",

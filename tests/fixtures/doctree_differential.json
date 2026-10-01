@@ -5743,6 +5743,48 @@
         "2: (WARNING/2) Duplicate explicit target name: \"x\".",
         "3: (WARNING/2) Duplicate explicit target name: \"x\"."
       ]
+    },
+    {
+      "family": "deflist",
+      "name": "deflist.classifier_delimiter_inside_interpreted_text",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                <title_reference>\n                    a : b\n            <definition>\n                <paragraph>\n                    def\n",
+      "rst": "`a : b`\n   def\n",
+      "stream": []
+    },
+    {
+      "family": "deflist",
+      "name": "deflist.classifier_delimiter_inside_emphasis",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                <emphasis>\n                    a : b\n            <definition>\n                <paragraph>\n                    def\n",
+      "rst": "*a : b*\n   def\n",
+      "stream": []
+    },
+    {
+      "family": "deflist",
+      "name": "deflist.escaped_classifier_delimiter",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                a : b\n            <definition>\n                <paragraph>\n                    def\n",
+      "rst": "a \\: b\n   def\n",
+      "stream": []
+    },
+    {
+      "family": "deflist",
+      "name": "deflist.escaped_space_before_classifier_delimiter",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                a\n            <classifier>\n                b\n            <definition>\n                <paragraph>\n                    def\n",
+      "rst": "a\\ : b\n   def\n",
+      "stream": []
+    },
+    {
+      "family": "deflist",
+      "name": "deflist.classifier_after_markup",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                <emphasis>\n                    a\n            <classifier>\n                b\n            <definition>\n                <paragraph>\n                    def\n",
+      "rst": "*a* : b\n   def\n",
+      "stream": []
+    },
+    {
+      "family": "deflist",
+      "name": "deflist.markup_opens_a_classifier",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                a\n            <classifier>\n                <emphasis>\n                    b\n                 c\n            <classifier>\n                d\n            <definition>\n                <paragraph>\n                    def\n",
+      "rst": "a : *b* c : d\n   def\n",
+      "stream": []
     }
   ],
   "docutils_version": "0.22.4",

@@ -20,6 +20,8 @@ pub mod pformat;
 
 pub(crate) use intern::intern;
 
+use std::borrow::Cow;
+
 use serde::{Deserialize, Deserializer, Serialize};
 
 /// Source provenance of a node: which source it came from, the 1-based
@@ -105,16 +107,114 @@ pub struct Attrs {
 /// neither does [`Node::pformat`].
 pub const RAWSOURCE: &str = "rawsource";
 
+/// [`Node::escapes`] tag: an escaped space docutils' `unescape` removed.
+pub const ESCAPED_SPACE: u32 = 1 << 31;
+
+/// [`Node::escapes`] tag: an escaped newline docutils' `unescape` removed.
+pub const ESCAPED_NEWLINE: u32 = 1 << 30;
+
+/// The byte-offset bits of a [`Node::escapes`] entry: a text node keeps no
+/// escape past its first GiB.
+const ESCAPE_OFFSET: u32 = ESCAPED_NEWLINE - 1;
+
 /// One doctree node. Element nodes have `text == None`; text leaves have
 /// `kind == kinds::TEXT`, `Some(text)`, and no children or attributes.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Node {
+    /// Where docutils' text holds the backslash escapes this `text` has
+    /// lost; empty on every element and on every text node without one
+    /// (an empty `Vec` does not allocate).
+    ///
+    /// docutils' Inliner parses `escape2null(text)` — each `\` + char a
+    /// `\x00` + char (`docutils/parsers/rst/states.py:750`,
+    /// `docutils/utils/__init__.py:657-668`) — and its `Text` keeps the
+    /// nulls: `str(node)` holds them, only `astext()` drops them, with an
+    /// escaped space or newline (`Text.astext`, `nodes.unescape`,
+    /// `docutils/nodes.py:440-441,2925-2939`). This tree's `text` is that
+    /// `astext()`; each entry is one `\x00` of `str(node)`, in order:
+    ///
+    /// - a byte offset `n` of `text`: a `\x00` before `text[n..]`, whose
+    ///   first character was escaped (at `n == text.len()`, a trailing lone
+    ///   backslash's bare `\x00`);
+    /// - `n | ESCAPED_SPACE`, `n | ESCAPED_NEWLINE`: an escaped space or
+    ///   newline `unescape` removed — `\x00 `, `\x00\n` — at offset `n`.
+    ///
+    /// Together they are all of `str(node)` ([`Node::null_escaped`]), which
+    /// is what docutils reads where an escape matters: SmartQuotes educates
+    /// `str(node)` — a `\x00` before a quote, dash or dot keeps it plain,
+    /// and an escaped space is still whitespace to the quote rules
+    /// (`docutils/transforms/universal.py:267-278`,
+    /// `sphinx/transforms/__init__.py:403-415`) — a term splits off its
+    /// classifiers in it (`states.py:3011`), and an `authors` field its
+    /// names (`docutils/transforms/frontmatter.py:516-526`).
+    ///
+    /// The inline parser writes it ([`Node::text_from_null_escaped`]), as do
+    /// the transforms that rebuild a text node from its `str()`; `pformat`
+    /// and `astext` ignore it, as docutils prints `astext()`.
+    ///
+    /// It is the first field on the wire: a tree in the shape before it —
+    /// what a doctree file or `env.bin` of the same format version written
+    /// before it holds — starts with its root's kind length and bytes, which
+    /// decode as offsets out of order and fail at once: `document`,
+    /// `title` and `bullet_list`, the roots persisted, each spell bytes
+    /// that drop somewhere (see `DOCTREE_FORMAT_VERSION`).
+    pub escapes: Vec<u32>,
     #[serde(serialize_with = "intern::serialize_str")]
     pub kind: &'static str,
     pub span: Span,
     pub text: Option<String>,
     pub attrs: Attrs,
     pub children: Vec<Node>,
+}
+
+/// One [`Node::escapes`] entry: its byte offset and the whitespace that
+/// followed its `\x00` in docutils' string when `unescape` removed one;
+/// `None` for an entry with both tags.
+fn escape_entry(entry: u32) -> Option<(usize, Option<char>)> {
+    let offset = (entry & ESCAPE_OFFSET) as usize;
+    match entry & !ESCAPE_OFFSET {
+        0 => Some((offset, None)),
+        ESCAPED_SPACE => Some((offset, Some(' '))),
+        ESCAPED_NEWLINE => Some((offset, Some('\n'))),
+        _ => None,
+    }
+}
+
+/// Every entry well-tagged and the offsets non-decreasing.
+fn escapes_in_order(escapes: &[u32]) -> bool {
+    let mut previous = 0;
+    for &entry in escapes {
+        match escape_entry(entry) {
+            Some((offset, _)) if offset >= previous => previous = offset,
+            _ => return false,
+        }
+    }
+    true
+}
+
+/// Whether `escapes` can sit beside `text`: in order, and every offset on
+/// a character boundary of it (its end included).
+fn escapes_fit(text: &str, escapes: &[u32]) -> bool {
+    escapes_in_order(escapes)
+        && escapes
+            .iter()
+            .all(|&entry| text.is_char_boundary((entry & ESCAPE_OFFSET) as usize))
+}
+
+/// `escapes` decodes first ([`Node::escapes`]): an entry out of order or
+/// badly tagged fails right here, before the rest of a node written in
+/// another shape is misread.
+fn deserialize_escapes<'de, D>(deserializer: D) -> Result<Vec<u32>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let escapes = Vec::<u32>::deserialize(deserializer)?;
+    if !escapes_in_order(&escapes) {
+        return Err(serde::de::Error::custom(
+            "escape offsets out of order: a node of another shape",
+        ));
+    }
+    Ok(escapes)
 }
 
 /// Owned mirror of [`Node`] whose only job is to let `#[derive(Deserialize)]`
@@ -127,6 +227,8 @@ pub struct Node {
 /// afterward sidesteps it.
 #[derive(Deserialize)]
 struct NodeShadow {
+    #[serde(deserialize_with = "deserialize_escapes")]
+    escapes: Vec<u32>,
     kind: String,
     span: Span,
     text: Option<String>,
@@ -140,8 +242,18 @@ impl<'de> Deserialize<'de> for Node {
         D: Deserializer<'de>,
     {
         let shadow = NodeShadow::deserialize(deserializer)?;
+        let fits = match &shadow.text {
+            Some(text) => escapes_fit(text, &shadow.escapes),
+            None => shadow.escapes.is_empty(),
+        };
+        if !fits {
+            return Err(serde::de::Error::custom(
+                "escape offsets that do not fit the node's text",
+            ));
+        }
         let kind = intern(&shadow.kind).map_err(serde::de::Error::custom)?;
         Ok(Node {
+            escapes: shadow.escapes,
             kind,
             span: shadow.span,
             text: shadow.text,
@@ -154,6 +266,7 @@ impl<'de> Deserialize<'de> for Node {
 impl Node {
     pub fn elem(kind: &'static str, span: Span) -> Node {
         Node {
+            escapes: Vec::new(),
             kind,
             span,
             text: None,
@@ -164,6 +277,7 @@ impl Node {
 
     pub fn text_node(s: impl Into<String>, span: Span) -> Node {
         Node {
+            escapes: Vec::new(),
             kind: kinds::TEXT,
             span,
             text: Some(s.into()),
@@ -172,11 +286,82 @@ impl Node {
         }
     }
 
+    /// A text node holding `text` — docutils' `astext()` — with the
+    /// [`Node::escapes`] of its `str(node)` beside it.
+    pub fn text_node_escaped(text: impl Into<String>, escapes: Vec<u32>, span: Span) -> Node {
+        let text = text.into();
+        debug_assert!(escapes_fit(&text, &escapes), "{escapes:?} beside {text:?}");
+        Node {
+            escapes,
+            ..Node::text_node(text, span)
+        }
+    }
+
+    /// docutils' `nodes.Text(data)` for a null-escaped `data` — the
+    /// Inliner's text, or a `str(node)` a transform rewrote: the text is
+    /// `unescape(data)` (`docutils/nodes.py:2925-2939` — an escaped space
+    /// or newline goes with its `\x00`, any other `\x00` alone) and every
+    /// `\x00` an entry of [`Node::escapes`].
+    pub fn text_from_null_escaped(data: &str, span: Span) -> Node {
+        if !data.contains('\0') {
+            return Node::text_node(data, span);
+        }
+        let mut text = String::with_capacity(data.len());
+        let mut escapes = Vec::new();
+        let mut chars = data.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c != '\0' {
+                text.push(c);
+                continue;
+            }
+            let tag = match chars.peek() {
+                Some(' ') => ESCAPED_SPACE,
+                Some('\n') => ESCAPED_NEWLINE,
+                _ => 0,
+            };
+            if tag != 0 {
+                chars.next();
+            }
+            if let Some(offset) = u32::try_from(text.len())
+                .ok()
+                .filter(|offset| *offset <= ESCAPE_OFFSET)
+            {
+                escapes.push(offset | tag);
+            }
+        }
+        Node::text_node_escaped(text, escapes, span)
+    }
+
+    /// docutils' `str(node)` of a text node — [`Node::text`] with the
+    /// `\x00`s of [`Node::escapes`] back in place; `None` for an element.
+    pub fn null_escaped(&self) -> Option<Cow<'_, str>> {
+        let text = self.text.as_deref()?;
+        if self.escapes.is_empty() {
+            return Some(Cow::Borrowed(text));
+        }
+        let mut out = String::with_capacity(text.len() + 2 * self.escapes.len());
+        let mut copied = 0;
+        for (offset, removed) in self.escapes.iter().filter_map(|&e| escape_entry(e)) {
+            // Constructed and decoded nodes keep `escapes_fit`; an entry a
+            // hand edit put out of step is skipped, not a panic.
+            let Some(piece) = text.get(copied..offset) else {
+                continue;
+            };
+            out.push_str(piece);
+            out.push('\0');
+            out.extend(removed);
+            copied = offset;
+        }
+        out.push_str(&text[copied..]);
+        Some(Cow::Owned(out))
+    }
+
     /// docutils `Element.copy()`: same kind, span and attributes, but **no
     /// children** (docutils copies `rawsource` and attributes only;
     /// `deepcopy` is the one that takes the subtree).
     pub fn shallow_copy(&self) -> Node {
         Node {
+            escapes: self.escapes.clone(),
             kind: self.kind,
             span: self.span,
             text: self.text.clone(),
@@ -289,6 +474,49 @@ pub fn from_bincode(bytes: &[u8]) -> anyhow::Result<Doctree> {
     Ok(doctree)
 }
 
+/// Test support: a tree in the wire shape [`Node`] had before
+/// [`Node::escapes`] — what a doctree file or `env.bin` written by an
+/// earlier build of this branch holds.
+#[cfg(test)]
+pub(crate) mod shape_before_escapes {
+    use super::{Attrs, Doctree, Node, Span};
+    use serde::Serialize;
+
+    #[derive(Serialize)]
+    pub(crate) struct OldNode<'n> {
+        kind: &'n str,
+        span: Span,
+        text: &'n Option<String>,
+        attrs: &'n Attrs,
+        children: Vec<OldNode<'n>>,
+    }
+
+    #[derive(Serialize)]
+    pub(crate) struct OldDoctree<'n> {
+        root: OldNode<'n>,
+        sources: &'n [String],
+    }
+
+    pub(crate) fn node(node: &Node) -> OldNode<'_> {
+        OldNode {
+            kind: node.kind,
+            span: node.span,
+            text: &node.text,
+            attrs: &node.attrs,
+            children: node.children.iter().map(self::node).collect(),
+        }
+    }
+
+    /// `doctree` encoded as [`super::to_bincode`] encoded it then.
+    pub(crate) fn to_bincode(doctree: &Doctree) -> Vec<u8> {
+        let old = OldDoctree {
+            root: node(&doctree.root),
+            sources: &doctree.sources,
+        };
+        bincode::serde::encode_to_vec(old, bincode::config::standard()).unwrap()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -300,7 +528,7 @@ mod tests {
     /// field, so this property can only be demonstrated through JSON here.
     #[test]
     fn doctree_deserialize_defaults_sources_when_field_absent_in_json() {
-        let json = r#"{"root":{"kind":"document","span":{"source":0,"line":0,"start":0,"end":0},"text":null,"attrs":{"ids":[],"names":[],"dupnames":[],"classes":[],"backrefs":[],"extra":{}},"children":[]}}"#;
+        let json = r#"{"root":{"escapes":[],"kind":"document","span":{"source":0,"line":0,"start":0,"end":0},"text":null,"attrs":{"ids":[],"names":[],"dupnames":[],"classes":[],"backrefs":[],"extra":{}},"children":[]}}"#;
 
         let restored: Doctree = serde_json::from_str(json).expect("json without sources decodes");
 
@@ -378,5 +606,153 @@ mod tests {
         p.children
             .push(Node::text_node("line one\nline two", Span::ZERO));
         assert_eq!(p.astext(), "line one\nline two");
+    }
+
+    fn escape2null(raw: &str) -> String {
+        crate::rst::inline::escape2null(raw)
+    }
+
+    /// `Node::text_node_escaped` keeps the text docutils' `astext()` gives
+    /// and, beside it, where the `\x00` markers of its `str(node)` were.
+    #[test]
+    fn text_node_escaped_holds_the_text_and_its_escapes() {
+        let t = Node::text_node_escaped("\"a\"", vec![0, 2], Span::ZERO);
+        assert_eq!(t.kind, kinds::TEXT);
+        assert_eq!(t.text.as_deref(), Some("\"a\""));
+        assert_eq!(t.escapes, [0, 2]);
+        assert_eq!(t.astext(), "\"a\"");
+        assert_eq!(t.null_escaped().as_deref(), Some("\u{0}\"a\u{0}\""));
+    }
+
+    /// docutils' `str(text)` survives the split into text and escapes:
+    /// every escaped character behind its `\x00`, every escaped space or
+    /// newline `unescape` removes (`docutils/nodes.py:2937-2938`) back as
+    /// `\x00 `/`\x00\n`, a trailing lone backslash as a bare `\x00`
+    /// (`docutils/utils/__init__.py:657-668`).
+    #[test]
+    fn a_null_escaped_string_round_trips_through_text_and_escapes() {
+        for raw in [
+            "plain",
+            "\\\"a\\\"",
+            "a\\--b",
+            "x\\ \"y\"",
+            "line1\\\nline2",
+            "foo\\",
+            "a\\\\b",
+            "é\\'ü\\ \\x",
+            "\\ \\\n\\",
+            "",
+        ] {
+            let null_escaped = escape2null(raw);
+            let node = Node::text_from_null_escaped(&null_escaped, Span::ZERO);
+            assert_eq!(
+                node.text.as_deref(),
+                Some(crate::rst::inline::unescape(&null_escaped, false).as_str()),
+                "{raw:?}"
+            );
+            assert_eq!(
+                node.null_escaped().as_deref(),
+                Some(null_escaped.as_str()),
+                "{raw:?}"
+            );
+        }
+    }
+
+    /// An escaped character is its plain byte offset; an escaped space or
+    /// newline, which the text no longer holds, is the offset where it
+    /// was, tagged; a trailing lone backslash is the offset one past the
+    /// text.
+    #[test]
+    fn escaped_whitespace_and_a_trailing_backslash_are_tagged_offsets() {
+        let node = |raw: &str| Node::text_from_null_escaped(&escape2null(raw), Span::ZERO);
+        assert_eq!(node("é\\'").escapes, [2]);
+        assert_eq!(node("x\\ y").escapes, [1 | ESCAPED_SPACE]);
+        assert_eq!(node("x\\\ny").escapes, [1 | ESCAPED_NEWLINE]);
+        assert_eq!(node("foo\\").escapes, [3]);
+        assert_eq!(node("a\\ \\\"b").escapes, [1 | ESCAPED_SPACE, 1]);
+    }
+
+    /// No escape, no heap: `escapes` is on every node.
+    #[test]
+    fn an_escape_free_node_allocates_no_escapes() {
+        assert_eq!(
+            Node::elem(kinds::PARAGRAPH, Span::ZERO).escapes.capacity(),
+            0
+        );
+        assert_eq!(Node::text_node("x", Span::ZERO).escapes.capacity(), 0);
+        assert_eq!(
+            Node::text_from_null_escaped("plain", Span::ZERO)
+                .escapes
+                .capacity(),
+            0
+        );
+    }
+
+    fn in_a_document(node: Node) -> Doctree {
+        let mut root = Node::elem(kinds::DOCUMENT, Span::ZERO);
+        let mut paragraph = Node::elem(kinds::PARAGRAPH, Span::ZERO);
+        paragraph.children.push(node);
+        root.children.push(paragraph);
+        Doctree {
+            root,
+            sources: vec!["<test>".to_string()],
+        }
+    }
+
+    /// A decoded tree upholds what the constructors do, so that a reader
+    /// can slice `text` at any escape offset: the offsets sit on character
+    /// boundaries within the text, in order, at most one whitespace tag
+    /// each, and only on a text node.
+    #[test]
+    fn decoding_rejects_escapes_that_do_not_fit_the_text() {
+        let text = |text: &str, escapes: Vec<u32>| {
+            let mut node = Node::text_node(text, Span::ZERO);
+            node.escapes = escapes;
+            node
+        };
+        let mut element = Node::elem(kinds::EMPHASIS, Span::ZERO);
+        element.escapes = vec![0];
+        for (what, node) in [
+            ("past the end", text("ab", vec![3])),
+            ("inside a character", text("é", vec![1])),
+            ("out of order", text("abc", vec![2, 1])),
+            (
+                "both whitespace tags",
+                text("ab", vec![1 | ESCAPED_SPACE | ESCAPED_NEWLINE]),
+            ),
+            ("on an element", element),
+        ] {
+            assert!(
+                from_bincode(&to_bincode(&in_a_document(node))).is_err(),
+                "{what}"
+            );
+        }
+        let fits = text("é\"", vec![0, 2, 3 | ESCAPED_SPACE]);
+        let tree = in_a_document(fits);
+        assert_eq!(from_bincode(&to_bincode(&tree)).unwrap(), tree);
+    }
+
+    /// A node written before `escapes` existed — the root of a doctree file,
+    /// or of a `titles`/`longtitles`/`tocs` entry in `env.bin` — fails to
+    /// decode at its first bytes: `escapes` is the first field, so the old
+    /// kind string's length and bytes are read as escape offsets, which
+    /// for each of these kinds drop somewhere.
+    #[test]
+    fn a_node_in_the_shape_before_escapes_fails_to_decode() {
+        let mut list = Node::elem(kinds::BULLET_LIST, Span::ZERO);
+        list.children.push(Node::elem(kinds::LIST_ITEM, Span::ZERO));
+        let mut title = Node::elem(kinds::TITLE, Span::ZERO);
+        title.children.push(Node::text_node("T", Span::ZERO));
+        let document = in_a_document(Node::text_node("x", Span::ZERO)).root;
+        for node in [document, title, list] {
+            let bytes = bincode::serde::encode_to_vec(
+                shape_before_escapes::node(&node),
+                bincode::config::standard(),
+            )
+            .unwrap();
+            let decoded: Result<(Node, usize), _> =
+                bincode::serde::decode_from_slice(&bytes, bincode::config::standard());
+            assert!(decoded.is_err(), "{}", node.kind);
+        }
     }
 }

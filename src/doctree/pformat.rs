@@ -104,7 +104,28 @@ pub fn pformat(node: &Node) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::doctree::{kinds, AttrValue, Node, Span};
+    use crate::doctree::{kinds, AttrValue, Node, Span, ESCAPED_SPACE};
+
+    /// docutils prints `Text.astext()` — the unescaped text (`nodes.py:
+    /// 452-465`) — so where the escapes were never shows, and `astext`
+    /// never returns them either.
+    #[test]
+    fn pformat_and_astext_ignore_escapes() {
+        let paragraph = |text: Node| {
+            let mut p = Node::elem(kinds::PARAGRAPH, Span::ZERO);
+            p.children.push(text);
+            p
+        };
+        let escaped = paragraph(Node::text_node_escaped(
+            "x\"a\"",
+            vec![1 | ESCAPED_SPACE, 1, 3],
+            Span::ZERO,
+        ));
+        let plain = paragraph(Node::text_node("x\"a\"", Span::ZERO));
+        assert_eq!(escaped.pformat(), plain.pformat());
+        assert_eq!(escaped.pformat(), "<paragraph>\n    x\"a\"\n");
+        assert_eq!(escaped.astext(), plain.astext());
+    }
 
     #[test]
     fn pformat_section_with_attrs() {

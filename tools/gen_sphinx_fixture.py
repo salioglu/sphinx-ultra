@@ -1379,6 +1379,18 @@ CASES = [
     ('tx_docinfo', 'footnote_reference_in_author', ':author: Me [#]_\n\n.. [#] note\n'),
     ('tx_docinfo', 'dangling_reference_in_author', ':author: See `nope`_.\n\nBody.\n'),
     ('tx_docinfo', 'dangling_reference_in_author_ending_in_a_list', ':author: See `nope`_.\n\n- item\n'),
+    # M2 wave 5, Task 13 (the escape side channel): `authors_from_one_paragraph`
+    # joins `str(node)` of the Text nodes, nulls kept, and splits with
+    # `(?<!\x00)` before the separator (`frontmatter.py:510-528`): an escaped
+    # separator does not split, the next separator still may, and the strip
+    # stops at a null.
+    ('tx_docinfo', 'authors_escaped_semicolon', ':authors: A\\; B\n\nBody.\n'),
+    ('tx_docinfo', 'authors_escaped_comma', ':authors: A\\, B\n\nBody.\n'),
+    ('tx_docinfo', 'authors_escaped_semicolon_then_comma', ':authors: A\\; B, C\n\nBody.\n'),
+    ('tx_docinfo', 'authors_escaped_space_after_separator', ':authors: A ;\\  B\n\nBody.\n'),
+    # `:trim:` strips `str(text)` (`Text.rstrip`/`lstrip`, `nodes.py:471-475`):
+    # the null of an escaped space stops it.
+    ('tx_subst', 'trim_stops_at_an_escaped_space', '.. |s| unicode:: U+2014\n   :trim:\n\na \\  |s|  \\ b\n'),
     # ===== tx_misc (M2 wave 5, sub-project 1, Task 12) =====
     # docutils' Transitions (830, `docutils/transforms/misc.py:64-143`):
     # misplaced transitions warn (base_node= the transition) and a section's

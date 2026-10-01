@@ -76,6 +76,15 @@ const DOCTREE_MAGIC: &[u8; 4] = b"SUDT";
 /// stamps on a captioned `literalinclude`), the `doctest` class and
 /// unwrapped doctest block quotes, Transitions' moves, and the toctree's
 /// `rawentries`/`rawcaption`, which the parse no longer writes.
+///
+/// Version 3 also carries the escape field, `Node::escapes` (docutils'
+/// backslash escapes beside each text node) — the one bump of the wave is
+/// for the post-transform meaning plus that field — and so changes shape
+/// within the version: a version-3 blob a build of this branch wrote
+/// before the field fails to decode instead (the field comes first on the
+/// wire, and the old node's kind bytes read as escape offsets out of
+/// order), which [`SphinxBuilder::load_doctree`] treats as a miss like any
+/// unreadable blob.
 const DOCTREE_FORMAT_VERSION: u32 = 3;
 
 /// Bytes of the [`DOCTREE_MAGIC`] + [`DOCTREE_FORMAT_VERSION`] header.
@@ -2242,6 +2251,35 @@ mod tests {
         let (stats, rebuilt) = build_incrementally(&source_dir, &output_dir);
         assert_eq!(stats.cache_hits, 1, "the version-2 document is re-read");
         assert!(rebuilt.load_doctree("index").is_some());
+    }
+
+    /// `Node::escapes` came within version 3: a version-3 blob a build
+    /// wrote before it has the right header and the old node shape. It
+    /// must fail to decode — a miss, the document re-read — never load as
+    /// a tree.
+    #[test]
+    fn a_version_3_doctree_without_escapes_is_a_cache_miss() {
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("source");
+        let output_dir = tmp.path().join("build");
+        write_project(&source_dir);
+
+        let (_cold, builder) = build_incrementally(&source_dir, &output_dir);
+        let doctree = builder.load_doctree("index").expect("doctree decodes");
+
+        let mut bytes = Vec::from(DOCTREE_MAGIC);
+        bytes.extend_from_slice(&DOCTREE_FORMAT_VERSION.to_le_bytes());
+        bytes.extend_from_slice(&crate::doctree::shape_before_escapes::to_bincode(&doctree));
+        std::fs::write(builder.doctree_path("index"), bytes).unwrap();
+        assert!(
+            builder.load_doctree("index").is_none(),
+            "a blob without escapes must not decode"
+        );
+
+        let (stats, rebuilt) = build_incrementally(&source_dir, &output_dir);
+        assert_eq!(stats.cache_hits, 1, "the old-shape document is re-read");
+        assert_eq!(stats.errors, 0);
+        assert_eq!(rebuilt.load_doctree("index"), Some(doctree));
     }
 
     /// The persisted doctree is the post-transform tree — Sphinx pickles

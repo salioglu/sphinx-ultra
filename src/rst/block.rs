@@ -191,6 +191,54 @@ fn split_classifiers(term: &str) -> Vec<String> {
     CLASSIFIER_RE.split(term).map(str::to_string).collect()
 }
 
+/// docutils `Text.term` (`states.py:3001-3021`): the term line's inline
+/// nodes, each top-level Text split at the classifier delimiter in its
+/// null-escaped text — an escaped colon is no delimiter, an escaped space
+/// before one still is — and every other node, markup spanning ` : `
+/// included, kept whole in the term or classifier the line has reached.
+///
+/// The part before a delimiter is `parts[0].rstrip()` — Python's whitespace
+/// set, and only on that branch: a term without a classifier is a whole
+/// `string2lines` line, rstripped already (Sphinx's glossary term is the
+/// opposite, kept verbatim; see `run_glossary`; probe-pinned, panel fix
+/// round F, `round_f`) — and goes in as a Text even when empty, as
+/// docutils' does; a classifier gets a Text only for a nonempty part
+/// (`TextElement`'s `if text:`).
+fn term_and_classifiers(nodes: Vec<Node>, span: Span) -> Vec<Node> {
+    let mut done = Vec::new();
+    let mut current = Node::elem(kinds::TERM, span);
+    for node in nodes {
+        let parts = node
+            .null_escaped()
+            .map(|text| split_classifiers(&text))
+            .filter(|parts| parts.len() > 1);
+        let Some(parts) = parts else {
+            current.children.push(node);
+            continue;
+        };
+        let mut parts = parts.into_iter();
+        if let Some(first) = parts.next() {
+            current.children.push(Node::text_from_null_escaped(
+                first.trim_end_matches(crate::utils::py_isspace),
+                span,
+            ));
+        }
+        for part in parts {
+            done.push(std::mem::replace(
+                &mut current,
+                Node::elem(kinds::CLASSIFIER, span),
+            ));
+            if !part.is_empty() {
+                current
+                    .children
+                    .push(Node::text_from_null_escaped(&part, span));
+            }
+        }
+    }
+    done.push(current);
+    done
+}
+
 struct SectionStart {
     title: String,
     style: (char, bool),
@@ -1929,34 +1977,11 @@ impl BlockParser {
             );
             let term_span = self.span_of(lines, *pos, *pos);
             let term_ends_in_colons = self.sources.line_text(term_line).ends_with("::");
-            let mut parts = split_classifiers(self.sources.line_text(term_line)).into_iter();
-            let has_classifiers = parts.len() > 1;
-            let term_text = parts.next().unwrap_or_default();
-            // `text = parts[0].rstrip()` (states.py:3015) — Python's
-            // whitespace set, applied only on the classifier branch: a term
-            // without one is a whole `string2lines` line, rstripped already.
-            // Sphinx's glossary term is the opposite (kept verbatim; see
-            // `run_glossary`). Probe-pinned, panel fix round F (`round_f`).
-            let term_text = if has_classifiers {
-                term_text
-                    .trim_end_matches(crate::utils::py_isspace)
-                    .to_string()
-            } else {
-                term_text
-            };
-            let mut term_msgs = Vec::new();
-            let inline = self.inline(&term_text, term_span, term_line.lineno);
-            let mut term = Node::elem(kinds::TERM, term_span);
-            term.children = inline.nodes;
-            term_msgs.extend(inline.messages);
-            item.children.push(term);
-            for classifier in parts {
-                let inline = self.inline(&classifier, term_span, term_line.lineno);
-                let mut c = Node::elem(kinds::CLASSIFIER, term_span);
-                c.children = inline.nodes;
-                term_msgs.extend(inline.messages);
-                item.children.push(c);
-            }
+            let line = self.sources.line_text(term_line).to_string();
+            let inline = self.inline(&line, term_span, term_line.lineno);
+            let mut term_msgs = inline.messages;
+            item.children
+                .extend(term_and_classifiers(inline.nodes, term_span));
             let mut definition =
                 Node::elem(kinds::DEFINITION, self.span_of(lines, *pos + 1, item_last));
             // Fixture-verified: term/classifier inline messages land INSIDE
@@ -10007,10 +10032,11 @@ fn py_make_doc_xrefs(
     results
 }
 
-/// One collected entry: a pass-through original field, or a field type
-/// with its `(fieldarg, content)` items (grouped types collect many).
+/// One collected entry: a pass-through original field (boxed: a whole
+/// `Node` beside the typed variant's few words), or a field type with its
+/// `(fieldarg, content)` items (grouped types collect many).
 enum DocFieldEntry {
-    Pass(Node),
+    Pass(Box<Node>),
     Typed {
         ftype: usize,
         items: Vec<(String, Vec<Node>)>,
@@ -10075,7 +10101,7 @@ fn transform_doc_field_list(
     // Step 2: construct the new field list (`docfields.py:484-510`).
     for entry in entries {
         match entry {
-            DocFieldEntry::Pass(field) => node.children.push(field),
+            DocFieldEntry::Pass(field) => node.children.push(*field),
             DocFieldEntry::Typed { ftype, items } => {
                 let mut empty = HashMap::new();
                 let fieldtypes = types.get_mut(&ftype).unwrap_or(&mut empty);
@@ -10125,7 +10151,7 @@ fn doc_field_step1(
     // `sx_std.confval_bad_type_markup` in tools/gen_sphinx_fixture.py:
     // a crash has no pformat, so the case is unpinnable by the oracle.
     if field.children.len() != 2 {
-        entries.push(DocFieldEntry::Pass(field));
+        entries.push(DocFieldEntry::Pass(Box::new(field)));
         return;
     }
     let name_text = field.children[0].astext();
@@ -10186,7 +10212,7 @@ fn doc_field_step1(
                 }
             }
         }
-        entries.push(DocFieldEntry::Pass(field));
+        entries.push(DocFieldEntry::Pass(Box::new(field)));
         return;
     }
     let (ftype, is_typefield) = lookup.expect("known implies present");
@@ -14610,6 +14636,80 @@ mod tests {
         let out = pf("term:not a classifier\n    Definition.");
         assert!(out.contains("<term>\n                term:not a classifier\n"));
         assert!(!out.contains("<classifier>"));
+    }
+
+    /// The term line is inline-parsed whole, and only its top-level Text
+    /// nodes split at `' +: +'` — on docutils' null-escaped string
+    /// (`states.py:2999-3021`): an escaped space is still a space to the
+    /// delimiter, an escaped colon is no delimiter, and a delimiter inside
+    /// markup is no delimiter. Probed, docutils 0.22.4: each item's term
+    /// and classifiers as `(kind, str(text))` per Text, in order.
+    #[test]
+    fn a_term_splits_its_null_escaped_text_nodes() {
+        fn texts(node: &Node, out: &mut Vec<(&'static str, String)>, owner: &'static str) {
+            for child in &node.children {
+                match child.null_escaped() {
+                    Some(text) => out.push((owner, text.into_owned())),
+                    None => texts(child, out, owner),
+                }
+            }
+        }
+        let item = |src: &str| {
+            let tree = parse_rst(
+                src,
+                &ParseOptions {
+                    source_path: "<snippet>".into(),
+                    ..Default::default()
+                },
+            );
+            let item = &tree.root.children[0].children[0];
+            assert_eq!(item.kind, kinds::DEFINITION_LIST_ITEM, "{src:?}");
+            let mut out = Vec::new();
+            for part in &item.children {
+                if matches!(part.kind, kinds::TERM | kinds::CLASSIFIER) {
+                    texts(part, &mut out, part.kind);
+                }
+            }
+            out
+        };
+        let t = |owner: &'static str, text: &str| (owner, text.to_string());
+        assert_eq!(
+            item("a\\ : b\n   def\n"),
+            [t(kinds::TERM, "a\u{0}"), t(kinds::CLASSIFIER, "b")]
+        );
+        assert_eq!(
+            item("a : \\ b\n   def\n"),
+            [t(kinds::TERM, "a"), t(kinds::CLASSIFIER, "\u{0} b")]
+        );
+        assert_eq!(item("a \\: b\n   def\n"), [t(kinds::TERM, "a \u{0}: b")]);
+        assert_eq!(
+            item("*x*\\ : b\n   def\n"),
+            [
+                t(kinds::TERM, "x"),
+                t(kinds::TERM, "\u{0}"),
+                t(kinds::CLASSIFIER, "b")
+            ]
+        );
+        // `node_list[-1] += nodes.Text(parts[0].rstrip())`, empty or not.
+        assert_eq!(
+            item("*a* : b\n   def\n"),
+            [
+                t(kinds::TERM, "a"),
+                t(kinds::TERM, ""),
+                t(kinds::CLASSIFIER, "b")
+            ]
+        );
+        assert_eq!(item("`a : b`\n   def\n"), [t(kinds::TERM, "a : b")]);
+        assert_eq!(item("*a : b*\n   def\n"), [t(kinds::TERM, "a : b")]);
+        assert_eq!(
+            item("a : *b* c : d\n   def\n"),
+            [
+                t(kinds::TERM, "a"),
+                t(kinds::CLASSIFIER, "b"),
+                t(kinds::CLASSIFIER, " c"),
+                t(kinds::CLASSIFIER, "d"),
+            ]
+        );
     }
 
     #[test]

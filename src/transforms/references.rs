@@ -291,7 +291,9 @@ fn contains_substitution_reference(root: &Node) -> bool {
 
 /// `if 'ltrim' in subdef.attributes or 'trim' in ...` (`references.py:
 /// 709-720`): the Text before the reference loses its trailing whitespace,
-/// the Text after it its leading (Python's `str.rstrip`/`lstrip`).
+/// the Text after it its leading — Python's `str.rstrip`/`lstrip` of
+/// `str(text)` (`Text.rstrip`, `nodes.py:471-475`), where the `\x00` of an
+/// escaped space stops the strip.
 fn trim_around(arena: &mut Arena, reference: usize, definition: usize) {
     let Some(parent) = arena.slots[reference].parent else {
         return;
@@ -317,13 +319,13 @@ fn trim_around(arena: &mut Arena, reference: usize, definition: usize) {
         if node.kind != kinds::TEXT {
             continue;
         }
-        if let Some(text) = &mut node.text {
-            *text = if trim_end {
-                text.trim_end_matches(crate::utils::py_isspace).to_string()
+        if let Some(text) = node.null_escaped() {
+            let trimmed = if trim_end {
+                text.trim_end_matches(crate::utils::py_isspace)
             } else {
                 text.trim_start_matches(crate::utils::py_isspace)
-                    .to_string()
             };
+            *node = Node::text_from_null_escaped(trimmed, node.span);
         }
     }
 }
@@ -1807,6 +1809,23 @@ mod tests {
             "<paragraph>\n    See \n    <problematic ids=\"id2\" refid=\"id1\">\n        \
              |a\\ b|\n     here.\n"
         );
+    }
+
+    /// `:trim:` is `prev.rstrip()`/`next.lstrip()` on the Text
+    /// (`references.py:711-720`), which `Text.rstrip` does to `str(self)`
+    /// (`nodes.py:471-475`): the `\x00` of an escaped space stops it, so
+    /// `a \  |s|  \ b` keeps `'a \x00'` — `a ` with its space — and
+    /// `'\x00 b'` (probed, docutils 0.22.4).
+    #[test]
+    fn trim_strips_the_null_escaped_text() {
+        let (tree, _) = read(".. |s| unicode:: U+2014\n   :trim:\n\na \\  |s|  \\ b\n");
+        let paragraph = &tree.root.children[1];
+        let texts: Vec<String> = paragraph
+            .children
+            .iter()
+            .map(|text| text.null_escaped().unwrap().into_owned())
+            .collect();
+        assert_eq!(texts, ["a \u{0}", "\u{2014}", "\u{0} b"]);
     }
 
     /// A typo inside a definition placed after its use (review, fix round

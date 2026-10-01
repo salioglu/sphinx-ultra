@@ -9,7 +9,9 @@
 //! bare `\x00` drops, keeping the escaped char). Inline literals restore
 //! backslashes instead. Behavior sources: the wave-2 probe notes
 //! (2026-08-07-m2-wave2-probes.md) and the differential fixture — never
-//! memory.
+//! memory. Where docutils' Text keeps the markers — plain text, and the
+//! text of the inline elements made from the escaped string — the node
+//! keeps them too, as [`Node::escapes`] ([`Node::text_from_null_escaped`]).
 
 use crate::doctree::ids::IdRegistry;
 use crate::doctree::{kinds, messages, AttrValue, Node, Span};
@@ -414,15 +416,18 @@ impl<'a> Inliner<'a> {
     }
 
     /// docutils `implicit_inline`: standalone URIs and emails inside plain
-    /// text runs become reference nodes.
+    /// text runs become reference nodes. The rest is `nodes.Text(text)` of
+    /// the null-escaped text, dropped only when that is empty
+    /// (`states.py:1147-1160`): a run of escapes alone (`*a*\ *b*`) is a
+    /// Text that unescapes to nothing.
     fn implicit_inline(&mut self, text: &str) {
         // Cheap pre-checks: without ':' no scheme URI can match; without
         // '@' no email can match (kills quadratic rescans over ordinary
         // hyphenated text).
         if !text.contains(':') && !text.contains('@') {
-            let out = unescape(text, false);
-            if !out.is_empty() {
-                self.nodes.push(Node::text_node(out, self.span));
+            if !text.is_empty() {
+                self.nodes
+                    .push(Node::text_from_null_escaped(text, self.span));
             }
             return;
         }
@@ -436,14 +441,16 @@ impl<'a> Inliner<'a> {
             if at_start {
                 if let Some((len, refuri, display)) = match_standalone_uri(&chars, i) {
                     let before: String = chars[emitted_upto..i].iter().collect();
-                    let before = unescape(&before, false);
                     if !before.is_empty() {
-                        self.nodes.push(Node::text_node(before, self.span));
+                        self.nodes
+                            .push(Node::text_from_null_escaped(&before, self.span));
                     }
+                    // `nodes.reference(unescape(text, True), text, ...)`
+                    // (`states.py:1111`): the escaped text.
                     let mut r = Node::elem(kinds::REFERENCE, self.span);
                     r.set("refuri", AttrValue::Str(unescape(&refuri, false)));
                     r.children
-                        .push(Node::text_node(unescape(&display, false), self.span));
+                        .push(Node::text_from_null_escaped(&display, self.span));
                     self.nodes.push(r);
                     i += len;
                     emitted_upto = i;
@@ -453,17 +460,23 @@ impl<'a> Inliner<'a> {
             i += 1;
         }
         let rest: String = chars[emitted_upto..].iter().collect();
-        let rest = unescape(&rest, false);
         if !rest.is_empty() {
-            self.nodes.push(Node::text_node(rest, self.span));
+            self.nodes
+                .push(Node::text_from_null_escaped(&rest, self.span));
         }
     }
 
+    /// `nodeclass(rawsource, text)` (`states.py:830-835`, and a generic
+    /// role's `roles.py:214`): the escaped text, unless `restore` gives a
+    /// literal its backslashes back.
     fn emit_inline(&mut self, kind: &'static str, content: &str, restore: bool) {
         self.flush_text();
         let mut node = Node::elem(kind, self.span);
-        node.children
-            .push(Node::text_node(unescape(content, restore), self.span));
+        node.children.push(if restore {
+            Node::text_node(unescape(content, true), self.span)
+        } else {
+            Node::text_from_null_escaped(content, self.span)
+        });
         self.nodes.push(node);
     }
 
@@ -670,7 +683,7 @@ impl<'a> Inliner<'a> {
                     None,
                 );
                 t.children
-                    .push(Node::text_node(unescape(&raw, false), self.span));
+                    .push(Node::text_from_null_escaped(&raw, self.span));
                 self.nodes.push(t);
                 if let Some(m) = msg {
                     self.messages.push(m);
@@ -1536,8 +1549,11 @@ impl<'a> Inliner<'a> {
                             "refuri",
                             AttrValue::Str(format!("https://peps.python.org/pep-{n:04}")),
                         );
-                        r.children
-                            .push(Node::text_node(format!("PEP {text}"), self.span));
+                        // `'PEP ' + text` (`roles.py:288`): the escaped text.
+                        r.children.push(Node::text_from_null_escaped(
+                            &format!("PEP {raw}"),
+                            self.span,
+                        ));
                         self.nodes.push(r);
                     }
                     None => self.role_problematic(
@@ -1603,6 +1619,17 @@ impl<'a> Inliner<'a> {
         self.flush_text();
         let ids = |s: &str| crate::doctree::ids::fully_normalize_name(s);
         let wsn = |s: &str| crate::doctree::ids::whitespace_normalize_name(s);
+        // `nodes.reference(rawsource, text, ...)` (`states.py:957`): `text`
+        // is the escaped text before the embedded link (`:918`) or, when
+        // there is none, the unescaped alias (`:946-947`).
+        let span = self.span;
+        let phrase_text = |text_part: &str, display_text: &str| {
+            if text_part.is_empty() {
+                Node::text_node(display_text, span)
+            } else {
+                Node::text_from_null_escaped(text_part, span)
+            }
+        };
 
         // embedded link: unescaped `<...>` at the very end, preceded by
         // whitespace (or the whole content).
@@ -1634,8 +1661,7 @@ impl<'a> Inliner<'a> {
                     };
                     r.set("name", AttrValue::Str(wsn(&display_text)));
                     r.set("refname", AttrValue::Str(alias.clone()));
-                    r.children
-                        .push(Node::text_node(display_text.clone(), self.span));
+                    r.children.push(phrase_text(&text_part, &display_text));
                     self.nodes.push(r);
                     if underscores == 1 {
                         // `nodes.target(match.group(1), refname=alias)`
@@ -1684,8 +1710,7 @@ impl<'a> Inliner<'a> {
                     };
                     r.set("name", AttrValue::Str(wsn(&display_text)));
                     r.set("refuri", AttrValue::Str(uri.clone()));
-                    r.children
-                        .push(Node::text_node(display_text.clone(), self.span));
+                    r.children.push(phrase_text(&text_part, &display_text));
                     self.nodes.push(r);
                     if underscores == 1 {
                         // `nodes.target(match.group(1), refuri=alias)`
@@ -1714,7 +1739,9 @@ impl<'a> Inliner<'a> {
                 } else {
                     r.set("refname", AttrValue::Str(ids(&text)));
                 }
-                r.children.push(Node::text_node(text, self.span));
+                // `text = escaped` (`states.py:951`).
+                r.children
+                    .push(Node::text_from_null_escaped(raw, self.span));
                 self.nodes.push(r);
             }
         }
@@ -1813,9 +1840,11 @@ impl<'a> Inliner<'a> {
             crate::doctree::RAWSOURCE,
             AttrValue::Str(unescape(&written, true)),
         );
+        // `nodes.substitution_reference(rawsource, text)` (`states.py:835`):
+        // the escaped text.
         subref
             .children
-            .push(Node::text_node(text.clone(), self.span));
+            .push(Node::text_from_null_escaped(&raw, self.span));
         if underscores == 0 {
             self.nodes.push(subref);
         } else {
@@ -2283,6 +2312,135 @@ mod tests {
         let (nodes, _) = pi("\\*not markup\\*");
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].text.as_deref(), Some("*not markup*"));
+    }
+
+    /// docutils' Inliner works on `escape2null(text)` (`states.py:750`) and
+    /// its Text nodes keep the `\x00` before each escaped character
+    /// (probed: `\"a\"` is `'\x00"a\x00"'`); this tree keeps the unescaped
+    /// text and the escaped characters' byte offsets beside it.
+    #[test]
+    fn escaped_quote_offsets_are_recorded() {
+        let (nodes, _) = pi("\\\"a\"");
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].text.as_deref(), Some("\"a\""));
+        assert_eq!(nodes[0].escapes, [0]);
+        let (nodes, _) = pi("\\\"a\\\"");
+        assert_eq!(nodes[0].text.as_deref(), Some("\"a\""));
+        assert_eq!(nodes[0].escapes, [0, 2]);
+    }
+
+    #[test]
+    fn escaped_dashes_and_ellipsis_offsets_are_recorded() {
+        let (nodes, _) = pi("a\\--b");
+        assert_eq!(nodes[0].text.as_deref(), Some("a--b"));
+        assert_eq!(nodes[0].escapes, [1]);
+        let (nodes, _) = pi("a\\...");
+        assert_eq!(nodes[0].text.as_deref(), Some("a..."));
+        assert_eq!(nodes[0].escapes, [1]);
+    }
+
+    #[test]
+    fn an_escape_free_text_has_no_escape_offsets() {
+        let (nodes, _) = pi("\"a\" -- b... *c* `d`_");
+        let mut stack: Vec<&Node> = nodes.iter().collect();
+        while let Some(node) = stack.pop() {
+            assert!(node.escapes.is_empty(), "{node:?}");
+            stack.extend(&node.children);
+        }
+    }
+
+    /// Every Text node in document order, as docutils' `str(node)` and
+    /// with the kind of its parent (`None` at the top).
+    fn null_escaped_texts(text: &str) -> Vec<(Option<&'static str>, String)> {
+        fn walk(
+            nodes: &[Node],
+            parent: Option<&'static str>,
+            out: &mut Vec<(Option<&'static str>, String)>,
+        ) {
+            for node in nodes {
+                match node.null_escaped() {
+                    Some(text) => out.push((parent, text.into_owned())),
+                    None => walk(&node.children, Some(node.kind), out),
+                }
+            }
+        }
+        let (nodes, _) = pi(text);
+        let mut out = Vec::new();
+        walk(&nodes, None, &mut out);
+        out
+    }
+
+    /// Where docutils' Text keeps the `\x00`s and where it does not
+    /// (probed, docutils 0.22.4): phrase-reference text, an inline
+    /// target's, a substitution reference's, a standalone URI's
+    /// (`states.py:916-958,834-835,1111`), and a generic role's or the
+    /// default role's (`roles.py:214`) keep them; a literal restores the
+    /// backslashes (`states.py:831-832`), and a problematic's text is the
+    /// restored start-string (`:841`).
+    #[test]
+    fn every_text_keeps_the_escapes_docutils_keeps() {
+        let texts = null_escaped_texts(
+            "see `x\\*y`_ and _`t\\*` and |s\\*| and http://a\\*b and ``l\\*`` \
+             and :sup:`s\\*` and `t\\\"` and *e\\*m* and **s\\*t** and \\*b `un\\*",
+        );
+        let top = |text: &str| (None, text.to_string());
+        let inside = |kind: &'static str, text: &str| (Some(kind), text.to_string());
+        assert_eq!(
+            texts,
+            [
+                top("see "),
+                inside(kinds::REFERENCE, "x\u{0}*y"),
+                top(" and "),
+                inside(kinds::TARGET, "t\u{0}*"),
+                top(" and "),
+                inside(kinds::SUBSTITUTION_REFERENCE, "s\u{0}*"),
+                top(" and "),
+                inside(kinds::REFERENCE, "http://a\u{0}*b"),
+                top(" and "),
+                inside(kinds::LITERAL, "l\\*"),
+                top(" and "),
+                inside(kinds::SUPERSCRIPT, "s\u{0}*"),
+                top(" and "),
+                inside(kinds::TITLE_REFERENCE, "t\u{0}\""),
+                top(" and "),
+                inside(kinds::EMPHASIS, "e\u{0}*m"),
+                top(" and "),
+                inside(kinds::STRONG, "s\u{0}*t"),
+                top(" and \u{0}*b "),
+                inside(kinds::PROBLEMATIC, "`"),
+                top("un\u{0}*"),
+            ]
+        );
+    }
+
+    /// `unescape` removes an escaped space or newline outright, but the
+    /// Text keeps it — SmartQuotes reads `x\ "y"` as `'x\x00 "y"'`, the
+    /// quote after a space (probed) — and `implicit_inline` drops only an
+    /// empty null-escaped string (`states.py:1150-1151`): an escaped space
+    /// between two inline constructs, or a trailing backslash, is a Text
+    /// that unescapes to nothing (probed: `*a*\ *b*`, `*a*\`).
+    #[test]
+    fn escaped_whitespace_and_a_lone_backslash_stay_in_the_text() {
+        assert_eq!(
+            null_escaped_texts("x\\ \"y\""),
+            [(None, "x\u{0} \"y\"".to_string())]
+        );
+        assert_eq!(
+            null_escaped_texts("line1\\\nline2"),
+            [(None, "line1\u{0}\nline2".to_string())]
+        );
+        assert_eq!(
+            null_escaped_texts("*a*\\ *b*"),
+            [
+                (Some(kinds::EMPHASIS), "a".to_string()),
+                (None, "\u{0} ".to_string()),
+                (Some(kinds::EMPHASIS), "b".to_string()),
+            ]
+        );
+        let (nodes, _) = pi("*a*\\");
+        assert_eq!(nodes.len(), 2);
+        assert_eq!(nodes[1].text.as_deref(), Some(""));
+        assert_eq!(nodes[1].escapes, [0]);
     }
 
     /// Sphinx-mode inline parse, for the roles that only exist there.

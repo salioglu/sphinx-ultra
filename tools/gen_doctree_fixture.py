@@ -1058,6 +1058,18 @@ CASES = [
     # Once the name is duplicated away, a third target with the second's
     # URI is an ordinary explicit duplicate.
     ("comment_target", "duplicate_external_target_after_a_conflict", ".. _x: https://a\n.. _x: https://b\n.. _x: https://b\n"),
+    # M2 wave 5, Task 13: `term()` inline-parses the whole term line and
+    # splits only its top-level Text nodes at `classifier_delimiter`, on
+    # their null-escaped text (states.py:2999-3021): markup spanning ` : `
+    # stays whole (no start-string warning), an escaped colon is no
+    # delimiter, an escaped space before the colon still is one, and markup
+    # after a delimiter joins the classifier it opened.
+    ("deflist", "classifier_delimiter_inside_interpreted_text", "`a : b`\n   def\n"),
+    ("deflist", "classifier_delimiter_inside_emphasis", "*a : b*\n   def\n"),
+    ("deflist", "escaped_classifier_delimiter", "a \\: b\n   def\n"),
+    ("deflist", "escaped_space_before_classifier_delimiter", "a\\ : b\n   def\n"),
+    ("deflist", "classifier_after_markup", "*a* : b\n   def\n"),
+    ("deflist", "markup_opens_a_classifier", "a : *b* c : d\n   def\n"),
 
 ]
 

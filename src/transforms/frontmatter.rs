@@ -392,18 +392,18 @@ fn extract_authors(
     true
 }
 
-/// `authors_from_one_paragraph` (`frontmatter.py:510-528`): the text of
-/// every `Text` in the body, split at the first of the language's author
-/// separators (English: `;`, then `,`; `en.py:58`) that splits it, each
-/// name stripped — markup is not kept. docutils does not split at a
-/// backslash-escaped separator (`(?<!\x00)`); this tree's text carries no
-/// escapes yet, so it does.
+/// `authors_from_one_paragraph` (`frontmatter.py:510-528`): `str(node)`
+/// of every `Text` in the body — escapes kept as `\x00`s — split at the
+/// first of the language's author separators (English: `;`, then `,`;
+/// `en.py:58`) that splits it, but never at an escaped one
+/// (`(?<!\x00)`), each name stripped and made a Text again — markup is
+/// not kept.
 fn authors_from_one_paragraph(body: &Node) -> Option<Vec<Vec<Node>>> {
     let mut text = String::new();
     let mut stack = vec![body];
     while let Some(node) = stack.pop() {
-        match &node.text {
-            Some(piece) => text.push_str(piece),
+        match node.null_escaped() {
+            Some(piece) => text.push_str(&piece),
             None => stack.extend(node.children.iter().rev()),
         }
     }
@@ -412,7 +412,7 @@ fn authors_from_one_paragraph(body: &Node) -> Option<Vec<Vec<Node>>> {
     }
     let mut names: Vec<&str> = Vec::new();
     for separator in [';', ','] {
-        names = text.split(separator).collect();
+        names = split_unescaped(&text, separator);
         if names.len() > 1 {
             break;
         }
@@ -422,9 +422,26 @@ fn authors_from_one_paragraph(body: &Node) -> Option<Vec<Vec<Node>>> {
             .into_iter()
             .map(|name| name.trim_matches(py_isspace))
             .filter(|name| !name.is_empty())
-            .map(|name| vec![Node::text_node(name, UNSTAMPED)])
+            .map(|name| vec![Node::text_from_null_escaped(name, UNSTAMPED)])
             .collect(),
     )
+}
+
+/// `re.split('(?<!\x00)' + separator, text)`: `text` split at every
+/// `separator` no `\x00` precedes.
+fn split_unescaped(text: &str, separator: char) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut start = 0;
+    let mut previous = None;
+    for (at, c) in text.char_indices() {
+        if c == separator && previous != Some('\0') {
+            parts.push(&text[start..at]);
+            start = at + c.len_utf8();
+        }
+        previous = Some(c);
+    }
+    parts.push(&text[start..]);
+    parts
 }
 
 /// `authors_from_bullet_list` (`frontmatter.py:530-540`).
@@ -508,17 +525,19 @@ fn python_digit_class() -> String {
 /// paragraph that is a single `Text` has the first RCS keyword pattern
 /// that matches it substituted throughout — `$Date: 2026/09/30 12:00:00 $`
 /// becomes `2026-09-30`, `$RCSfile: x.py,v $` `x.py`, `$Keyword: text $`
-/// `text`.
+/// `text`. The patterns run on `str(textnode)` and `nodes.Text` takes what
+/// they give, escapes and all.
 fn clean_rcs_keywords(paragraph: &mut Node) {
     let [text] = paragraph.children.as_mut_slice() else {
         return;
     };
-    let Some(value) = text.text.as_mut() else {
+    let Some(value) = text.null_escaped() else {
         return;
     };
     for (pattern, substitution) in RCS_KEYWORDS.iter() {
-        if pattern.is_match(value) {
-            *value = pattern.replace_all(value, *substitution).into_owned();
+        if pattern.is_match(&value) {
+            let cleaned = pattern.replace_all(&value, *substitution).into_owned();
+            *text = Node::text_from_null_escaped(&cleaned, text.span);
             return;
         }
     }
@@ -760,6 +779,51 @@ mod tests {
         assert_eq!(clean("a $Revision: 1.2 $ b"), "a 1.2 b");
         assert_eq!(clean("no keyword"), "no keyword");
         assert_eq!(clean("$Id:x $"), "$Id:x $");
+    }
+
+    /// `pattern.sub(substitution, textnode)` (`docutils/utils/__init__.py:
+    /// 497-507`) runs on `str(textnode)`, and `nodes.Text` keeps what it
+    /// gives: the escapes come through the substitution (probed:
+    /// `:date: $Date: x\* $` is `'x\x00*'`).
+    #[test]
+    fn rcs_keywords_are_cleaned_on_the_null_escaped_text() {
+        let mut paragraph = Node::elem(kinds::PARAGRAPH, Span::ZERO);
+        paragraph
+            .children
+            .push(Node::text_from_null_escaped("$Id: a\u{0}*b $", Span::ZERO));
+        clean_rcs_keywords(&mut paragraph);
+        assert_eq!(
+            paragraph.children[0].null_escaped().as_deref(),
+            Some("a\u{0}*b")
+        );
+    }
+
+    /// `authors_from_one_paragraph` (`frontmatter.py:510-528`) joins the
+    /// Text nodes' `str(node)`, splits with `(?<!\x00)` before the
+    /// separator and strips each name, nulls and all (probed: `A\; B` is
+    /// one author `'A\x00; B'`; `A ;\  B` two, the second `'\x00  B'`).
+    #[test]
+    fn an_escaped_separator_does_not_split_authors() {
+        let authors = |source: &str| {
+            let root = docinfo_tree(source);
+            let authors = root.children[0]
+                .children
+                .iter()
+                .find(|node| node.kind == "authors")
+                .expect("an authors element");
+            authors
+                .children
+                .iter()
+                .map(|author| author.children[0].null_escaped().unwrap().into_owned())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(authors(":authors: A\\; B\n\nBody.\n"), ["A\u{0}; B"]);
+        assert_eq!(authors(":authors: A\\, B\n\nBody.\n"), ["A\u{0}, B"]);
+        assert_eq!(
+            authors(":authors: A\\; B, C\n\nBody.\n"),
+            ["A\u{0}; B", "C"]
+        );
+        assert_eq!(authors(":authors: A ;\\  B\n\nBody.\n"), ["A", "\u{0}  B"]);
     }
 
     /// `astext()` separators and overrides, as docutils joins them.

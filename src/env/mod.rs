@@ -84,6 +84,11 @@ use crate::doctree::Node;
 /// whose ids `toc_fignumbers` keys by (AutoNumbering files a labelled
 /// captioned node under its auto id): a v4 `env.bin` from before them
 /// decodes into the old meaning, and only builds of this branch wrote one.
+/// Nor for the escape field the same wave gave every `Node`
+/// (`Node::escapes`), which reshapes the `titles`/`longtitles`/`tocs`
+/// trees: a v4 `env.bin` from before it fails to decode at its first node
+/// (the field comes first on the wire, and the old kind's bytes read as
+/// escape offsets out of order) and is rebuilt.
 pub const ENV_VERSION: u32 = 4;
 
 /// The `env.bin` filename inside a build's cache directory.
