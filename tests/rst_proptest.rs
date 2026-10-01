@@ -34,7 +34,7 @@ use proptest::prelude::*;
 use sphinx_ultra::error::BuildWarning;
 use sphinx_ultra::py::annotations::{parse_annotation, PyRefContext};
 use sphinx_ultra::py::PySigConfig;
-use sphinx_ultra::rst::{parse_rst, ParseOptions, PARSE_STACK_SIZE};
+use sphinx_ultra::rst::{on_parse_stack, parse_rst, ParseOptions};
 use sphinx_ultra::transforms::{parse_and_transform, BuildDate, TransformConfig};
 
 /// The time one case may take before proptest kills it and reports it — a
@@ -709,31 +709,71 @@ fn transform_block() -> impl Strategy<Value = String> {
     ]
 }
 
-/// One level of the deep-nesting sweep: how it opens, and how far in its
-/// content — the next level — is indented. `\n` ends an opener that takes
-/// no text on its line (the level's text becomes its first paragraph); an
-/// empty opener is a paragraph whose block quote the next level is; `term`
-/// is a definition-list item, its definition following with no blank line.
-fn opener() -> impl Strategy<Value = (&'static str, usize)> {
-    prop_oneof![
-        Just(("- ", 2)),
-        Just(("#. ", 3)),
-        Just(("(i) ", 4)),
-        Just(("", 3)),
-        Just((":f: ", 3)),
-        Just(("term", 3)),
-        Just((".. [#] ", 3)),
-        Just((".. [c] ", 3)),
-        Just((".. note:: ", 3)),
-        Just((".. admonition:: ", 3)),
-        Just((".. topic:: ", 3)),
-        Just((".. sidebar:: ", 3)),
-        Just((".. versionadded:: 1.0 ", 3)),
-        Just((".. container:: c\n", 3)),
-        Just((".. only:: html\n", 3)),
-        Just((".. compound::\n", 3)),
-        Just((".. py:function:: f()\n", 3)),
-    ]
+/// The openers of a deep-nesting level that nest in each other: how a
+/// level opens, and how far in its content — the next level — is indented.
+/// `\n` ends an opener that takes no text on its line (the level's text
+/// becomes its first paragraph); an empty opener is a paragraph whose block
+/// quote the next level is; `term` is a definition-list item, its
+/// definition following with no blank line.
+const NESTING_OPENERS: [(&str, usize); 14] = [
+    ("- ", 2),
+    ("#. ", 3),
+    ("(i) ", 4),
+    ("", 3),
+    (":f: ", 3),
+    ("term", 3),
+    (".. [#] ", 3),
+    (".. [c] ", 3),
+    (".. note:: ", 3),
+    (".. admonition:: ", 3),
+    (".. container:: c\n", 3),
+    (".. only:: html\n", 3),
+    (".. compound::\n", 3),
+    (".. py:function:: f()\n", 3),
+];
+
+/// Openers that end a nesting chain: `topic` and `sidebar` are refused
+/// inside body elements (docutils' "may not be used within topics or body
+/// elements"), and `versionadded` joins its content into one paragraph
+/// where Sphinx parses it as body elements (a known parser gap).
+const STOPPING_OPENERS: [(&str, usize); 3] = [
+    (".. topic:: ", 3),
+    (".. sidebar:: ", 3),
+    (".. versionadded:: 1.0 ", 3),
+];
+
+/// A level that keeps the chain nesting.
+fn nesting_opener() -> impl Strategy<Value = (&'static str, usize)> {
+    proptest::sample::select(&NESTING_OPENERS[..])
+}
+
+/// Any level — the innermost one, where a stopping opener ends nothing.
+fn any_opener() -> impl Strategy<Value = (&'static str, usize)> {
+    proptest::sample::select([&NESTING_OPENERS[..], &STOPPING_OPENERS[..]].concat())
+}
+
+/// One deep-nesting level: its opener, its text, and the transform-shaped
+/// blocks beside its content.
+type Level = ((&'static str, usize), &'static str, Vec<String>);
+
+/// `depth` levels whose every opener but the innermost nests, so a chain
+/// longer than the parser's 200-level guard reaches it.
+fn nesting_levels(depth: usize) -> impl Strategy<Value = Vec<Level>> {
+    let level = |opener: BoxedStrategy<(&'static str, usize)>| {
+        (
+            opener,
+            inline_payload(),
+            proptest::collection::vec(transform_block(), 0..2),
+        )
+    };
+    (
+        proptest::collection::vec(level(nesting_opener().boxed()), depth - 1),
+        level(any_opener().boxed()),
+    )
+        .prop_map(|(mut levels, innermost)| {
+            levels.push(innermost);
+            levels
+        })
 }
 
 /// One line of text the transforms read, for a nesting level.
@@ -755,11 +795,7 @@ fn inline_payload() -> impl Strategy<Value = &'static str> {
 /// (`.. |cK| replace:: |cK+1|_`) — nesting inline as deep as the chain is
 /// long, as substitution expansion builds it (docutils' expansion grows
 /// with the square of a chain's length, so a short one).
-fn nested_document(
-    levels: &[((&'static str, usize), &'static str, Vec<String>)],
-    chain: usize,
-    tail: &[String],
-) -> String {
+fn nested_document(levels: &[Level], chain: usize, tail: &[String]) -> String {
     let mut src = String::new();
     let mut indent = 0usize;
     for ((open, width), text, blocks) in levels {
@@ -824,92 +860,71 @@ proptest! {
         sphinx_read(&src, &opts(), &config);
     }
 
-    /// The deepest trees the parser builds, through the transforms: up to
-    /// 260 nested containers — past the parser's 200-level guard, which
-    /// replaces deeper content with an ERROR — drawn from every kind that
-    /// nests and three that refuse to inside body elements (`topic`,
-    /// `sidebar`, `versionadded`), with transform-shaped blocks at every
-    /// level and an inline chain of wrapped substitution references
-    /// ([`read_deep`]).
+    /// The deepest trees the parser builds, through the transforms. A
+    /// quarter of the cases nest 210 to 260 levels — past the parser's
+    /// 200-level guard, which replaces deeper content with an ERROR — and
+    /// the rest 1 to 39; every level but the innermost is one of the 14
+    /// openers that nest in each other ([`NESTING_OPENERS`]), the innermost
+    /// any of them or one of the 3 that end a chain ([`STOPPING_OPENERS`]).
+    /// Every level carries transform-shaped blocks, and an inline chain of
+    /// wrapped substitution references rides along ([`read_deep`]). A deep
+    /// case must print the guard's ERROR, so the sweep cannot quietly stop
+    /// reaching it.
     #[test]
     fn transforms_survive_the_deep_nesting_sweep(
-        levels in (prop_oneof![3 => 1usize..40, 1 => 190usize..=260]).prop_flat_map(|depth| {
-            proptest::collection::vec(
-                (
-                    opener(),
-                    inline_payload(),
-                    proptest::collection::vec(transform_block(), 0..2),
-                ),
-                depth,
-            )
-        }),
+        levels in prop_oneof![3 => 1usize..40, 1 => 210usize..=260]
+            .prop_flat_map(nesting_levels),
         chain in 0usize..24,
         tail in proptest::collection::vec(transform_block(), 0..6),
         config in transform_config(),
     ) {
         let src = nested_document(&levels, chain, &tail);
-        let _ = read_deep(src, config);
+        let records = read_deep(src, config);
+        if levels.len() >= 210 {
+            let guard = records
+                .iter()
+                .filter(|text| text.as_str() == GUARD_RECORD)
+                .count();
+            prop_assert!(guard >= 1, "{} levels, no guard record", levels.len());
+        }
     }
 }
 
+/// The text of the parser's nesting-guard record.
+const GUARD_RECORD: &str = "Maximum nesting depth exceeded; deeper content skipped.";
+
 /// [`sphinx_read`] for the deep-nesting sweep, returning the printed
-/// records' texts. The parse and the transforms move onto a thread with the
-/// build's parse stack (`rst::PARSE_STACK_SIZE`) themselves; the print —
-/// `pformat` and the tree's drop recurse once a level, test-side work —
-/// runs on one too.
+/// records' texts — all of it on one thread with the build's parse stack
+/// ([`on_parse_stack`]): the parse and the transforms, which run in place
+/// there, and the print (`pformat` and the tree's drop recurse once a
+/// level, test-side work).
 fn read_deep(src: String, config: TransformConfig) -> Vec<String> {
-    std::thread::Builder::new()
-        .stack_size(PARSE_STACK_SIZE)
-        .spawn(move || {
-            let (tree, records) = parse_and_transform(&src, &opts(), &config);
-            let _ = tree.root.pformat();
-            records
-                .iter()
-                .map(|record| {
-                    let _ = BuildWarning::from_diagnostic(record, "index.rst".into()).render();
-                    record.text.clone()
-                })
-                .collect()
-        })
-        .expect("the thread starts")
-        .join()
-        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+    on_parse_stack(move || {
+        let (tree, records) = parse_and_transform(&src, &opts(), &config);
+        let _ = tree.root.pformat();
+        records
+            .iter()
+            .map(|record| {
+                let _ = BuildWarning::from_diagnostic(record, "index.rst".into()).render();
+                record.text.clone()
+            })
+            .collect()
+    })
 }
 
-/// The deep-nesting sweep's documents do reach the parser's guard: 260
-/// levels of any one opener that may nest in itself print the guard's
-/// ERROR exactly once, and the transforms then run over the deepest tree
-/// that opener builds. (`topic` and `sidebar` are refused inside body
-/// elements — docutils' "may not be used within topics or body elements"
-/// — so a chain of them stops at the second level; `versionadded` joins
-/// its content into one paragraph where Sphinx parses it as body elements
-/// — a known parser gap — so a chain of it does not nest at all.)
+/// Each of the [`NESTING_OPENERS`] reaches the parser's guard on its own:
+/// 260 levels of it print the guard's ERROR exactly once, and the
+/// transforms then run over the deepest tree that opener builds. (The
+/// [`STOPPING_OPENERS`] would not: `topic` and `sidebar` stop at the second
+/// level, `versionadded` does not nest at all.)
 #[test]
 fn the_deep_nesting_documents_reach_the_guard() {
-    let openers = [
-        ("- ", 2),
-        ("#. ", 3),
-        ("(i) ", 4),
-        ("", 3),
-        (":f: ", 3),
-        ("term", 3),
-        (".. [#] ", 3),
-        (".. [c] ", 3),
-        (".. note:: ", 3),
-        (".. admonition:: ", 3),
-        (".. container:: c\n", 3),
-        (".. only:: html\n", 3),
-        (".. compound::\n", 3),
-        (".. py:function:: f()\n", 3),
-    ];
-    for opener in openers {
+    for opener in NESTING_OPENERS {
         let levels = vec![(opener, "\"q\" |s| `t`_ [#]_", Vec::new()); 260];
         let records = read_deep(nested_document(&levels, 8, &[]), TransformConfig::default());
         let guard = records
             .iter()
-            .filter(|text| {
-                text.as_str() == "Maximum nesting depth exceeded; deeper content skipped."
-            })
+            .filter(|text| text.as_str() == GUARD_RECORD)
             .count();
         assert_eq!(guard, 1, "{opener:?}: {records:?}");
     }

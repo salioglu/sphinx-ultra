@@ -1891,12 +1891,25 @@ mod tests {
     /// [`BOUNDED_WAIT`]: a pass that never ends fails the test instead of
     /// hanging it, and a pass recursing as deep as its input is long
     /// overflows the stack.
+    ///
+    /// The parse and the transforms move onto a thread with the build's
+    /// parse stack ([`crate::rst::PARSE_STACK_SIZE`]) unless the thread
+    /// calling them is marked as having it; this one is marked — falsely, on
+    /// purpose — so they run here, on the bounded stack, which the thread
+    /// checks before reading.
     fn read_bounded(source: impl Into<String>) -> (Doctree, Vec<(Option<u32>, String)>) {
         let source = source.into();
         let (sender, receiver) = std::sync::mpsc::channel();
         std::thread::Builder::new()
             .stack_size(BOUNDED_STACK)
             .spawn(move || {
+                crate::rst::mark_parse_stack_thread();
+                let here = std::thread::current().id();
+                assert_eq!(
+                    crate::rst::on_parse_stack(|| std::thread::current().id()),
+                    here,
+                    "the read runs on the bounded stack"
+                );
                 let _ = sender.send(read(&source));
             })
             .expect("the read thread could not start");
