@@ -20,18 +20,35 @@ pub(super) fn build_date(source: BuildDate) -> DateTime<Utc> {
 /// [`build_date`] with the environment variable and the clock handed in. A
 /// value Python's `float()` or `datetime.fromtimestamp` rejects — which
 /// aborts the Sphinx build (`ValueError`/`OverflowError`) — falls back to
-/// the clock here.
+/// the clock here; so does a pinned [`BuildDate::Epoch`] outside the same
+/// range.
 fn date_from(
     source: BuildDate,
     source_date_epoch: Option<String>,
     now: impl FnOnce() -> DateTime<Utc>,
 ) -> DateTime<Utc> {
     match source {
-        BuildDate::Epoch(seconds) => DateTime::from_timestamp(seconds, 0).unwrap_or_else(now),
+        BuildDate::Epoch(seconds) => python_datetime(seconds).unwrap_or_else(now),
         BuildDate::Environment => source_date_epoch
             .as_deref()
             .and_then(from_epoch_value)
             .unwrap_or_else(now),
+    }
+}
+
+/// The first and last whole seconds a Python `datetime` holds, as Unix
+/// time: `datetime(1, 1, 1)` and `datetime(9999, 12, 31, 23, 59, 59)` in
+/// UTC (`MINYEAR`/`MAXYEAR`).
+const PYTHON_SECONDS: std::ops::RangeInclusive<i64> = -62_135_596_800..=253_402_300_799;
+
+/// `datetime.fromtimestamp(seconds, tz=UTC)` for a whole second: `None`
+/// where it raises — a year outside 1 to 9999 (`ValueError: year 33658 is
+/// out of range` for `1e12`), which `chrono` would format.
+fn python_datetime(seconds: i64) -> Option<DateTime<Utc>> {
+    if PYTHON_SECONDS.contains(&seconds) {
+        DateTime::from_timestamp(seconds, 0)
+    } else {
+        None
     }
 }
 
@@ -62,8 +79,8 @@ fn from_epoch_value(value: &str) -> Option<DateTime<Utc>> {
     let whole = seconds.floor();
     let micros = ((seconds - whole) * 1e6).round_ties_even();
     let whole = if micros >= 1e6 { whole + 1.0 } else { whole };
-    // Out-of-range values saturate, and `from_timestamp` refuses them.
-    DateTime::from_timestamp(whole as i64, 0)
+    // A value past `i64` saturates, far outside Python's years either way.
+    python_datetime(whole as i64)
 }
 
 /// `date_format_mappings` (`i18n.py:177-215`) in its order, the order
@@ -385,6 +402,77 @@ mod tests {
                 "{value:?}"
             );
         }
+    }
+
+    /// Python's `datetime` holds the years 1 to 9999, and `fromtimestamp`
+    /// reaches both ends (probed, Sphinx 9.1.0 on Python 3.12: these format
+    /// as below); a `_` between digits is PEP 515's.
+    #[test]
+    fn source_date_epoch_reads_to_the_ends_of_pythons_years() {
+        for (value, expected) in [
+            ("253402300799", "9999-12-31 23:59:59"),
+            ("-62135596800", "0001-01-01 00:00:00"),
+            ("1_0", "1970-01-01 00:00:10"),
+        ] {
+            let date = from_epoch_value(value).unwrap_or_else(|| panic!("{value:?} unread"));
+            assert_eq!(
+                format_date("%Y-%m-%d %H:%M:%S", date),
+                expected,
+                "{value:?}"
+            );
+        }
+    }
+
+    /// Every value `format_date` raises on (probed, Sphinx 9.1.0 on Python
+    /// 3.12) — `float()`'s `ValueError` for garbage, `fromtimestamp`'s
+    /// `OverflowError` for an infinity and `ValueError` for NaN or a year
+    /// outside 1-9999 (`1e12` is "year 33658 is out of range"; a fraction
+    /// rounding past the last second or below the first leaves the range
+    /// too) — aborts the Sphinx build; here the build date falls back to
+    /// the clock. The same range bounds a pinned [`BuildDate::Epoch`].
+    #[test]
+    fn a_source_date_epoch_python_rejects_falls_back_to_the_clock() {
+        let clock = || at(1_700_000_000);
+        for value in [
+            "garbage",
+            "",
+            "1__0",
+            "_1",
+            "inf",
+            "-inf",
+            "nan",
+            "1e12",
+            "-1e11",
+            "253402300800",
+            "253402300799.9999994",
+            "-62135596801",
+            "-62135596800.4",
+        ] {
+            assert_eq!(
+                date_from(BuildDate::Environment, Some(value.into()), clock),
+                clock(),
+                "{value:?}"
+            );
+        }
+        for seconds in [253_402_300_800, -62_135_596_801, i64::MAX, i64::MIN] {
+            assert_eq!(
+                date_from(BuildDate::Epoch(seconds), None, clock),
+                clock(),
+                "{seconds}"
+            );
+        }
+    }
+
+    /// `%U` and `%W` map onto Babel's `WW`, which Babel rejects: Sphinx
+    /// logs `Invalid Babel locale: 'en'.` and the build aborts with
+    /// `ValueError: Invalid length for field: 'WW'` (probed). Here the
+    /// token stays as written, the rest formatted.
+    #[test]
+    fn the_week_of_year_tokens_stay_as_written() {
+        assert_eq!(
+            format_date("%U|%W|a%Ub|%Y", at(1_234_567_890)),
+            "%U|%W|a%Ub|2009"
+        );
     }
 
     /// The `date=None` branch (`i18n.py:270-280`): `SOURCE_DATE_EPOCH` when
