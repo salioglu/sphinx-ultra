@@ -56,11 +56,13 @@ everything forward is [ROADMAP.md](ROADMAP.md).
     `sphinx-build` crashes, hangs or fetches over the network (content
     nested past 200 levels, `include`'s `:parser:`, `raw`'s `:url:`, a
     `SOURCE_DATE_EPOCH` Python cannot read, a case-folded substitution
-    cycle, …) this build prints a record and carries on. One gap remains in
-    that guard: a chain of directives nested close to it (199 nested
-    `.. py:function::`) can exhaust a read thread's stack and abort a
-    release build — on a document `sphinx-build` already crashes on (from
-    82 nested `py:function`s).
+    cycle, …) this build prints a record and carries on. Content nested
+    more than 200 levels is cut there with `ERROR: Maximum nesting depth
+    exceeded; deeper content skipped. [docutils]`, where `sphinx-build`
+    dies with `RecursionError` (from 82 nested `py:function`s or 98 nested
+    `note`s); every thread that parses or walks the doctrees now has a
+    64 MiB stack (address space, committed as touched) so that the guard,
+    not a stack overflow, is what a deep document meets.
   Evidence: the read-phase doctree oracle at 697 cases (178 of them for the
   transforms, 20 for SmartQuotes), compared after the transforms and with
   each case's printed records; the docutils parse oracle at 761 cases with

@@ -27,7 +27,7 @@ The plan to move everything to ✅ is [ROADMAP.md](../ROADMAP.md).
 | Feature | Status | Evidence / gaps |
 |---|---|---|
 | File discovery w/ include/exclude patterns | ✅ (differentially verified) | `src/builder.rs` `discover_source_files`, `src/matching.rs`. `**` now translates to `.*` exactly like Sphinx 9.1 (wave 4); character-class emission is byte-identical to `sphinx.util.matching._translate_pattern` (incl. backslash doubling, `[]a]`/`[!]a]` edge cases). Verified by a committed 881-case differential fixture generated against sphinx 9.1.0 (`tools/gen_pattern_fixture.py`, `tests/pattern_differential.rs`) — zero divergence. Discovery keeps `include_patterns=['**']` and suffix-filters after matching, like Sphinx's `Project.discover`. Earlier 2026-08 fixes: `[!…]` → `[^/…]`, literal leading `^`, directory pruning. |
-| Parallel orchestration | ✅ | rayon pool sized by `-j`/config. Per-file failures become `BuildErrorReport`s and the build continues (2026-08). |
+| Parallel orchestration | ✅ | rayon pool sized by `-j`/config. Per-file failures become `BuildErrorReport`s and the build continues (2026-08). Since M2 wave 5 every thread that parses or walks the doctrees — the read pool's, and the thread the binary runs the build on — has a 64 MiB stack (`rst::PARSE_STACK_SIZE`, address space committed only as touched), and the public parse/transform entry points move their work onto such a thread whatever thread calls them, so the parser's 200-level nesting guard, never the stack, ends deep nesting. |
 | Incremental cache | ✅ | Fixed 2026-08: warm-cache rebuilds no longer deadlock (DashMap guard held across `alter` — found by the new E2E suite); hits write the rendered page; `--clean --incremental` produces a full tree (clean clears the cache); `max_cache_size_mb`/`cache_expiration_hours` plumbed; config changes invalidate via blake3 fingerprint; eviction honestly named least-accessed (LFU-style). M2 wave 4: staleness is now Sphinx's env-level computation, not mtime alone (below). |
 | Dependency graph / outdated computation | ✅ (M2 wave 4) | `build_dependency_graph`'s empty-vec TODO is gone. `BuildEnvironment::get_outdated_files` (`src/env/mod.rs`) is a port of Sphinx's: added ∪ changed ∪ removed documents, where "changed" consults `env.dependencies[docname]` — a dependency that is missing or newer than the document's read time makes the document outdated. `src/env/dependencies.rs` ports `note_dependency` and `relfn2path`. **M2 wave 4.5 ended the images-only limitation**: `include` and `literalinclude` call `note_dependency` on every member file they read, and `env.included` records the inclusion graph, so touching an included fragment re-reads the documents that include it. `docutils.conf` and gettext catalogs are still unmodelled. One deliberate non-dependency: a docutils **standard include** (`.. include:: <isonum.txt>`) records nothing, because sphinx's `Include.run` bypasses the path rewrite entirely for `<…>` targets (`other.py:410-412`) — the files are vendored, so there is nothing on disk to watch. That is unit-tested; the env oracle cannot reach it. Fixture `tests/fixtures/deps_image/` + `tests/e2e_cli.rs` cover the touch-an-image-and-rebuild path. Config-class (`rebuild='env'`) narrowing is deliberately not done: the whole-config `.config-fingerprint` wipes the cache on *any* config change, a strict superset that cannot under-rebuild. |
 | RST parsing | ✅ (docutils-fidelity, wired) | **M2 wave 3 (2026-08-13): the binary runs the new parser** — `Parser::parse` → `src/rst/parse_rst_full` (sphinx mode); the M1 line-scanner is deleted. `src/doctree/` generic-node IR with byte-parity `pformat`; `src/rst/` block + inline grammar (waves 1–2) plus docutils-exact directive machinery (typed option converters with docutils-verbatim error texts, options-before-arguments evaluation order, rawsource literals, as-written names), the docutils built-in directive set (admonitions/topic/sidebar/rubric/quote-family/compound/container/parsed-literal/image/figure/code/math/raw/line-block/class/table/csv-table/list-table) and substitution definitions (replace/unicode/date, embedded directives, duplicate dupname semantics). Zero divergence on a committed 761-case fixture vs docutils 0.22.4 parse layer (`tests/doctree_differential.rs`), which since M2 wave 5 also pins each case's reporter stream — the messages docutils writes, in creation order. Sphinx-mode set (toctree, versionmodified family, seealso, code-block/sourcecode + highlight state, only, rst-class, math + equation targets, index, hlist, glossary, xref pending_xref anatomy, pep/rfc/cve/cwe) verified against a real sphinx-build 9.1.0 read-phase oracle (`tests/sphinx_doctree_differential.rs`). Document now derives title/toc (docutils `make_id` anchors)/labels/toctree entries/directive+role records from the doctree; the three builder raw-source re-scanners are gone. **M2 wave 4** added generic object-description anatomy (`desc`/`desc_signature`/`desc_name`/`desc_addname`/`desc_annotation`/`desc_content`, the `:no-index:`/`:no-index-entry:`/`:no-contents-entry:`/`:no-typesetting:` family, the `PropagateDescDomain` transform) and the std-domain directives on top of it — `program`, `option` (incl. `[=value]` and comma-separated multi-name forms), `envvar`, `confval` with `:type:`/`:default:`, `describe`/`object`, `default-domain`; plus glossary terms taking their ids from Sphinx's `make_id` (not docutils') and index entries following `process_index_entry` onto a list-valued attribute. **M2 wave 4.5** added the py domain's fourteen directives on that anatomy, the `include`/`literalinclude` family (see their own rows below), and a faithful port of `Glossary.run`'s line state machine — which fixed the entry split (terms separated by a blank line share one `definition_list_item`; a `.. ` comment does not split a multi-term entry) and made its three misformat diagnostics appear in the doctree (printed since M2 wave 5's reporter channel). The sphinx oracle — since M2 wave 5 a comparison of parse **plus read transforms** and of the printed record stream — stands at **697 cases, zero divergence**. Remaining deferrals: ifconfig, meta, rst_prolog/epilog/default_role (all three wanted the per-line provenance layer wave 4.5 built, so they are now unblocked). Known gap recorded in-tree (`tools/gen_sphinx_fixture.py` header): `ObjectDescription`'s `allow_section_headings=True` is not modelled — this crate's nested parse is `match_titles=False` throughout, so a section title (or a `topic`/`sidebar`) inside a description body is rejected with `Unexpected section title.` where Sphinx accepts it. Threading a real `match_titles` through the section machinery is its own change; the two probe cases are held out of the corpus rather than committed knowingly-red. |
@@ -116,15 +116,15 @@ known-imperfect implementation for a blank file.
 
 ## Testing status
 
-**1214 tests passing, 7 ignored** (as of M2 wave 5 sub-project 1,
+**1219 tests passing, 7 ignored** (as of M2 wave 5 sub-project 1,
 `CARGO_INCREMENTAL=0 cargo test --locked` on 2026-10-01). That is what
-`cargo test` reports across its thirteen targets — 1024 lib + 7 bin + 183
+`cargo test` reports across its thirteen targets — 1027 lib + 7 bin + 185
 integration; the 7 ignored are `tests/html_differential.rs`'s page-oracle
 tests, off until the HTML writer lands; **0 of them are doc-tests** (the run
 lists `Doc-tests sphinx_ultra … running 0 tests` separately). A raw `#[test]`
-grep over `src/` and `tests/` returns 1219; with
-`tests/inventory_roundtrip.rs`'s two `#[tokio::test]`s that is 1221 — cargo's
-1214 passing plus the 7 ignored.
+grep over `src/` and `tests/` returns 1224; with
+`tests/inventory_roundtrip.rs`'s two `#[tokio::test]`s that is 1226 — cargo's
+1219 passing plus the 7 ignored.
 Every generator below is pinned to sphinx 9.1.0 / docutils 0.22.4 and asserts
 those versions at runtime; all five reproduce their committed output
 byte-identically. `PYTHONNOUSERSITE=1` is on every *live* regen command — the
@@ -143,7 +143,7 @@ start.
 
 | Suite | Status |
 |---|---|
-| Unit tests (lib + bin) | ✅ 1031 passing (1024 lib + 7 bin) |
+| Unit tests (lib + bin) | ✅ 1034 passing (1027 lib + 7 bin) |
 | Pattern compatibility tests | ✅ 10 passing — assertions encode Sphinx 9.1 semantics (M1 wave 4) |
 | Pattern differential suite | ✅ 881 generated cases vs `sphinx.util.matching` 9.1.0, zero divergence; regenerate with `PYTHONNOUSERSITE=1 uv run --python 3.12 --with 'sphinx>=9.1,<9.2' python tools/gen_pattern_fixture.py` |
 | Doctree differential suite (docutils parse layer) | ✅ 761 generated cases vs docutils 0.22.4, zero divergence — the tree and, since M2 wave 5, the reporter stream each case writes (2 tests); regenerate with `PYTHONNOUSERSITE=1 uv run --python 3.12 --with docutils==0.22.4 python tools/gen_doctree_fixture.py` (the flag is not optional — `uv run` keeps user site-packages on `sys.path`, and a user-site Pygments there silently re-records every `code:: python` case as tokenized output) |
@@ -152,8 +152,8 @@ start.
 | HTML differential harness (`tests/html_differential.rs`) | ✅ 9 passing, 7 ignored — the page-level oracle a real `sphinx-build -b html`/`-b dirhtml` 9.1.0 wrote for the committed corpus (`tests/fixtures/html_differential_*.json`); the fixture, normalization and helper checks pass, and the seven per-key output comparisons are `#[ignore]`d until the HTML builder is wired |
 | Inventory round-trip suite | ✅ 5 tests (3 `#[test]` + 2 `#[tokio::test]`, so a bare `#[test]` grep undercounts it) over 12 committed `.inv` files (4 sphinx-written, 3 handcrafted-valid, 5 handcrafted-malformed), expectations taken from Sphinx's own `InventoryFile.loads`; same `uv` invocation with `tools/gen_inventory_fixture.py` |
 | Doctree serde / interner-cap suites | ✅ 6 passing (5 + 1) — bincode round-trip, the escape offsets' encoding, and the interner's bound |
-| Property tests (`tests/rst_proptest.rs`) | ✅ 17 passing — the parser never panics on arbitrary, multiline, multibyte or deeply nested input, and (wave 4.5) on arbitrary py and std object signatures, arbitrary annotations through `parse_annotation`, and arbitrary `include`/`literalinclude` option blocks and file arguments against a real scratch srcdir (the file-argument sweep draws control characters, newlines, absolute and `..` paths since panel fix round B, and pins totality only — sphinx reads whatever path `relfn2path` yields, so "never reads outside the project" is not a property either side has). Round 1 widened the std sweep's body generator, whose fixed ASCII lines at three fixed indents could not reach the `glossary` dedent branch that broke totality: it now draws an arbitrary indent over text carrying 2-, 3- and 4-byte characters. **M2 wave 5** made the property the Sphinx read's: every generator's input also runs through `parse_and_transform` under a drawn `TransformConfig` (`keep_warnings`, SmartQuotes on/off, arbitrary actions and languages, excluded builders, arbitrary `today_fmt` and build date), and two generators are new — transform-shaped documents whose substitution, target, footnote and citation names collide (cycles and case variants included), and `transforms_survive_the_deep_nesting_sweep`, which nests every nesting container past the parser's 200-level guard and runs the transforms on the deepest trees on a 2 MiB thread (`the_deep_nesting_documents_reach_the_guard` proves each opener reaches the guard). Every case runs under a 60 s per-case timeout (proptest's forked `timeout`), so a transform that never ends fails the sweep instead of hanging it. Green at `PROPTEST_CASES=2048` (17/17, 105.6 s) |
-| `tests/e2e_cli.rs` | ✅ 59 passing — the real binary against fixture projects: exit codes, warning text, output trees, `--config` routing, sphinx-build mode, incremental/dependency rebuilds |
+| Property tests (`tests/rst_proptest.rs`) | ✅ 17 passing — the parser never panics on arbitrary, multiline, multibyte or deeply nested input, and (wave 4.5) on arbitrary py and std object signatures, arbitrary annotations through `parse_annotation`, and arbitrary `include`/`literalinclude` option blocks and file arguments against a real scratch srcdir (the file-argument sweep draws control characters, newlines, absolute and `..` paths since panel fix round B, and pins totality only — sphinx reads whatever path `relfn2path` yields, so "never reads outside the project" is not a property either side has). Round 1 widened the std sweep's body generator, whose fixed ASCII lines at three fixed indents could not reach the `glossary` dedent branch that broke totality: it now draws an arbitrary indent over text carrying 2-, 3- and 4-byte characters. **M2 wave 5** made the property the Sphinx read's: every generator's input also runs through `parse_and_transform` under a drawn `TransformConfig` (`keep_warnings`, SmartQuotes on/off, arbitrary actions and languages, excluded builders, arbitrary `today_fmt` and build date), and two generators are new — transform-shaped documents whose substitution, target, footnote and citation names collide (cycles and case variants included), and `transforms_survive_the_deep_nesting_sweep`, which nests every nesting container past the parser's 200-level guard and runs the transforms on the deepest trees the parser builds (`the_deep_nesting_documents_reach_the_guard` proves each opener reaches the guard). Every case runs under a 60 s per-case timeout (proptest's forked `timeout`), so a transform that never ends fails the sweep instead of hanging it. Green at `PROPTEST_CASES=2048` (17/17, 114.3 s) |
+| `tests/e2e_cli.rs` | ✅ 61 passing — the real binary against fixture projects: exit codes, warning text, output trees, `--config` routing, sphinx-build mode, incremental/dependency rebuilds, and (M2 wave 5) 260-level directive nesting reaching the parser's guard instead of the stack limit, under a 512 KiB main thread too |
 | Benchmarks | ❌ `benches/builder_benchmark.rs` panics at line 69 (`No such file or directory`) — it hands the parser a `test.rst` path that does not exist, so `cargo test --all-targets` and `cargo bench` fail. Pre-existing and outside plain `cargo test`, which is why no wave caught it. The rest exercise the placeholder write path (numbers measure escaped-text copying) and the cache benchmark is `black_box(42)`. Rewrite is scheduled with M2 wave 5. |
 
 ## Known divergences from Sphinx 9.1.0 (M2 wave 5, sub-project 1)
@@ -193,20 +193,10 @@ row above). What remains is write-time work, sub-project 2 and later:
 
 **Deliberate: crate-only messages.** Each has no Sphinx counterpart and
 replaces a crash or a network fetch; dropping it would drop content silently,
-so it prints, counts as a warning and fails `-W`. Input — `sphinx-build` —
-this crate:
+so it prints, counts as a warning and fails `-W` (the nesting guard's ERROR is
+one too; it is listed with the crash fallbacks below). Input — `sphinx-build`
+— this crate:
 
-- **Content nested more than 200 levels** (`MAX_NEST_DEPTH`,
-  `src/rst/block.rs`) — `RecursionError`, well before 200 (probed: 98 nested
-  `note`s, 82 nested `py:function`s; docutils alone 110 notes, 165 bullet
-  lists or block quotes) — `ERROR: Maximum nesting depth exceeded; deeper
-  content skipped. [docutils]`, the deeper content dropped. **The guard is
-  not always reached:** a chain of nested *directives* can exhaust a read
-  thread's 2 MiB stack first — the release binary aborts with a stack
-  overflow on 199 nested `.. py:function::` (150 build), a debug build on
-  about 90 nested `.. note::`; bullet lists, block quotes and the other
-  non-directive containers reach the guard (pending a decision; probed
-  2026-10-01).
 - **`.. include::` with `:parser:`** — runs the named parser — `CRITICAL:
   Problem with "include" directive:` / `parser mode is not supported by
   sphinx-ultra (planned with MyST, M2 wave 6)`, nothing included.
@@ -225,6 +215,16 @@ this crate:
 never finishes; this crate prints what Sphinx prints (or would) and carries
 on. Input — `sphinx-build` — this crate:
 
+- **Content nested more than 200 levels** — dies with `RecursionError` well
+  before 200 (probed: from 98 nested `note`s, 82 nested `py:function`s;
+  docutils alone from 110 notes, 165 bullet lists or block quotes) — the
+  parser's guard (`MAX_NEST_DEPTH`, `src/rst/block.rs`) fires at 200 levels:
+  `ERROR: Maximum nesting depth exceeded; deeper content skipped.
+  [docutils]`, the deeper content dropped, the build carried on. Every thread
+  that parses has the stack to get there (`rst::PARSE_STACK_SIZE`, 64 MiB);
+  pinned end to end on 260 nested `note`s, admonitions and `py:function`s
+  (`nesting_past_the_guard_prints_its_error_instead_of_aborting`, and under
+  a 512 KiB main thread).
 - **`today_fmt` with `%U` or `%W`** — logs `Invalid Babel locale: 'en'.` and
   aborts (`ValueError: Invalid length for field: 'WW'`) — the token is kept
   as written.
