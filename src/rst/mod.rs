@@ -405,10 +405,11 @@ pub struct ParseOutput {
     /// the top-level input, spliced `include` lines counted. Its
     /// `get_source_and_line()` is still bound to the finished top-level
     /// state machine (`states.py:244-246`), whose cursor stops there
-    /// (`statemachine.py:358-377`). `None` for an input without lines
-    /// (docutils: no line either). A document that ends inside a
-    /// directive's nested content leaves docutils' cursor further on, with
-    /// no line at all — not modelled (ledgered). Never serialized.
+    /// (`statemachine.py:358-377`) — unless the last top-level construct
+    /// moved it: past the end, with no line at all (`None`), when its nested
+    /// list parse ran to the end of the input, or onto the last line after
+    /// a final `::` paragraph (the parser's `TopCursor`). `None` too for an
+    /// input without lines (docutils: no line either). Never serialized.
     pub end_of_input: Option<(u16, u32)>,
 }
 

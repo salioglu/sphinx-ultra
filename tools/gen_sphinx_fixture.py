@@ -1209,6 +1209,24 @@ CASES = [
     # block's line. (Not a field name, `:0:` in docutils, nor a line
     # block's later lines, each stamped with its own line: ledgered.)
     ('tx_links', 'dangling_reference_locations', 'Title a_\n========\n\n- item b_\n\n  more c_\n\n+------+\n| d_   |\n+------+\n\n    quote e_\n\nterm f_\n   def g_\n\n:field: body i_\n\n.. note:: note j_\n\n| line k_\n'),
+    # Fix round 1: an explicit-markup or line-block nested parse stops at
+    # a blank line (`Explicit.blank`, `LineBlock.blank` are
+    # `invalid_input`, `states.py:2773,2803`), and a hyperlink target
+    # (`until_blank=True`, `:2058-2059,2532-2533`) or an empty comment
+    # (`:2427-2430`) does not read one: the top level eats the trailing
+    # blank and ends one past the input. A comment's or a directive's block
+    # does take trailing blanks, so it still ends with no line.
+    ('tx_links', 'anonymous_mismatch_ends_with_target_and_blank', 'A `x`__.\n\n.. _t: https://x/\n\n'),
+    ('tx_links', 'anonymous_mismatch_ends_with_anonymous_target_and_blank', 'A `x`__ and `y`__.\n\n__ https://x/\n\n'),
+    ('tx_links', 'anonymous_mismatch_ends_with_line_block_and_blank', 'A `x`__.\n\n| one\n| two\n\n'),
+    ('tx_links', 'anonymous_mismatch_ends_with_empty_comment_and_blank', 'A `x`__.\n\n..\n\n'),
+    ('tx_links', 'anonymous_mismatch_ends_with_empty_comment', 'A `x`__.\n\n..\n'),
+    ('tx_links', 'anonymous_mismatch_ends_with_comment_and_blank', 'A `x`__.\n\n.. c\n\n'),
+    ('tx_links', 'anonymous_mismatch_section_ends_with_target_and_blank', 'A `x`__.\n\nT\n=\n\n.. _t: https://x/\n\n'),
+    # Fix round 1 (Task 9): Substitutions' line-length error in a document
+    # ending in a hyperlink target and a blank line — one past the input
+    # (the target leaves the blank to the top level), as before Task 9.
+    ('tx_subst', 'expansion_exceeds_line_length_limit_ending_in_a_target_and_blank', '.. |a| replace:: ' + 'x' * 1000 + '\n.. |b| replace:: ' + ' '.join(['|a|'] * 11) + '\n\nSee |b| here.\n\n.. _t: https://x/\n\n'),
 ]
 
 
@@ -1425,8 +1443,8 @@ def main() -> int:
         "pyconf": 30,
         "tx_filter": 1,
         "tx_targets": 16,
-        "tx_subst": 23,
-        "tx_links": 46,
+        "tx_subst": 24,
+        "tx_links": 53,
     }
     counts: dict = {}
     for case in CASES:

@@ -365,9 +365,11 @@ enum TopCursor {
     #[default]
     JustPast,
     /// Further on: the element's nested list parse (`nested_list_parse`,
-    /// `states.py:382-424`) ran to the end of the input and `goto_line`
-    /// moved the cursor there, so the run loop's `next_line` steps beyond
-    /// it and `info()` raises `IndexError` — no source, no line.
+    /// `states.py:382-424`) ran to the end of the input — trailing blank
+    /// lines included, which the explicit list and a line block read only
+    /// through their last construct — and `goto_line` moved the cursor
+    /// there, so the run loop's `next_line` steps beyond it and `info()`
+    /// raises `IndexError` — no source, no line.
     Beyond,
     /// On the last line: a `::` paragraph that is the input's last line
     /// expects a literal block, and the empty quoted-literal parse steps
@@ -915,6 +917,20 @@ impl BlockParser {
         }
     }
 
+    /// The explicit construct just parsed, ending before `pos`, reads no
+    /// trailing blank line: a hyperlink or anonymous target
+    /// (`until_blank=True`), an empty comment or the end-of-inclusion
+    /// marker (nothing at all). The explicit list's nested parse stops at a
+    /// blank line (`Explicit.blank` is `invalid_input`, `states.py:2803`),
+    /// so when one follows, the top level eats it and its cursor ends just
+    /// past the input ([`TopCursor::JustPast`]); at the very end of the
+    /// input the list ran to it ([`TopCursor::Beyond`], set on dispatch).
+    fn note_blank_left_to_top(&mut self, lines: &[LineRec], pos: usize) {
+        if self.depth == 0 && pos < lines.len() {
+            self.top_cursor = TopCursor::JustPast;
+        }
+    }
+
     fn container<'r>(root: &'r mut Node, stack: &'r mut [Node]) -> &'r mut Node {
         match stack.last_mut() {
             Some(top) => top,
@@ -1115,7 +1131,9 @@ impl BlockParser {
         // `explicit_markup`/`anonymous` and `Text.indent` (a definition
         // list) each parse the rest of their list with `nested_list_parse`
         // and `goto_line` past it (`states.py:1373-1387,1407-1439,
-        // 1564-1576,1607-1634,2508-2527,2859-2874`).
+        // 1564-1576,1607-1634,2508-2527,2859-2874`). The explicit list stops
+        // at a blank line the last construct did not read
+        // ([`Self::note_blank_left_to_top`]).
         if let Some(bullet) = Self::bullet_marker(text) {
             self.note_cursor_beyond();
             self.parse_bullet_list(lines, pos, bullet, out);
@@ -2096,7 +2114,10 @@ impl BlockParser {
         // first with `nested_list_parse` and `goto_line` only when the
         // first line's block — the line and its indented continuation,
         // `get_first_known_indented(until_blank=True)` — is not
-        // blank-finished: when a non-blank line directly follows it.
+        // blank-finished: when a non-blank line directly follows it. That
+        // nested parse stops at a blank line (`LineBlock.blank` is
+        // `invalid_input`, `:2773`), so it reaches the end of the input
+        // only when the block does (checked below).
         let mut first_end = start + 1;
         while first_end < lines.len()
             && !lines[first_end].is_blank()
@@ -2104,9 +2125,7 @@ impl BlockParser {
         {
             first_end += 1;
         }
-        if first_end < lines.len() && !lines[first_end].is_blank() {
-            self.note_cursor_beyond();
-        }
+        let nested = first_end < lines.len() && !lines[first_end].is_blank();
         // (depth, text): depth None on bare `|` lines inherits the previous
         // line's depth (fixture-verified). Continuations dedent by the FIRST
         // continuation line's indent, preserving deeper relative indents.
@@ -2142,6 +2161,9 @@ impl BlockParser {
             } else {
                 break;
             }
+        }
+        if nested && p == lines.len() {
+            self.note_cursor_beyond();
         }
         // Resolve inherited depths and inline-parse each line's text.
         let span = self.span_of(lines, start, p - 1);
@@ -2346,6 +2368,9 @@ impl BlockParser {
                 }
             }
             if construct_error.is_none() {
+                // `until_blank=True` (`states.py:2058-2059`): a trailing
+                // blank line is left to the top level.
+                self.note_blank_left_to_top(lines, *pos);
                 self.warn_explicit_markup_end(lines, *pos, out);
                 return;
             }
@@ -2385,6 +2410,8 @@ impl BlockParser {
         {
             self.include_log.pop();
             *pos += 1;
+            // Reads nothing past its own line (`states.py:2431-2433`).
+            self.note_blank_left_to_top(lines, *pos);
             return;
         }
 
@@ -2412,6 +2439,11 @@ impl BlockParser {
             (Vec::new(), 0)
         };
         *pos = start + 1 + consumed;
+        if !consume_block {
+            // The empty comment reads nothing (`states.py:2427-2430`); any
+            // other reads its block, trailing blank lines included.
+            self.note_blank_left_to_top(lines, *pos);
+        }
         let span = self.span_of(lines, start, start + consumed);
         let mut text_lines: Vec<String> = Vec::new();
         if !rest.is_empty() {
@@ -8239,6 +8271,8 @@ impl BlockParser {
             link.push_str(self.sources.line_text(*l).trim());
         }
         *pos = start + 1 + consumed;
+        // `until_blank=True` (`states.py:2532-2533`).
+        self.note_blank_left_to_top(lines, *pos);
         let mut target = Node::elem(kinds::TARGET, span);
         target.set("anonymous", AttrValue::Int(1));
         // `blocktext = match.string[:match.end()] + '\n'.join(block)`
@@ -13925,7 +13959,16 @@ mod tests {
     /// to the end of the input (`:2961-2970`; a blank line after it ends
     /// its nested parse early, `:3205-3209`); a block quote, a table, a
     /// doctest block, a paragraph, a literal block and a section title
-    /// leave the cursor at the end. One more: a `::` paragraph with no line
+    /// leave the cursor at the end. The explicit markup list and a line
+    /// block's nested parse stop at a blank line (`Explicit.blank`,
+    /// `LineBlock.blank` are `invalid_input`, `:2773,2803`), so the last
+    /// construct must take any trailing blank lines itself: a comment, a
+    /// directive, a footnote, a citation and a substitution definition do
+    /// (their blocks are read without `until_blank`), but a hyperlink target
+    /// and an anonymous target (`until_blank=True`, `:2058-2059,2532-2533`),
+    /// an empty comment and the end-of-inclusion marker (which read nothing,
+    /// `:2427-2433`) and a line block's lines leave them to the top level,
+    /// which ends one past them. One more: a `::` paragraph with no line
     /// at all after it finds no literal block, and the empty quoted parse
     /// steps back (`previous_line`, `:3211-3225`) onto the last line — the
     /// location is that line. Only the top level counts: a section's
@@ -13955,6 +13998,19 @@ mod tests {
             "Para.\n\n| one\n| two\n",
             "Para.\n\n::\n\n> quoted\n",
             "---\n    x\n",
+            "Para.\n\n..\n",
+            "Para.\n\n.. c\n\n",
+            "Para.\n\n.. [1] f\n\n",
+            "Para.\n\n.. |s| replace:: S\n\n",
+            "Para.\n\n.. note:: y\n\n",
+            "Para.\n\n..\n   indented\n\n",
+            "Para.\n\n.. _t: https://x/\n.. c\n\n",
+            "Para.\n\n| one\n| two\n   cont\n",
+            "Para.\n\n- a\n\n\n",
+            "Para.\n\nterm\n   def\n\n",
+            "Para.\n\n:f: v\n\n",
+            "Para.\n\n-o  opt\n\n",
+            "Para.\n\n#. one\n\n",
         ] {
             assert_eq!(end(source), None, "{source:?}");
         }
@@ -13983,6 +14039,17 @@ mod tests {
             ("Para.\n\nB::\n\n\n", 6),
             ("Para.\n\nB::\n", 3),
             ("Para::\n", 1),
+            ("Para.\n\n.. _t: https://x/\n\n", 5),
+            ("Para.\n\n.. _t: https://x/\n\n\n", 6),
+            ("Para.\n\n.. _t:\n\n", 5),
+            ("Para.\n\n.. __: https://x/\n\n", 5),
+            ("Para.\n\n__ https://x/\n\n", 5),
+            ("Para.\n\n.. _t: https://x/\n   more\n\n", 6),
+            ("Para.\n\n.. c\n.. _t: https://x/\n\n", 6),
+            ("Para.\n\n..\n\n", 5),
+            ("Para.\n\n| one\n| two\n\n", 6),
+            ("Para.\n\n| one\n| two\n   cont\n\n", 7),
+            ("Title\n=====\n\n.. _t: https://x/\n\n", 6),
         ] {
             assert_eq!(end(source), Some((0, line)), "{source:?}");
         }
@@ -18392,6 +18459,36 @@ mod include_tests {
                 ("main.rst".to_string(), 5),
             ]
         );
+    }
+
+    /// A document ending in an `include`: docutils appends `''` and the
+    /// end-of-inclusion marker to the included lines and pads them with a
+    /// blank `internal padding after <source>` line (`misc.py:264-266`,
+    /// `statemachine.py:385-393`). The marker reads nothing (`states.py:
+    /// 2427-2433`) and the explicit list stops at the padding blank
+    /// (`Explicit.blank`, `:2803`), which the top level eats: a message
+    /// with no node is located one past the padding line, whatever the
+    /// included file ends with. Probed against Sphinx 9.1 (a 1-line
+    /// paragraph, bullet list or hyperlink target included last:
+    /// `internal padding after inc_….rst:5`).
+    #[test]
+    fn a_document_ending_in_an_include_ends_past_the_padding() {
+        let tmp = tempfile::tempdir().unwrap();
+        for (name, content) in [
+            ("inc_para.rst", "Inc para.\n"),
+            ("inc_list.rst", "- inc item\n"),
+            ("inc_target.rst", ".. _t: https://x/\n"),
+        ] {
+            write(tmp.path(), name, content);
+            let out =
+                parse_sphinx_full(tmp.path(), "main", &format!("A.\n\n.. include:: {name}\n"));
+            let (source, line) = out.end_of_input.expect("a line");
+            assert_eq!(
+                (out.doctree.sources[usize::from(source)].as_str(), line),
+                (format!("internal padding after {name}").as_str(), 5),
+                "{name}"
+            );
+        }
     }
 
     /// End-to-end over the real directive: the trailing blank prevents an
