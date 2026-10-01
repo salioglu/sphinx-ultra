@@ -105,6 +105,18 @@ pub(super) fn default_substitutions(ctx: &mut TransformCtx) {
 /// 76`), which Sphinx leaves at its default.
 const LINE_LENGTH_LIMIT: usize = 10_000;
 
+/// The depth limit: how many levels below a substitution definition its
+/// tree may reach for a reference to it to be expanded — where Sphinx's
+/// build has died. docutils measures the definition before every
+/// expansion (`len(subdef.astext())`, `references.py:696`), a recursion of
+/// one Python frame a level, and Python's default recursion limit is 1,000
+/// frames: 1,000 levels are past it however few frames lie below
+/// Substitutions (13 when Sphinx's `main` runs the build, probed — so the
+/// build dies from 987 levels on). Probed: a definition doubling to 512
+/// levels builds; to 1,024, the build dies of RecursionError at that line.
+/// See [`substitutions`] for what the limit stops.
+const MAX_DEFINITION_DEPTH: usize = 1_000;
+
 /// `Substitutions` (`docutils/transforms/references.py:642-764`, priority
 /// 220): every `substitution_reference` is replaced by a copy of its
 /// definition's children, the definition staying where it is.
@@ -150,7 +162,7 @@ const LINE_LENGTH_LIMIT: usize = 10_000;
 /// Where docutils never finishes, or aborts the Sphinx build, the port
 /// departs from it — and only there; every document docutils finishes gets
 /// docutils' records and tree. Two of the departures end the expansion;
-/// the third reports and carries on:
+/// the other two report and carry on:
 ///
 /// * **Never finishes.** docutils files a nested reference under its
 ///   case-folded name's definition (`normed`, the last of the names that
@@ -177,6 +189,22 @@ const LINE_LENGTH_LIMIT: usize = 10_000;
 ///   reference in its turn: `Undefined substitution referenced: "%s".` at
 ///   the reference's place, a `problematic` in its stead; everything else
 ///   is expanded as usual.
+/// * **Aborts measuring a definition, reported and carried on.** A
+///   definition [`MAX_DEFINITION_DEPTH`] levels deep is past what docutils
+///   can measure: the Sphinx build dies of RecursionError there. Only a
+///   definition that expansion grows gets that deep: one wrapping a
+///   reference to itself (`.. |a| replace:: |a|_ x`) under a name another
+///   folds onto (`.. |A|`) escapes the circularity test, and each expansion
+///   of its own reference copies it into itself — doubling it, references
+///   nesting twice as deep each round, on to 8,192 levels with two
+///   characters a level before the line-length limit, and for ever with
+///   none. Every transform after would walk each copy of it in time
+///   quadratic in its depth (the deep proptest sweep's 60-second timeout).
+///   So a reference to a definition that deep is not expanded: `Substitution
+///   definition "%s" exceeds the maximum nesting depth.` (ERROR, at the
+///   reference) and a `problematic` in its stead, as for the line-length
+///   limit. The limit is tested first: docutils dies measuring the
+///   definition's length.
 pub(super) fn substitutions(ctx: &mut TransformCtx) {
     if !contains_substitution_reference(&ctx.tree.root) {
         return;
@@ -230,6 +258,11 @@ pub(super) fn substitutions(ctx: &mut TransformCtx) {
                 let text = format!("Undefined substitution referenced: \"{refname}\".");
                 Some(ctx.message_at(messages::ERROR, &text, arena.location(reference)))
             }
+            Some(key) if arena.depth(defs[key]) >= MAX_DEFINITION_DEPTH => {
+                let text =
+                    format!("Substitution definition \"{key}\" exceeds the maximum nesting depth.");
+                Some(ctx.message_at(messages::ERROR, &text, arena.location(reference)))
+            }
             Some(key) if arena.text_len(defs[key]) > LINE_LENGTH_LIMIT => {
                 let text =
                     format!("Substitution definition \"{key}\" exceeds the line-length-limit.");
@@ -280,9 +313,15 @@ pub(super) fn substitutions(ctx: &mut TransformCtx) {
 /// Whether any `substitution_reference` is in the tree: most documents
 /// have none, and both substitution transforms leave those alone.
 fn contains_substitution_reference(root: &Node) -> bool {
+    contains(root, |node| node.kind == kinds::SUBSTITUTION_REFERENCE)
+}
+
+/// Whether any node of the tree under `root` is `wanted`: a walk by
+/// explicit stack that stops at the first.
+fn contains(root: &Node, wanted: impl Fn(&Node) -> bool) -> bool {
     let mut stack = vec![root];
     while let Some(node) = stack.pop() {
-        if node.kind == kinds::SUBSTITUTION_REFERENCE {
+        if wanted(node) {
             return true;
         }
         stack.extend(&node.children);
@@ -633,6 +672,18 @@ impl Arena {
         })
     }
 
+    /// How many levels down the subtree under `id` reaches (a leaf: 0) —
+    /// one less than the frames `node.astext()` recurses through.
+    fn depth(&self, id: usize) -> usize {
+        let mut deepest = 0;
+        let mut stack = vec![(id, 0)];
+        while let Some((id, depth)) = stack.pop() {
+            deepest = deepest.max(depth);
+            stack.extend(self.slots[id].kids.iter().map(|&kid| (kid, depth + 1)));
+        }
+        deepest
+    }
+
     /// `len(node.astext())`, in characters, as Python counts them.
     fn text_len(&self, id: usize) -> usize {
         let mut len = 0;
@@ -697,6 +748,28 @@ impl Arena {
         (span.source, span.line)
     }
 
+    /// [`Self::location`]'s rule seen from above, for a walk down the tree
+    /// that carries it instead of walking up from each reference: the node
+    /// locating a message about a child of `id` that is not under a
+    /// `reference` — `id` itself, or its section when `id` is a section's
+    /// title. Under a `reference`, a child is located as the reference is.
+    fn locator_below(&self, id: usize) -> usize {
+        match self.slots[id].parent {
+            Some(section)
+                if self.kind(id) == kinds::TITLE && self.kind(section) == kinds::SECTION =>
+            {
+                section
+            }
+            _ => id,
+        }
+    }
+
+    /// The `(source, line)` of `id`'s span.
+    fn line_of(&self, id: usize) -> (u16, u32) {
+        let span = self.slots[id].node.span;
+        (span.source, span.line)
+    }
+
     /// `old.replace_self(new)` (`nodes.py:1110-1132`): the first new node,
     /// if an element, takes on `old`'s ids, classes, names and dupnames
     /// (`update_basic_atts`, `:850-869`, skipping values it has), and the new
@@ -705,10 +778,23 @@ impl Arena {
     /// `false`, when `old` has no parent or its parent no longer holds it,
     /// where docutils raises.
     fn replace_self(&mut self, old: usize, new: Vec<usize>) -> bool {
+        self.replace_self_at(old, None, new)
+    }
+
+    /// [`Self::replace_self`] told where `old` sits among its parent's
+    /// children — checked, and searched for only when it is not there — so
+    /// a walk that knows each node's place replaces it without scanning its
+    /// siblings (`parent.index(old)`, a scan in docutils too, costs a
+    /// definition expanded into thousands of siblings dearly).
+    fn replace_self_at(&mut self, old: usize, index: Option<usize>, new: Vec<usize>) -> bool {
         let Some(parent) = self.slots[old].parent else {
             return false;
         };
-        let Some(index) = self.slots[parent].kids.iter().position(|&kid| kid == old) else {
+        let kids = &self.slots[parent].kids;
+        let Some(index) = index
+            .filter(|&index| kids.get(index) == Some(&old))
+            .or_else(|| kids.iter().position(|&kid| kid == old))
+        else {
             return false;
         };
         if let Some(&first) = new.first() {
@@ -1642,25 +1728,48 @@ pub(super) fn dangling_references(ctx: &mut TransformCtx) {
             && node.get("refname").is_some()
             && !footnote_resolved_by_number(node)
     };
-    if collect_paths(&ctx.tree.root, dangling).is_empty() {
+    if !contains(&ctx.tree.root, dangling) {
         return;
     }
     let root = std::mem::replace(&mut ctx.tree.root, Node::elem(kinds::DOCUMENT, Span::ZERO));
     let mut arena = Arena::new(root);
-    let mut stack = vec![Arena::ROOT];
-    while let Some(id) = stack.pop() {
+    // Each node beside its place among its parent's children and the node
+    // locating a message about it, both carried down rather than looked for
+    // from each reference: its place is where the walk found it (each
+    // replacement is one node for one, so no sibling moves), and its
+    // locator is [`Arena::location`]'s node, seen from above
+    // ([`Arena::locator_below`]). The walk follows the links the arena was
+    // built with, and the visits change none of those it has still to
+    // follow (a replaced reference keeps its parent and children), so they
+    // agree. A reference nested in a thousand others, or among thousands
+    // of siblings, costs no more than one alone in a paragraph.
+    let mut stack = vec![(Arena::ROOT, 0, Arena::ROOT)];
+    while let Some((id, index, locator)) = stack.pop() {
         if dangling(&arena.slots[id].node) {
-            visit_dangling_reference(ctx, &mut arena, id);
+            visit_dangling_reference(ctx, &mut arena, id, index, locator);
         }
+        let below = if arena.kind(id) == kinds::REFERENCE {
+            locator
+        } else {
+            arena.locator_below(id)
+        };
         // `children[:]` after the visit: a replaced reference's own.
-        stack.extend(arena.slots[id].kids.iter().rev());
+        let kids = arena.slots[id].kids.iter().enumerate().rev();
+        stack.extend(kids.map(|(index, &kid)| (kid, index, below)));
     }
     ctx.tree.root = arena.into_tree();
 }
 
 /// `DanglingReferencesVisitor.visit_reference` (`references.py:937-990`)
-/// for a reference that still carries its `refname`.
-fn visit_dangling_reference(ctx: &mut TransformCtx, arena: &mut Arena, reference: usize) {
+/// for a reference that still carries its `refname`: its parent's
+/// `index`th child, located at `locator`.
+fn visit_dangling_reference(
+    ctx: &mut TransformCtx,
+    arena: &mut Arena,
+    reference: usize,
+    index: usize,
+    locator: usize,
+) {
     let refname = arena.str_attr(reference, "refname").to_string();
     let (text, hint) = match ctx.ids.name_id(&refname) {
         Some(Some(id)) => {
@@ -1678,7 +1787,7 @@ fn visit_dangling_reference(ctx: &mut TransformCtx, arena: &mut Arena, reference
             embedded_reference_hint(&refname),
         ),
     };
-    let mut message = ctx.message_at(messages::ERROR, &text, arena.location(reference));
+    let mut message = ctx.message_at(messages::ERROR, &text, arena.line_of(locator));
     if let Some(hint) = hint {
         message = messages::with_paragraph(message, &hint);
     }
@@ -1689,7 +1798,7 @@ fn visit_dangling_reference(ctx: &mut TransformCtx, arena: &mut Arena, reference
         problematic.attrs.ids.push(ctx.ids.allocate_auto_id());
     }
     let problematic = arena.adopt(problematic, None);
-    arena.replace_self(reference, vec![problematic]);
+    arena.replace_self_at(reference, Some(index), vec![problematic]);
 }
 
 /// The hint DanglingReferences adds to an unknown name holding `<` or `>`
@@ -1721,6 +1830,8 @@ mod tests {
     use crate::doctree::{kinds, AttrValue, Doctree, Node, Span};
     use crate::rst::{ParseOptions, RegistryExport};
     use crate::transforms::{apply_read_transforms, parse_and_transform, TransformConfig};
+
+    use super::MAX_DEFINITION_DEPTH;
 
     /// A Sphinx read of `source` with `keep_warnings` on (so the tree keeps
     /// the messages a transform places, as the oracle's does): the
@@ -2044,6 +2155,119 @@ mod tests {
         );
         let c = detected(2, ".. |c| replace:: |b| |a|");
         assert_eq!(records, [c.clone(), c]);
+    }
+
+    /// `body`, then a definition wrapping a reference to itself, `text`
+    /// after it, under a name a second definition (`A`) folds onto.
+    /// docutils files the nested `a` under `A` (`normed`, `references.py:
+    /// 726`), so the circularity test never fires, and each expansion of
+    /// the definition's own reference copies the whole definition into
+    /// itself: it doubles, its references nesting twice as deep each round,
+    /// until the line-length limit stops it — if `text` gives it a length.
+    fn self_wrapping(text: &str, body: &str) -> String {
+        format!("{body}\n\n.. |a| replace:: |a|_{text}\n.. |A| replace:: y\n")
+    }
+
+    /// How many levels down the tree goes once the read transforms up to
+    /// and including Substitutions (220) have run on `source` — measured,
+    /// and the tree dropped, on the parse stack.
+    fn depth_after_substitutions(source: &str) -> usize {
+        crate::rst::on_parse_stack(|| {
+            let opts = ParseOptions {
+                source_path: "<snippet>".to_string(),
+                sphinx: true,
+                ..Default::default()
+            };
+            let out = crate::rst::parse_rst_full(source, &opts);
+            let mut tree = out.doctree;
+            let config = TransformConfig::default();
+            let table = super::super::READ_TRANSFORMS;
+            let through = 1 + table
+                .iter()
+                .position(|(_, name, _)| *name == "Substitutions")
+                .expect("Substitutions is a read transform");
+            let mut ctx = super::super::TransformCtx::new(
+                &mut tree,
+                out.ids,
+                out.next_seq,
+                out.end_of_input,
+                "index",
+                &config,
+            );
+            ctx.run(&table[..through]);
+            drop(ctx);
+            let mut deepest = 0;
+            let mut stack = vec![(&tree.root, 0)];
+            while let Some((node, depth)) = stack.pop() {
+                deepest = deepest.max(depth);
+                stack.extend(node.children.iter().map(|child| (child, depth + 1)));
+            }
+            deepest
+        })
+    }
+
+    fn too_deep(name: &str) -> String {
+        format!("Substitution definition \"{name}\" exceeds the maximum nesting depth.")
+    }
+
+    fn count(records: &[(Option<u32>, String)], text: &str) -> usize {
+        records.iter().filter(|(_, record)| record == text).count()
+    }
+
+    /// Thirty-two characters a level: the line-length limit stops the
+    /// doubling at 512 levels — a definition Sphinx measures, and a document
+    /// it builds (probed: exit 0, these records). The limit's error for the
+    /// definition's last reference and for the paragraph's, then
+    /// DanglingReferences' for every reference nested in the paragraph (511)
+    /// and in the definition (512). Nothing of the depth limit.
+    #[test]
+    fn a_definition_sphinx_can_measure_is_expanded_in_full() {
+        let source = self_wrapping(&format!(" {}", "x".repeat(31)), "|a|");
+        let (_, records) = read(&source);
+        let unknown = "Unknown target name: \"a\".";
+        let at = |line| {
+            records
+                .iter()
+                .filter(|(at, text)| *at == Some(line) && text == unknown)
+                .count()
+        };
+        assert_eq!((at(1), at(3)), (511, 512));
+        let too_long = "Substitution definition \"a\" exceeds the line-length-limit.";
+        assert_eq!(count(&records, too_long), 2);
+        assert_eq!(records.len(), 2 + 511 + 512);
+        assert_eq!(count(&records, &too_deep("a")), 0);
+    }
+
+    /// Two characters a level, as the deep sweep's shrunk timeout had it
+    /// (`|a|_ x`): the doubling would run on to 8,192 levels before the
+    /// line-length limit, each later transform walking every copy of them
+    /// in time quadratic in their depth — where Sphinx died long before,
+    /// measuring the definition (`len(subdef.astext())`, `references.py:
+    /// 696`: RecursionError, probed from 1,024 levels on). The expansion
+    /// stops at the depth limit instead: the definition's own last
+    /// reference and the paragraph's four each meet a definition too deep
+    /// to expand, are reported and become `problematic`s — and the tree
+    /// stays less than twice the limit deep.
+    #[test]
+    fn a_self_wrapping_definition_stops_at_the_depth_limit() {
+        let source = self_wrapping(" x", "|a| |a| |a| |a|");
+        let depth = depth_after_substitutions(&source);
+        // The last doubling takes the definition from under the limit to
+        // under twice it.
+        assert!(depth < 2 * MAX_DEFINITION_DEPTH, "{depth} levels");
+        let (_, records) = read(&source);
+        assert_eq!(count(&records, &too_deep("a")), 5);
+    }
+
+    /// With no text a level, nothing else stops the doubling: Sphinx dies
+    /// measuring the definition (probed), and the expansion ran on until
+    /// memory ran out. The depth limit ends it.
+    #[test]
+    fn a_text_free_self_wrapping_definition_stops_at_the_depth_limit() {
+        let source = self_wrapping("", "|a|");
+        assert!(depth_after_substitutions(&source) < 2 * MAX_DEFINITION_DEPTH);
+        let (_, records) = read(&source);
+        assert_eq!(count(&records, &too_deep("a")), 2);
     }
 
     /// The paragraph's references' `refuri`s, and whether every target

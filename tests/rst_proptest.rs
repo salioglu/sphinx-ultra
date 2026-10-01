@@ -31,6 +31,7 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 use proptest::prelude::*;
+use proptest::test_runner::FileFailurePersistence;
 use sphinx_ultra::error::BuildWarning;
 use sphinx_ultra::py::annotations::{parse_annotation, PyRefContext};
 use sphinx_ultra::py::PySigConfig;
@@ -38,10 +39,41 @@ use sphinx_ultra::rst::{on_parse_stack, parse_rst, ParseOptions};
 use sphinx_ultra::transforms::{parse_and_transform, BuildDate, TransformConfig};
 
 /// The time one case may take before proptest kills it and reports it — a
-/// hang, as no case takes more than a few seconds even in a debug build.
-/// Setting it runs each test's cases in a forked child process
-/// (proptest's `timeout`, which implies `fork`).
+/// hang, or work growing faster than the document: the slowest of 2,048
+/// deep-sweep cases took 6.1 s in a debug build (a 260-level case,
+/// `PROPTEST_RNG_SEED=20261001`, [`CASE_TIMES`]; 263 ms the mean of the
+/// 515 cases 210 levels deep or more), so the bound leaves ten times that
+/// for a loaded machine. Setting it runs each test's cases in a forked
+/// child process (proptest's `timeout`, which implies `fork`).
 const CASE_TIMEOUT_MS: u32 = 60_000;
+
+/// What every sweep here runs under: 512 cases (`PROPTEST_CASES`
+/// overrides), the per-case bound ([`CASE_TIMEOUT_MS`]), and failing seeds
+/// kept beside this file, in `tests/rst_proptest.proptest-regressions`
+/// (gitignored). That is where proptest's default would put them too, but
+/// only after looking for a `lib.rs` or `main.rs` above this file to mirror
+/// its path from, finding none — an integration test has neither — and
+/// saying so on every run (`FileFailurePersistence::SourceParallel set, but
+/// failed to find lib.rs or main.rs`); naming the place directly is silent.
+/// A seed replays only as long as the strategies stay as they were, so a
+/// failure a sweep finds is kept as a named test instead (as
+/// [`a_self_wrapping_substitution_stops_at_the_depth_limit`] is).
+fn sweep_config() -> ProptestConfig {
+    ProptestConfig {
+        cases: 512,
+        timeout: CASE_TIMEOUT_MS,
+        failure_persistence: Some(Box::new(FileFailurePersistence::WithSource(
+            "proptest-regressions",
+        ))),
+        ..ProptestConfig::default()
+    }
+}
+
+/// Set (to anything), every deep-sweep case prints how many levels it
+/// nests and how long its read took — to stderr, so run with
+/// `--nocapture` — which is how a run finds its slowest case against
+/// [`CASE_TIMEOUT_MS`].
+const CASE_TIMES: &str = "RST_PROPTEST_CASE_TIMES";
 
 /// The Sphinx read of `s` under `config`: the parse, then the read
 /// transforms ([`parse_and_transform`]), the tree printed as `pformat` and
@@ -290,11 +322,7 @@ fn include_target() -> impl Strategy<Value = String> {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig {
-        cases: 512,
-        timeout: CASE_TIMEOUT_MS,
-        ..ProptestConfig::default()
-    })]
+    #![proptest_config(sweep_config())]
 
     #[test]
     fn parse_never_panics_on_arbitrary_input(s in "\\PC*", config in transform_config()) {
@@ -836,11 +864,7 @@ fn nested_document(levels: &[Level], chain: usize, tail: &[String]) -> String {
 }
 
 proptest! {
-    #![proptest_config(ProptestConfig {
-        cases: 512,
-        timeout: CASE_TIMEOUT_MS,
-        ..ProptestConfig::default()
-    })]
+    #![proptest_config(sweep_config())]
 
     /// Transform-shaped documents: [`transform_block`]s in any order, any
     /// number of times, so that each kind of definition meets its
@@ -879,7 +903,15 @@ proptest! {
         config in transform_config(),
     ) {
         let src = nested_document(&levels, chain, &tail);
+        let started = std::time::Instant::now();
         let records = read_deep(src, config);
+        if std::env::var_os(CASE_TIMES).is_some() {
+            eprintln!(
+                "deep sweep case: {} levels, {} ms",
+                levels.len(),
+                started.elapsed().as_millis()
+            );
+        }
         if levels.len() >= 210 {
             let guard = records
                 .iter()
@@ -892,6 +924,32 @@ proptest! {
 
 /// The text of the parser's nesting-guard record.
 const GUARD_RECORD: &str = "Maximum nesting depth exceeded; deeper content skipped.";
+
+/// The deep sweep's timeout at 2,048 cases (60.2 s, twice; shrunk to 220
+/// levels holding `.. |a| replace:: |a|_ x` and a `.. |A|` definition),
+/// down to its cause. A definition wrapping a reference to itself, under a
+/// name another definition folds onto, escapes docutils' circularity test
+/// and doubles at each expansion of its own reference, its references
+/// nesting twice as deep each time: on to 8,192 levels before the
+/// line-length limit — where Sphinx dies of RecursionError from 1,024 on
+/// (probed) — and every transform after it walked each copy in time
+/// quadratic in that depth. The expansion stops at Substitutions' depth
+/// limit: the definition's own last reference and the paragraph's four
+/// are reported instead of expanded.
+#[test]
+fn a_self_wrapping_substitution_stops_at_the_depth_limit() {
+    let src = "|a| |a| |a| |a|\n\n.. |a| replace:: |a|_ x\n.. |A| replace:: y\n";
+    for smartquotes in [false, true] {
+        let config = TransformConfig {
+            smartquotes,
+            ..TransformConfig::default()
+        };
+        let records = read_deep(src.to_string(), config);
+        let limit = "Substitution definition \"a\" exceeds the maximum nesting depth.";
+        let guard = records.iter().filter(|text| *text == limit).count();
+        assert_eq!(guard, 5, "smartquotes={smartquotes}");
+    }
+}
 
 /// [`sphinx_read`] for the deep-nesting sweep, returning the printed
 /// records' texts — all of it on one thread with the build's parse stack

@@ -71,6 +71,11 @@ dist/
 tmp/
 temp/
 
+# proptest's failure seeds (`tests/rst_proptest.rs` writes them beside the
+# test file). A failure the sweeps find becomes a named regression test
+# instead: a seed replays only while the strategies stay as they were.
+*.proptest-regressions
+
 # Sphinx Ultra specific
 *.sphinx-ultra-cache
 .sphinx-ultra/
