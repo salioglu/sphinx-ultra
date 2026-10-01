@@ -1870,18 +1870,37 @@ mod tests {
         );
     }
 
-    /// [`read`] on a thread, given five seconds: a pass that never ends
-    /// fails the test instead of hanging it. The thread has the default
-    /// spawned-thread stack (2 MiB), so a pass recursing as deep as its
-    /// input is long overflows it.
+    /// The stack [`read_bounded`] reads on, set explicitly so that neither
+    /// the platform default nor `RUST_MIN_STACK` changes it: 256 KiB. Parse
+    /// and transforms read the flat chains of targets below in a quarter of
+    /// it, however long (probed in a debug build: 64 KiB suffices at 500,
+    /// 2,000 and 20,000 targets), while a recursive port of either of
+    /// IndirectHyperlinks' recursions overflows it — probed by swapping one
+    /// in: `resolve_indirect_target` before 500 targets,
+    /// `resolve_indirect_references` before 1,000.
+    const BOUNDED_STACK: usize = 256 * 1024;
+
+    /// How long [`read_bounded`] waits: a minute. The bound catches a pass
+    /// that never ends — it is no speed test. The slowest read it bounds
+    /// takes about a second alone in a debug build, so a loaded machine
+    /// stays far inside it.
+    const BOUNDED_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
+
+    /// [`read`] on a thread with a [`BOUNDED_STACK`] stack, given
+    /// [`BOUNDED_WAIT`]: a pass that never ends fails the test instead of
+    /// hanging it, and a pass recursing as deep as its input is long
+    /// overflows the stack.
     fn read_bounded(source: impl Into<String>) -> (Doctree, Vec<(Option<u32>, String)>) {
         let source = source.into();
         let (sender, receiver) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let _ = sender.send(read(&source));
-        });
+        std::thread::Builder::new()
+            .stack_size(BOUNDED_STACK)
+            .spawn(move || {
+                let _ = sender.send(read(&source));
+            })
+            .expect("the read thread could not start");
         receiver
-            .recv_timeout(std::time::Duration::from_secs(5))
+            .recv_timeout(BOUNDED_WAIT)
             .expect("the read pass did not terminate")
     }
 
@@ -2039,15 +2058,16 @@ mod tests {
     /// (`resolve_indirect_target`, `references.py:236-246`), as deep as the
     /// chain is long — here the first target names the second, and so on,
     /// so resolving the first descends through all of them. The port walks
-    /// the chain with an explicit stack: twenty thousand targets resolve on
-    /// a 2 MiB thread. (CPython stops at its recursion limit; ledgered with
-    /// the other Sphinx crashes the pass carries on through.) A paragraph
-    /// separates each target from the next: ReorderConsecutiveTargetAndIndex
-    /// Nodes (220) takes time quadratic in a run of adjacent targets
-    /// (ledgered), which this test is not about.
+    /// the chain with an explicit stack: five thousand targets resolve on a
+    /// [`BOUNDED_STACK`] thread, which a recursion keeping more than 52
+    /// bytes a level overflows. (CPython stops at its recursion limit;
+    /// ledgered with the other Sphinx crashes the pass carries on through.)
+    /// A paragraph separates each target from the next: ReorderConsecutive
+    /// TargetAndIndexNodes (220) takes time quadratic in a run of adjacent
+    /// targets (ledgered), which this test is not about.
     #[test]
     fn a_long_indirect_chain_resolves_without_recursion() {
-        const N: usize = 20_000;
+        const N: usize = 5_000;
         let mut source = String::from("See `a0`_.\n\n");
         for k in 0..N {
             source.push_str(&format!(".. _a{k}: a{}_\n\nP.\n\n", k + 1));
@@ -2064,10 +2084,11 @@ mod tests {
     /// 301-338`) hands a resolved target's `refuri` on to every target
     /// naming it, and from each of those to the targets naming *it* — here
     /// each target names the one before, so resolving the first (to the
-    /// external `a0`) rewrites the whole chain from the inside out.
+    /// external `a0`) rewrites the whole chain from the inside out — five
+    /// thousand targets deep, on the same [`BOUNDED_STACK`] thread.
     #[test]
     fn a_long_chain_of_referring_targets_rewrites_without_recursion() {
-        const N: usize = 20_000;
+        const N: usize = 5_000;
         let mut source = format!("See `a{N}`_.\n\n");
         for k in 1..=N {
             source.push_str(&format!(".. _a{k}: a{}_\n\nP.\n\n", k - 1));
