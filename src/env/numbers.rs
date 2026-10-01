@@ -860,8 +860,13 @@ mod tests {
     /// The classic docutils spelling — a `.. _label:` on its own line above
     /// the directive — is as much a label as the `:name:` option, because
     /// `PropagateTargets` moves the target's ids onto the node before
-    /// numbering runs. The number is filed under the propagated id, which is
-    /// what `get_fignumber` then reads back.
+    /// numbering runs. But AutoNumbering (210, `sphinx/transforms/
+    /// __init__.py:200-214`) runs first: the captioned node, id-less until
+    /// the label reaches it, has an auto id by then, and the label's id is
+    /// appended after it (probed: `ids="id1 f"`). The number is filed under
+    /// `ids[0]` (`collectors/toctree.py:334`) — the auto id, not the label
+    /// — which is what `get_fignumber` then reads back. The `:name:`d
+    /// figure has its id before 210 and is filed under its name.
     #[test]
     fn a_label_written_above_an_enumerable_node_numbers_it() {
         let (mut env, doctrees) = read(&[
@@ -878,16 +883,21 @@ mod tests {
         assign_figure_numbers(&mut env, true, 1, &load);
 
         let figures = &env.toc_fignumbers["a"]["figure"];
-        assert_eq!(figures["fig-named"], vec![1]);
         assert_eq!(
-            figures["fig-labelled"],
-            vec![2],
-            "a labelled figure still advances the counter: {figures:?}"
+            figures,
+            &BTreeMap::from([
+                ("fig-named".to_string(), vec![1]),
+                ("id1".to_string(), vec![2]),
+            ]),
+            "a labelled figure still advances the counter, under its auto id"
         );
-        assert_eq!(env.toc_fignumbers["a"]["table"]["tab-labelled"], vec![1]);
         assert_eq!(
-            env.toc_fignumbers["a"]["code-block"]["code-labelled"],
-            vec![1]
+            env.toc_fignumbers["a"]["table"],
+            BTreeMap::from([("id2".to_string(), vec![1])])
+        );
+        assert_eq!(
+            env.toc_fignumbers["a"]["code-block"],
+            BTreeMap::from([("id3".to_string(), vec![1])])
         );
     }
 

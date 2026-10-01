@@ -40,6 +40,9 @@ pub struct Parser {
     srcdir: Option<std::path::PathBuf>,
     /// `source_encoding` (see [`crate::rst::ParseOptions::source_encoding`]).
     source_encoding: String,
+    /// `highlight_language` (see
+    /// [`crate::rst::ParseOptions::highlight_language`]).
+    highlight_language: String,
     /// The read transforms' configuration slice
     /// ([`crate::transforms::TransformConfig`]), projected once like
     /// [`Self::py`].
@@ -62,6 +65,7 @@ impl Parser {
             py: crate::py::PySigConfig::from(config),
             srcdir: None,
             source_encoding: config.source_encoding.clone(),
+            highlight_language: config.highlight_language.clone(),
             transforms: crate::transforms::TransformConfig::from(config),
         })
     }
@@ -158,6 +162,7 @@ impl Parser {
                 py: self.py.clone(),
                 srcdir: self.srcdir.clone(),
                 source_encoding: self.source_encoding.clone(),
+                highlight_language: self.highlight_language.clone(),
             },
         );
         // Explicit targets for nitpicky label resolution: the target markers
@@ -425,6 +430,40 @@ mod tests {
         assert_eq!(
             xref.get("refdoc"),
             Some(&AttrValue::Str("guide/install".to_string()))
+        );
+    }
+
+    /// `highlight_language` reaches the parse: a `code-block` with no
+    /// argument and no `.. highlight::` in force takes it
+    /// (`sphinx/directives/code.py:157-166`) — Sphinx's `'default'` when the
+    /// configuration leaves it unset.
+    #[test]
+    fn the_configured_highlight_language_is_a_code_blocks_default() {
+        let language = |config: &BuildConfig| {
+            let parser = Parser::new(config).unwrap();
+            let mut document = Document::new("test.rst".into(), "test.html".into());
+            let doctree = parser.parse_rst_into(
+                ".. code-block::\n\n   x = 1\n",
+                Path::new("test.rst"),
+                "index",
+                None,
+                &mut document,
+            );
+            find_by_kind(&doctree.root, kinds::LITERAL_BLOCK)
+                .and_then(|block| block.get("language"))
+                .cloned()
+        };
+        assert_eq!(
+            language(&BuildConfig::default()),
+            Some(AttrValue::Str("default".to_string()))
+        );
+        let python = BuildConfig {
+            highlight_language: "python".to_string(),
+            ..BuildConfig::default()
+        };
+        assert_eq!(
+            language(&python),
+            Some(AttrValue::Str("python".to_string()))
         );
     }
 

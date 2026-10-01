@@ -407,8 +407,11 @@ static READ_TRANSFORMS: &[ReadTransform] = &[
     // 010 ApplySourceWorkaround: source/line patches only — the parser
     //     stamps its spans directly.
     // 010 ExtraTranslatableNodes: no-op without `gettext_additional_targets`.
-    // 010 PreserveTranslatableMessages: toctree `rawentries`/`rawcaption` —
-    //     a parse-time stamp (Task 12).
+    (
+        10,
+        "PreserveTranslatableMessages",
+        misc::preserve_translatable_messages,
+    ),
     // 020 Locale, 025 TranslationProgressTotaliser: no-op without message
     //     catalogs / the `translation_progress` attribute no oracle compares.
     // 100 RefOnlyBulletListTransform: no-op under `html_compact_lists=True`.
@@ -418,8 +421,9 @@ static READ_TRANSFORMS: &[ReadTransform] = &[
         references::default_substitutions,
     ),
     (210, "MoveModuleTargets", misc::move_module_targets),
-    // 210 HandleCodeBlocks (Task 12), AutoNumbering (Task 12),
-    //     AutoIndexUpgrader (never fires for core directives).
+    (210, "HandleCodeBlocks", misc::handle_code_blocks),
+    (210, "AutoNumbering", misc::auto_numbering),
+    // 210 AutoIndexUpgrader: never fires for core directives.
     (220, "Substitutions", references::substitutions),
     (
         220,
@@ -433,8 +437,8 @@ static READ_TRANSFORMS: &[ReadTransform] = &[
     (340, "DocInfo", frontmatter::doc_info),
     (440, "AnonymousHyperlinks", references::anonymous_hyperlinks),
     (460, "IndirectHyperlinks", references::indirect_hyperlinks),
-    // 500 DoctestTransform (Task 12); GlossarySorter: applied by the
-    //     parser's `glossary` directive.
+    (500, "DoctestTransform", misc::doctest_transform),
+    // 500 GlossarySorter: applied by the parser's `glossary` directive.
     (
         619,
         "CitationDefinitionTransform",
@@ -457,7 +461,7 @@ static READ_TRANSFORMS: &[ReadTransform] = &[
     // 740 StripComments: no-op (`strip_comments` unset).
     // 750 SphinxSmartQuotes (Task 14).
     // 820 Decorations: no-op (no generator/datestamp/source link).
-    // 830 Transitions (Task 12).
+    (830, "Transitions", misc::transitions),
     // 835 Validate, 840 ExposeInternals: no-ops.
     (
         850,
@@ -772,9 +776,11 @@ mod tests {
     }
 
     /// The substitution and target families in their probed slots
-    /// (research §1.2: 210-020, 210-021, 220-004, 220-032, 260-005,
-    /// 261-023): each substitution transform ahead of its priority's
-    /// neighbour, as Sphinx queues them; the reorder before PropagateTargets
+    /// (research §1.2: 210-020, 210-021, 210-022, 210-025, 220-004,
+    /// 220-032, 260-005, 261-023): each substitution transform ahead of its
+    /// priority's neighbour, as Sphinx queues them; AutoNumbering before
+    /// PropagateTargets, so a labelled captioned node gets its auto id
+    /// first (`ids="id1 f"`); the reorder before PropagateTargets
     /// (`transforms/__init__.py:472`, "This transform MUST run before
     /// ``PropagateTargets``"), and SortIds after it, since it sorts the ids
     /// PropagateTargets appended.
@@ -790,6 +796,8 @@ mod tests {
             [
                 (210, "DefaultSubstitutions"),
                 (210, "MoveModuleTargets"),
+                (210, "HandleCodeBlocks"),
+                (210, "AutoNumbering"),
                 (220, "Substitutions"),
                 (220, "ReorderConsecutiveTargetAndIndexNodes"),
                 (260, "PropagateTargets"),
@@ -800,8 +808,10 @@ mod tests {
 
     /// The hyperlink and footnote families in their probed slots (research
     /// §1.2: 440-009, 460-010, 619-016, 619-017, 620-011, 622-028, 640-012,
-    /// 660-013, 700-015, 850-039): the anonymous pairing before the indirect
-    /// targets (which rewrite the anonymous references it gave a `refid`);
+    /// 660-013, 700-015, 850-039), DoctestTransform (500-024) and
+    /// Transitions (830-014) among them: the anonymous pairing before the
+    /// indirect targets (which rewrite the anonymous references it gave a
+    /// `refid`);
     /// the citation definitions before the citation references (Sphinx
     /// registers them in that order, `sphinx/domains/citation.py:181-182`),
     /// both before Footnotes, which back-links the citations to the
@@ -823,6 +833,7 @@ mod tests {
             [
                 (440, "AnonymousHyperlinks"),
                 (460, "IndirectHyperlinks"),
+                (500, "DoctestTransform"),
                 (619, "CitationDefinitionTransform"),
                 (619, "CitationReferenceTransform"),
                 (620, "Footnotes"),
@@ -830,10 +841,20 @@ mod tests {
                 (640, "ExternalTargets"),
                 (660, "InternalTargets"),
                 (700, "FootnoteDocnameUpdater"),
+                (830, "Transitions"),
                 (850, "SphinxDanglingReferences"),
                 (999, "FilterSystemMessages"),
             ]
         );
+    }
+
+    /// PreserveTranslatableMessages (010-034, `sphinx/transforms/i18n.py:
+    /// 103-111`) is the first transform the pass runs: it records the
+    /// toctree's titles before anything could rewrite them.
+    #[test]
+    fn preserve_translatable_messages_runs_first() {
+        let (priority, name, _) = READ_TRANSFORMS[0];
+        assert_eq!((priority, name), (10, "PreserveTranslatableMessages"));
     }
 
     /// DocInfo in its probed slot (research §1.2, 340-008): after the

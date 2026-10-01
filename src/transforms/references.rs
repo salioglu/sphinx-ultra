@@ -360,7 +360,7 @@ pub(super) fn problematic_for(node: &Node, message_id: String) -> Node {
 /// `update_basic_atts` (`nodes.py:850-869`) as `replace_self` calls it
 /// (`:1120-1132`): the element replacing `old` takes on `old`'s ids,
 /// classes, names and dupnames, after its own, skipping values it has.
-fn update_basic_atts(new: &mut Node, old: &Node) {
+pub(super) fn update_basic_atts(new: &mut Node, old: &Node) {
     let attrs = &mut new.attrs;
     for (list, values) in [
         (&mut attrs.ids, &old.attrs.ids),

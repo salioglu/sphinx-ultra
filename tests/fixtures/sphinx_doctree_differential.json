@@ -5096,6 +5096,222 @@
       "warnings": [
         "<snippet>:: ERROR: Unknown target name: \"nope\". [docutils]"
       ]
+    },
+    {
+      "family": "tx_misc",
+      "name": "tx_misc.transition_at_start",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <transition>\n    <paragraph>\n        Para.\n",
+      "rst": "----\n\nPara.\n",
+      "warnings": [
+        "<snippet>:1: WARNING: Document or section may not begin with a transition. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_misc",
+      "name": "tx_misc.transition_at_end",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <transition>\n    <system_message level=\"2\" line=\"3\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Document may not end with a transition.\n",
+      "rst": "Para.\n\n----\n",
+      "warnings": [
+        "<snippet>:3: WARNING: Document may not end with a transition. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_misc",
+      "name": "tx_misc.consecutive_transitions",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <transition>\n    <transition>\n    <paragraph>\n        More.\n",
+      "rst": "Para.\n\n----\n\n----\n\nMore.\n",
+      "warnings": [
+        "<snippet>:5: WARNING: At least one body element must separate transitions; adjacent transitions are not allowed. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_misc",
+      "name": "tx_misc.transition_in_section",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Para.\n    <transition>\n    <section ids=\"next\" names=\"next\">\n        <title>\n            Next\n        <paragraph>\n            Text.\n",
+      "rst": "Title\n=====\n\nPara.\n\n----\n\nNext\n====\n\nText.\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_misc",
+      "name": "tx_misc.transition_at_section_start",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <transition>\n        <system_message level=\"2\" line=\"4\" source=\"<snippet>\" type=\"WARNING\">\n            <paragraph>\n                Document or section may not begin with a transition.\n        <paragraph>\n            Para.\n",
+      "rst": "Title\n=====\n\n----\n\nPara.\n",
+      "warnings": [
+        "<snippet>:4: WARNING: Document or section may not begin with a transition. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_misc",
+      "name": "tx_misc.transition_alone_at_section_start",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <system_message level=\"2\" line=\"4\" source=\"<snippet>\" type=\"WARNING\">\n            <paragraph>\n                Document or section may not begin with a transition.\n    <transition>\n    <section ids=\"next\" names=\"next\">\n        <title>\n            Next\n        <paragraph>\n            Text.\n",
+      "rst": "Title\n=====\n\n----\n\nNext\n====\n\nText.\n",
+      "warnings": [
+        "<snippet>:4: WARNING: Document or section may not begin with a transition. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_misc",
+      "name": "tx_misc.transition_before_a_subsection",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"a\" names=\"a\">\n        <title>\n            A\n        <transition>\n        <system_message level=\"2\" line=\"4\" source=\"<snippet>\" type=\"WARNING\">\n            <paragraph>\n                Document or section may not begin with a transition.\n        <section ids=\"b\" names=\"b\">\n            <title>\n                B\n            <paragraph>\n                y\n",
+      "rst": "A\n=\n\n----\n\nB\n-\n\ny\n",
+      "warnings": [
+        "<snippet>:4: WARNING: Document or section may not begin with a transition. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_misc",
+      "name": "tx_misc.adjacent_transitions_in_section",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Para.\n        <transition>\n        <transition>\n        <system_message level=\"2\" line=\"8\" source=\"<snippet>\" type=\"WARNING\">\n            <paragraph>\n                At least one body element must separate transitions; adjacent transitions are not allowed.\n        <paragraph>\n            More.\n",
+      "rst": "Title\n=====\n\nPara.\n\n----\n\n----\n\nMore.\n",
+      "warnings": [
+        "<snippet>:8: WARNING: At least one body element must separate transitions; adjacent transitions are not allowed. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_misc",
+      "name": "tx_misc.adjacent_transitions_ending_a_section",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Para.\n        <transition>\n        <system_message level=\"2\" line=\"8\" source=\"<snippet>\" type=\"WARNING\">\n            <paragraph>\n                At least one body element must separate transitions; adjacent transitions are not allowed.\n    <transition>\n    <section ids=\"next\" names=\"next\">\n        <title>\n            Next\n        <paragraph>\n            x\n",
+      "rst": "Title\n=====\n\nPara.\n\n----\n\n----\n\nNext\n====\n\nx\n",
+      "warnings": [
+        "<snippet>:8: WARNING: At least one body element must separate transitions; adjacent transitions are not allowed. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_misc",
+      "name": "tx_misc.three_transitions_in_a_section",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <transition>\n        <transition>\n        <transition>\n        <paragraph>\n            Para.\n",
+      "rst": "Title\n=====\n\n----\n\n----\n\n----\n\nPara.\n",
+      "warnings": [
+        "<snippet>:4: WARNING: Document or section may not begin with a transition. [docutils]",
+        "<snippet>:6: WARNING: At least one body element must separate transitions; adjacent transitions are not allowed. [docutils]",
+        "<snippet>:8: WARNING: At least one body element must separate transitions; adjacent transitions are not allowed. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_misc",
+      "name": "tx_misc.transition_ending_nested_sections",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"a\" names=\"a\">\n        <title>\n            A\n        <section ids=\"b\" names=\"b\">\n            <title>\n                B\n            <paragraph>\n                b\n    <transition>\n    <section ids=\"c\" names=\"c\">\n        <title>\n            C\n        <paragraph>\n            c\n",
+      "rst": "A\n=\n\nB\n-\n\nb\n\n----\n\nC\n=\n\nc\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_misc",
+      "name": "tx_misc.transition_ending_the_document_in_a_section",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"a\" names=\"a\">\n        <title>\n            A\n        <section ids=\"b\" names=\"b\">\n            <title>\n                B\n            <paragraph>\n                b\n            <transition>\n            <system_message level=\"2\" line=\"9\" source=\"<snippet>\" type=\"WARNING\">\n                <paragraph>\n                    Document may not end with a transition.\n",
+      "rst": "A\n=\n\nB\n-\n\nb\n\n----\n",
+      "warnings": [
+        "<snippet>:9: WARNING: Document may not end with a transition. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_misc",
+      "name": "tx_misc.transition_message_needs_a_body_model",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <transition>\n        <highlightlang force=\"0\" lang=\"c\" linenothreshold=\"9223372036854775807\">\n        <paragraph>\n            Para.\n",
+      "rst": "Title\n=====\n\n----\n\n.. highlight:: c\n\nPara.\n",
+      "warnings": [
+        "<snippet>:4: WARNING: Document or section may not begin with a transition. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_misc",
+      "name": "tx_misc.transition_message_needs_valid_section_ids",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"module-a.b title\" names=\"title\">\n        <title>\n            Title\n        <index entries=\"('pair',\\ 'module;\\ a.b',\\ 'module-a.b',\\ '',\\ None)\">\n        <paragraph>\n            Para.\n        <transition>\n        <transition>\n        <paragraph>\n            More.\n",
+      "rst": "Title\n=====\n\n.. py:module:: a.b\n\nPara.\n\n----\n\n----\n\nMore.\n",
+      "warnings": [
+        "<snippet>:10: WARNING: At least one body element must separate transitions; adjacent transitions are not allowed. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_misc",
+      "name": "tx_misc.transition_message_needs_a_valid_rest_of_section",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <transition>\n        <paragraph>\n            Para.\n    <transition>\n    <section ids=\"next\" names=\"next\">\n        <title>\n            Next\n        <paragraph>\n            x\n",
+      "rst": "Title\n=====\n\n----\n\nPara.\n\n----\n\nNext\n====\n\nx\n",
+      "warnings": [
+        "<snippet>:4: WARNING: Document or section may not begin with a transition. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_misc",
+      "metadata": {
+        "orphan": ""
+      },
+      "name": "tx_misc.transition_after_docinfo",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <transition>\n    <paragraph>\n        Para.\n",
+      "rst": ":orphan:\n\n----\n\nPara.\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_misc",
+      "name": "tx_misc.figure_autonumbered_id",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <figure ids=\"id1\">\n        <image candidates=\"{'?': 'https://example.com/a.png'}\" uri=\"https://example.com/a.png\">\n        <caption>\n            Caption A.\n    <target refid=\"f\">\n    <figure ids=\"id2 f\" names=\"f\">\n        <image candidates=\"{'?': 'https://example.com/b.png'}\" uri=\"https://example.com/b.png\">\n        <caption>\n            Caption B.\n    <figure ids=\"named\" names=\"named\">\n        <image candidates=\"{'?': 'https://example.com/c.png'}\" uri=\"https://example.com/c.png\">\n        <caption>\n            Caption C.\n    <figure>\n        <image candidates=\"{'?': 'https://example.com/d.png'}\" uri=\"https://example.com/d.png\">\n",
+      "rst": ".. figure:: https://example.com/a.png\n\n   Caption A.\n\n.. _f:\n\n.. figure:: https://example.com/b.png\n\n   Caption B.\n\n.. figure:: https://example.com/c.png\n   :name: named\n\n   Caption C.\n\n.. figure:: https://example.com/d.png\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_misc",
+      "name": "tx_misc.table_autonumbered_id",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <table ids=\"id1\">\n        <title>\n            Title\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"3\">\n            <colspec colwidth=\"3\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            a\n                    <entry>\n                        <paragraph>\n                            b\n    <table ids=\"id2\">\n        <title>\n            LT\n        <tgroup cols=\"1\">\n            <colspec colwidth=\"100\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            x\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"3\">\n            <colspec colwidth=\"3\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            c\n                    <entry>\n                        <paragraph>\n                            d\n    <target refid=\"t\">\n    <table ids=\"id3 t\" names=\"t\">\n        <title>\n            CSV\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"50\">\n            <colspec colwidth=\"50\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            a\n                    <entry>\n                        <paragraph>\n                            b\n",
+      "rst": ".. table:: Title\n\n   ===  ===\n   a    b\n   ===  ===\n\n.. list-table:: LT\n\n   * - x\n\n===  ===\nc    d\n===  ===\n\n.. _t:\n\n.. csv-table:: CSV\n\n   a, b\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_misc",
+      "name": "tx_misc.code_block_caption_autonumbered_id",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <container classes=\"literal-block-wrapper\" ids=\"id1\" literal_block=\"1\">\n        <caption>\n            Example\n        <literal_block force=\"0\" highlight_args=\"{}\" language=\"python\" xml:space=\"preserve\">\n            x = 1\n    <target refid=\"c\">\n    <container classes=\"literal-block-wrapper\" ids=\"id2 c\" literal_block=\"1\" names=\"c\">\n        <caption>\n            Labelled\n        <literal_block force=\"0\" highlight_args=\"{}\" language=\"default\" xml:space=\"preserve\">\n            y\n    <container classes=\"literal-block-wrapper\" ids=\"named\" literal_block=\"1\" names=\"named\">\n        <caption>\n            Named\n        <literal_block force=\"0\" highlight_args=\"{}\" language=\"default\" xml:space=\"preserve\">\n            z\n",
+      "rst": ".. code-block:: python\n   :caption: Example\n\n   x = 1\n\n.. _c:\n\n.. code-block::\n   :caption: Labelled\n\n   y\n\n.. code-block::\n   :caption: Named\n   :name: named\n\n   z\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_misc",
+      "name": "tx_misc.autonumber_follows_the_parse_ids",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <footnote_reference auto=\"1\" docname=\"index\" ids=\"id1\" refid=\"id2\">\n            1\n        .\n    <footnote auto=\"1\" backrefs=\"id1\" docname=\"index\" ids=\"id2\" names=\"1\">\n        <label>\n            1\n        <paragraph>\n            Note.\n    <table ids=\"id3\">\n        <title>\n            T\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"3\">\n            <colspec colwidth=\"3\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            a\n                    <entry>\n                        <paragraph>\n                            b\n",
+      "rst": "See [#]_.\n\n.. [#] Note.\n\n.. table:: T\n\n   ===  ===\n   a    b\n   ===  ===\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_misc",
+      "name": "tx_misc.doctest_block_class",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <doctest_block classes=\"doctest\" xml:space=\"preserve\">\n        >>> 1 + 1\n        2\n",
+      "rst": ">>> 1 + 1\n2\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_misc",
+      "name": "tx_misc.blockquote_of_doctests_unwrapped",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <doctest_block classes=\"doctest\" xml:space=\"preserve\">\n        >>> quoted\n        1\n    <doctest_block classes=\"doctest\" xml:space=\"preserve\">\n        >>> two\n    <paragraph>\n        Mid.\n    <block_quote>\n        <doctest_block classes=\"doctest\" xml:space=\"preserve\">\n            >>> b\n        <paragraph>\n            text\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                item\n            <doctest_block classes=\"doctest\" xml:space=\"preserve\">\n                >>> in list\n",
+      "rst": "Para.\n\n    >>> quoted\n    1\n\n    >>> two\n\nMid.\n\n    >>> b\n\n    text\n\n- item\n\n      >>> in list\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_misc",
+      "name": "tx_misc.doctest_blocks_in_nested_quotes",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <paragraph>\n            Outer.\n        <doctest_block classes=\"doctest\" xml:space=\"preserve\">\n            >>> inner\n    <paragraph>\n        More.\n    <doctest_block classes=\"doctest\" xml:space=\"preserve\">\n        >>> deep\n",
+      "rst": "Para.\n\n    Outer.\n\n        >>> inner\n\nMore.\n\n        >>> deep\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_misc",
+      "name": "tx_misc.blockquote_of_doctests_keeps_its_class",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para.\n    <comment xml:space=\"preserve\">\n    <doctest_block classes=\"special doctest\" xml:space=\"preserve\">\n        >>> a\n    <doctest_block classes=\"doctest\" xml:space=\"preserve\">\n        >>> b\n    <paragraph>\n        End.\n",
+      "rst": "Para.\n\n.. rst-class:: special\n\n..\n\n    >>> a\n\n    >>> b\n\nEnd.\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_misc",
+      "name": "tx_misc.toctree_rawentries_rawcaption",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <compound classes=\"toctree-wrapper\">\n        <toctree caption=\"Main \"Cap\"\" entries=\"('Ext\\ title',\\ 'https://example.com') ('Custom',\\ 'self') ('Index',\\ 'genindex') (None,\\ 'https://plain.example.com') (None,\\ 'search')\" glob=\"0\" hidden=\"0\" includefiles=\"genindex search\" includehidden=\"0\" maxdepth=\"-1\" numbered=\"0\" parent=\"index\" rawcaption=\"Main \"Cap\"\" rawentries=\"Ext\\ title Custom Index\" titlesonly=\"0\">\n",
+      "rst": ".. toctree::\n   :caption: Main \"Cap\"\n\n   Ext title <https://example.com>\n   Custom <self>\n   Index <genindex>\n   https://plain.example.com\n   search\n",
+      "warnings": []
+    },
+    {
+      "conf": {
+        "highlight_language": "python"
+      },
+      "family": "tx_misc",
+      "name": "tx_misc.highlight_language_default_from_config",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Para:\n    <literal_block xml:space=\"preserve\">\n        lit\n    <literal_block force=\"0\" highlight_args=\"{}\" language=\"python\" xml:space=\"preserve\">\n        x = 1\n    <highlightlang force=\"0\" lang=\"c\" linenothreshold=\"9223372036854775807\">\n    <literal_block force=\"0\" highlight_args=\"{}\" language=\"c\" xml:space=\"preserve\">\n        y\n",
+      "rst": "Para::\n\n   lit\n\n.. code-block::\n\n   x = 1\n\n.. highlight:: c\n\n.. code-block::\n\n   y\n",
+      "warnings": []
     }
   ],
   "conf_semantics": "a case's optional 'conf' dict is confoverrides applied on top of the base settings above; absent = defaults. The consumer maps every key onto ParseOptions.py and errors on unmapped keys.",

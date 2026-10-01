@@ -322,6 +322,63 @@ pub(crate) fn py_repr_str(s: &str) -> String {
     out
 }
 
+/// The inverse of `repr()` over a Python tuple of `str`s and `None`s with
+/// two or more items — `(None, 'intro')`, `('T x', 'b')` — each `str`
+/// rendered by [`py_repr_str`]: the form the crate writes such a tuple into
+/// a list attribute in (the toctree's `entries`,
+/// [`crate::env::toctree::ResolvedEntries::entries_attr`]). Every escape
+/// [`py_repr_str`] writes reads back; `None` when `item` is not exactly
+/// such a tuple.
+pub(crate) fn parse_py_str_tuple(item: &str) -> Option<Vec<Option<String>>> {
+    let mut chars = item.strip_prefix('(')?.strip_suffix(')')?.chars();
+    let mut items = Vec::new();
+    loop {
+        items.push(parse_py_str_literal(&mut chars)?);
+        match chars.next() {
+            None if items.len() > 1 => return Some(items),
+            Some(',') if chars.next() == Some(' ') => {}
+            _ => return None,
+        }
+    }
+}
+
+/// One [`parse_py_str_tuple`] item: `None`, or a quoted [`py_repr_str`].
+fn parse_py_str_literal(chars: &mut std::str::Chars<'_>) -> Option<Option<String>> {
+    let quote = chars.next()?;
+    if quote == 'N' {
+        return (chars.by_ref().take(3).eq("one".chars())).then_some(None);
+    }
+    if quote != '\'' && quote != '"' {
+        return None;
+    }
+    let mut text = String::new();
+    loop {
+        match chars.next()? {
+            c if c == quote => return Some(Some(text)),
+            '\\' => text.push(match chars.next()? {
+                c @ ('\\' | '\'' | '"') => c,
+                'n' => '\n',
+                'r' => '\r',
+                't' => '\t',
+                'x' => hex_char(chars, 2)?,
+                'u' => hex_char(chars, 4)?,
+                'U' => hex_char(chars, 8)?,
+                _ => return None,
+            }),
+            c => text.push(c),
+        }
+    }
+}
+
+/// The character whose code point the next `digits` hex digits spell.
+fn hex_char(chars: &mut std::str::Chars<'_>, digits: usize) -> Option<char> {
+    let hex: String = chars.by_ref().take(digits).collect();
+    if hex.len() != digits || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    char::from_u32(u32::from_str_radix(&hex, 16).ok()?)
+}
+
 /// Python `str.split()` with no separator: split on runs of [`py_isspace`],
 /// dropping the empty leading/trailing/interior fields. Rust's
 /// `str::split_whitespace` is the same shape over a NARROWER set (it misses
@@ -800,6 +857,57 @@ mod path_tests {
         assert_eq!(py_repr_str("a\x1fb\x7f"), "'a\\x1fb\\x7f'");
         assert_eq!(py_repr_str("a\u{2028}b"), "'a\\u2028b'");
         assert_eq!(py_repr_str("é ü"), "'é ü'", "printable non-ASCII stays raw");
+    }
+
+    /// [`parse_py_str_tuple`] inverts [`py_repr_str`] item by item — every
+    /// escape it writes, both quote styles, `None` — so a tuple the crate
+    /// rendered into a list attribute reads back exactly.
+    #[test]
+    fn a_rendered_str_tuple_reads_back() {
+        let texts = [
+            "a",
+            "it's",
+            "say \"hi\"",
+            "both ' and \"",
+            "a\\b",
+            "a\nb\tc\rd",
+            "term\u{a0}",
+            "a\u{3000}b",
+            "a\x1fb\x7f\u{85}",
+            "a\u{2028}b",
+            "é ü",
+            "(x, 'y')",
+            "",
+        ];
+        for title in texts {
+            for target in [Some("intro"), None] {
+                let rendered = format!(
+                    "({}, {})",
+                    py_repr_str(title),
+                    target.map_or("None".to_string(), py_repr_str)
+                );
+                assert_eq!(
+                    parse_py_str_tuple(&rendered),
+                    Some(vec![Some(title.to_string()), target.map(str::to_string)]),
+                    "{rendered}"
+                );
+            }
+        }
+        assert_eq!(
+            parse_py_str_tuple("(None, 'self')"),
+            Some(vec![None, Some("self".to_string())])
+        );
+        for malformed in [
+            "",
+            "()",
+            "('a'",
+            "'a', 'b'",
+            "('a','b')",
+            "(Nope, 'a')",
+            "('\\q')",
+        ] {
+            assert_eq!(parse_py_str_tuple(malformed), None, "{malformed}");
+        }
     }
 
     /// [`simplify_verbatim`] over Windows-shaped literals, which is the

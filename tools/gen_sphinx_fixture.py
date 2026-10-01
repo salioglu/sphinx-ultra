@@ -107,23 +107,29 @@ SphinxDanglingReferences -- every `refname` reference), then `tx_footnotes`
 (the citation transforms, Footnotes, UnreferencedFootnotesDetector,
 FootnoteDocnameUpdater -- every footnote and citation), then `tx_docinfo`
 (DocInfo, and the docinfo MetadataCollector pops -- every leading field
-list). Later tasks
+list), then `tx_misc` (PreserveTranslatableMessages, HandleCodeBlocks,
+AutoNumbering, DoctestTransform, Transitions -- toctree raw attributes,
+doctest blocks, captioned figures/tables/code-blocks, every misplaced
+transition; and CodeBlock's `highlight_language` default). Later tasks
 extend this corpus with Sphinx-specific directives (toctree, code-block,
 versionadded/versionchanged/deprecated, seealso, only, highlight, math, index,
 rst-class, ...) once the Rust side grows the sphinx registry + env surface.
 
 Wave-4 task 9 tried to add a sphinx-mode `.. figure::` case (to pin where the
 `:name:` id lands, which the docutils-mode fixture already covers as
-`dir_media.figure_name_option`). It is EXCLUDED by the policy above: a figure
+`dir_media.figure_name_option`). It was EXCLUDED by the policy above: a figure
 must contain an `image`, and `ImageCollector.process_doc` stamps every image
 with `candidates="{'*': 'pic.png'}"` — one of the enumerated excluded
 divergences. Verified by hand against the oracle in that task: sphinx-mode
 output for `.. figure:: pic.png` + `:name: myfig` is `<figure ids="myfig"
 names="myfig">`, byte-identical to ours apart from that one attribute (an
 unnamed figure additionally picks up `ids="id1"` from Sphinx's `AutoNumbering`
-transform, which this crate does not run). src/rst/block.rs's
+transform). src/rst/block.rs's
 `a_figure_name_lands_on_the_image_in_docutils_and_the_figure_in_sphinx` pins
-the id placement until the image-collection task can fold the case in here.
+the id placement. Since M2 wave 5, Task 12, `tx_misc.figure_autonumbered_id`
+carries figures after all: remote URIs, which ImageCollector stamps without
+an `image file not readable` warning, under the consumer's strict
+`IMAGE_CANDIDATES` exemption for that one attribute.
 
 Wave-4 task 9 also left `ObjectDescription`'s `parse_content_to_nodes(
 allow_section_headings=True)` (`directives/__init__.py:288`) out of the corpus.
@@ -379,6 +385,10 @@ SUPPORTED_KINDS = {
     "footnote_reference",
     "citation",
     "label",
+    # M2 wave 5, Task 12: the doctest blocks DoctestTransform classes and
+    # HandleCodeBlocks unwraps, and the figures AutoNumbering numbers.
+    "doctest_block",
+    "figure",
 }
 
 CASES = [
@@ -1369,6 +1379,60 @@ CASES = [
     ('tx_docinfo', 'footnote_reference_in_author', ':author: Me [#]_\n\n.. [#] note\n'),
     ('tx_docinfo', 'dangling_reference_in_author', ':author: See `nope`_.\n\nBody.\n'),
     ('tx_docinfo', 'dangling_reference_in_author_ending_in_a_list', ':author: See `nope`_.\n\n- item\n'),
+    # ===== tx_misc (M2 wave 5, sub-project 1, Task 12) =====
+    # docutils' Transitions (830, `docutils/transforms/misc.py:64-143`):
+    # misplaced transitions warn (base_node= the transition) and a section's
+    # last transition moves up past every section it ends. The warning goes
+    # into the tree after the transition only when the parent, with a
+    # paragraph in the transition's place, validates: never in the document
+    # itself (Sphinx's `translation_progress` attribute is no valid
+    # attribute of it), and not in a section whose ids, children or other
+    # transitions break docutils' content model. Formerly excluded
+    # ("Transitions edge warnings").
+    ('tx_misc', 'transition_at_start', '----\n\nPara.\n'),
+    ('tx_misc', 'transition_at_end', 'Para.\n\n----\n'),
+    ('tx_misc', 'consecutive_transitions', 'Para.\n\n----\n\n----\n\nMore.\n'),
+    ('tx_misc', 'transition_in_section', 'Title\n=====\n\nPara.\n\n----\n\nNext\n====\n\nText.\n'),
+    ('tx_misc', 'transition_at_section_start', 'Title\n=====\n\n----\n\nPara.\n'),
+    ('tx_misc', 'transition_alone_at_section_start', 'Title\n=====\n\n----\n\nNext\n====\n\nText.\n'),
+    ('tx_misc', 'transition_before_a_subsection', 'A\n=\n\n----\n\nB\n-\n\ny\n'),
+    ('tx_misc', 'adjacent_transitions_in_section', 'Title\n=====\n\nPara.\n\n----\n\n----\n\nMore.\n'),
+    ('tx_misc', 'adjacent_transitions_ending_a_section', 'Title\n=====\n\nPara.\n\n----\n\n----\n\nNext\n====\n\nx\n'),
+    ('tx_misc', 'three_transitions_in_a_section', 'Title\n=====\n\n----\n\n----\n\n----\n\nPara.\n'),
+    ('tx_misc', 'transition_ending_nested_sections', 'A\n=\n\nB\n-\n\nb\n\n----\n\nC\n=\n\nc\n'),
+    ('tx_misc', 'transition_ending_the_document_in_a_section', 'A\n=\n\nB\n-\n\nb\n\n----\n'),
+    ('tx_misc', 'transition_message_needs_a_body_model', 'Title\n=====\n\n----\n\n.. highlight:: c\n\nPara.\n'),
+    ('tx_misc', 'transition_message_needs_valid_section_ids', 'Title\n=====\n\n.. py:module:: a.b\n\nPara.\n\n----\n\n----\n\nMore.\n'),
+    ('tx_misc', 'transition_message_needs_a_valid_rest_of_section', 'Title\n=====\n\n----\n\nPara.\n\n----\n\nNext\n====\n\nx\n'),
+    # A docinfo (still in the tree at 830) is no title: no message.
+    ('tx_misc', 'transition_after_docinfo', ':orphan:\n\n----\n\nPara.\n'),
+    # Sphinx's AutoNumbering (210, `sphinx/transforms/__init__.py:200-214`):
+    # a captioned/titled figure, table or code-block container with no id
+    # gets the next auto id -- before PropagateTargets adds a label's. The
+    # figures' remote URIs keep ImageCollector (880) silent; the
+    # `candidates` it stamps on every image is the consumer's one strict
+    # exemption (tests/sphinx_doctree_differential.rs, IMAGE_CANDIDATES).
+    ('tx_misc', 'figure_autonumbered_id', '.. figure:: https://example.com/a.png\n\n   Caption A.\n\n.. _f:\n\n.. figure:: https://example.com/b.png\n\n   Caption B.\n\n.. figure:: https://example.com/c.png\n   :name: named\n\n   Caption C.\n\n.. figure:: https://example.com/d.png\n'),
+    ('tx_misc', 'table_autonumbered_id', '.. table:: Title\n\n   ===  ===\n   a    b\n   ===  ===\n\n.. list-table:: LT\n\n   * - x\n\n===  ===\nc    d\n===  ===\n\n.. _t:\n\n.. csv-table:: CSV\n\n   a, b\n'),
+    ('tx_misc', 'code_block_caption_autonumbered_id', '.. code-block:: python\n   :caption: Example\n\n   x = 1\n\n.. _c:\n\n.. code-block::\n   :caption: Labelled\n\n   y\n\n.. code-block::\n   :caption: Named\n   :name: named\n\n   z\n'),
+    ('tx_misc', 'autonumber_follows_the_parse_ids', 'See [#]_.\n\n.. [#] Note.\n\n.. table:: T\n\n   ===  ===\n   a    b\n   ===  ===\n'),
+    # DoctestTransform (500, `:327-334`) and HandleCodeBlocks (210,
+    # `:178-197`): a block quote of doctest blocks only is unwrapped.
+    ('tx_misc', 'doctest_block_class', '>>> 1 + 1\n2\n'),
+    ('tx_misc', 'blockquote_of_doctests_unwrapped', 'Para.\n\n    >>> quoted\n    1\n\n    >>> two\n\nMid.\n\n    >>> b\n\n    text\n\n- item\n\n      >>> in list\n'),
+    ('tx_misc', 'doctest_blocks_in_nested_quotes', 'Para.\n\n    Outer.\n\n        >>> inner\n\nMore.\n\n        >>> deep\n'),
+    # The `rst-class` lands on the first doctest block: its pending
+    # ClassAttribute (210, queued by the parse, so after HandleCodeBlocks)
+    # finds the block where the quote was.
+    ('tx_misc', 'blockquote_of_doctests_keeps_its_class', 'Para.\n\n.. rst-class:: special\n\n..\n\n    >>> a\n\n    >>> b\n\nEnd.\n'),
+    # PreserveTranslatableMessages (010, `sphinx/transforms/i18n.py:103-111`
+    # over `sphinx/addnodes.py:58-68`): `rawentries` the explicit titles,
+    # `rawcaption` the caption.
+    ('tx_misc', 'toctree_rawentries_rawcaption', '.. toctree::\n   :caption: Main "Cap"\n\n   Ext title <https://example.com>\n   Custom <self>\n   Index <genindex>\n   https://plain.example.com\n   search\n'),
+    # CodeBlock's default language (`sphinx/directives/code.py:157-166`):
+    # the `.. highlight::` in force, else `highlight_language`; a `::`
+    # block has none until the write phase.
+    ('tx_misc', 'highlight_language_default_from_config', 'Para::\n\n   lit\n\n.. code-block::\n\n   x = 1\n\n.. highlight:: c\n\n.. code-block::\n\n   y\n', {'highlight_language': 'python'}),
 ]
 
 
@@ -1619,6 +1683,7 @@ def main() -> int:
         "tx_links": 53,
         "tx_footnotes": 20,
         "tx_docinfo": 25,
+        "tx_misc": 22,
     }
     counts: dict = {}
     for case in CASES:

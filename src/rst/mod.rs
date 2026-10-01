@@ -70,7 +70,18 @@ pub struct ParseOptions {
     /// an explicit `:encoding:` option still wins. Ignored outside sphinx
     /// mode, where bare docutils' `'utf-8'` default applies.
     pub source_encoding: String,
+    /// Sphinx's `highlight_language` config value (`config.py:257`, default
+    /// `'default'`): the language a sphinx-mode `code-block` with no
+    /// argument takes when no `.. highlight::` is in force
+    /// (`self.env.current_document.highlight_language or
+    /// self.config.highlight_language`, `sphinx/directives/code.py:157-166`).
+    /// A `::` literal block takes none at read time — the write phase's
+    /// HighlightLanguageTransform stamps it. Ignored outside sphinx mode.
+    pub highlight_language: String,
 }
+
+/// Sphinx's default `highlight_language` (`config.py:257`).
+pub const DEFAULT_HIGHLIGHT_LANGUAGE: &str = "default";
 
 /// Sphinx's default `source_encoding` (`config.py:244`).
 pub const DEFAULT_SOURCE_ENCODING: &str = "utf-8-sig";
@@ -86,6 +97,7 @@ impl Default for ParseOptions {
             py: crate::py::PySigConfig::default(),
             srcdir: None,
             source_encoding: DEFAULT_SOURCE_ENCODING.to_string(),
+            highlight_language: DEFAULT_HIGHLIGHT_LANGUAGE.to_string(),
         }
     }
 }
@@ -477,6 +489,7 @@ pub fn parse_rst_full(source: &str, opts: &ParseOptions) -> ParseOutput {
     parser.py = opts.py.clone();
     parser.srcdir = opts.srcdir.clone();
     parser.source_encoding = opts.source_encoding.clone();
+    parser.config_highlight_language = opts.highlight_language.clone();
     parser.parse_document_full()
 }
 

@@ -79,7 +79,11 @@ use crate::doctree::Node;
 /// list, as Sphinx keeps them); a v4 `env.bin` written before that is
 /// misframed from its first metadata value on (a string's length where the
 /// value's variant tag goes) and fails to decode, so it is rebuilt — only
-/// builds of this branch ever wrote one, so no second bump.
+/// builds of this branch ever wrote one, so no second bump. Nor for the
+/// read transforms that landed after it, whose trees the `tocs` copy and
+/// whose ids `toc_fignumbers` keys by (AutoNumbering files a labelled
+/// captioned node under its auto id): a v4 `env.bin` from before them
+/// decodes into the old meaning, and only builds of this branch wrote one.
 pub const ENV_VERSION: u32 = 4;
 
 /// The `env.bin` filename inside a build's cache directory.

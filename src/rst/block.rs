@@ -256,6 +256,10 @@ pub(crate) struct BlockParser {
     /// `.. highlight::` state consumed by later code-blocks in the same
     /// document (sphinx env.temp_data\['highlight_language'\]).
     highlight_language: Option<String>,
+    /// [`super::ParseOptions::highlight_language`]: the configured
+    /// `highlight_language` a code-block takes when no `.. highlight::` is
+    /// in force (sphinx `self.config.highlight_language`).
+    pub(crate) config_highlight_language: String,
     /// `.. program::` state consumed by later `.. option::` directives in
     /// the same document (sphinx `env.ref_context['std:program']`).
     program: Option<String>,
@@ -414,6 +418,7 @@ impl BlockParser {
             srcdir: None,
             source_encoding: super::DEFAULT_SOURCE_ENCODING.to_string(),
             highlight_language: None,
+            config_highlight_language: super::DEFAULT_HIGHLIGHT_LANGUAGE.to_string(),
             program: None,
             py_module: None,
             py_modules: Vec::new(),
@@ -637,6 +642,7 @@ impl BlockParser {
         sub.py = self.py.clone();
         sub.srcdir = self.srcdir.clone();
         sub.highlight_language = self.highlight_language.clone();
+        sub.config_highlight_language = self.config_highlight_language.clone();
         sub.program = self.program.clone();
         // The py ref_context flows in like `program` (state changes made
         // inside a detached parse stay local, matching the wave-4
@@ -4461,7 +4467,7 @@ impl BlockParser {
                 } else {
                     caption_option.as_str()
                 };
-                match self.container_wrapper(caption_text, lb, &input, true, out) {
+                match self.container_wrapper(caption_text, lb, &input, out) {
                     Ok(container) => out.push(container),
                     Err(text) => out.push(self.msg(
                         messages::WARNING,
@@ -4484,23 +4490,17 @@ impl BlockParser {
         }
     }
 
-    /// `container_wrapper` (`code.py:78-96`) plus — for literalinclude —
-    /// the read-phase `AutoNumbering` id: the caption parses as RST — a
-    /// leading `system_message` raises the `Invalid caption` ValueError
+    /// `container_wrapper` (`code.py:78-96`): the caption parses as RST —
+    /// a leading `system_message` raises the `Invalid caption` ValueError
     /// into the reporter funnel; otherwise the first node's children become
     /// the caption (everything after it is discarded, exactly as sphinx
-    /// keeps only `parsed[0]`).
-    ///
-    /// `auto_number` is off for code-block, which has never carried the
-    /// parse-time `AutoNumbering` approximation: a `.. _label:` written
-    /// above the block reaches it through PropagateTargets in the read pass
-    /// ([`crate::transforms`]), and numbering files it under that label.
+    /// keeps only `parsed[0]`). An unnamed container gets its id from the
+    /// read pass's AutoNumbering (210, [`crate::transforms`]).
     fn container_wrapper(
         &mut self,
         caption: &str,
         literal_node: Node,
         input: &DirectiveInput<'_>,
-        auto_number: bool,
         out: &mut Vec<Node>,
     ) -> Result<Node, String> {
         // `directive.parse_text_to_nodes(caption,
@@ -4530,16 +4530,7 @@ impl BlockParser {
         }
         container.children.push(caption_node);
         container.children.push(literal_node);
-        // `add_name` lands on the CONTAINER (`code.py:502`); without a
-        // name, Sphinx's `AutoNumbering` transform (priority 210) hands
-        // the captioned enumerable node an implicit id via
-        // `note_implicit_target` (`SP/transforms/__init__.py:200-214` —
-        // probed `ids="id1"`, no name). Stamped here at parse time: the
-        // transform pipeline has no AutoNumbering pass (the known
-        // labelled-figure gap — only the unlabelled case is handled), so
-        // the shared auto-id serial is allocated in document order rather
-        // than after the parse; the two orders only diverge in a document
-        // that also allocates auto ids elsewhere.
+        // `add_name` lands on the CONTAINER (`code.py:502`).
         self.directive_add_name(
             &mut container,
             &input.options,
@@ -4547,10 +4538,6 @@ impl BlockParser {
             input.lineno,
             out,
         );
-        if auto_number && container.attrs.ids.is_empty() {
-            let id = self.registry.allocate_auto_id();
-            container.attrs.ids.push(id);
-        }
         Ok(container)
     }
 
@@ -6134,16 +6121,17 @@ impl BlockParser {
     }
 
     /// sphinx code-block (sphinx/directives/code.py CodeBlock): language
-    /// falls back to the `.. highlight::` state then the 'default'
-    /// sentinel; :caption: wraps in a literal-block-wrapper container
-    /// that takes the ids/names.
+    /// falls back to the `.. highlight::` state, then the configured
+    /// `highlight_language` (`current_document.highlight_language or
+    /// config.highlight_language`, `code.py:157-166`); :caption: wraps in a
+    /// literal-block-wrapper container that takes the ids/names.
     fn run_sphinx_code_block(&mut self, input: DirectiveInput<'_>, out: &mut Vec<Node>) {
         let language = input
             .arguments
             .first()
             .cloned()
             .or_else(|| self.highlight_language.clone())
-            .unwrap_or_else(|| "default".to_string());
+            .unwrap_or_else(|| self.config_highlight_language.clone());
         // sphinx util.parselinenos + CodeBlock.run: an invalid spec
         // REPLACES the whole block with a WARNING system_message;
         // out-of-range lines are filtered (review findings 31/43/45/46).
@@ -6210,7 +6198,7 @@ impl BlockParser {
             // the directive returns instead.
             Some(OptVal::Str(caption_text)) => {
                 let caption_text = caption_text.clone();
-                match self.container_wrapper(&caption_text, lb, &input, false, out) {
+                match self.container_wrapper(&caption_text, lb, &input, out) {
                     Ok(container) => out.push(container),
                     Err(text) => out.push(self.msg(
                         messages::WARNING,
@@ -6364,7 +6352,9 @@ impl BlockParser {
         };
         toctree.set("numbered", AttrValue::Int(numbered));
         toctree.set("parent", AttrValue::Str(self.docname.clone()));
-        toctree.set("rawentries", AttrValue::Str(String::new()));
+        // No `rawentries`/`rawcaption`: Sphinx's directive writes neither;
+        // PreserveTranslatableMessages (010) does, in the read pass
+        // (`crate::transforms`).
         toctree.set(
             "titlesonly",
             AttrValue::Int(i64::from(opt_get(&input.options, "titlesonly").is_some())),
@@ -20153,16 +20143,23 @@ mod literalinclude_tests {
     /// the fixture module.
     fn parse(srcdir: &Path, main: &str) -> ParseOutput {
         write(srcdir, "example.py", EXAMPLE_PY);
-        parse_rst_full(
-            main,
-            &ParseOptions {
-                source_path: srcdir.join("main.rst").display().to_string(),
-                sphinx: true,
-                docname: "main".to_string(),
-                srcdir: Some(srcdir.to_path_buf()),
-                ..Default::default()
-            },
-        )
+        parse_rst_full(main, &main_options(srcdir))
+    }
+
+    /// [`parse`], then Sphinx's read transforms.
+    fn parse_and_transform(srcdir: &Path, main: &str) -> ParseOutput {
+        write(srcdir, "example.py", EXAMPLE_PY);
+        crate::transforms::parse_full_and_transform(main, &main_options(srcdir))
+    }
+
+    fn main_options(srcdir: &Path) -> ParseOptions {
+        ParseOptions {
+            source_path: srcdir.join("main.rst").display().to_string(),
+            sphinx: true,
+            docname: "main".to_string(),
+            srcdir: Some(srcdir.to_path_buf()),
+            ..Default::default()
+        }
     }
 
     /// `parse_line_num_spec` (`SP/util/_lines.py`) `strip()`s each part with
@@ -20411,21 +20408,18 @@ mod literalinclude_tests {
 
     /// The EMPTY `:caption:` falls back to the path as written, and the
     /// unnamed captioned container gets the AutoNumbering implicit
-    /// `ids="id1"` with no name (probed).
+    /// `ids="id1"` with no name (probed) — from the read transform
+    /// (`crate::transforms`, 210), not the parse, which leaves it id-less.
     #[test]
     fn empty_caption_falls_back_to_the_path_and_gets_id1() {
         let tmp = tempfile::tempdir().unwrap();
-        let output = parse(
-            tmp.path(),
-            ".. literalinclude:: example.py\n\
-             \x20  :caption:\n\
-             \x20  :lines: 3\n",
-        );
+        let src = ".. literalinclude:: example.py\n\
+                   \x20  :caption:\n\
+                   \x20  :lines: 3\n";
         let p = at(tmp.path(), "example.py");
-        assert_eq!(
-            output.doctree.root.children[0].pformat(),
+        let expected = |ids: &str| {
             format!(
-                "<container classes=\"literal-block-wrapper\" ids=\"id1\" \
+                "<container classes=\"literal-block-wrapper\"{ids} \
                  literal_block=\"1\">\n\
                  \x20   <caption>\n\
                  \x20       example.py\n\
@@ -20433,6 +20427,13 @@ mod literalinclude_tests {
                  source=\"{p}\" xml:space=\"preserve\">\n\
                  \x20       CONST = 1\n"
             )
+        };
+        let parsed = parse(tmp.path(), src);
+        assert_eq!(parsed.doctree.root.children[0].pformat(), expected(""));
+        let transformed = parse_and_transform(tmp.path(), src);
+        assert_eq!(
+            transformed.doctree.root.children[0].pformat(),
+            expected(" ids=\"id1\"")
         );
     }
 

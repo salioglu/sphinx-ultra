@@ -69,6 +69,13 @@ const DOCTREE_MAGIC: &[u8; 4] = b"SUDT";
 /// the transform families to come rewrite targets, references,
 /// substitutions and footnotes). The shape is unchanged, so a version-2
 /// blob decodes cleanly into an untransformed tree: a change of meaning.
+/// The families that landed later in the same wave stay within version 3
+/// (one bump for the wave; only builds of this branch ever wrote a
+/// version-3 blob without them): among them AutoNumbering's ids on
+/// captioned figures, tables and code blocks (which the parse no longer
+/// stamps on a captioned `literalinclude`), the `doctest` class and
+/// unwrapped doctest block quotes, Transitions' moves, and the toctree's
+/// `rawentries`/`rawcaption`, which the parse no longer writes.
 const DOCTREE_FORMAT_VERSION: u32 = 3;
 
 /// Bytes of the [`DOCTREE_MAGIC`] + [`DOCTREE_FORMAT_VERSION`] header.
