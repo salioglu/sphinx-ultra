@@ -12,6 +12,7 @@ use crate::config::BuildConfig;
 use crate::doctree::Doctree;
 use crate::document::Document;
 use crate::env;
+use crate::env::citation_domain as env_citation;
 use crate::env::dependencies as env_dependencies;
 use crate::env::genindex as env_genindex;
 use crate::env::metadata as env_metadata;
@@ -1056,8 +1057,9 @@ impl SphinxBuilder {
 
             // The registrations Sphinx makes from inside the directives
             // while it parses (glossary terms, std and py object
-            // descriptions), replayed from the parse records: their
-            // duplicate warnings belong to the parse stream below.
+            // descriptions) and from the citation transforms (619),
+            // replayed from the read's records: their duplicate warnings
+            // belong to the document's stream below.
             let registrations = env_std::replay_registrations(
                 env,
                 &env_std::DocumentSource {
@@ -1066,6 +1068,7 @@ impl SphinxBuilder {
                     registry: &result.document.registry,
                     path: &result.document.source_path,
                 },
+                &doc2path,
             );
 
             // Everything Sphinx prints while it reads this document, in
@@ -1248,6 +1251,17 @@ impl SphinxBuilder {
                 // so it must stay out of the warning count (and out of -W).
                 ConsistencyLevel::Info => info!("{}: {}", source.display(), message.message),
             }
+        }
+        // Then the domains' `check_consistency` (`environment/__init__.py:
+        // 822`): the citation domain's is the only one Sphinx defines.
+        // `location=(docname, lineno)` renders as the document's path and
+        // the citation's line.
+        for (docname, lineno, label) in env.citation.unreferenced() {
+            let path = sources
+                .get(docname)
+                .map(|path| path.to_path_buf())
+                .unwrap_or_else(|| self.source_dir.join(format!("{docname}.rst")));
+            self.add_warning(env_citation::unreferenced_warning(path, lineno, label));
         }
 
         self.xref_phase(env, results);

@@ -311,8 +311,8 @@ fn matches_sphinx_oracle_pformat() {
     );
 }
 
-/// Records the oracle prints that the parse layer cannot make, because
-/// Sphinx computes them against the build environment rather than from the
+/// Records the oracle prints that the read cannot make, because Sphinx
+/// computes them against the build environment rather than from the
 /// document alone. `PythonDomain.note_object`'s duplicate-description
 /// warning compares the registration with every object the environment
 /// holds — other documents' included — so this crate replays the parse's
@@ -320,8 +320,10 @@ fn matches_sphinx_oracle_pformat() {
 /// collect_registrations`), and the environment oracle
 /// (`tests/env_differential.rs`, projects `py_dup` and — for its place
 /// among the parse's other records, by the registration's `seq` —
-/// `reporter_interleave`) is its venue. `(case, record, reason)`; strict:
-/// each record must be in the case's oracle output and absent from ours.
+/// `reporter_interleave`) is its venue; likewise the citation domain's
+/// duplicate warning, from a read transform (project `citations`).
+/// `(case, record, reason)`; strict: each record must be in the case's
+/// oracle output and absent from ours.
 const MERGE_TIME_RECORDS: &[(&str, &str, &str)] = &[
     (
         "py.duplicate_functions",
@@ -334,6 +336,19 @@ const MERGE_TIME_RECORDS: &[(&str, &str, &str)] = &[
         "<snippet>:3: WARNING: duplicate object description of dupmod, other instance in \
          index, use :no-index: for one of them",
         "duplicate object descriptions are an environment replay (merge phase)",
+    ),
+    // `CitationDomain.note_citation` (`sphinx/domains/citation.py:70-82`),
+    // called from CitationDefinitionTransform (619), compares the citation
+    // with every one the environment holds; the read pass records the call
+    // (`RegistryExport::citations`, with the `seq` it spent) and the merge
+    // phase replays it (`env::citation_domain`). Venue for the place among
+    // the transforms' records and across documents: the environment oracle's
+    // `citations` project.
+    (
+        "tx_footnotes.citation_duplicate",
+        "<snippet>:4: WARNING: duplicate citation CIT, other instance in <snippet> \
+         [ref.citation]",
+        "duplicate citations are an environment replay (merge phase)",
     ),
 ];
 

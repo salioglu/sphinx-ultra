@@ -667,6 +667,19 @@ const KNOWN_RESOLVED_GAPS: &[(&str, &str, &str)] = &[
     // compared at full strength.
     ("reporter_interleave", "index", TOCTREE_RESOLUTION),
     ("reporter_interleave", "second", TOCTREE_RESOLUTION),
+    // Wave 5, Task 10: the `citations` project exists for the read side of
+    // citations (its warning stream; `a` and `b` compare at full strength).
+    // `c`'s one reference is a `pending_xref` the write phase resolves
+    // against the citation domain — sub-project 2.
+    ("citations", "index", TOCTREE_RESOLUTION),
+    (
+        "citations",
+        "c",
+        "citation resolution (`CitationDomain.resolve_xref`, \
+         `sphinx/domains/citation.py:99-113`) turns the `pending_xref` \
+         CitationReferenceTransform made into a `reference`; the resolver \
+         has no citation domain yet (sub-project 2)",
+    ),
 ];
 
 /// The attributes Sphinx's `HighlightLanguageTransform`
@@ -1693,13 +1706,13 @@ fn resolved_doctrees_match_oracle() {
 /// fixture document (or project) exactly once and that the two document
 /// tables are disjoint — so the table lengths ARE the exemption counts.
 /// Update the seven constants and the doc sites together.
-const DOCUMENTED_PROJECTS: usize = 34;
-const DOCUMENTED_DOCUMENTS: usize = 91;
-const DOCUMENTED_WHOLESALE_EXEMPT_DOCUMENTS: usize = 35;
+const DOCUMENTED_PROJECTS: usize = 35;
+const DOCUMENTED_DOCUMENTS: usize = 95;
+const DOCUMENTED_WHOLESALE_EXEMPT_DOCUMENTS: usize = 37;
 const DOCUMENTED_STAMP_EXEMPT_DOCUMENTS: usize = 8;
-const DOCUMENTED_BYTE_EXACT_DOCUMENTS: usize = 48;
+const DOCUMENTED_BYTE_EXACT_DOCUMENTS: usize = 50;
 const DOCUMENTED_WARNING_EXEMPT_PROJECTS: usize = 4;
-const DOCUMENTED_BYTE_EXACT_WARNING_PROJECTS: usize = 30;
+const DOCUMENTED_BYTE_EXACT_WARNING_PROJECTS: usize = 31;
 
 #[test]
 fn exemption_arithmetic_matches_the_documented_numbers() {
@@ -2128,6 +2141,108 @@ fn py_registrations_across_incremental_rebuilds_match_sphinx_s_clear_and_replay(
             ("dup", "b", "dup"),
             ("beta", "b", "module-beta"),
         ])
+    );
+}
+
+/// The citation domain across incremental rebuilds — the same clear-and-
+/// replay contract as the py registrations above, for the one registration
+/// a read *transform* makes (CitationDefinitionTransform, 619). Every
+/// expected line is byte-pinned to sphinx 9.1.0 incremental dummy builds of
+/// this project (probe `probe-t10/incr.py`, 2026-10-01: cold, steady,
+/// touch `a`; and cold, steady, touch `b`):
+///
+/// - cold: `b` registers `Dup` after `a` and warns naming `a`'s path; `Lone`
+///   is referenced nowhere (`check_consistency`);
+/// - steady: nothing is read, so no duplicate warning re-fires (Sphinx
+///   skips `check_consistency` too when nothing was read — this crate runs
+///   it on every build, a pre-existing difference, so only the duplicate
+///   is asserted absent here);
+/// - touch `a` (whose registration lost): clearing `a` leaves `b`'s `Dup`,
+///   so the replay warns from `a`, at `a`'s line, naming `b`;
+/// - touch `b` (whose registration won): clearing `b` removes `Dup`, and
+///   its replay registers silently.
+///
+/// `a` references `Dup`, so only `Lone` is ever unreferenced; `a`'s
+/// reference is cleared and re-noted with `a`.
+#[test]
+fn citation_registrations_across_incremental_rebuilds_match_sphinx_s_clear_and_replay() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let source_dir = tmp.path().join("source");
+    std::fs::create_dir_all(&source_dir).unwrap();
+    write(
+        &source_dir,
+        "index",
+        "Idx\n===\n\n.. toctree::\n\n   a\n   b\n",
+    );
+    let doc_a = "A\n=\n\nSee [Dup]_.\n\n.. [Dup] In a.\n";
+    let doc_b = "B\n=\n\n.. [Dup] In b.\n.. [Lone] Lone.\n";
+    write(&source_dir, "a", doc_a);
+    write(&source_dir, "b", doc_b);
+    let source_dir = sphinx_ultra::utils::canonicalize_simplified(&source_dir).unwrap();
+
+    let unreferenced = "<project>/b.rst:5: WARNING: Citation [Lone] is not referenced. \
+                        [ref.citation]";
+    let duplicate = |docname: &str, line: u32, other: &str| {
+        format!(
+            "<project>/{docname}.rst:{line}: WARNING: duplicate citation Dup, other instance \
+             in <project>/{other}.rst [ref.citation]"
+        )
+    };
+    let citations = |env: &serde_json::Value| env["citation"]["citations"].clone();
+
+    let out = tmp.path().join("out");
+    let (_, cold_env, cold_warnings) = incremental_build(&source_dir, &out);
+    assert_eq!(
+        cold_warnings,
+        vec![duplicate("b", 4, "a"), unreferenced.to_string()]
+    );
+    assert_eq!(
+        citations(&cold_env),
+        serde_json::json!([["Dup", "b", "dup", 4], ["Lone", "b", "lone", 5]])
+    );
+    assert_eq!(
+        cold_env["citation"]["citation_refs"],
+        serde_json::json!({"Dup": ["a"]})
+    );
+
+    let (hits, steady_env, steady_warnings) = incremental_build(&source_dir, &out);
+    assert_eq!(hits, 3);
+    assert!(
+        steady_warnings
+            .iter()
+            .all(|warning| !warning.contains("duplicate citation")),
+        "an unread document re-fires no duplicate warning: {steady_warnings:?}"
+    );
+    assert_eq!(steady_env["citation"], cold_env["citation"]);
+
+    // Touch the document whose registration LOST the duplicate.
+    write(&source_dir, "a", doc_a);
+    let (hits, env, warnings) = incremental_build(&source_dir, &out);
+    assert_eq!(hits, 2);
+    assert_eq!(
+        warnings,
+        vec![duplicate("a", 6, "b"), unreferenced.to_string()]
+    );
+    assert_eq!(
+        citations(&env),
+        serde_json::json!([["Dup", "a", "dup", 6], ["Lone", "b", "lone", 5]]),
+        "`Dup` keeps its slot (overwritten in place), now `a`'s"
+    );
+    assert_eq!(
+        env["citation"]["citation_refs"],
+        serde_json::json!({"Dup": ["a"]})
+    );
+
+    // Touch the document whose registration WON, against a fresh build.
+    let out2 = tmp.path().join("out2");
+    incremental_build(&source_dir, &out2);
+    write(&source_dir, "b", doc_b);
+    let (hits, env, warnings) = incremental_build(&source_dir, &out2);
+    assert_eq!(hits, 2);
+    assert_eq!(warnings, vec![unreferenced.to_string()]);
+    assert_eq!(
+        citations(&env),
+        serde_json::json!([["Dup", "b", "dup", 4], ["Lone", "b", "lone", 5]])
     );
 }
 

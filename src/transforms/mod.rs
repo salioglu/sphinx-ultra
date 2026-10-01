@@ -29,6 +29,7 @@
 //! [`TransformCtx::reporter`].
 
 mod dates;
+pub(crate) mod footnotes;
 pub(crate) mod misc;
 pub(crate) mod references;
 
@@ -38,7 +39,7 @@ use crate::config::{BuildConfig, SmartquotesExcludes};
 use crate::doctree::ids::{fully_normalize_name, IdRegistry};
 use crate::doctree::{kinds, messages, AttrValue, Doctree, Node};
 use crate::rst::diagnostics::{Diagnostic, Reporter};
-use crate::rst::ParseOptions;
+use crate::rst::{CitationRecord, ParseOptions, RegistryExport};
 
 /// The configuration the read transforms consult — the slice of Sphinx's
 /// `self.config` they read, with Sphinx 9.1's defaults (`config.py`).
@@ -212,6 +213,8 @@ pub struct DocumentLists {
     /// (`note_footnote_ref`, `nodes.py:2043-2046`).
     pub footnote_refs: BTreeMap<String, Vec<NodePath>>,
     /// `document.citation_refs` (`note_citation_ref`, `nodes.py:2051-2054`).
+    /// Empty from 619 on, which replaces every one in the tree; docutils'
+    /// list, which keeps them, is [`TransformCtx::replaced_citation_refs`].
     pub citation_refs: BTreeMap<String, Vec<NodePath>>,
     /// `document.autofootnotes`: the `auto=1` footnotes (`[#]`, `[#label]`).
     pub autofootnotes: Vec<NodePath>,
@@ -366,6 +369,21 @@ pub struct TransformCtx<'a> {
     /// of `SphinxDomains` in the probed order (850-040; the last printer,
     /// `SphinxDanglingReferences`, is 850-039 — research §1.2).
     pub reporter: Reporter,
+    /// The registrations the transforms make with the environment, which
+    /// leave the pass beside its records
+    /// ([`crate::rst::RegistryExport::citations`]): CitationDefinitionTransform's
+    /// `note_citation` calls (619), each holding the `seq` it spent — where
+    /// its duplicate warning, if the merge phase's replay against the
+    /// environment finds one ([`crate::env::citation_domain`]), prints.
+    pub(crate) citations: Vec<CitationRecord>,
+    /// `document.citation_refs` from 619 on: the `citation_reference`s
+    /// CitationReferenceTransform took out of the tree (replaced by
+    /// `pending_xref`s, [`footnotes::citation_references`]), which
+    /// docutils' list still holds and Footnotes (620) still links to their
+    /// citations — each `refname` to the first id of each reference no
+    /// earlier transform resolved, in document order. The walk-built lists
+    /// ([`DocumentLists`]) cannot see nodes that have left the tree.
+    pub(crate) replaced_citation_refs: BTreeMap<String, Vec<String>>,
 }
 
 /// One [`READ_TRANSFORMS`] entry: Sphinx priority, upstream class name,
@@ -409,11 +427,25 @@ static READ_TRANSFORMS: &[ReadTransform] = &[
     (460, "IndirectHyperlinks", references::indirect_hyperlinks),
     // 500 DoctestTransform (Task 12); GlossarySorter: applied by the
     //     parser's `glossary` directive.
-    // 619 CitationDefinitionTransform, CitationReferenceTransform;
-    // 620 Footnotes; 622 UnreferencedFootnotesDetector (Task 10).
+    (
+        619,
+        "CitationDefinitionTransform",
+        footnotes::citation_definitions,
+    ),
+    (
+        619,
+        "CitationReferenceTransform",
+        footnotes::citation_references,
+    ),
+    (620, "Footnotes", footnotes::footnotes),
+    (
+        622,
+        "UnreferencedFootnotesDetector",
+        footnotes::unreferenced_footnotes,
+    ),
     (640, "ExternalTargets", references::external_targets),
     (660, "InternalTargets", references::internal_targets),
-    // 700 FootnoteDocnameUpdater (Task 10).
+    (700, "FootnoteDocnameUpdater", footnotes::footnote_docnames),
     // 740 StripComments: no-op (`strip_comments` unset).
     // 750 SphinxSmartQuotes (Task 14).
     // 820 Decorations: no-op (no generator/datestamp/source link).
@@ -451,6 +483,8 @@ impl<'a> TransformCtx<'a> {
             docname,
             end_of_input,
             reporter: Reporter::continuing_from(next_seq),
+            citations: Vec::new(),
+            replaced_citation_refs: BTreeMap::new(),
         }
     }
 
@@ -515,9 +549,10 @@ impl<'a> TransformCtx<'a> {
         }
     }
 
-    /// The records the transforms made, in `seq` order.
-    fn finish(self) -> Vec<Diagnostic> {
-        self.reporter.take()
+    /// The records the transforms made, in `seq` order, and the
+    /// registrations they made, in the order they made them.
+    fn finish(self) -> (Vec<Diagnostic>, Vec<CitationRecord>) {
+        (self.reporter.take(), self.citations)
     }
 }
 
@@ -526,10 +561,20 @@ impl<'a> TransformCtx<'a> {
 /// ([`crate::rst::ParseOutput::ids`]) and `next_seq` its diagnostics
 /// counter ([`crate::rst::ParseOutput::next_seq`]), both continued;
 /// `end_of_input` is where the parse's input ended
-/// ([`crate::rst::ParseOutput::end_of_input`]). Every record a transform
-/// makes is appended to `diagnostics` — the document's stream
-/// ([`crate::rst::RegistryExport::diagnostics`]) — numbered from
-/// `next_seq` on.
+/// ([`crate::rst::ParseOutput::end_of_input`]). `registry` is the parse's
+/// export: every record a transform makes is appended to its
+/// `diagnostics` — the document's stream — numbered from `next_seq` on,
+/// and every registration a transform makes with the environment to its
+/// own list ([`RegistryExport::citations`]), for the merge phase to replay.
+///
+/// The parse's `nameids` snapshot in `registry` is not updated: the one
+/// name a transform registers is the number Footnotes (620) gives an
+/// unlabelled auto-numbered footnote (`note_explicit_target`,
+/// `docutils/transforms/references.py:530-532`), which the snapshot's only
+/// reader — `StandardDomain.process_doc`, the labels — skips with every
+/// other footnote name (`sphinx/domains/std/__init__.py:951-958`). The
+/// continued `ids` registry, which the transforms after Footnotes resolve
+/// against, does hold it.
 ///
 /// `next_seq` is handed over separately because the recorded diagnostics
 /// alone cannot say where the parse's numbering stopped: a registration
@@ -542,11 +587,13 @@ pub fn apply_read_transforms(
     end_of_input: Option<(u16, u32)>,
     docname: &str,
     config: &TransformConfig,
-    diagnostics: &mut Vec<Diagnostic>,
+    registry: &mut RegistryExport,
 ) {
     let mut ctx = TransformCtx::new(tree, ids, next_seq, end_of_input, docname, config);
     ctx.run(READ_TRANSFORMS);
-    diagnostics.extend(ctx.finish());
+    let (diagnostics, citations) = ctx.finish();
+    registry.diagnostics.extend(diagnostics);
+    registry.citations.extend(citations);
 }
 
 /// A standalone Sphinx read of `source`: the parse, then the read
@@ -560,7 +607,6 @@ pub fn parse_and_transform(
     config: &TransformConfig,
 ) -> (Doctree, Vec<Diagnostic>) {
     let mut out = crate::rst::parse_rst_full(source, opts);
-    let mut diagnostics = std::mem::take(&mut out.registry.diagnostics);
     apply_read_transforms(
         &mut out.doctree,
         out.ids,
@@ -568,17 +614,18 @@ pub fn parse_and_transform(
         out.end_of_input,
         &opts.docname,
         config,
-        &mut diagnostics,
+        &mut out.registry,
     );
-    (out.doctree, diagnostics)
+    (out.doctree, out.registry.diagnostics)
 }
 
 /// Test support: [`crate::rst::parse_rst_full`] followed by the read pass
 /// under Sphinx's default configuration, every other field of the parse
 /// output kept — the doctree and registry the build's read phase
 /// ([`crate::parser::Parser`]) hands the merge phase. The transforms'
-/// records join `registry.diagnostics`; the id registry the pass continued
-/// is spent, so `ids` comes back empty.
+/// records join `registry.diagnostics`, their registrations
+/// `registry.citations`; the id registry the pass continued is spent, so
+/// `ids` comes back empty.
 #[cfg(test)]
 pub(crate) fn parse_full_and_transform(
     source: &str,
@@ -592,7 +639,7 @@ pub(crate) fn parse_full_and_transform(
         out.end_of_input,
         &opts.docname,
         &TransformConfig::default(),
-        &mut out.registry.diagnostics,
+        &mut out.registry,
     );
     out
 }
@@ -719,13 +766,21 @@ mod tests {
         );
     }
 
-    /// The hyperlink family in its probed slots (research §1.2: 440-009,
-    /// 460-010, 640-012, 660-013, 850-039): the anonymous pairing before the
-    /// indirect targets (which rewrite the anonymous references it gave a
-    /// `refid`), the external and internal targets after the footnotes'
-    /// 620, and the dangling references last before FilterSystemMessages.
+    /// The hyperlink and footnote families in their probed slots (research
+    /// §1.2: 440-009, 460-010, 619-016, 619-017, 620-011, 622-028, 640-012,
+    /// 660-013, 700-015, 850-039): the anonymous pairing before the indirect
+    /// targets (which rewrite the anonymous references it gave a `refid`);
+    /// the citation definitions before the citation references (Sphinx
+    /// registers them in that order, `sphinx/domains/citation.py:181-182`),
+    /// both before Footnotes, which back-links the citations to the
+    /// references they replaced, and the unreferenced-footnote check after
+    /// it, which reads its backrefs; the external and internal targets after
+    /// the footnotes' 620 (a reference Footnotes resolved is theirs no
+    /// more), the docnames after every footnote reference is final but the
+    /// dangling ones, and the dangling references last before
+    /// FilterSystemMessages.
     #[test]
-    fn the_hyperlink_transforms_run_in_sphinx_order() {
+    fn the_hyperlink_and_footnote_transforms_run_in_sphinx_order() {
         let order: Vec<(u16, &str)> = READ_TRANSFORMS
             .iter()
             .map(|(priority, name, _)| (*priority, *name))
@@ -736,8 +791,13 @@ mod tests {
             [
                 (440, "AnonymousHyperlinks"),
                 (460, "IndirectHyperlinks"),
+                (619, "CitationDefinitionTransform"),
+                (619, "CitationReferenceTransform"),
+                (620, "Footnotes"),
+                (622, "UnreferencedFootnotesDetector"),
                 (640, "ExternalTargets"),
                 (660, "InternalTargets"),
+                (700, "FootnoteDocnameUpdater"),
                 (850, "SphinxDanglingReferences"),
                 (999, "FilterSystemMessages"),
             ]
@@ -828,6 +888,7 @@ mod tests {
         ]);
         let records: Vec<(u32, DiagnosticChannel, String)> = ctx
             .finish()
+            .0
             .into_iter()
             .map(|d| (d.seq, d.channel, d.text))
             .collect();

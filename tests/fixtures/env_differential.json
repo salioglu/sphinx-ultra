@@ -7073,6 +7073,182 @@
         "index": "Index\n=====\n\nPara *bad.\n\nDup\n---\n\nx\n\nDup\n---\n\ny\n"
       },
       "name": "keep_warnings_false"
+    },
+    {
+      "conf": {
+        "keep_warnings": true,
+        "smartquotes": false
+      },
+      "data_files": {
+        "notes.inc": ".. [Inc] Included citation.\n\n.. [9] Unreferenced footnote.\n"
+      },
+      "expect": {
+        "dependencies": {
+          "b": [
+            "<project>/notes.inc"
+          ]
+        },
+        "files_to_rebuild": {
+          "a": [
+            "index"
+          ],
+          "b": [
+            "index"
+          ],
+          "c": [
+            "index"
+          ]
+        },
+        "genindex": [],
+        "included": {},
+        "index_entries": {
+          "a": [],
+          "b": [],
+          "c": [],
+          "index": []
+        },
+        "py_modindex": {
+          "collapse": false,
+          "groups": []
+        },
+        "py_modules": [],
+        "py_objects": [],
+        "relations": {
+          "a": [
+            "index",
+            "index",
+            "b"
+          ],
+          "b": [
+            "index",
+            "a",
+            "c"
+          ],
+          "c": [
+            "index",
+            "b",
+            null
+          ],
+          "index": [
+            null,
+            null,
+            "a"
+          ]
+        },
+        "resolved_pformat": {
+          "a": "<document source=\"<project>/a.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"a\" names=\"a\">\n        <title>\n            A\n        <citation docname=\"a\" ids=\"dup\" names=\"dup\">\n            <label support_smartquotes=\"0\">\n                Dup\n            <paragraph>\n                In a.\n        <citation docname=\"a\" ids=\"used\" names=\"used\">\n            <label support_smartquotes=\"0\">\n                Used\n            <paragraph>\n                Used from c.\n        <citation docname=\"a\" ids=\"lonely\" names=\"lonely\">\n            <label support_smartquotes=\"0\">\n                Lonely\n            <paragraph>\n                Never referenced.\n",
+          "b": "<document source=\"<project>/b.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"b\" names=\"b\">\n        <title>\n            B\n        <paragraph>\n            Para \n            <problematic ids=\"id2\" refid=\"id1\">\n                *\n            bad.\n        <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"4\" source=\"<project>/b.rst\" type=\"WARNING\">\n            <paragraph>\n                Inline emphasis start-string without end-string.\n        <paragraph>\n            See \n            <footnote_reference auto=\"1\" docname=\"b\" ids=\"id3\" refid=\"id5\">\n                1\n             and \n            <problematic ids=\"id8 id4\" refid=\"id7\">\n                [#]_\n            .\n        <citation docname=\"b\" ids=\"dup\" names=\"dup\">\n            <label support_smartquotes=\"0\">\n                Dup\n            <paragraph>\n                In b.\n        <footnote auto=\"1\" backrefs=\"id3\" docname=\"b\" ids=\"id5\" names=\"1\">\n            <label>\n                1\n            <paragraph>\n                Only one.\n        <citation docname=\"b\" ids=\"inc\" names=\"inc\">\n            <label support_smartquotes=\"0\">\n                Inc\n            <paragraph>\n                Included citation.\n        <footnote docname=\"b\" ids=\"id6\" names=\"9\">\n            <label>\n                9\n            <paragraph>\n                Unreferenced footnote.\n",
+          "c": "<document source=\"<project>/c.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"c\" names=\"c\">\n        <title>\n            C\n        <paragraph>\n            See \n            <reference ids=\"id1\" internal=\"1\" refuri=\"#used\">\n                <inline>\n                    [Used]\n            .\n",
+          "index": "<document source=\"<project>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"index\" names=\"index\">\n        <title>\n            Index\n        <compound classes=\"toctree-wrapper\">\n            <compact_paragraph toctree=\"1\">\n                <bullet_list>\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                A\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                B\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                C\n"
+        },
+        "std": {
+          "anonlabels": {
+            "dup": [
+              "b",
+              "dup"
+            ],
+            "genindex": [
+              "genindex",
+              ""
+            ],
+            "inc": [
+              "b",
+              "inc"
+            ],
+            "lonely": [
+              "a",
+              "lonely"
+            ],
+            "modindex": [
+              "py-modindex",
+              ""
+            ],
+            "py-modindex": [
+              "py-modindex",
+              ""
+            ],
+            "search": [
+              "search",
+              ""
+            ],
+            "used": [
+              "a",
+              "used"
+            ]
+          },
+          "labels": {
+            "genindex": [
+              "genindex",
+              "",
+              "Index"
+            ],
+            "modindex": [
+              "py-modindex",
+              "",
+              "Module Index"
+            ],
+            "py-modindex": [
+              "py-modindex",
+              "",
+              "Python Module Index"
+            ],
+            "search": [
+              "search",
+              "",
+              "Search Page"
+            ]
+          },
+          "objects": [],
+          "progoptions": [],
+          "terms": {}
+        },
+        "toc_fignumbers": {},
+        "toc_num_entries": {
+          "a": 1,
+          "b": 1,
+          "c": 1,
+          "index": 1
+        },
+        "toc_secnumbers": {},
+        "tocs_pformat": {
+          "a": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"a\">\n                A\n",
+          "b": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"b\">\n                B\n",
+          "c": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"c\">\n                C\n",
+          "index": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"index\">\n                Index\n        <bullet_list>\n            <toctree caption=\"True\" entries=\"(None,\\ 'a') (None,\\ 'b') (None,\\ 'c')\" glob=\"0\" hidden=\"0\" includefiles=\"a b c\" includehidden=\"0\" maxdepth=\"-1\" numbered=\"0\" parent=\"index\" rawentries=\"\" titlesonly=\"0\">\n"
+        },
+        "toctree_includes": {
+          "index": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "warning_records": [
+          "<project>/b.rst:4: WARNING: Inline emphasis start-string without end-string. [docutils]",
+          "<project>/b.rst:8: WARNING: duplicate citation Dup, other instance in <project>/a.rst [ref.citation]",
+          "<project>/b.rst:6: ERROR: Too many autonumbered footnote references: only 1 corresponding footnote available. [docutils]",
+          "<project>/notes.inc:3: WARNING: Footnote [9] is not referenced. [ref.footnote]",
+          "<project>/b.rst:8: WARNING: Citation [Dup] is not referenced. [ref.citation]",
+          "<project>/a.rst:6: WARNING: Citation [Lonely] is not referenced. [ref.citation]",
+          "<project>/b.rst:1: WARNING: Citation [Inc] is not referenced. [ref.citation]"
+        ],
+        "warnings": [
+          "<project>/b.rst:4: WARNING: Inline emphasis start-string without end-string. [docutils]",
+          "<project>/b.rst:8: WARNING: duplicate citation Dup, other instance in <project>/a.rst [ref.citation]",
+          "<project>/b.rst:6: ERROR: Too many autonumbered footnote references: only 1 corresponding footnote available. [docutils]",
+          "<project>/notes.inc:3: WARNING: Footnote [9] is not referenced. [ref.footnote]",
+          "<project>/b.rst:8: WARNING: Citation [Dup] is not referenced. [ref.citation]",
+          "<project>/a.rst:6: WARNING: Citation [Lonely] is not referenced. [ref.citation]",
+          "<project>/b.rst:1: WARNING: Citation [Inc] is not referenced. [ref.citation]"
+        ]
+      },
+      "files": {
+        "a": "A\n=\n\n.. [Dup] In a.\n.. [Used] Used from c.\n.. [Lonely] Never referenced.\n",
+        "b": "B\n=\n\nPara *bad.\n\nSee [#]_ and [#]_.\n\n.. [Dup] In b.\n\n.. [#] Only one.\n\n.. include:: notes.inc\n",
+        "c": "C\n=\n\nSee [Used]_.\n",
+        "index": "Index\n=====\n\n.. toctree::\n\n   a\n   b\n   c\n"
+      },
+      "name": "citations"
     }
   ],
   "sphinx_version": "9.1.0"

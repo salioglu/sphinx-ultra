@@ -103,7 +103,9 @@ PropagateTargets, SortIds -- which also re-admitted the propagation-visible
 `py.module_basic`/`py.duplicate_modules` from EXCLUDED), then `tx_subst`
 (DefaultSubstitutions, docutils Substitutions), then `tx_links`
 (AnonymousHyperlinks, IndirectHyperlinks, ExternalTargets, InternalTargets,
-SphinxDanglingReferences -- every `refname` reference). Later tasks
+SphinxDanglingReferences -- every `refname` reference), then `tx_footnotes`
+(the citation transforms, Footnotes, UnreferencedFootnotesDetector,
+FootnoteDocnameUpdater -- every footnote and citation). Later tasks
 extend this corpus with Sphinx-specific directives (toctree, code-block,
 versionadded/versionchanged/deprecated, seealso, only, highlight, math, index,
 rst-class, ...) once the Rust side grows the sphinx registry + env surface.
@@ -355,6 +357,13 @@ SUPPORTED_KINDS = {
     "option",
     "option_string",
     "description",
+    # M2 wave 5, Task 10: footnotes and citations, which the transforms
+    # number, label and link (citation references are `pending_xref`s by
+    # then).
+    "footnote",
+    "footnote_reference",
+    "citation",
+    "label",
 }
 
 CASES = [
@@ -1227,6 +1236,65 @@ CASES = [
     # ending in a hyperlink target and a blank line — one past the input
     # (the target leaves the blank to the top level), as before Task 9.
     ('tx_subst', 'expansion_exceeds_line_length_limit_ending_in_a_target_and_blank', '.. |a| replace:: ' + 'x' * 1000 + '\n.. |b| replace:: ' + ' '.join(['|a|'] * 11) + '\n\nSee |b| here.\n\n.. _t: https://x/\n\n'),
+    # ===== tx_footnotes (M2 wave 5, sub-project 1, Task 10) =====
+    # Sphinx's CitationDefinitionTransform and CitationReferenceTransform
+    # (619, `sphinx/domains/citation.py:133-177`), docutils' Footnotes (620,
+    # `docutils/transforms/references.py:416-635`), Sphinx's
+    # UnreferencedFootnotesDetector (622, `sphinx/transforms/__init__.py:
+    # 288-324`) and FootnoteDocnameUpdater (700, `sphinx/builders/latex/
+    # transforms.py:34-43`, registered for every builder). Formerly
+    # excluded: every footnote is numbered, labelled and back-linked by
+    # them, every citation reference becomes a `pending_xref`.
+    ('tx_footnotes', 'auto_numbered', 'See [#]_ and [#]_.\n\n.. [#] One.\n.. [#] Two.\n'),
+    # Labelled auto-numbered footnotes take their numbers in footnote
+    # order, every reference to a label the same one; the unlabelled one
+    # between them takes the next.
+    ('tx_footnotes', 'auto_named', '[#b]_ [#a]_ [#a]_ [#]_\n\n.. [#a] A\n.. [#] auto\n.. [#b] B\n'),
+    ('tx_footnotes', 'manual', '[1]_ [2]_ [1]_\n\n.. [1] one\n.. [2] two\n'),
+    # Ten symbols, then each doubled (`**` for the eleventh).
+    ('tx_footnotes', 'symbol', ' '.join(['[*]_'] * 12) + '\n\n' + ''.join('.. [*] s%d\n' % i for i in range(12))),
+    # Auto numbers skip the names manual footnotes hold (1, 2), and the
+    # unreferenced manual footnote warns.
+    ('tx_footnotes', 'mixed_order', '[#]_ [1]_ [#]_ [#x]_\n\n.. [#] a\n.. [1] one\n.. [#] b\n.. [2] two\n.. [#x] x\n'),
+    ('tx_footnotes', 'too_many_references', '[#]_ [#]_ [#]_\n\n.. [#] a\n.. [#] b\n'),
+    # Manual footnotes first, then symbol, then auto-numbered (labelled
+    # ones say `[#]` too), each in document order.
+    ('tx_footnotes', 'unreferenced', '.. [1] one\n.. [#] auto\n.. [*] star\n.. [#lab] lab\n.. [2] two\n'),
+    # `reftarget` keeps the label as written; the citation's backrefs come
+    # from the references the 619 transform already took out of the tree
+    # (docutils' `citation_refs` still holds them). `[Other]` stays an
+    # unresolved `pending_xref` (resolution is a write-phase matter).
+    ('tx_footnotes', 'citation_definition_and_reference', 'See [CIT]_ and [Other]_ and [cit]_.\n\n.. [CIT] Citation.\n'),
+    # The `duplicate citation` warning is the citation domain's, decided
+    # against the environment: a merge-time record (MERGE_TIME_RECORDS in
+    # tests/sphinx_doctree_differential.rs).
+    ('tx_footnotes', 'citation_duplicate', '[CIT]_\n\n.. [CIT] first\n.. [CIT] second\n'),
+    # NBSP around the references (Python whitespace: the inline markup is
+    # recognized) and non-ASCII labels (names lowercased, ids made ASCII).
+    ('tx_footnotes', 'label_nbsp', 'See [#ä]_ and [ÄB]_ and [1]_.\n\n.. [#ä] Umlaut.\n.. [ÄB] Citation.\n.. [1] One two.\n'),
+    # The overflow message's plural (`footnote` for one and none).
+    ('tx_footnotes', 'too_many_references_one', '[#]_ [#]_\n\n.. [#] a\n'),
+    ('tx_footnotes', 'too_many_references_none', '[#]_\n'),
+    ('tx_footnotes', 'too_many_symbol_references', '[*]_ [*]_ [*]_\n\n.. [*] a\n'),
+    # Overflowing references in a section title: located at the section.
+    ('tx_footnotes', 'too_many_references_in_a_title', '- a [#]_\n\nT [#]_ [*]_\n===========\n\n.. [#] x\n'),
+    # A labelled reference no footnote carries takes the next unlabelled
+    # number — and keeps its `refname`, resolved: neither ExternalTargets
+    # nor SphinxDanglingReferences touches it.
+    ('tx_footnotes', 'unmatched_label_takes_a_number', 'See [#nope]_ and [#]_.\n\n.. [#] x\n\n.. _nope: https://x.example\n'),
+    ('tx_footnotes', 'unmatched_label_is_not_dangling', 'See [#nope]_.\n\n.. [#] x\n'),
+    # The number an auto footnote is named by is a name like any other:
+    # SphinxDanglingReferences resolves `[1]_` to it (no backref).
+    ('tx_footnotes', 'manual_reference_to_an_auto_number', 'See [1]_.\n\n.. [#] auto\n'),
+    # Duplicate labels: no footnote is named, so nothing resolves; the
+    # overflow message still spends its id.
+    ('tx_footnotes', 'duplicate_labelled_auto', '[#a]_\n\n.. [#a] one\n.. [#a] two\n'),
+    ('tx_footnotes', 'duplicate_manual', 'A [1]_ [1]_.\n\n.. [1] x\n.. [1] y\n'),
+    ('tx_footnotes', 'auto_label_number_taken', 'See [1]_ [#1]_.\n\n.. [#1] auto one\n.. [1] manual\n'),
+    ('tx_footnotes', 'labelled_and_unlabelled_overflow', 'See [#]_ [#lab]_ [#]_.\n\n.. [#lab] L\n.. [#] x\n'),
+    # Footnotes inside footnotes, references inside footnotes and citations.
+    ('tx_footnotes', 'nested', '.. [#] outer [#]_ [*]_\n\n   .. [#] inner [#]_\n   .. [*] star\n\nSee [#]_.\n'),
+    ('tx_footnotes', 'references_inside_notes', 'See [#]_ and [CIT]_.\n\n.. [#] has [CIT]_ and [1]_\n.. [CIT] has [#]_ and [1]_\n.. [1] one\n.. [#] two\n'),
 ]
 
 
@@ -1445,6 +1513,7 @@ def main() -> int:
         "tx_targets": 16,
         "tx_subst": 24,
         "tx_links": 53,
+        "tx_footnotes": 20,
     }
     counts: dict = {}
     for case in CASES:

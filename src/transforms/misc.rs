@@ -115,7 +115,7 @@ fn remove_messages_below(node: &mut Node, filterlevel: i64) {
 mod tests {
     use crate::doctree::ids::IdRegistry;
     use crate::doctree::{kinds, messages, AttrValue, Doctree, Node, Span};
-    use crate::rst::ParseOptions;
+    use crate::rst::{ParseOptions, RegistryExport};
     use crate::transforms::{apply_read_transforms, parse_and_transform, TransformConfig};
 
     /// One message of every level the parser creates, in sphinx mode, in
@@ -232,7 +232,7 @@ mod tests {
             root,
             sources: vec!["<snippet>".to_string()],
         };
-        let mut records = Vec::new();
+        let mut registry = RegistryExport::default();
         apply_read_transforms(
             &mut tree,
             IdRegistry::new(),
@@ -240,10 +240,10 @@ mod tests {
             None,
             "index",
             &keeping_warnings(),
-            &mut records,
+            &mut registry,
         );
         assert_eq!(message_levels(&tree.root), [2]);
         assert_eq!(tree.root.children[0].children.len(), 1);
-        assert!(records.is_empty());
+        assert!(registry.diagnostics.is_empty());
     }
 }

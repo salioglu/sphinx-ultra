@@ -14,9 +14,12 @@
 //! (`references.py:146-159,315-335,371-373,411-413,945-948`, and
 //! Footnotes', `:524-529,630-634`), and the walk-built lists the next
 //! transform reads ([`super::DocumentLists`]) hold only nodes that still
-//! carry one. The two exceptions are a target IndirectHyperlinks failed,
+//! carry one. The three exceptions are a target IndirectHyperlinks failed,
 //! which keeps its `refname` (`:296-298`) — the transforms after it skip
-//! every `target` still carrying one — and InternalTargets' name without an
+//! every `target` still carrying one —, the labelled footnote reference
+//! Footnotes numbers from an unlabelled footnote (`:561-568`), which keeps
+//! its `refname` beside the `refid` it gains — skipped by that pair
+//! ([`footnote_resolved_by_number`]) — and InternalTargets' name without an
 //! id (`:409-413`), which is unreachable: every name left in a target's
 //! `names` maps to an id (`nodes.py:1929-1990` dupnames the others).
 
@@ -342,7 +345,7 @@ fn replace_with_problematic(ctx: &mut TransformCtx, arena: &mut Arena, reference
 /// (`references.py:148-149,292-293,981`, and Substitutions' `:702-703`):
 /// the node as written ([`RAWSOURCE`]), pointing at its message. Its own id
 /// is the caller's to give.
-fn problematic_for(node: &Node, message_id: String) -> Node {
+pub(super) fn problematic_for(node: &Node, message_id: String) -> Node {
     let rawsource = match node.get(RAWSOURCE) {
         Some(AttrValue::Str(rawsource)) => rawsource.clone(),
         _ => String::new(),
@@ -677,22 +680,19 @@ impl Arena {
     /// span line stands in for docutils' `line` (ledgered where they differ:
     /// an attribution, a field name, a glossary term).
     fn location(&self, reference: usize) -> (u16, u32) {
+        // The ancestors the rule reads: up to the first that is not a
+        // `reference`, and that one's parent (a title's section).
+        let mut ancestors = Vec::new();
         let mut at = reference;
         while let Some(parent) = self.slots[at].parent {
+            ancestors.push(&self.slots[parent].node);
             at = parent;
             if self.slots[at].node.kind != kinds::REFERENCE {
+                ancestors.extend(self.slots[at].parent.map(|up| &self.slots[up].node));
                 break;
             }
         }
-        if self.slots[at].node.kind == kinds::TITLE {
-            if let Some(section) = self.slots[at]
-                .parent
-                .filter(|&parent| self.slots[parent].node.kind == kinds::SECTION)
-            {
-                at = section;
-            }
-        }
-        let span = self.slots[at].node.span;
+        let span = locating_ancestor(&self.slots[reference].node, &ancestors).span;
         (span.source, span.line)
     }
 
@@ -865,7 +865,7 @@ fn collect_targets(root: &Node) -> Vec<NodePath> {
 /// (`root` included) that `wanted` accepts, in document order — pre-order,
 /// by an explicit stack of sibling cursors rather than recursion, building
 /// a path only for the nodes it keeps.
-fn collect_paths(root: &Node, wanted: impl Fn(&Node) -> bool) -> Vec<NodePath> {
+pub(super) fn collect_paths(root: &Node, wanted: impl Fn(&Node) -> bool) -> Vec<NodePath> {
     let mut found = Vec::new();
     if wanted(root) {
         found.push(Vec::new());
@@ -894,6 +894,44 @@ fn collect_paths(root: &Node, wanted: impl Fn(&Node) -> bool) -> Vec<NodePath> {
         }
     }
     found
+}
+
+/// The node whose line locates a message about `reference`, given its
+/// ancestors nearest first ([`Arena::location`] gives the rule): the first
+/// ancestor that is not a `reference` (or the last one, or the reference
+/// itself without any), a section title standing in for its section.
+fn locating_ancestor<'n>(reference: &'n Node, ancestors: &[&'n Node]) -> &'n Node {
+    let Some(at) = ancestors
+        .iter()
+        .position(|node| node.kind != kinds::REFERENCE)
+        .or_else(|| ancestors.len().checked_sub(1))
+    else {
+        return reference;
+    };
+    if ancestors[at].kind == kinds::TITLE {
+        if let Some(section) = ancestors
+            .get(at + 1)
+            .filter(|node| node.kind == kinds::SECTION)
+        {
+            return section;
+        }
+    }
+    ancestors[at]
+}
+
+/// [`Arena::location`] for the reference at `path` below `root`.
+pub(super) fn location_at(root: &Node, path: &[usize]) -> (u16, u32) {
+    let mut chain = vec![root];
+    for &index in path {
+        let Some(child) = chain.last().and_then(|node| node.children.get(index)) else {
+            break;
+        };
+        chain.push(child);
+    }
+    let reference = chain.pop().unwrap_or(root);
+    chain.reverse();
+    let span = locating_ancestor(reference, &chain).span;
+    (span.source, span.line)
 }
 
 fn parent_of<'n>(root: &'n Node, path: &[usize]) -> Option<&'n Node> {
@@ -1020,7 +1058,7 @@ fn is_targetable(kind: &str) -> bool {
 }
 
 /// `node.get(key)` as a string.
-fn str_value<'n>(node: &'n Node, key: &'static str) -> Option<&'n str> {
+pub(super) fn str_value<'n>(node: &'n Node, key: &'static str) -> Option<&'n str> {
     match node.get(key) {
         Some(AttrValue::Str(value)) => Some(value),
         _ => None,
@@ -1030,7 +1068,7 @@ fn str_value<'n>(node: &'n Node, key: &'static str) -> Option<&'n str> {
 /// `node.replace_self(new)` for the node at `path` (`nodes.py:1110-1132`):
 /// `new` takes `old`'s place and its basic attributes
 /// ([`update_basic_atts`]).
-fn replace_at(root: &mut Node, path: &[usize], mut new: Node) {
+pub(super) fn replace_at(root: &mut Node, path: &[usize], mut new: Node) {
     let Some((&index, parent)) = path.split_last() else {
         return;
     };
@@ -1475,9 +1513,25 @@ impl Links {
 /// transforms after IndirectHyperlinks: it carries its `refname` and is not
 /// a target — the only targets that still carry one are those
 /// IndirectHyperlinks failed, which it marked resolved (`references.py:
-/// 298`).
+/// 298`) — nor a footnote reference Footnotes (620) resolved without
+/// taking its `refname` away ([`footnote_resolved_by_number`]).
 fn awaits_resolution(node: &Node) -> bool {
-    node.kind != kinds::TARGET && node.get("refname").is_some()
+    node.kind != kinds::TARGET
+        && node.get("refname").is_some()
+        && !footnote_resolved_by_number(node)
+}
+
+/// A labelled auto-numbered footnote reference (`[#nope]_`) that no
+/// footnote carries the label of, which Footnotes numbered with the next
+/// unlabelled footnote's number instead: `number_footnote_references`
+/// gives it that footnote's `refid` and marks it resolved, but leaves its
+/// `refname` (`references.py:536-569`, probed: `tx_footnotes.
+/// unmatched_label_takes_a_number`). The one node that carries both, so
+/// both mark it — and the transforms after Footnotes skip it, resolved.
+fn footnote_resolved_by_number(node: &Node) -> bool {
+    node.kind == kinds::FOOTNOTE_REFERENCE
+        && node.get("refname").is_some()
+        && node.get("refid").is_some()
 }
 
 /// `ExternalTargets` (`docutils/transforms/references.py:340-373`,
@@ -1568,7 +1622,9 @@ pub(super) fn internal_targets(ctx: &mut TransformCtx) {
 /// `reference` and `footnote_reference` still carrying a `refname`
 /// (`:937-940`; `citation_reference` too upstream, but Sphinx's
 /// CitationReferenceTransform (619) has replaced every one by then,
-/// `sphinx/domains/citation.py:150-177`):
+/// `sphinx/domains/citation.py:150-177`) and is not resolved — the one
+/// node Footnotes resolved with its `refname` left is skipped
+/// ([`footnote_resolved_by_number`]):
 ///
 /// * a name `document.nameids` maps to an id: the `refname` gives way to
 ///   that `refid` (`:941-949`);
@@ -1584,6 +1640,7 @@ pub(super) fn dangling_references(ctx: &mut TransformCtx) {
     let dangling = |node: &Node| {
         matches!(node.kind, kinds::REFERENCE | kinds::FOOTNOTE_REFERENCE)
             && node.get("refname").is_some()
+            && !footnote_resolved_by_number(node)
     };
     if collect_paths(&ctx.tree.root, dangling).is_empty() {
         return;
@@ -1663,7 +1720,7 @@ fn embedded_reference_hint(refname: &str) -> Option<String> {
 mod tests {
     use crate::doctree::ids::IdRegistry;
     use crate::doctree::{kinds, AttrValue, Doctree, Node, Span};
-    use crate::rst::ParseOptions;
+    use crate::rst::{ParseOptions, RegistryExport};
     use crate::transforms::{apply_read_transforms, parse_and_transform, TransformConfig};
 
     /// A Sphinx read of `source` with `keep_warnings` on (so the tree keeps
@@ -2041,7 +2098,7 @@ mod tests {
             None,
             "index",
             &TransformConfig::default(),
-            &mut Vec::new(),
+            &mut RegistryExport::default(),
         );
         let figure = &tree.root.children[0];
         let kinds: Vec<&str> = figure.children.iter().map(|child| child.kind).collect();

@@ -21,6 +21,7 @@
 //! `Hash*` equivalent so that bincode bytes and [`BuildEnvironment::snapshot`]
 //! output are deterministic across runs and processes.
 
+pub mod citation_domain;
 pub mod dependencies;
 pub mod genindex;
 pub mod metadata;
@@ -70,11 +71,16 @@ use crate::doctree::Node;
 /// to decode (the trailing bytes don't parse as a `PyDomainData`) and is
 /// rebuilt — only dev builds of this branch ever wrote one, so no second
 /// bump.
-pub const ENV_VERSION: u32 = 3;
+///
+/// Version 4: M2 wave 5 adds the `citation` domain's registries
+/// ([`citation_domain::CitationDomainData`]), which the read transforms'
+/// citation registrations fill.
+pub const ENV_VERSION: u32 = 4;
 
 /// The `env.bin` filename inside a build's cache directory.
 const ENV_FILENAME: &str = "env.bin";
 
+pub use citation_domain::CitationDomainData;
 pub use py_domain::PyDomainData;
 pub use std_domain::StdDomainData;
 
@@ -191,6 +197,9 @@ pub struct BuildEnvironment {
     pub py: PyDomainData,
     /// docname -> its `.. index::` entries, in document order.
     pub index_entries: BTreeMap<String, Vec<IndexEntryRecord>>,
+    /// The citation domain's registries (`domaindata['citation']`),
+    /// insertion-ordered — see [`CitationDomainData`].
+    pub citation: CitationDomainData,
 }
 
 impl BuildEnvironment {
@@ -332,7 +341,7 @@ impl BuildEnvironment {
     /// `environment/collectors/dependencies.py:24` (dependencies),
     /// `environment/collectors/metadata.py:22` (metadata),
     /// `domains/std/__init__.py:896` (std domain), `domains/index.py:41`
-    /// (index entries).
+    /// (index entries), `domains/citation.py:49` (citations).
     pub fn clear_doc(&mut self, docname: &str) {
         self.all_docs.remove(docname);
         self.included.remove(docname);
@@ -377,6 +386,9 @@ impl BuildEnvironment {
         self.py.clear_doc(docname);
 
         self.index_entries.remove(docname);
+
+        // `CitationDomain.clear_doc`, the same event.
+        self.citation.clear_doc(docname);
     }
 
     /// A deterministic JSON view of this environment, shaped to line up
@@ -506,6 +518,18 @@ impl BuildEnvironment {
             "py_objects": py_objects,
             "py_modules": py_modules,
             "index_entries": JsonValue::Object(index_entries),
+            // `domaindata['citation']`, `citations` in registration order.
+            "citation": {
+                "citations": self
+                    .citation
+                    .citations
+                    .iter()
+                    .map(|(label, entry)| {
+                        json!([label, entry.docname, entry.labelid, entry.lineno])
+                    })
+                    .collect::<Vec<_>>(),
+                "citation_refs": self.citation.citation_refs,
+            },
         })
     }
 }
@@ -646,6 +670,15 @@ mod tests {
                 category_key: None,
             }],
         );
+        env.citation.note_citation(
+            "CIT",
+            citation_domain::CitationEntry {
+                docname: "index".to_string(),
+                labelid: "cit".to_string(),
+                lineno: 7,
+            },
+        );
+        env.citation.note_citation_reference("CIT", "index");
         env
     }
 
@@ -713,6 +746,34 @@ mod tests {
         assert!(BuildEnvironment::load(tmp.path()).is_none());
     }
 
+    /// An `env.bin` from before the citation domain existed (version 3, no
+    /// trailing `citation` field) is a cold start, whichever check catches
+    /// it first: its stamped version, or its missing bytes.
+    #[test]
+    fn a_version_3_environment_is_a_cold_start() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut old = populated_env();
+        old.version = 3;
+        old.citation = CitationDomainData::default();
+        let config = bincode::config::standard();
+        let mut bytes = bincode::serde::encode_to_vec(&old, config).unwrap();
+        let citation_len = bincode::serde::encode_to_vec(&old.citation, config)
+            .unwrap()
+            .len();
+        bytes.truncate(bytes.len() - citation_len);
+        std::fs::write(tmp.path().join(ENV_FILENAME), &bytes).unwrap();
+        assert!(BuildEnvironment::load(tmp.path()).is_none());
+
+        old.version = ENV_VERSION;
+        let mut bytes = bincode::serde::encode_to_vec(&old, config).unwrap();
+        bytes.truncate(bytes.len() - citation_len);
+        std::fs::write(tmp.path().join(ENV_FILENAME), &bytes).unwrap();
+        assert!(
+            BuildEnvironment::load(tmp.path()).is_none(),
+            "the missing citation registries alone make it a miss"
+        );
+    }
+
     #[test]
     fn load_returns_none_when_version_does_not_match_current() {
         let tmp = tempfile::TempDir::new().unwrap();
@@ -778,6 +839,7 @@ mod tests {
         assert!(env.py.objects.is_empty() && env.py.objects_index.is_empty());
         assert!(env.py.modules.is_empty() && env.py.modules_index.is_empty());
         assert!(env.index_entries.is_empty());
+        assert_eq!(env.citation, CitationDomainData::default());
     }
 
     #[test]

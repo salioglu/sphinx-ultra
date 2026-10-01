@@ -136,7 +136,9 @@ impl Parser {
     /// read, before anything but the target-marker harvest reads the tree,
     /// before the merge phase's domain hooks, and before the tree is
     /// persisted. The transforms' records join the parse's in
-    /// `document.registry.diagnostics`, numbered after them.
+    /// `document.registry.diagnostics`, numbered after them, and their
+    /// registrations with the environment (`document.registry.citations`)
+    /// wait there for the merge phase to replay.
     fn parse_rst_into(
         &self,
         content: &str,
@@ -172,7 +174,7 @@ impl Parser {
             output.end_of_input,
             docname,
             &self.transforms,
-            &mut output.registry.diagnostics,
+            &mut output.registry,
         );
         {
             let root = &output.doctree.root;

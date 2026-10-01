@@ -1629,6 +1629,74 @@ y
 """,
         },
     },
+    # -----------------------------------------------------------------------
+    # Wave 5 (sub-project 1, Task 10): the read side of citations, across
+    # documents. `CitationDefinitionTransform` (priority 619,
+    # `sphinx/domains/citation.py:133-148`) registers every citation with
+    # the citation domain (`note_citation`, `:70-82`), which warns about a
+    # label the ENVIRONMENT already holds — here `Dup`, registered by `a`
+    # (read first) when `b` registers it again: `b`'s record prints among
+    # its own read records in transform order, after the parse's inline
+    # WARNING and before Footnotes' (620) overflow ERROR, naming `a`'s
+    # source path; the newer registration overwrites the older in place.
+    # After the read, `check_consistency` (`:88-97`) warns about every
+    # citation no document references, in registration order (`Dup` — at
+    # `b`'s line now — then `Lonely`); `Used` is referenced from `c`,
+    # whose resolved doctree waits for citation resolution (sub-project 2).
+    # `b` includes `notes.inc`, whose footnote and citation locate their
+    # warnings (see below).
+    # -----------------------------------------------------------------------
+    {
+        "name": "citations",
+        "conf": {"keep_warnings": True},
+        "files": {
+            "index": """\
+Index
+=====
+
+.. toctree::
+
+   a
+   b
+   c
+""",
+            "a": """\
+A
+=
+
+.. [Dup] In a.
+.. [Used] Used from c.
+.. [Lonely] Never referenced.
+""",
+            "b": """\
+B
+=
+
+Para *bad.
+
+See [#]_ and [#]_.
+
+.. [Dup] In b.
+
+.. [#] Only one.
+
+.. include:: notes.inc
+""",
+            "c": """\
+C
+=
+
+See [Used]_.
+""",
+        },
+        # An included file's footnote warns at its own source and line; its
+        # citation's `Citation [..] is not referenced.` names the
+        # including document's path with the included file's line
+        # (`location=(docname, lineno)`).
+        "data_files": {
+            "notes.inc": ".. [Inc] Included citation.\n\n.. [9] Unreferenced footnote.\n",
+        },
+    },
 ]
 
 

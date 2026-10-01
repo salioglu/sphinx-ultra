@@ -466,6 +466,8 @@ impl BlockParser {
             diagnostics: std::mem::take(&mut self.reporter).take(),
             dependencies: std::mem::take(&mut self.dependency_records),
             included: std::mem::take(&mut self.included_records),
+            // Made by the read transforms (619), after the parse.
+            citations: Vec::new(),
         };
         super::ParseOutput {
             doctree: crate::doctree::Doctree {

@@ -551,6 +551,24 @@ impl IdRegistry {
             .collect()
     }
 
+    /// `document.set_name_id_map(node, id, explicit=True)` for a name no
+    /// node holds yet (`docutils/nodes.py:1921-1927`): `name` now maps to
+    /// `id`, explicitly. Footnotes (620) names an unlabelled auto-numbered
+    /// footnote by its number this way (`note_explicit_target`,
+    /// `transforms/references.py:530-532`), having picked a number no name
+    /// has; a name some node already holds is left as it is (the duplicate
+    /// path this would take is unreachable there).
+    pub(crate) fn note_explicit_name(&mut self, name: &str, id: &str) {
+        self.nameids
+            .entry(name.to_string())
+            .or_insert_with(|| NameEntry {
+                id: Some(id.to_string()),
+                explicit: true,
+                refuri: None,
+                refname: None,
+            });
+    }
+
     /// `document.nameids.get(name)`, the lookup the reference transforms
     /// make (`docutils/transforms/references.py:228,403,942,955`): `None`
     /// when no node has the name, `Some(None)` once it has been duplicated

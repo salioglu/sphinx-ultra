@@ -146,7 +146,11 @@ pub(crate) fn source_path_of(doc: &DocumentSource<'_>, source: u16) -> PathBuf {
 /// descriptions (`ObjectDescription.add_target_and_index` -> `note_object`
 /// / `add_program_option`) — see [`RegistryExport::program_options`] for
 /// why the doctree cannot carry these — and the **py domain's**
-/// ([`crate::env::py_domain::collect_registrations`]).
+/// ([`crate::env::py_domain::collect_registrations`]); then the one domain
+/// registration a read *transform* makes, the **citation domain's**
+/// (CitationDefinitionTransform and CitationReferenceTransform, 619:
+/// [`crate::env::citation_domain::collect_registrations`]), whose
+/// duplicate warning names the earlier document's path (`doc2path`).
 ///
 /// Each duplicate registration's warning comes back with the `seq` its
 /// record took in the document's diagnostics stream: Sphinx logs it from
@@ -159,11 +163,13 @@ pub(crate) fn source_path_of(doc: &DocumentSource<'_>, source: u16) -> PathBuf {
 pub fn replay_registrations(
     env: &mut BuildEnvironment,
     doc: &DocumentSource<'_>,
+    doc2path: &dyn Fn(&str) -> PathBuf,
 ) -> Vec<(u32, BuildWarning)> {
     let mut warnings = Vec::new();
     replay_glossary_terms(env, doc, &mut warnings);
     replay_descriptions(env, doc, &mut warnings);
     crate::env::py_domain::collect_registrations(env, doc, &mut warnings);
+    crate::env::citation_domain::collect_registrations(env, doc, doc2path, &mut warnings);
     warnings.sort_by_key(|(seq, _)| *seq);
     warnings
 }
@@ -515,7 +521,7 @@ mod tests {
             // The merge phase's order: the parse-time registrations, then
             // the label pass.
             warnings.extend(
-                replay_registrations(&mut env, &doc)
+                replay_registrations(&mut env, &doc, &doc2path)
                     .into_iter()
                     .map(|(_, warning)| warning),
             );

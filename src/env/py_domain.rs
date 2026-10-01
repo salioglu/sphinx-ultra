@@ -1863,7 +1863,7 @@ mod tests {
                 path: &path,
             };
             warnings.extend(
-                std_domain::replay_registrations(&mut env, &doc)
+                std_domain::replay_registrations(&mut env, &doc, &doc2path)
                     .into_iter()
                     .map(|(_, warning)| warning),
             );

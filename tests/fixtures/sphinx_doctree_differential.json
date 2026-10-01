@@ -4549,6 +4549,210 @@
       "warnings": [
         "<snippet>:8: ERROR: Substitution definition \"b\" exceeds the line-length-limit. [docutils]"
       ]
+    },
+    {
+      "family": "tx_footnotes",
+      "name": "tx_footnotes.auto_numbered",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <footnote_reference auto=\"1\" docname=\"index\" ids=\"id1\" refid=\"id3\">\n            1\n         and \n        <footnote_reference auto=\"1\" docname=\"index\" ids=\"id2\" refid=\"id4\">\n            2\n        .\n    <footnote auto=\"1\" backrefs=\"id1\" docname=\"index\" ids=\"id3\" names=\"1\">\n        <label>\n            1\n        <paragraph>\n            One.\n    <footnote auto=\"1\" backrefs=\"id2\" docname=\"index\" ids=\"id4\" names=\"2\">\n        <label>\n            2\n        <paragraph>\n            Two.\n",
+      "rst": "See [#]_ and [#]_.\n\n.. [#] One.\n.. [#] Two.\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_footnotes",
+      "name": "tx_footnotes.auto_named",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <footnote_reference auto=\"1\" docname=\"index\" ids=\"id1\" refid=\"b\">\n            3\n         \n        <footnote_reference auto=\"1\" docname=\"index\" ids=\"id2\" refid=\"a\">\n            1\n         \n        <footnote_reference auto=\"1\" docname=\"index\" ids=\"id3\" refid=\"a\">\n            1\n         \n        <footnote_reference auto=\"1\" docname=\"index\" ids=\"id4\" refid=\"id5\">\n            2\n    <footnote auto=\"1\" backrefs=\"id2 id3\" docname=\"index\" ids=\"a\" names=\"a\">\n        <label>\n            1\n        <paragraph>\n            A\n    <footnote auto=\"1\" backrefs=\"id4\" docname=\"index\" ids=\"id5\" names=\"2\">\n        <label>\n            2\n        <paragraph>\n            auto\n    <footnote auto=\"1\" backrefs=\"id1\" docname=\"index\" ids=\"b\" names=\"b\">\n        <label>\n            3\n        <paragraph>\n            B\n",
+      "rst": "[#b]_ [#a]_ [#a]_ [#]_\n\n.. [#a] A\n.. [#] auto\n.. [#b] B\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_footnotes",
+      "name": "tx_footnotes.manual",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <footnote_reference docname=\"index\" ids=\"id1\" refid=\"id4\">\n            1\n         \n        <footnote_reference docname=\"index\" ids=\"id2\" refid=\"id5\">\n            2\n         \n        <footnote_reference docname=\"index\" ids=\"id3\" refid=\"id4\">\n            1\n    <footnote backrefs=\"id1 id3\" docname=\"index\" ids=\"id4\" names=\"1\">\n        <label>\n            1\n        <paragraph>\n            one\n    <footnote backrefs=\"id2\" docname=\"index\" ids=\"id5\" names=\"2\">\n        <label>\n            2\n        <paragraph>\n            two\n",
+      "rst": "[1]_ [2]_ [1]_\n\n.. [1] one\n.. [2] two\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_footnotes",
+      "name": "tx_footnotes.symbol",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <footnote_reference auto=\"*\" docname=\"index\" ids=\"id1\" refid=\"id13\">\n            *\n         \n        <footnote_reference auto=\"*\" docname=\"index\" ids=\"id2\" refid=\"id14\">\n            †\n         \n        <footnote_reference auto=\"*\" docname=\"index\" ids=\"id3\" refid=\"id15\">\n            ‡\n         \n        <footnote_reference auto=\"*\" docname=\"index\" ids=\"id4\" refid=\"id16\">\n            §\n         \n        <footnote_reference auto=\"*\" docname=\"index\" ids=\"id5\" refid=\"id17\">\n            ¶\n         \n        <footnote_reference auto=\"*\" docname=\"index\" ids=\"id6\" refid=\"id18\">\n            #\n         \n        <footnote_reference auto=\"*\" docname=\"index\" ids=\"id7\" refid=\"id19\">\n            ♠\n         \n        <footnote_reference auto=\"*\" docname=\"index\" ids=\"id8\" refid=\"id20\">\n            ♥\n         \n        <footnote_reference auto=\"*\" docname=\"index\" ids=\"id9\" refid=\"id21\">\n            ♦\n         \n        <footnote_reference auto=\"*\" docname=\"index\" ids=\"id10\" refid=\"id22\">\n            ♣\n         \n        <footnote_reference auto=\"*\" docname=\"index\" ids=\"id11\" refid=\"id23\">\n            **\n         \n        <footnote_reference auto=\"*\" docname=\"index\" ids=\"id12\" refid=\"id24\">\n            ††\n    <footnote auto=\"*\" backrefs=\"id1\" docname=\"index\" ids=\"id13\">\n        <label>\n            *\n        <paragraph>\n            s0\n    <footnote auto=\"*\" backrefs=\"id2\" docname=\"index\" ids=\"id14\">\n        <label>\n            †\n        <paragraph>\n            s1\n    <footnote auto=\"*\" backrefs=\"id3\" docname=\"index\" ids=\"id15\">\n        <label>\n            ‡\n        <paragraph>\n            s2\n    <footnote auto=\"*\" backrefs=\"id4\" docname=\"index\" ids=\"id16\">\n        <label>\n            §\n        <paragraph>\n            s3\n    <footnote auto=\"*\" backrefs=\"id5\" docname=\"index\" ids=\"id17\">\n        <label>\n            ¶\n        <paragraph>\n            s4\n    <footnote auto=\"*\" backrefs=\"id6\" docname=\"index\" ids=\"id18\">\n        <label>\n            #\n        <paragraph>\n            s5\n    <footnote auto=\"*\" backrefs=\"id7\" docname=\"index\" ids=\"id19\">\n        <label>\n            ♠\n        <paragraph>\n            s6\n    <footnote auto=\"*\" backrefs=\"id8\" docname=\"index\" ids=\"id20\">\n        <label>\n            ♥\n        <paragraph>\n            s7\n    <footnote auto=\"*\" backrefs=\"id9\" docname=\"index\" ids=\"id21\">\n        <label>\n            ♦\n        <paragraph>\n            s8\n    <footnote auto=\"*\" backrefs=\"id10\" docname=\"index\" ids=\"id22\">\n        <label>\n            ♣\n        <paragraph>\n            s9\n    <footnote auto=\"*\" backrefs=\"id11\" docname=\"index\" ids=\"id23\">\n        <label>\n            **\n        <paragraph>\n            s10\n    <footnote auto=\"*\" backrefs=\"id12\" docname=\"index\" ids=\"id24\">\n        <label>\n            ††\n        <paragraph>\n            s11\n",
+      "rst": "[*]_ [*]_ [*]_ [*]_ [*]_ [*]_ [*]_ [*]_ [*]_ [*]_ [*]_ [*]_\n\n.. [*] s0\n.. [*] s1\n.. [*] s2\n.. [*] s3\n.. [*] s4\n.. [*] s5\n.. [*] s6\n.. [*] s7\n.. [*] s8\n.. [*] s9\n.. [*] s10\n.. [*] s11\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_footnotes",
+      "name": "tx_footnotes.mixed_order",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <footnote_reference auto=\"1\" docname=\"index\" ids=\"id1\" refid=\"id5\">\n            3\n         \n        <footnote_reference docname=\"index\" ids=\"id2\" refid=\"id6\">\n            1\n         \n        <footnote_reference auto=\"1\" docname=\"index\" ids=\"id3\" refid=\"id7\">\n            4\n         \n        <footnote_reference auto=\"1\" docname=\"index\" ids=\"id4\" refid=\"x\">\n            5\n    <footnote auto=\"1\" backrefs=\"id1\" docname=\"index\" ids=\"id5\" names=\"3\">\n        <label>\n            3\n        <paragraph>\n            a\n    <footnote backrefs=\"id2\" docname=\"index\" ids=\"id6\" names=\"1\">\n        <label>\n            1\n        <paragraph>\n            one\n    <footnote auto=\"1\" backrefs=\"id3\" docname=\"index\" ids=\"id7\" names=\"4\">\n        <label>\n            4\n        <paragraph>\n            b\n    <footnote docname=\"index\" ids=\"id8\" names=\"2\">\n        <label>\n            2\n        <paragraph>\n            two\n    <footnote auto=\"1\" backrefs=\"id4\" docname=\"index\" ids=\"x\" names=\"x\">\n        <label>\n            5\n        <paragraph>\n            x\n",
+      "rst": "[#]_ [1]_ [#]_ [#x]_\n\n.. [#] a\n.. [1] one\n.. [#] b\n.. [2] two\n.. [#x] x\n",
+      "warnings": [
+        "<snippet>:6: WARNING: Footnote [2] is not referenced. [ref.footnote]"
+      ]
+    },
+    {
+      "family": "tx_footnotes",
+      "name": "tx_footnotes.too_many_references",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <footnote_reference auto=\"1\" docname=\"index\" ids=\"id1\" refid=\"id4\">\n            1\n         \n        <footnote_reference auto=\"1\" docname=\"index\" ids=\"id2\" refid=\"id5\">\n            2\n         \n        <problematic ids=\"id7 id3\" refid=\"id6\">\n            [#]_\n    <footnote auto=\"1\" backrefs=\"id1\" docname=\"index\" ids=\"id4\" names=\"1\">\n        <label>\n            1\n        <paragraph>\n            a\n    <footnote auto=\"1\" backrefs=\"id2\" docname=\"index\" ids=\"id5\" names=\"2\">\n        <label>\n            2\n        <paragraph>\n            b\n",
+      "rst": "[#]_ [#]_ [#]_\n\n.. [#] a\n.. [#] b\n",
+      "warnings": [
+        "<snippet>:1: ERROR: Too many autonumbered footnote references: only 2 corresponding footnotes available. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_footnotes",
+      "name": "tx_footnotes.unreferenced",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <footnote docname=\"index\" ids=\"id1\" names=\"1\">\n        <label>\n            1\n        <paragraph>\n            one\n    <footnote auto=\"1\" docname=\"index\" ids=\"id2\" names=\"3\">\n        <label>\n            3\n        <paragraph>\n            auto\n    <footnote auto=\"*\" docname=\"index\" ids=\"id3\">\n        <label>\n            *\n        <paragraph>\n            star\n    <footnote auto=\"1\" docname=\"index\" ids=\"lab\" names=\"lab\">\n        <label>\n            4\n        <paragraph>\n            lab\n    <footnote docname=\"index\" ids=\"id4\" names=\"2\">\n        <label>\n            2\n        <paragraph>\n            two\n",
+      "rst": ".. [1] one\n.. [#] auto\n.. [*] star\n.. [#lab] lab\n.. [2] two\n",
+      "warnings": [
+        "<snippet>:1: WARNING: Footnote [1] is not referenced. [ref.footnote]",
+        "<snippet>:5: WARNING: Footnote [2] is not referenced. [ref.footnote]",
+        "<snippet>:3: WARNING: Footnote [*] is not referenced. [ref.footnote]",
+        "<snippet>:2: WARNING: Footnote [#] is not referenced. [ref.footnote]",
+        "<snippet>:4: WARNING: Footnote [#] is not referenced. [ref.footnote]"
+      ]
+    },
+    {
+      "family": "tx_footnotes",
+      "name": "tx_footnotes.citation_definition_and_reference",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <pending_xref ids=\"id1\" refdomain=\"citation\" reftarget=\"CIT\" reftype=\"ref\" refwarn=\"1\" support_smartquotes=\"0\">\n            <inline>\n                [CIT]\n         and \n        <pending_xref ids=\"id2\" refdomain=\"citation\" reftarget=\"Other\" reftype=\"ref\" refwarn=\"1\" support_smartquotes=\"0\">\n            <inline>\n                [Other]\n         and \n        <pending_xref ids=\"id3\" refdomain=\"citation\" reftarget=\"cit\" reftype=\"ref\" refwarn=\"1\" support_smartquotes=\"0\">\n            <inline>\n                [cit]\n        .\n    <citation backrefs=\"id1 id3\" docname=\"index\" ids=\"cit\" names=\"cit\">\n        <label support_smartquotes=\"0\">\n            CIT\n        <paragraph>\n            Citation.\n",
+      "rst": "See [CIT]_ and [Other]_ and [cit]_.\n\n.. [CIT] Citation.\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_footnotes",
+      "name": "tx_footnotes.citation_duplicate",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <pending_xref ids=\"id1\" refdomain=\"citation\" reftarget=\"CIT\" reftype=\"ref\" refwarn=\"1\" support_smartquotes=\"0\">\n            <inline>\n                [CIT]\n    <citation docname=\"index\" dupnames=\"cit\" ids=\"cit\">\n        <label support_smartquotes=\"0\">\n            CIT\n        <paragraph>\n            first\n    <citation docname=\"index\" dupnames=\"cit\" ids=\"id2\">\n        <label support_smartquotes=\"0\">\n            CIT\n        <system_message backrefs=\"id2\" level=\"2\" line=\"4\" source=\"<snippet>\" type=\"WARNING\">\n            <paragraph>\n                Duplicate explicit target name: \"cit\".\n        <paragraph>\n            second\n",
+      "rst": "[CIT]_\n\n.. [CIT] first\n.. [CIT] second\n",
+      "warnings": [
+        "<snippet>:4: WARNING: Duplicate explicit target name: \"cit\". [docutils]",
+        "<snippet>:4: WARNING: duplicate citation CIT, other instance in <snippet> [ref.citation]"
+      ]
+    },
+    {
+      "family": "tx_footnotes",
+      "name": "tx_footnotes.label_nbsp",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <footnote_reference auto=\"1\" docname=\"index\" ids=\"id1\" refid=\"a\">\n            2\n         and \n        <pending_xref ids=\"id2\" refdomain=\"citation\" reftarget=\"ÄB\" reftype=\"ref\" refwarn=\"1\" support_smartquotes=\"0\">\n            <inline>\n                [ÄB]\n         and \n        <footnote_reference docname=\"index\" ids=\"id3\" refid=\"id4\">\n            1\n        .\n    <footnote auto=\"1\" backrefs=\"id1\" docname=\"index\" ids=\"a\" names=\"ä\">\n        <label>\n            2\n        <paragraph>\n            Umlaut.\n    <citation backrefs=\"id2\" docname=\"index\" ids=\"ab\" names=\"äb\">\n        <label support_smartquotes=\"0\">\n            ÄB\n        <paragraph>\n            Citation.\n    <footnote backrefs=\"id3\" docname=\"index\" ids=\"id4\" names=\"1\">\n        <label>\n            1\n        <paragraph>\n            One two.\n",
+      "rst": "See [#ä]_ and [ÄB]_ and [1]_.\n\n.. [#ä] Umlaut.\n.. [ÄB] Citation.\n.. [1] One two.\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_footnotes",
+      "name": "tx_footnotes.too_many_references_one",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <footnote_reference auto=\"1\" docname=\"index\" ids=\"id1\" refid=\"id3\">\n            1\n         \n        <problematic ids=\"id5 id2\" refid=\"id4\">\n            [#]_\n    <footnote auto=\"1\" backrefs=\"id1\" docname=\"index\" ids=\"id3\" names=\"1\">\n        <label>\n            1\n        <paragraph>\n            a\n",
+      "rst": "[#]_ [#]_\n\n.. [#] a\n",
+      "warnings": [
+        "<snippet>:1: ERROR: Too many autonumbered footnote references: only 1 corresponding footnote available. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_footnotes",
+      "name": "tx_footnotes.too_many_references_none",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <problematic ids=\"id3 id1\" refid=\"id2\">\n            [#]_\n",
+      "rst": "[#]_\n",
+      "warnings": [
+        "<snippet>:1: ERROR: Too many autonumbered footnote references: only 0 corresponding footnote available. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_footnotes",
+      "name": "tx_footnotes.too_many_symbol_references",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <footnote_reference auto=\"*\" docname=\"index\" ids=\"id1\" refid=\"id4\">\n            *\n         \n        <problematic ids=\"id6 id2\" refid=\"id5\">\n            [*]_\n         \n        <problematic ids=\"id7 id3\" refid=\"id5\">\n            [*]_\n    <footnote auto=\"*\" backrefs=\"id1\" docname=\"index\" ids=\"id4\">\n        <label>\n            *\n        <paragraph>\n            a\n",
+      "rst": "[*]_ [*]_ [*]_\n\n.. [*] a\n",
+      "warnings": [
+        "<snippet>:1: ERROR: Too many symbol footnote references: only 1 corresponding footnotes available. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_footnotes",
+      "name": "tx_footnotes.too_many_references_in_a_title",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                a \n                <footnote_reference auto=\"1\" docname=\"index\" ids=\"id1\" refid=\"id4\">\n                    1\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T \n            <problematic ids=\"id6 id2\" refid=\"id5\">\n                [#]_\n             \n            <problematic ids=\"id8 id3\" refid=\"id7\">\n                [*]_\n        <footnote auto=\"1\" backrefs=\"id1\" docname=\"index\" ids=\"id4\" names=\"1\">\n            <label>\n                1\n            <paragraph>\n                x\n",
+      "rst": "- a [#]_\n\nT [#]_ [*]_\n===========\n\n.. [#] x\n",
+      "warnings": [
+        "<snippet>:4: ERROR: Too many autonumbered footnote references: only 1 corresponding footnote available. [docutils]",
+        "<snippet>:4: ERROR: Too many symbol footnote references: only 0 corresponding footnotes available. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_footnotes",
+      "name": "tx_footnotes.unmatched_label_takes_a_number",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <footnote_reference auto=\"1\" docname=\"index\" ids=\"id1\" refid=\"id3\" refname=\"nope\">\n            1\n         and \n        <problematic ids=\"id5 id2\" refid=\"id4\">\n            [#]_\n        .\n    <footnote auto=\"1\" backrefs=\"id1\" docname=\"index\" ids=\"id3\" names=\"1\">\n        <label>\n            1\n        <paragraph>\n            x\n    <target ids=\"nope\" names=\"nope\" refuri=\"https://x.example\">\n",
+      "rst": "See [#nope]_ and [#]_.\n\n.. [#] x\n\n.. _nope: https://x.example\n",
+      "warnings": [
+        "<snippet>:1: ERROR: Too many autonumbered footnote references: only 1 corresponding footnote available. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_footnotes",
+      "name": "tx_footnotes.unmatched_label_is_not_dangling",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <footnote_reference auto=\"1\" docname=\"index\" ids=\"id1\" refid=\"id2\" refname=\"nope\">\n            1\n        .\n    <footnote auto=\"1\" backrefs=\"id1\" docname=\"index\" ids=\"id2\" names=\"1\">\n        <label>\n            1\n        <paragraph>\n            x\n",
+      "rst": "See [#nope]_.\n\n.. [#] x\n",
+      "warnings": []
+    },
+    {
+      "family": "tx_footnotes",
+      "name": "tx_footnotes.manual_reference_to_an_auto_number",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <footnote_reference docname=\"index\" ids=\"id1\" refid=\"id2\">\n            1\n        .\n    <footnote auto=\"1\" docname=\"index\" ids=\"id2\" names=\"1\">\n        <label>\n            1\n        <paragraph>\n            auto\n",
+      "rst": "See [1]_.\n\n.. [#] auto\n",
+      "warnings": [
+        "<snippet>:3: WARNING: Footnote [#] is not referenced. [ref.footnote]"
+      ]
+    },
+    {
+      "family": "tx_footnotes",
+      "name": "tx_footnotes.duplicate_labelled_auto",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <problematic ids=\"id1\" refid=\"id4\">\n            [#a]_\n    <footnote auto=\"1\" docname=\"index\" dupnames=\"a\" ids=\"a\">\n        <label>\n            1\n        <paragraph>\n            one\n    <footnote auto=\"1\" docname=\"index\" dupnames=\"a\" ids=\"id2\">\n        <label>\n            2\n        <system_message backrefs=\"id2\" level=\"2\" line=\"4\" source=\"<snippet>\" type=\"WARNING\">\n            <paragraph>\n                Duplicate explicit target name: \"a\".\n        <paragraph>\n            two\n",
+      "rst": "[#a]_\n\n.. [#a] one\n.. [#a] two\n",
+      "warnings": [
+        "<snippet>:4: WARNING: Duplicate explicit target name: \"a\". [docutils]",
+        "<snippet>:1: ERROR: Too many autonumbered footnote references: only 0 corresponding footnote available. [docutils]",
+        "<snippet>:1: ERROR: Duplicate target name, cannot be used as a unique reference: \"a\". [docutils]"
+      ]
+    },
+    {
+      "family": "tx_footnotes",
+      "name": "tx_footnotes.duplicate_manual",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        A \n        <problematic ids=\"id1\" refid=\"id5\">\n            [1]_\n         \n        <problematic ids=\"id2\" refid=\"id6\">\n            [1]_\n        .\n    <footnote docname=\"index\" dupnames=\"1\" ids=\"id3\">\n        <label>\n            1\n        <paragraph>\n            x\n    <footnote docname=\"index\" dupnames=\"1\" ids=\"id4\">\n        <label>\n            1\n        <system_message backrefs=\"id4\" level=\"2\" line=\"4\" source=\"<snippet>\" type=\"WARNING\">\n            <paragraph>\n                Duplicate explicit target name: \"1\".\n        <paragraph>\n            y\n",
+      "rst": "A [1]_ [1]_.\n\n.. [1] x\n.. [1] y\n",
+      "warnings": [
+        "<snippet>:4: WARNING: Duplicate explicit target name: \"1\". [docutils]",
+        "<snippet>:1: ERROR: Duplicate target name, cannot be used as a unique reference: \"1\". [docutils]",
+        "<snippet>:1: ERROR: Duplicate target name, cannot be used as a unique reference: \"1\". [docutils]"
+      ]
+    },
+    {
+      "family": "tx_footnotes",
+      "name": "tx_footnotes.auto_label_number_taken",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <problematic ids=\"id1\" refid=\"id6\">\n            [1]_\n         \n        <problematic ids=\"id2\" refid=\"id7\">\n            [#1]_\n        .\n    <footnote auto=\"1\" docname=\"index\" dupnames=\"1\" ids=\"id3\">\n        <label>\n            2\n        <paragraph>\n            auto one\n    <footnote docname=\"index\" dupnames=\"1\" ids=\"id4\">\n        <label>\n            1\n        <system_message backrefs=\"id4\" level=\"2\" line=\"4\" source=\"<snippet>\" type=\"WARNING\">\n            <paragraph>\n                Duplicate explicit target name: \"1\".\n        <paragraph>\n            manual\n",
+      "rst": "See [1]_ [#1]_.\n\n.. [#1] auto one\n.. [1] manual\n",
+      "warnings": [
+        "<snippet>:4: WARNING: Duplicate explicit target name: \"1\". [docutils]",
+        "<snippet>:1: ERROR: Too many autonumbered footnote references: only 0 corresponding footnote available. [docutils]",
+        "<snippet>:1: ERROR: Duplicate target name, cannot be used as a unique reference: \"1\". [docutils]",
+        "<snippet>:1: ERROR: Duplicate target name, cannot be used as a unique reference: \"1\". [docutils]"
+      ]
+    },
+    {
+      "family": "tx_footnotes",
+      "name": "tx_footnotes.labelled_and_unlabelled_overflow",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <footnote_reference auto=\"1\" docname=\"index\" ids=\"id1\" refid=\"id4\">\n            2\n         \n        <footnote_reference auto=\"1\" docname=\"index\" ids=\"id2\" refid=\"lab\">\n            1\n         \n        <problematic ids=\"id6 id3\" refid=\"id5\">\n            [#]_\n        .\n    <footnote auto=\"1\" backrefs=\"id2\" docname=\"index\" ids=\"lab\" names=\"lab\">\n        <label>\n            1\n        <paragraph>\n            L\n    <footnote auto=\"1\" backrefs=\"id1\" docname=\"index\" ids=\"id4\" names=\"2\">\n        <label>\n            2\n        <paragraph>\n            x\n",
+      "rst": "See [#]_ [#lab]_ [#]_.\n\n.. [#lab] L\n.. [#] x\n",
+      "warnings": [
+        "<snippet>:1: ERROR: Too many autonumbered footnote references: only 1 corresponding footnote available. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_footnotes",
+      "name": "tx_footnotes.nested",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <footnote auto=\"1\" backrefs=\"id2\" docname=\"index\" ids=\"id1\" names=\"1\">\n        <label>\n            1\n        <paragraph>\n            outer \n            <footnote_reference auto=\"1\" docname=\"index\" ids=\"id2\" refid=\"id1\">\n                1\n             \n            <footnote_reference auto=\"*\" docname=\"index\" ids=\"id3\" refid=\"id6\">\n                *\n        <footnote auto=\"1\" backrefs=\"id5\" docname=\"index\" ids=\"id4\" names=\"2\">\n            <label>\n                2\n            <paragraph>\n                inner \n                <footnote_reference auto=\"1\" docname=\"index\" ids=\"id5\" refid=\"id4\">\n                    2\n        <footnote auto=\"*\" backrefs=\"id3\" docname=\"index\" ids=\"id6\">\n            <label>\n                *\n            <paragraph>\n                star\n    <paragraph>\n        See \n        <problematic ids=\"id9 id7\" refid=\"id8\">\n            [#]_\n        .\n",
+      "rst": ".. [#] outer [#]_ [*]_\n\n   .. [#] inner [#]_\n   .. [*] star\n\nSee [#]_.\n",
+      "warnings": [
+        "<snippet>:6: ERROR: Too many autonumbered footnote references: only 2 corresponding footnotes available. [docutils]"
+      ]
+    },
+    {
+      "family": "tx_footnotes",
+      "name": "tx_footnotes.references_inside_notes",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        See \n        <footnote_reference auto=\"1\" docname=\"index\" ids=\"id1\" refid=\"id3\">\n            2\n         and \n        <pending_xref ids=\"id2\" refdomain=\"citation\" reftarget=\"CIT\" reftype=\"ref\" refwarn=\"1\" support_smartquotes=\"0\">\n            <inline>\n                [CIT]\n        .\n    <footnote auto=\"1\" backrefs=\"id1\" docname=\"index\" ids=\"id3\" names=\"2\">\n        <label>\n            2\n        <paragraph>\n            has \n            <pending_xref ids=\"id4\" refdomain=\"citation\" reftarget=\"CIT\" reftype=\"ref\" refwarn=\"1\" support_smartquotes=\"0\">\n                <inline>\n                    [CIT]\n             and \n            <footnote_reference docname=\"index\" ids=\"id5\" refid=\"id8\">\n                1\n    <citation backrefs=\"id2 id4\" docname=\"index\" ids=\"cit\" names=\"cit\">\n        <label support_smartquotes=\"0\">\n            CIT\n        <paragraph>\n            has \n            <footnote_reference auto=\"1\" docname=\"index\" ids=\"id6\" refid=\"id9\">\n                3\n             and \n            <footnote_reference docname=\"index\" ids=\"id7\" refid=\"id8\">\n                1\n    <footnote backrefs=\"id5 id7\" docname=\"index\" ids=\"id8\" names=\"1\">\n        <label>\n            1\n        <paragraph>\n            one\n    <footnote auto=\"1\" backrefs=\"id6\" docname=\"index\" ids=\"id9\" names=\"3\">\n        <label>\n            3\n        <paragraph>\n            two\n",
+      "rst": "See [#]_ and [CIT]_.\n\n.. [#] has [CIT]_ and [1]_\n.. [CIT] has [#]_ and [1]_\n.. [1] one\n.. [#] two\n",
+      "warnings": []
     }
   ],
   "conf_semantics": "a case's optional 'conf' dict is confoverrides applied on top of the base settings above; absent = defaults. The consumer maps every key onto ParseOptions.py and errors on unmapped keys.",

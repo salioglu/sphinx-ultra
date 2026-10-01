@@ -274,6 +274,37 @@ pub struct GlossaryTermRecord {
     pub seq: u32,
 }
 
+/// One `CitationDomain.note_citation` call (`sphinx/domains/citation.py:
+/// 70-82`), which CitationDefinitionTransform makes for every citation of
+/// the document at read time (priority 619, `:133-148`) — recorded by the
+/// read-transform pass ([`crate::transforms`]), not the parse. The call
+/// registers `label -> (docname, node_id, line)` with the environment and
+/// warns `duplicate citation %s, other instance in %s` when the label is
+/// already there, from this or any other document: that decision needs the
+/// environment, so the merge phase replays the record
+/// ([`crate::env::citation_domain`]) and puts the warning at `seq`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct CitationRecord {
+    /// `node[0].astext()`: the citation's label as written (`CIT`, not the
+    /// normalized name `cit`).
+    pub label: String,
+    /// `node['ids'][0]`.
+    pub node_id: String,
+    /// Source-table index of the citation (`location=node`): a citation in
+    /// an included file is that file's. Not `#[serde(default)]`
+    /// (cache-shape rule, see [`RegistryExport::program_options`]).
+    pub source: u16,
+    /// `node.line`: the citation marker's line in `source` — the duplicate
+    /// warning's line, and the one `check_consistency`'s `Citation [%s] is
+    /// not referenced.` prints (`:88-97`).
+    pub line: u32,
+    /// Where the duplicate warning belongs in the document's diagnostics
+    /// sequence: the number the transform spent when it made the call,
+    /// among the records the transforms around it print — see
+    /// [`PyObjectRecord::seq`].
+    pub seq: u32,
+}
+
 /// What the parse layer hands the environment besides the doctree itself:
 /// state that lives in the parser (the docutils id/name registry, Sphinx's
 /// `env.ref_context`) and dies with it, but that env collectors need.
@@ -361,6 +392,14 @@ pub struct RegistryExport {
     /// the orphan check. Not `#[serde(default)]` — see
     /// [`Self::program_options`].
     pub included: Vec<String>,
+    /// The citation registrations the read transforms made
+    /// (CitationDefinitionTransform, priority 619), one per citation in
+    /// document order: the one environment registration a read transform
+    /// makes whose warning depends on other documents. Empty from the parse
+    /// itself; [`crate::transforms::apply_read_transforms`] fills it. Not
+    /// `#[serde(default)]` — see [`Self::program_options`]: a stale entry
+    /// decoding with no citations would register none of the document's.
+    pub citations: Vec<CitationRecord>,
 }
 
 #[cfg(test)]
@@ -449,7 +488,8 @@ mod tests {
             "deprecated":false,"source":0,"lineno":1}],
         "diagnostics":[{"seq":0,"channel":"Logger","level":2,"category":null,"text":"m",
             "source":0,"line":2,"doc2path_location":false}],
-        "dependencies":["part.rst"],"included":["part"]}"#;
+        "dependencies":["part.rst"],"included":["part"],
+        "citations":[{"label":"CIT","node_id":"cit","source":0,"line":4,"seq":5}]}"#;
 
     /// Decode [`COMPLETE_REGISTRY`] with the field `name` removed at
     /// `path` (object keys and array indices), and require the failure
@@ -515,8 +555,23 @@ mod tests {
             // would silently un-suppress the orphan warning.
             "dependencies",
             "included",
+            // A registry from before the read pass recorded its citation
+            // registrations must MISS: a defaulted empty list would
+            // register none of the document's citations — no duplicate
+            // warning, and its citations missing from the environment.
+            "citations",
         ] {
             must_miss(&[], field);
+        }
+    }
+
+    /// Each field of a [`CitationRecord`] follows the same rule: a record
+    /// decoding with a zeroed `seq` would print its duplicate warning first
+    /// of the document's stream, a zeroed `line` at line 0.
+    #[test]
+    fn citation_records_missing_a_field_fail_to_decode() {
+        for field in ["label", "node_id", "source", "line", "seq"] {
+            must_miss(&["citations", "0"], field);
         }
     }
 
