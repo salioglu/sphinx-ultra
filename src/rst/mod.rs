@@ -497,7 +497,8 @@ thread_local! {
 }
 
 /// Record that the current thread has [`PARSE_STACK_SIZE`] — for a thread
-/// pool's start handler that built its threads with it.
+/// pool's start handler that built its threads with it (and for a test
+/// that marks a smaller thread on purpose, to keep the work on it).
 pub(crate) fn mark_parse_stack_thread() {
     ON_PARSE_STACK.with(|marked| marked.set(true));
 }
@@ -507,20 +508,31 @@ pub(crate) fn mark_parse_stack_thread() {
 /// (a panic in `work` resumes here). Every public entry point that parses
 /// or runs the read transforms goes through this, so no caller's thread —
 /// a test's, a library user's, the main thread — can be too small for the
-/// nesting guard. Should the system refuse the thread, `work` runs here.
-pub(crate) fn on_parse_stack<T: Send>(work: impl FnOnce() -> T + Send) -> T {
+/// nesting guard. Should the system refuse a thread that size (a strict
+/// overcommit policy, an address-space limit), `work` runs here, on
+/// whatever stack this thread has — as it did before the guard needed the
+/// room.
+pub fn on_parse_stack<T: Send>(work: impl FnOnce() -> T + Send) -> T {
     if ON_PARSE_STACK.with(std::cell::Cell::get) {
         return work();
     }
+    on_new_stack(PARSE_STACK_SIZE, work)
+}
+
+/// [`on_parse_stack`]'s spawn: `work` on a scoped thread with `stack`
+/// bytes, marked as having the parse stack — or here, if the system
+/// refuses the thread.
+fn on_new_stack<T: Send>(stack: usize, work: impl FnOnce() -> T + Send) -> T {
     let mut work = Some(work);
     let ran = std::thread::scope(|scope| {
         let slot = &mut work;
-        let spawned = std::thread::Builder::new()
-            .stack_size(PARSE_STACK_SIZE)
-            .spawn_scoped(scope, move || {
-                mark_parse_stack_thread();
-                slot.take().map(|work| work())
-            });
+        let spawned =
+            std::thread::Builder::new()
+                .stack_size(stack)
+                .spawn_scoped(scope, move || {
+                    mark_parse_stack_thread();
+                    slot.take().map(|work| work())
+                });
         match spawned {
             Ok(thread) => thread
                 .join()
@@ -532,6 +544,13 @@ pub(crate) fn on_parse_stack<T: Send>(work: impl FnOnce() -> T + Send) -> T {
         Some(out) => out,
         None => (work.take().expect("work runs once"))(),
     }
+}
+
+/// Whether the current thread has the parse stack, for the tests of the
+/// threads that are given it.
+#[cfg(test)]
+pub(crate) fn has_parse_stack() -> bool {
+    ON_PARSE_STACK.with(std::cell::Cell::get)
 }
 
 /// Parse RST source into a doctree. Total: never panics, never errors —
@@ -579,22 +598,40 @@ mod tests {
             .count()
     }
 
-    /// `work` on a thread with a 512 KiB stack: far less than a debug
-    /// build's parse of [`nested_admonitions`] needs (between 4 and 5 MiB,
-    /// probed), so it reaches the guard only if the entry point moves its
-    /// work onto a [`PARSE_STACK_SIZE`] thread.
+    /// `work` on a thread with a 64 KiB stack: far less than a debug build
+    /// needs for [`nested_admonitions`] — the parse between 4 and 5 MiB,
+    /// the read transforms of the parsed tree alone between 64 and 128 KiB
+    /// (probed) — so it reaches the end only if each entry point moves its
+    /// own work onto a [`PARSE_STACK_SIZE`] thread.
     fn on_a_small_thread<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> T {
         std::thread::Builder::new()
-            .stack_size(512 * 1024)
+            .stack_size(64 * 1024)
             .spawn(work)
             .unwrap()
             .join()
             .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
     }
 
+    /// Whether any `system_message` is left in the tree (an explicit
+    /// stack: the tree is deep).
+    fn has_a_message(root: &crate::doctree::Node) -> bool {
+        let mut stack = vec![root];
+        while let Some(node) = stack.pop() {
+            if node.kind == crate::doctree::kinds::SYSTEM_MESSAGE {
+                return true;
+            }
+            stack.extend(node.children.iter());
+        }
+        false
+    }
+
     /// Every public entry point that parses or transforms runs on a
     /// [`PARSE_STACK_SIZE`] thread whatever thread calls it, so the nesting
-    /// guard, not the caller's stack, ends deep nesting.
+    /// guard, not the caller's stack, ends deep nesting. Each is called
+    /// from a small thread on its own: the transforms get a tree parsed
+    /// beforehand, and FilterSystemMessages taking the guard's message out
+    /// of it shows they ran to the end. (The deep results are dropped on a
+    /// parse-stack thread: their drop recurses once a level.)
     #[test]
     fn the_entry_points_reach_the_nesting_guard_from_a_small_thread() {
         fn opts() -> ParseOptions {
@@ -603,14 +640,16 @@ mod tests {
                 ..Default::default()
             }
         }
-        let parsed = on_a_small_thread(|| {
-            let out = parse_rst_full(&nested_admonitions(), &opts());
-            guard_records(&out.registry.diagnostics)
-        });
-        assert_eq!(parsed, 1, "parse_rst_full");
+        let parsed = on_a_small_thread(|| parse_rst_full(&nested_admonitions(), &opts()));
+        assert_eq!(
+            guard_records(&parsed.registry.diagnostics),
+            1,
+            "parse_rst_full"
+        );
+        assert!(on_parse_stack(|| has_a_message(&parsed.doctree.root)));
 
-        let (transformed, read) = on_a_small_thread(|| {
-            let mut out = parse_rst_full(&nested_admonitions(), &opts());
+        let transformed = on_a_small_thread(move || {
+            let mut out = parsed;
             crate::transforms::apply_read_transforms(
                 &mut out.doctree,
                 std::mem::take(&mut out.ids),
@@ -620,18 +659,45 @@ mod tests {
                 &crate::transforms::TransformConfig::default(),
                 &mut out.registry,
             );
-            let (_, read) = crate::transforms::parse_and_transform(
+            out
+        });
+        assert!(
+            !on_parse_stack(|| has_a_message(&transformed.doctree.root)),
+            "apply_read_transforms ran to FilterSystemMessages"
+        );
+
+        let read = on_a_small_thread(|| {
+            crate::transforms::parse_and_transform(
                 &nested_admonitions(),
                 &opts(),
                 &crate::transforms::TransformConfig::default(),
-            );
-            (
-                guard_records(&out.registry.diagnostics),
-                guard_records(&read),
             )
         });
-        assert_eq!(transformed, 1, "apply_read_transforms");
-        assert_eq!(read, 1, "parse_and_transform");
+        assert_eq!(guard_records(&read.1), 1, "parse_and_transform");
+        on_parse_stack(move || drop((transformed, read)));
+    }
+
+    /// A thread with the parse stack runs the work in place; one without it
+    /// hands the work to a new thread, marked as having the stack.
+    #[test]
+    fn on_parse_stack_runs_in_place_only_where_the_stack_is() {
+        let here = std::thread::current().id();
+        let (there, marked) = on_parse_stack(|| (std::thread::current().id(), has_parse_stack()));
+        assert_ne!(there, here);
+        assert!(marked);
+        let nested = on_parse_stack(|| {
+            let outer = std::thread::current().id();
+            on_parse_stack(|| std::thread::current().id()) == outer
+        });
+        assert!(nested, "a marked thread keeps the work");
+    }
+
+    /// When the system refuses a thread that size, the work runs in place
+    /// rather than failing: a 2^60-byte stack cannot be mapped anywhere.
+    #[test]
+    fn a_refused_stack_runs_the_work_in_place() {
+        let here = std::thread::current().id();
+        assert_eq!(on_new_stack(1 << 60, || std::thread::current().id()), here);
     }
 
     /// The work runs exactly once, its result comes back, and a panic in it

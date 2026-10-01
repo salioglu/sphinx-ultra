@@ -279,6 +279,30 @@ fn config_fingerprint(config: &BuildConfig) -> Result<String> {
         .to_string())
 }
 
+/// The read pool: every document is parsed and transformed on one of its
+/// `jobs` threads, which get `stack` bytes — the parse stack
+/// ([`crate::rst::PARSE_STACK_SIZE`]), so that the parser's nesting guard,
+/// not the stack, ends deep nesting — and are marked as having it, so the
+/// parse runs on them directly rather than on a thread of its own. Should
+/// the system refuse threads that size (a strict overcommit policy, an
+/// address-space limit), the pool is built with the default stack instead:
+/// each parse then asks for a parse-stack thread of its own, and runs in
+/// place if that is refused too.
+fn read_pool(jobs: usize, stack: usize) -> Result<rayon::ThreadPool> {
+    let sized = rayon::ThreadPoolBuilder::new()
+        .num_threads(jobs)
+        .stack_size(stack)
+        .start_handler(|_| crate::rst::mark_parse_stack_thread())
+        .build();
+    match sized {
+        Ok(pool) => Ok(pool),
+        Err(error) => {
+            debug!("read pool with {stack}-byte stacks refused ({error}); using the default stack");
+            Ok(rayon::ThreadPoolBuilder::new().num_threads(jobs).build()?)
+        }
+    }
+}
+
 impl SphinxBuilder {
     pub fn new(config: BuildConfig, source_dir: PathBuf, output_dir: PathBuf) -> Result<Self> {
         // -d/doctree_dir relocates the cache (sphinx-build's doctree dir).
@@ -833,16 +857,7 @@ impl SphinxBuilder {
                 .collect::<BTreeSet<String>>(),
         );
 
-        // The read pool: every document is parsed and transformed on one of
-        // its threads, which get the parse stack (`rst::PARSE_STACK_SIZE`)
-        // so that the parser's nesting guard, not the stack, ends deep
-        // nesting — and are marked as having it, so the parse runs on them
-        // directly rather than on a thread of its own.
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(self.parallel_jobs)
-            .stack_size(crate::rst::PARSE_STACK_SIZE)
-            .start_handler(|_| crate::rst::mark_parse_stack_thread())
-            .build()?;
+        let pool = read_pool(self.parallel_jobs, crate::rst::PARSE_STACK_SIZE)?;
 
         let results: Vec<(PathBuf, Result<ReadResult>)> = pool.install(|| {
             files
@@ -1926,6 +1941,18 @@ fn now_micros() -> u64 {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    /// The read pool's threads have the parse stack and say so; when the
+    /// system refuses threads that size (here a 2^60-byte stack, which
+    /// cannot be mapped anywhere) the pool still starts, on the default
+    /// stack, and its threads do not claim the parse stack.
+    #[test]
+    fn the_read_pool_has_the_parse_stack_or_falls_back() {
+        let pool = read_pool(2, crate::rst::PARSE_STACK_SIZE).unwrap();
+        assert!(pool.install(crate::rst::has_parse_stack));
+        let fallback = read_pool(2, 1 << 60).unwrap();
+        assert!(!fallback.install(crate::rst::has_parse_stack));
+    }
 
     fn write_project(source_dir: &Path) {
         std::fs::create_dir_all(source_dir).unwrap();

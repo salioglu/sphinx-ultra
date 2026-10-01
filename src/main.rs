@@ -651,19 +651,35 @@ fn remove_dir_contents(dir: &std::path::Path) -> Result<()> {
 /// (`sphinx_ultra::rst::PARSE_STACK_SIZE`), not on the main thread: the
 /// build's read pool has its own, but the merge, numbering and resolution
 /// phases walk the same doctrees on the thread that drives the build, and a
-/// main thread can be as small as 1 MiB (Windows). The tokio runtime is
-/// `#[tokio::main]`'s, built on that thread instead.
+/// main thread can be as small as 1 MiB (Windows).
 fn main() -> Result<()> {
-    let run = std::thread::Builder::new()
-        .stack_size(sphinx_ultra::rst::PARSE_STACK_SIZE)
-        .spawn(|| {
-            tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()?
-                .block_on(run_main())
-        })?;
-    run.join()
-        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+    on_build_thread(sphinx_ultra::rst::PARSE_STACK_SIZE, run)
+}
+
+/// `#[tokio::main]`'s runtime, built on the thread it is called on, running
+/// [`run_main`].
+fn run() -> Result<()> {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(run_main())
+}
+
+/// `work` on a thread with `stack` bytes, named `main` so that a panic
+/// still reads `thread 'main' panicked` — or right here, on the real main
+/// thread, should the system refuse a thread that size (a strict
+/// overcommit policy, an address-space limit).
+fn on_build_thread(stack: usize, work: fn() -> Result<()>) -> Result<()> {
+    let spawned = std::thread::Builder::new()
+        .name("main".to_string())
+        .stack_size(stack)
+        .spawn(work);
+    match spawned {
+        Ok(thread) => thread
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
+        Err(_) => work(),
+    }
 }
 
 async fn run_main() -> Result<()> {
@@ -735,6 +751,32 @@ async fn run_main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    /// The thread [`super::on_build_thread`]'s work last ran on: its name
+    /// and id.
+    type RanOn = (Option<String>, std::thread::ThreadId);
+    static RAN_ON: std::sync::Mutex<Option<RanOn>> = std::sync::Mutex::new(None);
+
+    fn record_thread() -> anyhow::Result<()> {
+        let thread = std::thread::current();
+        *RAN_ON.lock().unwrap() = Some((thread.name().map(str::to_string), thread.id()));
+        Ok(())
+    }
+
+    /// The build runs on a thread of its own named `main`; when the system
+    /// refuses a thread that size (a 2^60-byte stack cannot be mapped
+    /// anywhere) it runs in place, on the calling thread.
+    #[test]
+    fn the_build_runs_on_a_thread_named_main_or_in_place() {
+        let here = std::thread::current().id();
+        super::on_build_thread(1024 * 1024, record_thread).unwrap();
+        let (name, id) = RAN_ON.lock().unwrap().clone().unwrap();
+        assert_eq!(name.as_deref(), Some("main"));
+        assert_ne!(id, here);
+        super::on_build_thread(1 << 60, record_thread).unwrap();
+        let (_, id) = RAN_ON.lock().unwrap().clone().unwrap();
+        assert_eq!(id, here);
+    }
+
     use super::*;
 
     fn argv(args: &[&str]) -> Vec<String> {
