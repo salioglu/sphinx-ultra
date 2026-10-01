@@ -66,7 +66,14 @@ everything forward is [ROADMAP.md](ROADMAP.md).
     work onto such a thread (`sphinx_ultra::rst::on_parse_stack` does the
     same for any closure), so that the guard, not a stack overflow, is what
     a deep document meets; where the system refuses threads that size, they
-    fall back to the default stack.
+    fall back to the default stack. A reference to a substitution definition
+    that expansion has grown 1,000 levels deep (one wrapping a reference to
+    itself, under a name another definition folds onto, doubles at each
+    expansion) is not expanded: `ERROR: Substitution definition "a" exceeds
+    the maximum nesting depth. [docutils]`, where `sphinx-build` dies with
+    `RecursionError` measuring the definition. Without the limit such a
+    definition made every later transform quadratic in its depth, or
+    exhausted memory.
   Evidence: the read-phase doctree oracle at 697 cases (178 of them for the
   transforms, 20 for SmartQuotes), compared after the transforms and with
   each case's printed records; the docutils parse oracle at 761 cases with
