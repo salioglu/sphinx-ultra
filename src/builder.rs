@@ -1252,9 +1252,14 @@ impl SphinxBuilder {
     ///
     /// Runs the numbering passes (`TocTreeCollector.get_updated_docs`, which
     /// Sphinx dispatches through `env-get-updated` right after the read
-    /// phase) and Sphinx's post-read consistency checks over the finished
-    /// toctree graph (`env.check_consistency()`), then saves the environment
-    /// — Sphinx's own end-of-read-phase step (`builders/__init__.py:420`).
+    /// phase) and — when this build read or renumbered a document, as
+    /// Sphinx gates it — the post-read consistency checks over the finished
+    /// toctree graph ([`Self::check_consistency`]), then saves the
+    /// environment, Sphinx's own end-of-read-phase step
+    /// (`builders/__init__.py:420`). Sphinx pickles only under the same
+    /// gate; saving every time is inert here, because a build that read
+    /// nothing changed nothing but the removals, and Sphinx clears those
+    /// again from its unsaved environment on every build.
     ///
     /// Every document is resolved, not only the ones this build read: the
     /// write phase emits every page (see [`Self::write_phase`]), and a page
@@ -1279,7 +1284,48 @@ impl SphinxBuilder {
             })
             .collect();
 
-        self.number_phase(env, results);
+        let renumbered = self.number_phase(env, results);
+        // Sphinx's `updated_docnames`: what `read()` returned (every document
+        // it read) plus what `check_dependents` added (the documents whose
+        // numbering moved) — and only when that set is non-empty does it
+        // check the environment's consistency (`if updated_docnames:`,
+        // `builders/__init__.py:410-433`). A rebuild that reads nothing —
+        // nothing changed, or only a removal (`removed` is not part of the
+        // set) — prints neither orphans nor unreferenced citations, and
+        // passes `-W` as `sphinx-build -W` does. "Read" is this build's own
+        // bookkeeping: a result with a read time was parsed by this build,
+        // which also covers a document re-read because its cached copy
+        // could not be recovered, and a toctree container re-read because
+        // an entry of it was deleted (the deliberate divergence in
+        // [`Self::plan_read`] — Sphinx, which does not re-read it, prints
+        // the dangling entry from its write phase instead and, nothing
+        // read, no consistency check).
+        let updated =
+            results.iter().any(|result| result.read_time_us.is_some()) || !renumbered.is_empty();
+        if updated {
+            self.check_consistency(env, &sources);
+        }
+
+        self.xref_phase(env, results);
+        self.genindex_phase(env, &sources);
+        self.py_modindex_phase(env);
+
+        if let Err(e) = env.save(self.cache.cache_dir()) {
+            log::warn!(
+                "Could not save the build environment to {}: {e:#} — this build's \
+                 output is complete, but the next one will start from scratch",
+                self.cache.cache_dir().display()
+            );
+        }
+    }
+
+    /// Sphinx's `env.check_consistency()` (`environment/__init__.py:797-
+    /// 823`): the toctree orphan check and the multiple-parents note, then
+    /// the domains' `check_consistency` — the citation domain's is the only
+    /// one Sphinx defines (`domains/citation.py:88`), and no built-in
+    /// listens to `env-check-consistency`. [`Self::resolve_phase`] decides
+    /// whether it runs at all.
+    fn check_consistency(&self, env: &BuildEnvironment, sources: &HashMap<&str, &Path>) {
         // Sphinx's default `source_suffix` is `.rst` alone, so a `.md`/`.txt`
         // this crate's wider discovery admitted is not a document Sphinx
         // would warn about being orphaned. A docname with no source in this
@@ -1317,18 +1363,6 @@ impl SphinxBuilder {
                 .map(|path| path.to_path_buf())
                 .unwrap_or_else(|| self.source_dir.join(format!("{docname}.rst")));
             self.add_warning(env_citation::unreferenced_warning(path, lineno, label));
-        }
-
-        self.xref_phase(env, results);
-        self.genindex_phase(env, &sources);
-        self.py_modindex_phase(env);
-
-        if let Err(e) = env.save(self.cache.cache_dir()) {
-            log::warn!(
-                "Could not save the build environment to {}: {e:#} — this build's \
-                 output is complete, but the next one will start from scratch",
-                self.cache.cache_dir().display()
-            );
         }
     }
 
@@ -1454,12 +1488,14 @@ impl SphinxBuilder {
     /// warm cache hit loaded from disk — and falls back to the persisted
     /// doctree for anything else.
     ///
-    /// The returned docnames (Sphinx's `rewrite_needed`) are the documents
-    /// whose numbering moved, which Sphinx adds to its write set. They are
-    /// logged rather than consumed here because this builder's write set is
-    /// already every found document (see [`Self::write_phase`]) — a
-    /// superset — so there is nothing left for them to widen.
-    fn number_phase(&self, env: &mut BuildEnvironment, results: &[ReadResult]) {
+    /// Returns the documents whose numbering moved (Sphinx's
+    /// `rewrite_needed`, which `check_dependents` adds to
+    /// `updated_docnames`): [`Self::resolve_phase`] counts them as updated
+    /// when it decides whether to check the environment's consistency.
+    /// Sphinx also adds them to its write set; that use has nothing to
+    /// widen here, because this builder's write set is already every found
+    /// document (see [`Self::write_phase`]).
+    fn number_phase(&self, env: &mut BuildEnvironment, results: &[ReadResult]) -> Vec<String> {
         let in_memory: HashMap<&str, &Doctree> = results
             .iter()
             .map(|result| (result.docname.as_str(), &result.doctree))
@@ -1486,6 +1522,9 @@ impl SphinxBuilder {
             sections.changed.len(),
             figures.len()
         );
+        let mut renumbered = sections.changed;
+        renumbered.extend(figures);
+        renumbered
     }
 
     /// Surface one numbering diagnostic at the location Sphinx logs it —

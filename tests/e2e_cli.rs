@@ -1177,6 +1177,88 @@ fn sphinx_build_incremental_by_default_and_fresh_env() {
     );
 }
 
+/// Sphinx checks the environment's consistency — the orphan check, the
+/// multiple-parents note and the citation domain's `Citation [..] is not
+/// referenced.` — only after a build that read or renumbered a document
+/// (`if updated_docnames:`, `sphinx/builders/__init__.py:418-433`), so a
+/// rebuild that reads nothing prints none of it and passes `-W`. Every
+/// step is pinned to `sphinx-build -W` 9.1.0 run the same way, into one
+/// shared output dir (probe matrix of 2026-10-01): cold, both warnings,
+/// exit 1; nothing changed, nothing printed, exit 0; a touched document
+/// is read, so both come back; an added orphan is read and warns as well;
+/// deleting it reads nothing (a removal alone is not an update), exit 0.
+#[test]
+fn a_rebuild_that_reads_nothing_skips_the_consistency_checks_like_sphinx() {
+    let src = temp_source(
+        "consistency-gate",
+        &[
+            ("index.rst", "Index\n=====\n\n.. toctree::\n\n   a\n"),
+            ("a.rst", "A\n=\n\nText.\n"),
+            (
+                "lone.rst",
+                "Lone\n====\n\n.. [Lone] A citation nobody cites.\n",
+            ),
+        ],
+    );
+    let out = out_dir("consistency-gate");
+    let run = || {
+        let result = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap(), "-W"]);
+        // Each record as `<srcdir-relative path>: WARNING: ...`.
+        let records: Vec<String> = stderr_of(&result)
+            .lines()
+            .filter_map(|line| {
+                let (_, record) = line.split_once("consistency-gate-src/")?;
+                record.contains(": WARNING: ").then(|| record.to_string())
+            })
+            .collect();
+        (result.status.code(), records, stderr_of(&result))
+    };
+    let orphan = |docname: &str| {
+        format!("{docname}.rst: WARNING: document isn't included in any toctree [toc.not_included]")
+    };
+    let citation =
+        "lone.rst:4: WARNING: Citation [Lone] is not referenced. [ref.citation]".to_string();
+
+    let (code, records, stderr) = run();
+    assert_eq!(records, vec![orphan("lone"), citation.clone()], "{stderr}");
+    assert_eq!(code, Some(1), "{stderr}");
+
+    let (code, records, stderr) = run();
+    assert_eq!(records, Vec::<String>::new(), "{stderr}");
+    assert_eq!(code, Some(0), "an unchanged rebuild passes -W: {stderr}");
+    assert!(
+        stderr.contains("Cache hits: 3"),
+        "nothing is read: {stderr}"
+    );
+
+    std::fs::write(src.join("a.rst"), "A\n=\n\nText.\n").unwrap();
+    let (code, records, stderr) = run();
+    assert_eq!(records, vec![orphan("lone"), citation.clone()], "{stderr}");
+    assert_eq!(code, Some(1), "{stderr}");
+
+    std::fs::write(src.join("b.rst"), "B\n=\n\nText.\n").unwrap();
+    let (code, records, stderr) = run();
+    assert_eq!(
+        records,
+        vec![orphan("b"), orphan("lone"), citation.clone()],
+        "{stderr}"
+    );
+    assert_eq!(code, Some(1), "{stderr}");
+
+    let (code, records, stderr) = run();
+    assert_eq!(records, Vec::<String>::new(), "{stderr}");
+    assert_eq!(code, Some(0), "{stderr}");
+
+    std::fs::remove_file(src.join("b.rst")).unwrap();
+    let (code, records, stderr) = run();
+    assert_eq!(records, Vec::<String>::new(), "{stderr}");
+    assert_eq!(code, Some(0), "a removal alone runs no check: {stderr}");
+    assert!(
+        stderr.contains("Cache hits: 3"),
+        "nothing is read: {stderr}"
+    );
+}
+
 #[test]
 fn sphinx_build_quiet_keeps_warnings() {
     let out = out_dir("sb-quiet");

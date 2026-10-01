@@ -2184,10 +2184,10 @@ fn py_registrations_across_incremental_rebuilds_match_sphinx_s_clear_and_replay(
 ///
 /// - cold: `b` registers `Dup` after `a` and warns naming `a`'s path; `Lone`
 ///   is referenced nowhere (`check_consistency`);
-/// - steady: nothing is read, so no duplicate warning re-fires (Sphinx
-///   skips `check_consistency` too when nothing was read — this crate runs
-///   it on every build, a pre-existing difference, so only the duplicate
-///   is asserted absent here);
+/// - steady: nothing is read, so no duplicate warning re-fires, and
+///   nothing is checked: `check_consistency` runs only after a build that
+///   read or renumbered a document (`builders/__init__.py:418-433`), so
+///   the steady build prints nothing at all;
 /// - touch `a` (whose registration lost): clearing `a` leaves `b`'s `Dup`,
 ///   so the replay warns from `a`, at `a`'s line, naming `b`;
 /// - touch `b` (whose registration won): clearing `b` removes `Dup`, and
@@ -2238,11 +2238,11 @@ fn citation_registrations_across_incremental_rebuilds_match_sphinx_s_clear_and_r
 
     let (hits, steady_env, steady_warnings) = incremental_build(&source_dir, &out);
     assert_eq!(hits, 3);
-    assert!(
-        steady_warnings
-            .iter()
-            .all(|warning| !warning.contains("duplicate citation")),
-        "an unread document re-fires no duplicate warning: {steady_warnings:?}"
+    assert_eq!(
+        steady_warnings,
+        Vec::<String>::new(),
+        "an unread document re-fires no duplicate warning, and a build that \
+         read nothing checks no consistency"
     );
     assert_eq!(steady_env["citation"], cold_env["citation"]);
 
