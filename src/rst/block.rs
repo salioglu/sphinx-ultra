@@ -10639,8 +10639,8 @@ fn py_slice(len: usize, start: Option<i64>, end: Option<i64>) -> (usize, usize) 
             v.min(n)
         }
     };
-    let from = start.map(&index).unwrap_or(0);
-    let to = end.map(&index).unwrap_or(n).max(from);
+    let from = start.map(index).unwrap_or(0);
+    let to = end.map(index).unwrap_or(n).max(from);
     (from as usize, to as usize)
 }
 
