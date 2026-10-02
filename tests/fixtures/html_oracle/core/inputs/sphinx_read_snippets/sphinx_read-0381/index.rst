@@ -1,0 +1,2 @@
+.. py:function:: f()
+                  g()

@@ -1,0 +1,6 @@
+<SRCDIR>/index.rst:1: ERROR: "csv-table" directive may not both specify an external file and have content.
+
+.. csv-table::
+   :file: data.csv
+
+   1, 2 [docutils]

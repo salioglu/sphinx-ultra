@@ -1,0 +1,4 @@
+.. note::
+   :name:
+
+   Body text.

@@ -1,0 +1,2 @@
+<SRCDIR>/index.rst:7: WARNING: The 'page_size' option must be a positive integer, got '0'; ignoring it. [needs.directive]
+<SRCDIR>/index.rst:10: WARNING: The 'page_size' option must be a positive integer, got 'lots'; ignoring it. [needs.directive]

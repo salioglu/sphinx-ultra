@@ -1,0 +1,1 @@
+<SRCDIR>/index.rst:3: WARNING: Inline emphasis start-string without end-string. [docutils]

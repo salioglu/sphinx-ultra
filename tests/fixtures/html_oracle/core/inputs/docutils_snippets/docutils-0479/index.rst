@@ -1,0 +1,4 @@
+.. epigraph::
+   :class: x
+
+   text

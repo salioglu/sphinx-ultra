@@ -1,0 +1,1 @@
+<SRCDIR>/index.rst:1: WARNING: image file not readable: pic.pngsecondlineofuri [image.not_readable]

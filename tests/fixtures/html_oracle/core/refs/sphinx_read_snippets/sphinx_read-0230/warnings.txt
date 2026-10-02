@@ -1,0 +1,6 @@
+<SRCDIR>/index.rst:1: ERROR: Error in "image" directive:
+invalid option value: (option: "width"; value: 'banana')
+"banana" is no valid measure..
+
+.. image:: pic.png
+   :width: banana [docutils]

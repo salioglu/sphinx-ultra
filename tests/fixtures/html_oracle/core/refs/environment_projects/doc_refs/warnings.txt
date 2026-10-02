@@ -1,0 +1,1 @@
+<SRCDIR>/a.rst:6: WARNING: unknown document: 'missing-doc' [ref.doc]

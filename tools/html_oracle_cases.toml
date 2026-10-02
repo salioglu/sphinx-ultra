@@ -1,0 +1,54 @@
+# The six source sets are the complete HTML oracle corpus.  Parser-only
+# pattern_differential.json is intentionally absent.
+
+[[source_sets]]
+name = "docutils_snippets"
+profile = "core"
+kind = "docutils_snippets"
+source = "tests/fixtures/doctree_differential.json"
+count = 735
+
+[[source_sets]]
+name = "sphinx_read_snippets"
+profile = "core"
+kind = "sphinx_read_snippets"
+source = "tests/fixtures/sphinx_doctree_differential.json"
+count = 489
+
+[[source_sets]]
+name = "environment_projects"
+profile = "core"
+kind = "environment_projects"
+source = "tests/fixtures/env_differential.json"
+project_count = 29
+document_floor = 84
+
+[[source_sets]]
+name = "html_projects"
+profile = "core"
+kind = "html_projects"
+source = "tests/fixtures"
+projects = [
+  "basic",
+  "basic_missing_ref",
+  "deps_image",
+  "intersphinx",
+  "literalinclude",
+  "toctree_forms",
+  "toctree_glob",
+]
+count = 7
+
+[[source_sets]]
+name = "inventory_projects"
+profile = "core"
+kind = "inventory_projects"
+source = "tools/gen_inventory_fixture.py"
+count = 4
+
+[[source_sets]]
+name = "sphinx_needs_doc_tests"
+profile = "local_needs"
+kind = "sphinx_needs_doc_tests"
+source = "packages/sphinx-needs/tests/doc_test"
+count = 142

@@ -1,0 +1,5 @@
+WARNING: cannot cache unpickleable configuration value: 'needs_functions' (because it contains a function, class, or module object) [config.cache]
+<SRCDIR>/index.rst:12: WARNING: Error while resolving dynamic values for field 'status', of need 'TEST_2': dynamic function value <class 'object'> is not of type 'string' [needs.dynamic_function]
+<SRCDIR>/index.rst:16: WARNING: Return value of function 'bad_function' is of type <class 'object'>. Allowed are str, int, float, list [needs.dynamic_function]
+<SRCDIR>/index.rst:18: WARNING: Error parsing dynamic function: Not a function call [needs.dynamic_function]
+<SRCDIR>/index.rst:20: WARNING: Unknown function 'unknown' [needs.dynamic_function]

@@ -1,0 +1,3 @@
+.. pull-quote::
+
+   Pulled text.

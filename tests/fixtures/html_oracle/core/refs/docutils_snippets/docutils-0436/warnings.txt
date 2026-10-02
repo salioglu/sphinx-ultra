@@ -1,0 +1,7 @@
+<SRCDIR>/index.rst:1: ERROR: Error in "image" directive:
+invalid option value: (option: "height"; value: '10banana')
+not a positive number or measure of one of the following units:
+em, ex, ch, rem, vw, vh, vmin, vmax, cm, mm, Q, in, pt, pc, px.
+
+.. image:: pic.png
+   :height: 10banana [docutils]

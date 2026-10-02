@@ -1,0 +1,2 @@
+<SRCDIR>/index.rst:1: WARNING: term not in glossary: 'foo bar' [ref.term]
+<SRCDIR>/index.rst:1: WARNING: unknown document: 'some page' [ref.doc]

@@ -1,0 +1,2 @@
+.. py:module:: oldmod
+   :deprecated:

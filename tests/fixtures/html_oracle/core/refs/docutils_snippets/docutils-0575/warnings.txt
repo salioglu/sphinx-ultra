@@ -1,0 +1,4 @@
+<SRCDIR>/index.rst:1: ERROR: References to auto-numbered and auto-symbol footnotes are not supported in a substitution definition.
+
+.. |f| replace:: note [#]_ [docutils]
+<SRCDIR>/index.rst:1: ERROR: Too many autonumbered footnote references: only 0 corresponding footnote available. [docutils]

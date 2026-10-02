@@ -1,0 +1,158 @@
+{
+  "validation_summary": "Schema validation completed with 6 warning(s) in 0.048 seconds. Validated 251 needs/s.",
+  "validated_needs_per_second": 251,
+  "validated_needs_count": 12,
+  "validation_warnings": {
+    "FEAt": [
+      {
+        "log_lvl": "warning",
+        "type": "sn_schema_warning",
+        "subtype": "local_fail",
+        "details": {
+          "severity": "warning",
+          "field": "id",
+          "need_path": "FEAt",
+          "schema_path": "[0] > local > properties > id > pattern",
+          "user_msg": "id must be uppercase with numbers and underscores",
+          "validation_msg": "\"FEAt\" does not match \"^[A-Z0-9_]+$\""
+        },
+        "children": []
+      }
+    ],
+    "SPEC_MISSING_APPROVAL": [
+      {
+        "log_lvl": "error",
+        "type": "sn_schema_violation",
+        "subtype": "local_fail",
+        "details": {
+          "severity": "violation",
+          "need_path": "SPEC_MISSING_APPROVAL",
+          "schema_path": "spec[1] > local > unevaluatedProperties",
+          "validation_msg": "Unevaluated properties are not allowed ('priority', 'asil' were unexpected)"
+        },
+        "children": []
+      },
+      {
+        "log_lvl": "error",
+        "type": "sn_schema_violation",
+        "subtype": "local_fail",
+        "details": {
+          "severity": "violation",
+          "need_path": "SPEC_MISSING_APPROVAL",
+          "schema_path": "spec-approved-required[2] > local > required",
+          "user_msg": "Approval required due to high efforts",
+          "validation_msg": "\"approved\" is a required property"
+        },
+        "children": []
+      },
+      {
+        "log_lvl": "warning",
+        "type": "sn_schema_info",
+        "subtype": "local_fail",
+        "details": {
+          "severity": "info",
+          "need_path": "SPEC_MISSING_APPROVAL",
+          "schema_path": "spec-approved-not-given[3] > local > required",
+          "user_msg": "Approval not given",
+          "validation_msg": "\"approved\" is a required property"
+        },
+        "children": []
+      }
+    ],
+    "SPEC": [
+      {
+        "log_lvl": "error",
+        "type": "sn_schema_violation",
+        "subtype": "local_fail",
+        "details": {
+          "severity": "violation",
+          "field": "id",
+          "need_path": "SPEC",
+          "schema_path": "spec[1] > local > properties > id > pattern",
+          "validation_msg": "\"SPEC\" does not match \"^SPEC_[a-zA-Z0-9_-]*$\""
+        },
+        "children": []
+      },
+      {
+        "log_lvl": "error",
+        "type": "sn_schema_violation",
+        "subtype": "local_fail",
+        "details": {
+          "severity": "violation",
+          "need_path": "SPEC",
+          "schema_path": "spec[1] > local > unevaluatedProperties",
+          "validation_msg": "Unevaluated properties are not allowed ('priority', 'asil' were unexpected)"
+        },
+        "children": []
+      }
+    ],
+    "SPEC_SAFE_UNSAFE_FEAT": [
+      {
+        "log_lvl": "error",
+        "type": "sn_schema_violation",
+        "subtype": "local_fail",
+        "details": {
+          "severity": "violation",
+          "need_path": "SPEC_SAFE_UNSAFE_FEAT",
+          "schema_path": "spec[1] > local > unevaluatedProperties",
+          "validation_msg": "Unevaluated properties are not allowed ('priority', 'asil', 'approved', 'links' were unexpected)"
+        },
+        "children": []
+      },
+      {
+        "log_lvl": "error",
+        "type": "sn_schema_violation",
+        "subtype": "network_contains_too_few",
+        "details": {
+          "severity": "violation",
+          "need_path": "SPEC_SAFE_UNSAFE_FEAT > links",
+          "schema_path": "safe-spec-[links]->safe-feat[4] > validate > network > links > contains",
+          "validation_msg": "Too few valid links of type 'links' (0 < 1) / nok: FEAT"
+        },
+        "children": [
+          {
+            "need_id": "FEAT",
+            "warning": {
+              "subtype": "network_local_fail",
+              "details": {
+                "field": "asil",
+                "need_path": "SPEC_SAFE_UNSAFE_FEAT > links > FEAT",
+                "schema_path": "safe-spec-[links]->safe-feat[4] > validate > network > links > contains > local > allOf > 0 > properties > asil > enum",
+                "validation_msg": "\"QM\" is not one of \"A\", \"B\" or 2 other candidates"
+              },
+              "children": []
+            }
+          }
+        ]
+      }
+    ],
+    "SPEC_SAFE_ADD_UNSAFE_FEAT": [
+      {
+        "log_lvl": "error",
+        "type": "sn_schema_violation",
+        "subtype": "local_fail",
+        "details": {
+          "severity": "violation",
+          "need_path": "SPEC_SAFE_ADD_UNSAFE_FEAT",
+          "schema_path": "spec[1] > local > unevaluatedProperties",
+          "validation_msg": "Unevaluated properties are not allowed ('priority', 'asil', 'approved', 'links' were unexpected)"
+        },
+        "children": []
+      }
+    ],
+    "SPEC_SAFE": [
+      {
+        "log_lvl": "error",
+        "type": "sn_schema_violation",
+        "subtype": "local_fail",
+        "details": {
+          "severity": "violation",
+          "need_path": "SPEC_SAFE",
+          "schema_path": "spec[1] > local > unevaluatedProperties",
+          "validation_msg": "Unevaluated properties are not allowed ('priority', 'asil', 'approved', 'links' were unexpected)"
+        },
+        "children": []
+      }
+    ]
+  }
+}

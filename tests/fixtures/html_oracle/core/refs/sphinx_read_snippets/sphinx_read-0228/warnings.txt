@@ -1,0 +1,6 @@
+<SRCDIR>/index.rst:1: ERROR: Error in "image" directive:
+invalid option value: (option: "scale"; value: 'notanumber')
+invalid literal for int() with base 10: 'notanumber'.
+
+.. image:: pic.png
+   :scale: notanumber [docutils]

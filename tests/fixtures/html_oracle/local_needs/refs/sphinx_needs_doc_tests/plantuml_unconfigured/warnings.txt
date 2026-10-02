@@ -1,0 +1,1 @@
+<SRCDIR>/index.rst:24: WARNING: PlantUML is not available, so the diagram was not rendered. Install 'sphinxcontrib-plantuml' and add it to the 'extensions' list to render it. [needs.needuml]

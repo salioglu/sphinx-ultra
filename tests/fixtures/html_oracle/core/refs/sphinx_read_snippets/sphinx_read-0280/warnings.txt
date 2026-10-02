@@ -1,0 +1,1 @@
+<SRCDIR>/index.rst:4: WARNING: glossary terms must not be separated by empty lines [docutils]

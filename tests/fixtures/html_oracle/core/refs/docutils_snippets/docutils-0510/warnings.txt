@@ -1,0 +1,1 @@
+<SRCDIR>/index.rst:1: ERROR: Content block expected for the "code" directive; none found. [docutils]

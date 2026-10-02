@@ -1,0 +1,1 @@
+:math:sub:`text` end.

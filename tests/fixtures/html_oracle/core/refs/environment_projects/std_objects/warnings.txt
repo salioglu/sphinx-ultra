@@ -1,0 +1,1 @@
+<SRCDIR>/b.rst:8: WARNING: unknown option: '--missing-option' [ref.option]

@@ -1,0 +1,1 @@
+.. |arrow| unicode:: 0x2192 0x2192

@@ -1,0 +1,3 @@
+.. confval:: FOOBAR
+
+   Body.

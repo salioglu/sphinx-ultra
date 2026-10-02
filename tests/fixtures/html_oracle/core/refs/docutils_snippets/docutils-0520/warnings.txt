@@ -1,0 +1,1 @@
+<SRCDIR>/index.rst:1: ERROR: "raw" directive may not both specify an external file and have content. [docutils]

@@ -1,0 +1,5 @@
+<SRCDIR>/index.rst:1: ERROR: Error in "image" directive: "left" is not a valid value for the "align" option within a substitution definition.  Valid values for "align" are: "top", "middle", "bottom". [docutils]
+<SRCDIR>/index.rst:1: WARNING: Substitution definition "pic3" empty or invalid.
+
+.. |pic3| image:: p.png
+   :align: left [docutils]

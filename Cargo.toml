@@ -85,6 +85,7 @@ ureq = { version = "3.4.0", default-features = false, features = ["rustls", "gzi
 [dev-dependencies]
 criterion = { version = "0.7", features = ["html_reports"] }
 proptest = "1.0"
+sha2 = "0.10"
 tempfile = "3.0"
 
 [[bin]]

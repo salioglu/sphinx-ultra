@@ -1,0 +1,2 @@
+.. |long
+   name| replace:: joined

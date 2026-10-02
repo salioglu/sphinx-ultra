@@ -1,0 +1,1 @@
+.. index:: foo, bar, !baz

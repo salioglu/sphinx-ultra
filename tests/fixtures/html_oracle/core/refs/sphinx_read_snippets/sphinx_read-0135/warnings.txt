@@ -1,0 +1,6 @@
+<SRCDIR>/index.rst:2: ERROR: Malformed table.
+Text in column margin in table line 2.
+
+=====  =====
+A     xB
+=====  ===== [docutils]

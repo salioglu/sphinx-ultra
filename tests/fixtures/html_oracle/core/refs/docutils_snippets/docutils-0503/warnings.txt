@@ -1,0 +1,8 @@
+<SRCDIR>/index.rst:1: ERROR: Error in "figure" directive:
+invalid option value: (option: "align"; value: 'top')
+"top" unknown; choose from "left", "center", or "right".
+
+.. figure:: pic.png
+   :align: top
+
+   Caption. [docutils]

@@ -1,0 +1,2 @@
+.. |h|
+   replace:: hanging

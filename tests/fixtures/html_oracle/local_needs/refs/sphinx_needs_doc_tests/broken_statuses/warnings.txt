@@ -1,0 +1,7 @@
+WARNING: Config option "needs_statuses" is deprecated. Please use "needs_fields.status.schema.enum" to define custom status field enum constraints. [needs.deprecated]
+ERROR: Need 'SP_TOO_002' has schema violations:
+  Severity:       violation
+  Field:          status
+  Need path:      SP_TOO_002
+  Schema path:    fields > schema > properties > status > enum
+  Schema message: "NOT_ALLOWED" is not one of "open" or "implemented" [sn_schema_violation.field_fail]

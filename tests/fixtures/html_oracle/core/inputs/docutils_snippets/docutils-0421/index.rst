@@ -1,0 +1,6 @@
+.. frobnicate:: x
+
+   c
+
+
+after

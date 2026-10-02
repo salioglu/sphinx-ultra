@@ -1,0 +1,2 @@
+<SRCDIR>/a.rst:10: WARNING: image file not readable: pic.png [image.not_readable]
+<SRCDIR>/a.rst:15: WARNING: image file not readable: pic2.png [image.not_readable]

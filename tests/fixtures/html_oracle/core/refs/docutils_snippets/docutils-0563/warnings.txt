@@ -1,0 +1,5 @@
+<SRCDIR>/index.rst:1: ERROR: Error parsing content block for the "list-table" directive: two-level bullet list expected, but row 1 does not contain a second-level bullet list.
+
+.. list-table::
+
+   * flat item [docutils]

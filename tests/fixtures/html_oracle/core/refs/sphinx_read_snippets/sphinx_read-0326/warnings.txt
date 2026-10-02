@@ -1,0 +1,1 @@
+<SRCDIR>/index.rst:3: WARNING: unknown option: '--verbose' [ref.option]

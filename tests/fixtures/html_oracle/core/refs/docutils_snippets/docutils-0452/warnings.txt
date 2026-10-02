@@ -1,0 +1,8 @@
+<SRCDIR>/index.rst:1: ERROR: Error in "csv-table" directive:
+invalid option value: (option: "delim"; value: '²')
+invalid literal for int() with base 10: '²'.
+
+.. csv-table::
+   :delim: ²
+
+   a,b [docutils]

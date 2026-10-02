@@ -1,0 +1,1 @@
+WARNING: needs_role_need_template uses the deprecated str.format syntax; migrate '{field}' placeholders to Jinja '{{ field }}' (this will be rendered with str.format for now, but support will be removed in a future release) [needs.deprecated]

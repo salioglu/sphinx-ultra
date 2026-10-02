@@ -1,0 +1,1 @@
+<SRCDIR>/index.rst:2: WARNING: Bullet list ends without a blank line; unexpected unindent. [docutils]

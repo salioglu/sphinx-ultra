@@ -1,0 +1,3 @@
+<SRCDIR>/index.rst:1: WARNING: equation not found: euler [ref.eq]
+<SRCDIR>/index.rst:1: WARNING: equation not found: euler [ref.eq]
+<SRCDIR>/index.rst:1: WARNING: equation not found: a b [ref.eq]

@@ -1,0 +1,2 @@
+<SRCDIR>/index.rst:1: WARNING: Footnote [*] is not referenced. [ref.footnote]
+<SRCDIR>/index.rst:2: WARNING: Footnote [*] is not referenced. [ref.footnote]

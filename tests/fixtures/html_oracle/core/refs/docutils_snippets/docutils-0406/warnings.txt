@@ -1,0 +1,8 @@
+<SRCDIR>/index.rst:1: ERROR: Error in "note" directive:
+invalid option value: (option: "class"; value: None)
+argument required but none supplied.
+
+.. note::
+   :class:
+
+   Body. [docutils]

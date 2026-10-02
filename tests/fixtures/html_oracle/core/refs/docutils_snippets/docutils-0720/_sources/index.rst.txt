@@ -1,0 +1,1 @@
+.. |ab | replace:: q

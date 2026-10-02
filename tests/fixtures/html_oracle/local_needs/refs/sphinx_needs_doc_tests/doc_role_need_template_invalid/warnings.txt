@@ -1,0 +1,7 @@
+WARNING: needs_role_need_template could not be compiled as a Jinja template: syntax error: unexpected `}`, expected end of variable block (in __compiled__:1)
+-------------------------------- __compiled__ ---------------------------------
+   1 > [{{ id }] {{ title }}
+     i        ^ syntax error
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+No referenced variables
+------------------------------------------------------------------------------- [needs.link_text]

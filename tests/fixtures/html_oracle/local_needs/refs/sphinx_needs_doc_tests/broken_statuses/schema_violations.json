@@ -1,0 +1,22 @@
+{
+  "validation_summary": "Schema validation completed with 1 warning(s) in 0.001 seconds. Validated 3303 needs/s.",
+  "validated_needs_per_second": 3303,
+  "validated_needs_count": 2,
+  "validation_warnings": {
+    "SP_TOO_002": [
+      {
+        "log_lvl": "error",
+        "type": "sn_schema_violation",
+        "subtype": "field_fail",
+        "details": {
+          "severity": "violation",
+          "field": "status",
+          "need_path": "SP_TOO_002",
+          "schema_path": "fields > schema > properties > status > enum",
+          "validation_msg": "\"NOT_ALLOWED\" is not one of \"open\" or \"implemented\""
+        },
+        "children": []
+      }
+    ]
+  }
+}

@@ -1,0 +1,7 @@
+<SRCDIR>/index.rst:1: ERROR: Figure caption must be a paragraph or empty comment.
+
+.. figure:: pic.png
+
+   - bullet
+   - list [docutils]
+<SRCDIR>/index.rst:1: WARNING: image file not readable: pic.png [image.not_readable]

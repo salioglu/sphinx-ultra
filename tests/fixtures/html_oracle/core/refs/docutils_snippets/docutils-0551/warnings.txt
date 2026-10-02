@@ -1,0 +1,6 @@
+<SRCDIR>/index.rst:1: ERROR: Insufficient data supplied (1 row(s)); no data remaining for table body, required by "csv-table" directive.
+
+.. csv-table::
+   :header-rows: 1
+
+   only, row [docutils]

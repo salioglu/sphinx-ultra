@@ -1,0 +1,1 @@
+.. |s| just plain text

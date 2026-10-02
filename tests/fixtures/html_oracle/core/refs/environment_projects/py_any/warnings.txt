@@ -1,0 +1,2 @@
+<SRCDIR>/a.rst:7: WARNING: more than one target found for 'any' cross-reference 'dup': could be :std:ref:`Dup Section` or :py:func:`mod.dup` [ref.any]
+<SRCDIR>/a.rst:7: WARNING: 'any' reference target not found: nosuch_any [ref.any]

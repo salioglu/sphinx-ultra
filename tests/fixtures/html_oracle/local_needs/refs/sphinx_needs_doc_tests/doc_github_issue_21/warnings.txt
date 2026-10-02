@@ -1,0 +1,17 @@
+<SRCDIR>/index.rst:6: ERROR: Unexpected indentation. [docutils]
+<SRCDIR>/index.rst:44: ERROR: Error in "needlist" directive:
+unknown option: "layout".
+
+.. needlist::
+   :tags: test
+   :status: implemented
+   :show_filters:
+   :layout: table [docutils]
+<SRCDIR>/index.rst:52: ERROR: Error in "needlist" directive:
+unknown option: "layout".
+
+.. needlist::
+  :layout: diagram [docutils]
+<SRCDIR>/index.rst:12: WARNING: Need 'OWN_ID_123' has unknown outgoing link 'R_F4722' in field 'links' [needs.link_outgoing]
+<SRCDIR>/index.rst:24: WARNING: Need 'TC_C3893' has unknown outgoing link 'impl_01' in field 'links' [needs.link_outgoing]
+<SRCDIR>/index.rst:29: WARNING: linked need impl_01 not found [needs.link_ref]

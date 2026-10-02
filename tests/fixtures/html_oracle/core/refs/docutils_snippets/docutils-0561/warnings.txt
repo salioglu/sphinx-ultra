@@ -1,0 +1,7 @@
+<SRCDIR>/index.rst:1: ERROR: Error parsing content block for the "list-table" directive: uniform two-level bullet list expected, but row 2 does not contain the same number of items as row 1 (1 vs 2).
+
+.. list-table::
+
+   * - a
+     - b
+   * - only one [docutils]

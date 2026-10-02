@@ -1,0 +1,3 @@
+.. list-table::
+
+   * flat item

@@ -1,0 +1,2 @@
+<SRCDIR>/a.rst:4: WARNING: image file not readable: pic.png [image.not_readable]
+<SRCDIR>/b.rst:4: WARNING: numfig is disabled. :numref: is ignored.

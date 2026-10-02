@@ -1,0 +1,1 @@
+<SRCDIR>/index.rst:1: WARNING: Citation [CIT2020] is not referenced. [ref.citation]

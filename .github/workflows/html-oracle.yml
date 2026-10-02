@@ -1,0 +1,72 @@
+name: HTML oracle
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONNOUSERSITE: "1"
+
+    steps:
+      - name: Check out sphinx-ultra
+        uses: actions/checkout@v7
+
+      - name: Check out pinned sphinx-needs
+        uses: actions/checkout@v7
+        with:
+          repository: useblocks/sphinx-needs
+          ref: 58bcb59d861da95f2aca79f343e8bae6ec5c1250
+          path: sphinx-needs
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install Python 3.12
+        run: uv python install 3.12
+
+      - name: Sync core profile
+        run: uv sync --locked --python 3.12 --project tools/oracle_profiles/core
+
+      - name: Sync local-needs profile
+        run: uv sync --locked --python 3.12 --project tools/oracle_profiles/local_needs
+
+      - name: Generate core references
+        run: >-
+          uv run --locked --python 3.12 --project tools/oracle_profiles/core python
+          tools/gen_html_oracle.py --config tools/html_oracle_cases.toml
+          --out tests/fixtures/html_oracle --profile core -j 12
+
+      - name: Generate local-needs references
+        run: >-
+          uv run --locked --python 3.12 --project tools/oracle_profiles/local_needs python
+          tools/gen_html_oracle.py --config tools/html_oracle_cases.toml
+          --out tests/fixtures/html_oracle --profile local_needs
+          --needs-root "${{ github.workspace }}/sphinx-needs" -j 12
+
+      - name: Verify core references
+        run: >-
+          uv run --locked --python 3.12 --project tools/oracle_profiles/core python
+          tools/gen_html_oracle.py --config tools/html_oracle_cases.toml
+          --out tests/fixtures/html_oracle --verify --profile core
+
+      - name: Verify local-needs references
+        run: >-
+          uv run --locked --python 3.12 --project tools/oracle_profiles/local_needs python
+          tools/gen_html_oracle.py --config tools/html_oracle_cases.toml
+          --out tests/fixtures/html_oracle --verify --profile local_needs
+          --needs-root "${{ github.workspace }}/sphinx-needs"
+
+      - name: Upload HTML oracle corpus
+        uses: actions/upload-artifact@v4
+        with:
+          name: html-oracle
+          path: tests/fixtures/html_oracle
+          # Every reference tree contains a .buildinfo, which upload-artifact
+          # would otherwise drop as a hidden file.
+          include-hidden-files: true
+          if-no-files-found: error

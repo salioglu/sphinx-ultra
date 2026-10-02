@@ -1,0 +1,5 @@
+<SRCDIR>/index.rst:1: ERROR: Missing matching underline for section title overline.
+
+====
+Title
+not underline [docutils]

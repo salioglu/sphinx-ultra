@@ -1,0 +1,1 @@
+<SRCDIR>/index.rst:4: WARNING: toctree glob pattern 'missing*' didn't match any documents

@@ -1,0 +1,1 @@
+<SRCDIR>/index.rst:1: ERROR: Invalid context: the "replace" directive can only be used within a substitution definition. [docutils]

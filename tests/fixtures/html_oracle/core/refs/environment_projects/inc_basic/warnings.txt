@@ -1,0 +1,20 @@
+<SRCDIR>/a.rst:8: CRITICAL: Problems with "include" directive path:
+InputError: [Errno 2] No such file or directory: 'target/html-oracle/generator-work/case-vkkvp6iy/source/missing.rst'. [docutils]
+<SRCDIR>/a.rst:10: CRITICAL: Problem with "start-after" option of "include" directive:
+Text not found. [docutils]
+target/html-oracle/generator-work/case-vkkvp6iy/source/circ_b.rst:3: WARNING: circular inclusion in "include" directive:
+target/html-oracle/generator-work/case-vkkvp6iy/source/circ_a.rst
+> target/html-oracle/generator-work/case-vkkvp6iy/source/circ_b.rst
+> target/html-oracle/generator-work/case-vkkvp6iy/source/circ_a.rst
+> target/html-oracle/generator-work/case-vkkvp6iy/source/a.rst [docutils]
+<SRCDIR>/a.rst:15: WARNING: Object named 'not_there' not found in include file _StrPath('<SRCDIR>/example.py') [docutils]
+target/html-oracle/generator-work/case-vkkvp6iy/source/circ_b.rst:3: WARNING: circular inclusion in "include" directive:
+target/html-oracle/generator-work/case-vkkvp6iy/source/circ_a.rst
+> target/html-oracle/generator-work/case-vkkvp6iy/source/circ_b.rst
+> target/html-oracle/generator-work/case-vkkvp6iy/source/circ_a.rst [docutils]
+target/html-oracle/generator-work/case-vkkvp6iy/source/circ_a.rst:3: WARNING: circular inclusion in "include" directive:
+target/html-oracle/generator-work/case-vkkvp6iy/source/circ_b.rst
+> target/html-oracle/generator-work/case-vkkvp6iy/source/circ_a.rst
+> target/html-oracle/generator-work/case-vkkvp6iy/source/circ_b.rst [docutils]
+<SRCDIR>/shared/frag.rst:3: CRITICAL: Problems with "include" directive path:
+InputError: [Errno 2] No such file or directory: 'target/html-oracle/generator-work/case-vkkvp6iy/source/shared/frag2.rst'. [docutils]

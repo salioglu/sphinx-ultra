@@ -1,0 +1,1 @@
+<SRCDIR>/index.rst:2: WARNING: glossary seems to be misformatted, check indentation [docutils]

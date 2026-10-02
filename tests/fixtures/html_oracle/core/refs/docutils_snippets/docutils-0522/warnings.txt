@@ -1,0 +1,7 @@
+<SRCDIR>/index.rst:1: ERROR: Error in "raw" directive:
+unknown option: "name".
+
+.. raw:: html
+   :name: r1
+
+   text [docutils]

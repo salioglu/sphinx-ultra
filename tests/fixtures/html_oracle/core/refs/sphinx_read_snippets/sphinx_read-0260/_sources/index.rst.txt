@@ -1,0 +1,4 @@
+.. math::
+   :nowrap:
+
+   x

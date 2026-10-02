@@ -1,0 +1,3 @@
+<SRCDIR>/index.rst:1: ERROR: The "list-table" directive is empty; content required.
+
+.. list-table:: [docutils]

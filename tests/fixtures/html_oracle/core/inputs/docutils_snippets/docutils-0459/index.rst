@@ -1,0 +1,5 @@
+.. note::
+
+   .. topic:: Inner
+
+      body

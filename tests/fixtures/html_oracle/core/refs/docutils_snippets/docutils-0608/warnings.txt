@@ -1,0 +1,3 @@
+<SRCDIR>/index.rst:1: ERROR: Unknown target name: "text <a>".
+
+Did you want to embed a URI or alias? [docutils]

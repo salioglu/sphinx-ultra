@@ -1,0 +1,5 @@
+<SRCDIR>/index.rst:1: ERROR: Error parsing content block for the "list-table" directive: exactly one bullet list expected.
+
+.. list-table::
+
+   just a paragraph [docutils]

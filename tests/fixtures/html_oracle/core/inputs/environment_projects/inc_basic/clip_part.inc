@@ -1,0 +1,2 @@
+clip alpha
+clip beta

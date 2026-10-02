@@ -1,0 +1,1 @@
+.. [#] An auto-numbered footnote.

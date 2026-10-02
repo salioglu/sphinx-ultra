@@ -1,0 +1,3 @@
+<SRCDIR>/b.rst:4: WARNING: duplicate object description of dupfn, other instance in a, use :no-index: for one of them
+<SRCDIR>/b.rst:6: WARNING: duplicate object description of dupmod, other instance in a, use :no-index: for one of them
+<SRCDIR>/b.rst:8: WARNING: duplicate object description of dupmod, other instance in b, use :no-index: for one of them

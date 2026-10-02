@@ -1,0 +1,4 @@
+<SRCDIR>/index.rst:2: WARNING: Title underline too short.
+
+Long Section Title
+====== [docutils]

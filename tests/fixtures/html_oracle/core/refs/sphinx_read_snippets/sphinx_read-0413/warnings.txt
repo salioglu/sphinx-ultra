@@ -1,0 +1,1 @@
+<SRCDIR>/index.rst:1: WARNING: could not parse arglist ('a, a'): duplicate parameter name: 'a'

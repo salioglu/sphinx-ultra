@@ -1,0 +1,1 @@
+<SRCDIR>/index.rst:1: WARNING: Inline substitution_reference start-string without end-string. [docutils]

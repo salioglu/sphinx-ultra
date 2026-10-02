@@ -1,0 +1,4 @@
+<SRCDIR>/index.rst:1: WARNING: Inline emphasis start-string without end-string. [docutils]
+<SRCDIR>/index.rst:1: ERROR: Problematic content in substitution definition
+
+.. |bad| replace:: *unclosed [docutils]

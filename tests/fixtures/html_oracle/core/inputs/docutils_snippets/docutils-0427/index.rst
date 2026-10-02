@@ -1,0 +1,2 @@
+.. image:: pic
+   ture.png

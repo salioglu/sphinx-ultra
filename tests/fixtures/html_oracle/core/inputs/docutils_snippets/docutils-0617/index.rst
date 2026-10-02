@@ -1,0 +1,1 @@
+.. [CIT]  Two spaces citation.

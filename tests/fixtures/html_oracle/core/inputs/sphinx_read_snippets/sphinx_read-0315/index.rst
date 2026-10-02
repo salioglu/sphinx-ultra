@@ -1,0 +1,1 @@
+.. option:: --color[=WHEN]

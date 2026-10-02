@@ -1,0 +1,2 @@
+<SRCDIR>/index.rst:3: ERROR: Unexpected indentation. [docutils]
+<SRCDIR>/index.rst:1: WARNING: Citation [CIT] is not referenced. [ref.citation]

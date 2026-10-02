@@ -1,0 +1,3 @@
+<SRCDIR>/index.rst:1: WARNING: Content block expected for the "table" directive; none found.
+
+.. table:: Title [docutils]

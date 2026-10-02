@@ -1,0 +1,5 @@
+<SRCDIR>/index.rst:1: WARNING: image file not readable: x.png [image.not_readable]
+<SRCDIR>/index.rst:1: WARNING: Could not obtain image size. :scale: option is ignored.
+<SRCDIR>/index.rst:1: WARNING: Cannot scale image!
+  Could not get size from "x.png":
+  Requires Python Imaging Library. [docutils]

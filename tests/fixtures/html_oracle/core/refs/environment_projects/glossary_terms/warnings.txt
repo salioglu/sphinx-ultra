@@ -1,0 +1,1 @@
+<SRCDIR>/b.rst:8: WARNING: term not in glossary: 'nonexistent term' [ref.term]

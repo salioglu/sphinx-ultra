@@ -1,0 +1,3 @@
+<SRCDIR>/index.rst:1: ERROR: Anonymous references are not supported in a substitution definition.
+
+.. |a| replace:: see `docs`__ [docutils]

@@ -1,0 +1,5 @@
+<SRCDIR>/index.rst:1: ERROR: Error parsing content block for the "table" directive: exactly one table expected.
+
+.. table::
+
+   just a paragraph [docutils]

@@ -1,0 +1,8 @@
+<SRCDIR>/index.rst:1: ERROR: Error in "note" directive:
+invalid option data: extension option field name may not contain multiple words.
+
+.. note::
+   :bogus: x
+   :class extra: v
+
+   Body. [docutils]

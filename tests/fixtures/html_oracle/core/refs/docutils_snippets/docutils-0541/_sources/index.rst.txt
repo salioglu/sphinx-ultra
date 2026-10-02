@@ -1,0 +1,3 @@
+.. table::
+
+   just a paragraph

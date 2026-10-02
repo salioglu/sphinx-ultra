@@ -1,0 +1,4 @@
+<SRCDIR>/index.rst:4: ERROR: Unexpected section title.
+
+Fake
+==== [docutils]

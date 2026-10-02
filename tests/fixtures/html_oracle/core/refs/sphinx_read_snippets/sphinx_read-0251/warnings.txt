@@ -1,0 +1,2 @@
+<SRCDIR>/index.rst:1: WARNING: toctree contains reference to nonexisting document 'installation' [toc.not_readable]
+<SRCDIR>/index.rst:1: WARNING: toctree contains reference to nonexisting document 'other' [toc.not_readable]

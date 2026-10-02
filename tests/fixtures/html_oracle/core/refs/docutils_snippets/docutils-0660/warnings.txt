@@ -1,0 +1,4 @@
+<SRCDIR>/index.rst:2: WARNING: Title underline too short.
+
+日本語
+==== [docutils]

@@ -1,0 +1,4 @@
+.. note::
+   :bogus: x
+
+   Body.

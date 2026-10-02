@@ -1,0 +1,4 @@
+
+Sphinx error!
+
+    sphinx.errors.SphinxError: Sphinx is unable to load the master document (<SRCDIR>/index.rst). The master document must be within the source directory or a subdirectory of it.

@@ -1,0 +1,2 @@
+WARNING: needs_filter_data is deprecated and will be removed in a future version. Use needs_variant_data instead. [needs.deprecated]
+<SRCDIR>/page_5.rst:4: WARNING: Need could not be created: A need with ID 'STORY_PAGE_1' already exists. [needs.create_need]

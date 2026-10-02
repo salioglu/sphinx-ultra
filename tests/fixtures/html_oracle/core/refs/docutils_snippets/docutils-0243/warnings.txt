@@ -1,0 +1,2 @@
+<SRCDIR>/index.rst:1: ERROR: Undefined substitution referenced: "Sub Name". [docutils]
+<SRCDIR>/index.rst:1: ERROR: Unknown target name: "sub name". [docutils]

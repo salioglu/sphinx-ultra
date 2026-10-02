@@ -1,0 +1,1 @@
+<SRCDIR>/index.rst:3: WARNING: Document may not end with a transition. [docutils]
