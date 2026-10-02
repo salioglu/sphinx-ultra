@@ -5,8 +5,12 @@
 //! ROADMAP M1 defect, the assertion documents it with a comment so the fix is
 //! a deliberate test change, not an accident.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+
+use flate2::read::ZlibDecoder;
+use sphinx_ultra::{BuildConfig, HTMLBuilder, InventoryFile, SearchIndex};
 
 fn bin() -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_sphinx-ultra"));
@@ -45,6 +49,44 @@ fn stderr_of(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
+fn native_newline() -> &'static str {
+    if cfg!(windows) {
+        "\r\n"
+    } else {
+        "\n"
+    }
+}
+
+fn search_value(out: &Path) -> serde_json::Value {
+    let raw = std::fs::read_to_string(out.join("searchindex.js")).unwrap();
+    assert!(raw.starts_with("Search.setIndex("));
+    assert!(raw.ends_with(')'));
+    serde_json::from_str(&raw["Search.setIndex(".len()..raw.len() - 1]).unwrap()
+}
+
+fn assert_search_fixture(
+    name: &str,
+    docnames: &[&str],
+    filenames: &[String],
+    titles: &[&str],
+    alltitles: serde_json::Value,
+    titleterms: serde_json::Value,
+) -> serde_json::Value {
+    let out = out_dir(&format!("search-{name}"));
+    let result = build(&fixture(name), &out, &[]);
+    assert!(result.status.success(), "{name}: {}", stderr_of(&result));
+    let value = search_value(&out);
+    assert_eq!(value["docnames"], serde_json::json!(docnames), "{name}");
+    assert_eq!(value["filenames"], serde_json::json!(filenames), "{name}");
+    assert_eq!(value["titles"], serde_json::json!(titles), "{name}");
+    assert_eq!(value["alltitles"], alltitles, "{name}");
+    assert_eq!(value["titleterms"], titleterms, "{name}");
+    assert_eq!(value["objects"], serde_json::json!({}), "{name}");
+    assert_eq!(value["objtypes"], serde_json::json!({}), "{name}");
+    assert_eq!(value["objnames"], serde_json::json!({}), "{name}");
+    value
+}
+
 #[test]
 fn build_succeeds_and_writes_html_tree() {
     let out = out_dir("basic-build");
@@ -59,6 +101,356 @@ fn build_succeeds_and_writes_html_tree() {
     assert!(
         html.contains("Welcome"),
         "index.html should carry the title text"
+    );
+}
+
+#[test]
+fn build_emits_sphinx_search_index() {
+    let out = out_dir("basic-search-index");
+    let result = build(&fixture("basic"), &out, &[]);
+
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    let raw = std::fs::read_to_string(out.join("searchindex.js")).unwrap();
+    assert!(raw.starts_with("Search.setIndex("));
+    assert!(raw.ends_with(')'));
+
+    let value: serde_json::Value =
+        serde_json::from_str(&raw["Search.setIndex(".len()..raw.len() - ")".len()]).unwrap();
+    let object = value.as_object().unwrap();
+    let keys: Vec<&str> = object.keys().map(String::as_str).collect();
+    assert_eq!(
+        keys,
+        vec![
+            "alltitles",
+            "docnames",
+            "envversion",
+            "filenames",
+            "indexentries",
+            "objects",
+            "objnames",
+            "objtypes",
+            "terms",
+            "titles",
+            "titleterms",
+        ]
+    );
+    assert_eq!(
+        object["docnames"],
+        serde_json::json!(["index", "installation"])
+    );
+    assert_eq!(
+        object["filenames"],
+        serde_json::json!(["index.rst", "installation.rst"])
+    );
+    assert_eq!(
+        object["titles"],
+        serde_json::json!(["Welcome", "Installation"])
+    );
+    assert_eq!(
+        object["alltitles"],
+        serde_json::json!({
+            "Installation": [[1, null]],
+            "Welcome": [[0, null]],
+        })
+    );
+    assert_eq!(object["terms"], serde_json::json!({"instal": 0, "text": 1}));
+    assert_eq!(
+        object["titleterms"],
+        serde_json::json!({"instal": 1, "welcom": 0})
+    );
+    assert_eq!(object["objects"], serde_json::json!({}));
+    assert_eq!(object["objnames"], serde_json::json!({}));
+    assert_eq!(object["objtypes"], serde_json::json!({}));
+    assert_eq!(object["indexentries"], serde_json::json!({}));
+}
+
+#[test]
+fn build_emits_sphinx_object_inventory() {
+    let out = out_dir("basic-object-inventory");
+    let result = build(&fixture("basic"), &out, &[]);
+
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    let raw = std::fs::read(out.join("objects.inv")).unwrap();
+    let mut lines = raw.splitn(5, |byte| *byte == b'\n');
+    assert_eq!(
+        lines.next(),
+        Some(b"# Sphinx inventory version 2".as_slice())
+    );
+    assert_eq!(lines.next(), Some(b"# Project: Fixture".as_slice()));
+    assert_eq!(lines.next(), Some(b"# Version: ".as_slice()));
+    assert_eq!(
+        lines.next(),
+        Some(b"# The remainder of this file is compressed using zlib.".as_slice())
+    );
+
+    let mut body = String::new();
+    ZlibDecoder::new(lines.next().unwrap())
+        .read_to_string(&mut body)
+        .unwrap();
+    assert_eq!(
+        body,
+        concat!(
+            "genindex std:label -1 genindex.html Index\n",
+            "index std:doc -1 index.html Welcome\n",
+            "installation std:doc -1 installation.html Installation\n",
+            "modindex std:label -1 py-modindex.html Module Index\n",
+            "py-modindex std:label -1 py-modindex.html Python Module Index\n",
+            "search std:label -1 search.html Search Page\n",
+        )
+    );
+}
+
+#[test]
+fn build_emits_sphinx_build_info() {
+    let out = out_dir("basic-build-info");
+    let result = build(&fixture("basic"), &out, &[]);
+
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    let raw = std::fs::read_to_string(out.join(".buildinfo")).unwrap();
+    let mut lines = raw.split(native_newline());
+    assert_eq!(lines.next(), Some("# Sphinx build info version 1"));
+    assert_eq!(
+        lines.next(),
+        Some(
+            "# This file records the configuration used when building these files. When it is not found, a full rebuild will be done."
+        )
+    );
+    let config = lines.next().unwrap();
+    let tags = lines.next().unwrap();
+    assert!(config.starts_with("config: "));
+    assert!(tags.starts_with("tags: "));
+    assert_eq!(
+        &config["config: ".len()..],
+        "bc9d5af5c9b6d45a25e31a5ff598283a"
+    );
+    assert_eq!(&tags["tags: ".len()..], "645f666f9bcd5a90fca523b33c5a78b7");
+    assert_eq!(lines.next(), Some(""));
+    assert_eq!(lines.next(), None);
+}
+
+#[test]
+fn search_index_matches_sphinx_fixture_shapes() {
+    let basic = assert_search_fixture(
+        "basic",
+        &["index", "installation"],
+        &["index.rst".to_string(), "installation.rst".to_string()],
+        &["Welcome", "Installation"],
+        serde_json::json!({"Installation": [[1, null]], "Welcome": [[0, null]]}),
+        serde_json::json!({"instal": 1, "welcom": 0}),
+    );
+    assert_eq!(basic["terms"], serde_json::json!({"instal": 0, "text": 1}));
+
+    let missing = assert_search_fixture(
+        "basic_missing_ref",
+        &["index"],
+        &["index.rst".to_string()],
+        &["Welcome"],
+        serde_json::json!({"Welcome": [[0, null]]}),
+        serde_json::json!({"welcom": 0}),
+    );
+    assert_eq!(missing["terms"], serde_json::json!({}));
+
+    let deps = assert_search_fixture(
+        "deps_image",
+        &["index", "page"],
+        &["index.rst".to_string(), "page.rst".to_string()],
+        &["Welcome", "Page"],
+        serde_json::json!({"Page": [[1, null]], "Welcome": [[0, null]]}),
+        serde_json::json!({"page": 1, "welcom": 0}),
+    );
+    assert_eq!(deps["terms"]["page"], serde_json::json!(0));
+
+    let intersphinx = assert_search_fixture(
+        "intersphinx",
+        &["index"],
+        &["index.rst".to_string()],
+        &["Intersphinx Fixture"],
+        serde_json::json!({"Intersphinx Fixture": [[0, null]]}),
+        serde_json::json!({"fixtur": 0, "intersphinx": 0}),
+    );
+    // Snowball spelling is covered on the stacked stemmer branch. These are
+    // the non-stemming terms that must remain in the Sphinx 9.1 index.
+    for term in ["defin", "exampl", "exist", "label", "project", "target"] {
+        assert!(intersphinx["terms"].get(term).is_some(), "missing {term}");
+    }
+
+    let forms = assert_search_fixture(
+        "toctree_forms",
+        &["index", "installation", "sub/page", "sub/sibling"],
+        &[
+            "index.rst".to_string(),
+            "installation.rst".to_string(),
+            format!("sub{}page.rst", std::path::MAIN_SEPARATOR),
+            format!("sub{}sibling.rst", std::path::MAIN_SEPARATOR),
+        ],
+        &["Welcome", "Installation", "Page", "Sibling"],
+        serde_json::json!({
+            "Contents:": [[0, null]],
+            "Installation": [[1, null]],
+            "Page": [[2, null]],
+            "Sibling": [[3, null]],
+            "Welcome": [[0, null]],
+        }),
+        serde_json::json!({
+            "content": 0,
+            "instal": 1,
+            "page": 2,
+            "sibl": 3,
+            "welcom": 0,
+        }),
+    );
+    assert!(forms["terms"].get("sub").is_none());
+
+    let glob = assert_search_fixture(
+        "toctree_glob",
+        &["index", "pages/a", "pages/b"],
+        &[
+            "index.rst".to_string(),
+            format!("pages{}a.rst", std::path::MAIN_SEPARATOR),
+            format!("pages{}b.rst", std::path::MAIN_SEPARATOR),
+        ],
+        &["Welcome", "Alpha", "Beta"],
+        serde_json::json!({
+            "Alpha": [[1, null]],
+            "Beta": [[2, null]],
+            "Welcome": [[0, null]],
+        }),
+        serde_json::json!({"alpha": 1, "beta": 2, "welcom": 0}),
+    );
+    assert_eq!(
+        glob["terms"],
+        serde_json::json!({
+            "alpha": 0,
+            "beta": 0,
+            "first": 1,
+            "page": [1, 2],
+            "second": 2,
+        })
+    );
+    assert!(glob["terms"].get("miss").is_none());
+}
+
+#[test]
+fn buildinfo_hashes_match_sphinx_for_all_html_fixtures() {
+    let expected = [
+        ("basic", "bc9d5af5c9b6d45a25e31a5ff598283a"),
+        ("basic_missing_ref", "bc9d5af5c9b6d45a25e31a5ff598283a"),
+        ("deps_image", "2a19b9281246b838bad487cca62ce7dd"),
+        ("intersphinx", "9df0ca2b2a4bc173c812878b2b25105c"),
+        ("toctree_forms", "bc9d5af5c9b6d45a25e31a5ff598283a"),
+        ("toctree_glob", "bc9d5af5c9b6d45a25e31a5ff598283a"),
+    ];
+    let newline = native_newline();
+    for (name, config_hash) in expected {
+        let out = out_dir(&format!("buildinfo-{name}"));
+        let result = build(&fixture(name), &out, &[]);
+        assert!(result.status.success(), "{name}: {}", stderr_of(&result));
+        let raw = std::fs::read_to_string(out.join(".buildinfo")).unwrap();
+        assert_eq!(
+            raw,
+            format!(
+                "# Sphinx build info version 1{newline}# This file records the configuration used when building these files. When it is not found, a full rebuild will be done.{newline}config: {config_hash}{newline}tags: 645f666f9bcd5a90fca523b33c5a78b7{newline}"
+            ),
+            "{name}"
+        );
+    }
+}
+
+#[test]
+fn custom_tag_build_emits_sphinx_tag_hash() {
+    let out = out_dir("buildinfo-custom-tag");
+    let result = sphinx_build(&[
+        fixture("basic").to_str().unwrap(),
+        out.to_str().unwrap(),
+        "-t",
+        "custom",
+    ]);
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    let raw = std::fs::read_to_string(out.join(".buildinfo")).unwrap();
+    let newline = native_newline();
+    assert!(raw.contains(&format!(
+        "config: bc9d5af5c9b6d45a25e31a5ff598283a{newline}"
+    )));
+    assert!(raw.contains(&format!("tags: c191a6fc30aa78c716b20a6a34088b42{newline}")));
+}
+
+#[test]
+fn written_inventories_load_for_all_html_fixtures() {
+    for name in [
+        "basic",
+        "basic_missing_ref",
+        "deps_image",
+        "intersphinx",
+        "toctree_forms",
+        "toctree_glob",
+    ] {
+        let out = out_dir(&format!("inventory-load-{name}"));
+        let result = build(&fixture(name), &out, &[]);
+        assert!(result.status.success(), "{name}: {}", stderr_of(&result));
+        let bytes = std::fs::read(out.join("objects.inv")).unwrap();
+        let inventory = InventoryFile::loads(&bytes, "").unwrap();
+        assert!(inventory.contains("std:doc", "index"), "{name}");
+    }
+}
+
+#[test]
+fn direct_html_builder_writes_search_and_inventory_artifacts() {
+    let root = tempfile::tempdir().unwrap();
+    let mut builder = HTMLBuilder::new(
+        BuildConfig::default(),
+        root.path().join("src"),
+        root.path().join("out"),
+    )
+    .unwrap();
+    let mut index = SearchIndex::new("en".to_string());
+    index
+        .add_document(
+            "index".to_string(),
+            "index.rst".to_string(),
+            "Welcome".to_string(),
+            "Body",
+        )
+        .unwrap();
+    index
+        .add_object(
+            "Thing".to_string(),
+            "index",
+            Some("thing".to_string()),
+            "py:function",
+            Some("Thing".to_string()),
+        )
+        .unwrap();
+
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(builder.init()).unwrap();
+    runtime.block_on(builder.dump_search_index(&index)).unwrap();
+    runtime
+        .block_on(builder.dump_object_inventory(&index))
+        .unwrap();
+    let value = search_value(&root.path().join("out"));
+    assert_eq!(value["objtypes"]["0"], "py:function");
+    let bytes = std::fs::read(root.path().join("out").join("objects.inv")).unwrap();
+    let inventory = InventoryFile::loads(&bytes, "").unwrap();
+    assert!(inventory.contains("py:function", "Thing"));
+}
+
+#[test]
+fn first_level_section_titles_keep_their_anchor() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("src");
+    std::fs::create_dir_all(&source).unwrap();
+    std::fs::write(
+        source.join("index.rst"),
+        "Document\n========\n\nSection\n-------\n\nBody.\n",
+    )
+    .unwrap();
+    let out = root.path().join("out");
+    let result = build(&source, &out, &[]);
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    let value = search_value(&out);
+    assert_eq!(
+        value["alltitles"]["Section"],
+        serde_json::json!([[0, "section"]])
     );
 }
 
