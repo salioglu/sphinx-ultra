@@ -131,6 +131,9 @@ pub struct RoleRecord {
 pub struct ToctreeRecord {
     pub glob: bool,
     pub entries: Vec<ToctreeEntryRecord>,
+    /// The optional caption is a title in Sphinx's search index; entry
+    /// labels and targets are not searchable body text.
+    pub caption: Option<String>,
     /// Source-table index of the `.. toctree::` line — the section-
     /// numbering warning (`location=toctreenode`) names this source's
     /// path. Not `#[serde(default)]` (see [`DirectiveRecord::source`]).

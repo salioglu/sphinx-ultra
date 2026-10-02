@@ -403,8 +403,11 @@ impl Default for BuildConfig {
 
             // Sphinx-compatible defaults
             project: "Sphinx Ultra Project".to_string(),
-            version: Some("1.0.0".to_string()),
-            release: Some("1.0.0".to_string()),
+            // Sphinx defaults both values to the empty string when conf.py
+            // does not define them. Keep None here so artifact headers use
+            // that same default while explicit conf.py values remain intact.
+            version: None,
+            release: None,
             copyright: Some("2024, Sphinx Ultra".to_string()),
             language: Some("en".to_string()),
             root_doc: Some("index".to_string()),
