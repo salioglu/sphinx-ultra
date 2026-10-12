@@ -1,0 +1,1 @@
+.. index:: pair: a; b

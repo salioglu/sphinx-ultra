@@ -1,0 +1,8 @@
+<SRCDIR>/index.rst:1: ERROR: Error in "note" directive:
+invalid option data: duplicate option "class".
+
+.. note::
+   :class: a
+   :class: b
+
+   Body. [docutils]

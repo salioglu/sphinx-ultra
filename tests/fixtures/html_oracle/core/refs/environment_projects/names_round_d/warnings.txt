@@ -1,0 +1,2 @@
+<SRCDIR>/index.rst:6: WARNING: undefined label: 'only comment' [ref.ref]
+<SRCDIR>/index.rst:6: WARNING: undefined label: 'only comment' [ref.ref]

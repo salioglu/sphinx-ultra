@@ -1,0 +1,3 @@
+.. highlights::
+
+   Highlighted text.

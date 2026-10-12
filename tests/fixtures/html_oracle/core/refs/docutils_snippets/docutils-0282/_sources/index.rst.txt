@@ -1,0 +1,1 @@
+.. [#note] Labeled auto footnote.

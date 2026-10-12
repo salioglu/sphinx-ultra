@@ -1,0 +1,3 @@
+<SRCDIR>/index.rst:38: WARNING: Need 'OTHER_1' has unknown outgoing link 'SP_TOO_001.unknown_part' in field 'links' [needs.link_outgoing]
+<SRCDIR>/index.rst:26: WARNING: Need part not associated with a need. [needs.part]
+<SRCDIR>/index.rst:36: WARNING: linked need part SP_TOO_001.unknown_part not found [needs.link_ref]

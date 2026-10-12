@@ -1,0 +1,4 @@
+<SRCDIR>/index.rst:1: ERROR: Incomplete section title.
+
+----
+text with no closing [docutils]

@@ -1,0 +1,1 @@
+.. |f| replace:: note [#]_

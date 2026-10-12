@@ -1,0 +1,5 @@
+<SRCDIR>/index.rst:1: WARNING: Title overline too short.
+
+=====
+   Long title text
+===== [docutils]

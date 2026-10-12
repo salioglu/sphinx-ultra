@@ -1,0 +1,1 @@
+.. py:function:: func(a, /)

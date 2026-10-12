@@ -1,0 +1,1 @@
+.. |z| bogusdir:: x

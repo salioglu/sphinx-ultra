@@ -1,0 +1,3 @@
+.. |topic| topic:: T
+
+   body

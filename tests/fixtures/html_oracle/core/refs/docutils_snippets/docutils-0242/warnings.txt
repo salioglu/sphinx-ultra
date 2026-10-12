@@ -1,0 +1,6 @@
+<SRCDIR>/index.rst:1: ERROR: Undefined substitution referenced: "sub". [docutils]
+<SRCDIR>/index.rst:1: ERROR: Undefined substitution referenced: "sub2". [docutils]
+<SRCDIR>/index.rst:1: ERROR: Undefined substitution referenced: "sub3". [docutils]
+<SRCDIR>/index.rst:2: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.
+See "backrefs" attribute for IDs. [docutils]
+<SRCDIR>/index.rst:1: ERROR: Unknown target name: "sub2". [docutils]

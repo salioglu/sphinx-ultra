@@ -1,0 +1,1 @@
+<SRCDIR>/index.rst:5: WARNING: At least one body element must separate transitions; adjacent transitions are not allowed. [docutils]

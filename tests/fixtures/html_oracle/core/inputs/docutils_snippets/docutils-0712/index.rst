@@ -1,0 +1,3 @@
+.. |u| unicode:: 0x410x42
+
+|u| here

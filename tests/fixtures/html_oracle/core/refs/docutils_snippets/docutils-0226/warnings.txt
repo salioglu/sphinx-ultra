@@ -1,0 +1,2 @@
+<SRCDIR>/index.rst:1: ERROR: Indirect hyperlink target "text" (id="text") refers to target "two words", which does not exist. [docutils]
+<SRCDIR>/index.rst:1: ERROR: Unknown target name: "two words". [docutils]

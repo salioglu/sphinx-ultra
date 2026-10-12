@@ -1,0 +1,4 @@
+.. list-table::
+
+   * - a
+     - b

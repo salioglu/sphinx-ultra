@@ -1,0 +1,1 @@
+<SRCDIR>/index.rst:3: WARNING: duplicate object description of dup, other instance in index, use :no-index: for one of them

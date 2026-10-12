@@ -1,0 +1,1 @@
+WARNING: Matplotlib is not installed and required by needbar. Install with `sphinx-needs[plotting]` to use. [needs.mpl]

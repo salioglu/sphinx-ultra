@@ -1,0 +1,3 @@
+.. envvar:: FOOBAR
+
+   Body.

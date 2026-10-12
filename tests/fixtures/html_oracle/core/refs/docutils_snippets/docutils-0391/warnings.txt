@@ -1,0 +1,7 @@
+<SRCDIR>/index.rst:1: ERROR: Error in "note" directive:
+unknown option: "bogus".
+
+.. note::
+   :bogus: x
+
+   Body. [docutils]

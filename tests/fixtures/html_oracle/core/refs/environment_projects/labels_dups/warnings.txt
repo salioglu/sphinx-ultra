@@ -1,0 +1,1 @@
+<SRCDIR>/b.rst:7: WARNING: duplicate label dup-label, other instance in <SRCDIR>/a.rst

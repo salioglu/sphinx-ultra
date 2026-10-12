@@ -1,0 +1,1 @@
+<SRCDIR>/index.rst:4: WARNING: 'variant' role used but no variant data is available: 'platform' [needs.variant]

@@ -1,0 +1,2 @@
+<SRCDIR>/index.rst:6: WARNING: No options specified to generate need report [needs.needreport]
+<SRCDIR>/index.rst:8: WARNING: Could not load needs report template file <SRCDIR>/unknown.rst [needs.needreport]

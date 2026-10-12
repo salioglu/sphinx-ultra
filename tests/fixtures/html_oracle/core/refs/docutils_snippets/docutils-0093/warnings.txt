@@ -1,0 +1,1 @@
+<SRCDIR>/index.rst:4: ERROR: Inconsistent literal block quoting. [docutils]

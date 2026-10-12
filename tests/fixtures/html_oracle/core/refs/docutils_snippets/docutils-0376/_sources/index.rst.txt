@@ -1,0 +1,3 @@
+.. bogusdirective::
+
+   content

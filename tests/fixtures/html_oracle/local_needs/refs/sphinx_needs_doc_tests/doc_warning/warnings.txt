@@ -1,0 +1,5 @@
+<SRCDIR>/index.rst:9: ERROR: Unknown interpreted text role "unknown0". [docutils]
+<SRCDIR>/index.rst:16: ERROR: Unknown interpreted text role "unknown1". [docutils]
+<SRCDIR>/index.rst:24: ERROR: Unknown interpreted text role "unknown2". [docutils]
+<SRCDIR>/index.rst:31: ERROR: Unknown interpreted text role "unknown3". [docutils]
+<SRCDIR>/index.rst:6: ERROR: Unknown interpreted text role "unknown4". [docutils]

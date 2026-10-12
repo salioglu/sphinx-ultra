@@ -1,0 +1,4 @@
+<SRCDIR>/index.rst:1: WARNING: term not in glossary: ' foo bar ' [ref.term]
+<SRCDIR>/index.rst:1: WARNING: unknown document: ' a b ' [ref.doc]
+<SRCDIR>/index.rst:1: WARNING: 'any' reference target not found:  p q  [ref.any]
+<SRCDIR>/index.rst:1: WARNING: undefined label: ' l ' [ref.ref]

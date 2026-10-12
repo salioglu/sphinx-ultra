@@ -1,0 +1,4 @@
+.. compound::
+   :class: custom
+
+   Body.

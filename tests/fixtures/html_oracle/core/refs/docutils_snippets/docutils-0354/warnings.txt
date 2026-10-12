@@ -1,0 +1,7 @@
+<SRCDIR>/index.rst:1: ERROR: Malformed table.
+No bottom table border found or no blank line after table bottom.
+
+=====  =====
+A      B
+=====  ===== [docutils]
+<SRCDIR>/index.rst:4: WARNING: Blank line required after table. [docutils]

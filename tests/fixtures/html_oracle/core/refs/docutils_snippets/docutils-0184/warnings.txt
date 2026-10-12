@@ -1,0 +1,1 @@
+<SRCDIR>/index.rst:1: WARNING: Inline strong start-string without end-string. [docutils]

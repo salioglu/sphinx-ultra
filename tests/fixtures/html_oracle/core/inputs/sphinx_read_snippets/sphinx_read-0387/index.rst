@@ -1,0 +1,2 @@
+.. py:module:: badmod
+   :noindexentry:

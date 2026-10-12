@@ -1,0 +1,4 @@
+<SRCDIR>/index.rst:47: WARNING: title_from_content set to True, but a title was provided. [needs.directive]
+<SRCDIR>/index.rst:53: WARNING: title_from_content set to True, but a title was provided. [needs.directive]
+<SRCDIR>/index.rst:58: WARNING: title_from_content set to True, but a title was provided. [needs.directive]
+<SRCDIR>/index.rst:66: WARNING: title_from_content set to True, but a title was provided. [needs.directive]

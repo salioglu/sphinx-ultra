@@ -1,0 +1,4 @@
+
+Configuration error!
+
+    sphinx.errors.ConfigError: config directory doesn't contain a conf.py file (<SRCDIR>)

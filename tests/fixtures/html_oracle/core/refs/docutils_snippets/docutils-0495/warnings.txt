@@ -1,0 +1,8 @@
+<SRCDIR>/index.rst:1: ERROR: Error in "figure" directive:
+invalid option value: (option: "scale"; value: 'abc')
+invalid literal for int() with base 10: 'abc'.
+
+.. figure:: pic.png
+   :scale: abc
+
+   Caption. [docutils]

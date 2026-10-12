@@ -1,0 +1,6 @@
+<SRCDIR>/a.rst.rst:6: WARNING: line number spec is out of range(1-3): '1-40'
+<SRCDIR>/a.rst.rst:9: WARNING: line number spec is out of range(1-3): '9'
+<SRCDIR>/a.rst.rst:12: WARNING: non-whitespace stripped by dedent
+<SRCDIR>/part.rst:4: WARNING: duplicate object description of partfn, other instance in a, use :no-index: for one of them
+<SRCDIR>/part.rst:6: WARNING: undefined label: 'missing-target' [ref.ref]
+<SRCDIR>/part.rst:6: WARNING: undefined label: 'missing-target' [ref.ref]

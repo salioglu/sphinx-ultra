@@ -1,0 +1,4 @@
+<SRCDIR>/index.rst:4: WARNING: "query" or "specific" missing as option for github service. [needs.github]
+
+
+    RuntimeError: network disabled by html oracle

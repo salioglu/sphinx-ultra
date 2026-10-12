@@ -1,0 +1,8 @@
+<SRCDIR>/index.rst:1: ERROR: Malformed table.
+Malformed table; parse incomplete.
+
++--------------+--------------+
+| A bad table. |              |
++--------------+              |
+| Cells must be rectangles.   |
++-----------------------------+ [docutils]

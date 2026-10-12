@@ -1,0 +1,7 @@
+<SRCDIR>/index.rst:1: ERROR: Error in "unicode" directive:
+1 argument(s) required, 0 supplied.
+
+unicode:: [docutils]
+<SRCDIR>/index.rst:1: WARNING: Substitution definition "u" empty or invalid.
+
+.. |u| unicode:: [docutils]

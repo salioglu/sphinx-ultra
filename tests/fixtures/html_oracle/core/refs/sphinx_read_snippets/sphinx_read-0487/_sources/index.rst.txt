@@ -1,0 +1,1 @@
+.. envvar:: MYVAR

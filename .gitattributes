@@ -19,3 +19,6 @@
 # whitespace), the `.rst`/`.py` project fixtures are parsed too, and `.png`
 # cannot be mistaken for text.
 *.inv -text
+
+# HTML oracle fixtures are byte-exact hashed references, never text.
+tests/fixtures/html_oracle/** -text

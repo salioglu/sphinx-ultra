@@ -1,0 +1,2 @@
+<SRCDIR>/index.rst:1: ERROR: Too many autonumbered footnote references: only 0 corresponding footnote available. [docutils]
+<SRCDIR>/index.rst:1: ERROR: Unknown target name: "label". [docutils]

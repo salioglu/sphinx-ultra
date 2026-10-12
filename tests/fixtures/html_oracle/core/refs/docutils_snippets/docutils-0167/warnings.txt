@@ -1,0 +1,3 @@
+<SRCDIR>/index.rst:2: WARNING: Explicit markup ends without a blank line; unexpected unindent. [docutils]
+<SRCDIR>/index.rst:3: ERROR: Anonymous hyperlink mismatch: 0 references but 1 targets.
+See "backrefs" attribute for IDs. [docutils]

@@ -1,0 +1,2 @@
+<SRCDIR>/index.rst:2: WARNING: Duplicate explicit target name: "x". [docutils]
+<SRCDIR>/index.rst:2: WARNING: Citation [X] is not referenced. [ref.citation]

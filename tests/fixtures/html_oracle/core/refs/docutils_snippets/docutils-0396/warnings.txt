@@ -1,0 +1,6 @@
+<SRCDIR>/index.rst:1: ERROR: Error in "admonition" directive:
+1 argument(s) required, 0 supplied.
+
+.. admonition::
+
+   Body. [docutils]

@@ -1,0 +1,39 @@
+/* These are used by the needtable directive
+to style the table representation of the needs.
+
+Note: we use `table.NEEDS_TABLE.NEEDS_TABLE` to select a needtable, to increase the specificity of the selector,
+so that it should be generally higher than the specificity of the theme CSS selectors.
+This avoids having to use !important.
+*/
+
+table.NEEDS_TABLE.NEEDS_TABLE,
+table.NEEDS_DATATABLES.NEEDS_DATATABLES {
+    display: table;
+    overflow-x: auto;
+    white-space: normal;
+    width: 100%;
+    margin: 0 auto;
+}
+
+div.needstable_wrapper {
+    width: 100%;
+    overflow-x: auto;
+    padding: 0;
+}
+
+/* `libs/html/needstable.css` is the structural, host-agnostic half of the pair, and is
+shipped verbatim by every consumer of the contract. It asks for every colour through a
+`--needstable-*` custom property with a self-effacing fallback; this is where Sphinx-Needs'
+own theme tokens answer. See `design/needstable-contract.md`. */
+div.needstable {
+    --needstable-label-color: var(--sn-color-table-label);
+    --needstable-border-color: var(--sn-color-table-btn-border);
+    --needstable-focus-color: var(--sn-color-table-label);
+    /* The columns disclosure is the only OPAQUE surface the widget paints, so it is the
+    only one that cannot inherit the page's colours. Its structural fallbacks are the
+    system colours `Canvas`/`CanvasText`, which follow the user agent's colour scheme
+    rather than the page's -- so on a site whose own switch is set to dark they come out
+    white on a dark page. These two tokens answer them, from the theme `needs_css` names. */
+    --needstable-popover-bg: var(--sn-color-table-popover-bg);
+    --needstable-popover-color: var(--sn-color-table-popover-fg);
+}

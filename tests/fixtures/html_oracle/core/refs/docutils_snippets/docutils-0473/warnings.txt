@@ -1,0 +1,4 @@
+<SRCDIR>/index.rst:1: ERROR: Error in "rubric" directive:
+1 argument(s) required, 0 supplied.
+
+.. rubric:: [docutils]

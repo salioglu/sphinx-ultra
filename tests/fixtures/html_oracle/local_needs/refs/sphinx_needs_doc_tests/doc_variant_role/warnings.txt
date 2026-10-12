@@ -1,0 +1,2 @@
+<SRCDIR>/index.rst:12: WARNING: 'variant' role could not resolve 'nonexistent': Unknown variant data key: 'var.nonexistent' [needs.variant]
+<SRCDIR>/index.rst:14: WARNING: 'variant' role could not resolve 'build': variant data reference 'var.build' resolves to a mapping ('var.build'); access a leaf value instead [needs.variant]

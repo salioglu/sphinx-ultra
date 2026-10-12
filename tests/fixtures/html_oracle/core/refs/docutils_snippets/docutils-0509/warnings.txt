@@ -1,0 +1,8 @@
+<SRCDIR>/index.rst:1: ERROR: Error in "code" directive:
+invalid option value: (option: "number-lines"; value: 'xyz')
+invalid literal for int() with base 10: 'xyz'.
+
+.. code::
+   :number-lines: xyz
+
+   one [docutils]

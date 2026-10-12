@@ -1,0 +1,8 @@
+<SRCDIR>/index.rst:1: ERROR: Error in "note" directive:
+invalid option block.
+
+.. note:: inline text
+   :class: foo
+   more inline text same para as option???
+
+   Body. [docutils]

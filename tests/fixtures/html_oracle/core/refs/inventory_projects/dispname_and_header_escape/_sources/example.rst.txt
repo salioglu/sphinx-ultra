@@ -1,0 +1,4 @@
+Example Page
+=============
+
+Body text.

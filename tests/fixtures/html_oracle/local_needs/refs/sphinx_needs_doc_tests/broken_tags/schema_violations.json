@@ -1,0 +1,22 @@
+{
+  "validation_summary": "Schema validation completed with 1 warning(s) in 0.006 seconds. Validated 510 needs/s.",
+  "validated_needs_per_second": 510,
+  "validated_needs_count": 3,
+  "validation_warnings": {
+    "SP_TOO_003": [
+      {
+        "log_lvl": "error",
+        "type": "sn_schema_violation",
+        "subtype": "field_fail",
+        "details": {
+          "severity": "violation",
+          "field": "tags.2",
+          "need_path": "SP_TOO_003",
+          "schema_path": "fields > schema > properties > tags > items > enum",
+          "validation_msg": "\"BROKEN\" is not one of \"new\" or \"security\""
+        },
+        "children": []
+      }
+    ]
+  }
+}

@@ -1,0 +1,2 @@
+<SRCDIR>/index.rst:1: WARNING: undefined label: ' l abc ' [ref.ref]
+<SRCDIR>/index.rst:1: WARNING: undefined label: ' x y ' [ref.numref]

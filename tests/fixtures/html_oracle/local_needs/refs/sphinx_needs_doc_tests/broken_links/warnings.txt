@@ -1,0 +1,2 @@
+<SRCDIR>/index.rst:12: WARNING: Need 'SP_TOO_002' has unknown outgoing link 'NOT_WORKING_LINK' in field 'links' [needs.link_outgoing]
+<SRCDIR>/index.rst:21: WARNING: linked need BROKEN_LINK not found [needs.link_ref]

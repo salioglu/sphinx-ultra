@@ -1,0 +1,2 @@
+<SRCDIR>/index.rst:1: ERROR: Unknown interpreted text role "bogus". [docutils]
+<SRCDIR>/index.rst:1: ERROR: Unknown interpreted text role "bogus". [docutils]

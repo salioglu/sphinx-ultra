@@ -1,0 +1,5 @@
+<SRCDIR>/index.rst:1: ERROR: Invalid character code: 0x110000
+ValueError: chr() arg not in range(0x110000) [docutils]
+<SRCDIR>/index.rst:1: WARNING: Substitution definition "x" empty or invalid.
+
+.. |x| unicode:: 0x110000 [docutils]

@@ -1,0 +1,2 @@
+WARNING: unknown role name: a:b:c
+<SRCDIR>/index.rst:1: ERROR: Unknown interpreted text role "a:b:c". [docutils]

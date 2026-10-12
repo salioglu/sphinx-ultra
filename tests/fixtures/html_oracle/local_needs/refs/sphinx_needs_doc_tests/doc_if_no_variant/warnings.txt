@@ -1,0 +1,1 @@
+<SRCDIR>/index.rst:4: WARNING: 'if' directive used but needs_variant_data is not configured: 'var.arch == "abc"' [needs.if]

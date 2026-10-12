@@ -1,0 +1,1 @@
+.. py:function::    foo(aaaa)   

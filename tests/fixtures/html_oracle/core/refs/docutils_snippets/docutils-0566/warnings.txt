@@ -1,0 +1,7 @@
+<SRCDIR>/index.rst:1: ERROR: "list-table" widths do not match the number of columns in table (2).
+
+.. list-table::
+   :widths: 5 10 15
+
+   * - a
+     - b [docutils]

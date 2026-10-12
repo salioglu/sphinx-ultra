@@ -1,0 +1,8 @@
+.. hlist::
+   :columns: 3
+
+   * a
+   * b
+   * c
+   * d
+   * e

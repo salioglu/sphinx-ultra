@@ -1,0 +1,1 @@
+.. py:exception:: MyError

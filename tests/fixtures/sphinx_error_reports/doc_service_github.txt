@@ -1,0 +1,55 @@
+<SRCDIR>/index.rst:4: WARNING: "query" or "specific" missing as option for github service. [needs.github]
+
+
+Versions
+========
+
+* Platform:         linux; (Linux-6.17.0-1022-azure-x86_64-with-glibc2.39)
+* Python version:   3.12.14 (CPython)
+* Sphinx version:   9.1.0
+* Docutils version: 0.21.2
+* Jinja2 version:   3.1.6
+* Pygments version: 2.21.0
+
+Last Messages
+=============
+
+    building [html]: targets for 1 source files that are out of date
+    updating environment:
+    [new config]
+    1 added, 0 changed, 0 removed
+
+    reading sources... [100%]
+    index
+
+    Service github-issues requesting data for query: repo:useblocks/sphinx-needs is:issue
+    Needs successfully exported
+
+Loaded Extensions
+=================
+
+* sphinx.ext.mathjax (9.1.0)
+* alabaster (1.0.0)
+* sphinxcontrib.applehelp (2.0.0)
+* sphinxcontrib.devhelp (2.0.0)
+* sphinxcontrib.htmlhelp (2.1.0)
+* sphinxcontrib.serializinghtml (2.0.0)
+* sphinxcontrib.qthelp (2.0.0)
+* sphinx_data_viewer (0.1.5)
+* sphinxcontrib.jquery (4.1)
+* sphinx.ext.graphviz (9.1.0)
+* sphinx_needs (8.5.0)
+
+Traceback
+=========
+
+      File "/home/runner/work/sphinx-ultra/sphinx-ultra/tools/html_oracle_runner.py", line 20, in reject_network
+        raise RuntimeError("network disabled by html oracle")
+    RuntimeError: network disabled by html oracle
+
+
+The full traceback has been saved in:
+<SPHINX_ERR_LOG>
+
+To report this error to the developers, please open an issue at <https://github.com/sphinx-doc/sphinx/issues/>. Thanks!
+Please also report this if it was a user error, so that a better error message can be provided next time.

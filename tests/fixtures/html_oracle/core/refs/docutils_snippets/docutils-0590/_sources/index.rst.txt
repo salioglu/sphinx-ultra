@@ -1,0 +1,1 @@
+.. |pic| image:: picture.png

@@ -1,0 +1,1 @@
+<SRCDIR>/index.rst:1: WARNING: Malformed option description '=bad', should look like "opt", "-opt args", "--opt args", "/opt args" or "+opt args"

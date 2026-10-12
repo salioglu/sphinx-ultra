@@ -1,0 +1,2 @@
+<SRCDIR>/index.rst:4: WARNING: py:func reference target not found: missing_fn [ref.func]
+<SRCDIR>/index.rst:4: WARNING: py:class reference target not found: Missing [ref.class]

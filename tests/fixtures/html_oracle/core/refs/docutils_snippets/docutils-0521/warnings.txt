@@ -1,0 +1,2 @@
+<SRCDIR>/index.rst:1: CRITICAL: Problems with "raw" directive path:
+InputError: [Errno 2] No such file or directory: 'target/html-oracle/generator-work/case-xh82xnj2/source/nonexistent-raw-input.html'. [docutils]

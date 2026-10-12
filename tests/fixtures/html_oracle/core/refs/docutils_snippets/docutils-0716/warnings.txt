@@ -1,0 +1,1 @@
+<SRCDIR>/index.rst:1: WARNING: image file not readable: p.png [image.not_readable]

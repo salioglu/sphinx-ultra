@@ -1,0 +1,5 @@
+WARNING: Config option "needs_global_options" is deprecated. Please use needs_fields and needs_links instead. [needs.deprecated]
+WARNING: needs_global_options['link3']['default'] value is incorrect: Invalid value for field 'link3': 1 [needs.config]
+WARNING: needs_global_options['bad_value_type']['default'] value is incorrect: Invalid value for field 'bad_value_type': 1.27 [needs.config]
+WARNING: needs_global_options['too_many_params']['predicates'] value is incorrect: defaults must be a list of (filter, value) pairs. [needs.config]
+WARNING: needs_global_options['unknown'] does not correspond to any defined field [needs.config]

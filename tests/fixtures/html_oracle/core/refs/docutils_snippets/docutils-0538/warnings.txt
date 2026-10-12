@@ -1,0 +1,10 @@
+<SRCDIR>/index.rst:1: ERROR: "table" widths do not match the number of columns in table (2).
+
+.. table::
+   :widths: 10 20 30
+
+   =====  =====
+   A      B
+   =====  =====
+   1      2
+   =====  ===== [docutils]

@@ -1,0 +1,4 @@
+<SRCDIR>/index.rst:1: ERROR: Content block expected for the "replace" directive; none found. [docutils]
+<SRCDIR>/index.rst:1: WARNING: Substitution definition "e" empty or invalid.
+
+.. |e| replace:: [docutils]

@@ -1,0 +1,2 @@
+<SRCDIR>/index.rst:4: WARNING: Blank line required after table. [docutils]
+<SRCDIR>/index.rst:4: WARNING: Footnote [1] is not referenced. [ref.footnote]

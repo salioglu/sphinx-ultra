@@ -1,0 +1,3 @@
+.. topic:: *emphasized* title
+
+   Body.

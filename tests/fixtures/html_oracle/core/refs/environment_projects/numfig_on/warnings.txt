@@ -1,0 +1,4 @@
+<SRCDIR>/a.rst:4: WARNING: image file not readable: pic.png [image.not_readable]
+
+
+    TypeError: not all arguments converted during string formatting

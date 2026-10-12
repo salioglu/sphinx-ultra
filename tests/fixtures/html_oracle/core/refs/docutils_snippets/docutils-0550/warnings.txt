@@ -1,0 +1,6 @@
+<SRCDIR>/index.rst:1: ERROR: 3 header row(s) specified but only 1 row(s) of data supplied ("csv-table" directive).
+
+.. csv-table::
+   :header-rows: 3
+
+   1, 2 [docutils]

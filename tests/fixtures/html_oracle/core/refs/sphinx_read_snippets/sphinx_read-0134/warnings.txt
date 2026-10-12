@@ -1,0 +1,6 @@
+<SRCDIR>/index.rst:3: ERROR: Malformed table.
+Bottom border or header rule does not match top border.
+
+=====  =====
+A      B
+===  === [docutils]

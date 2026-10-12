@@ -1,0 +1,7 @@
+WARNING: cannot cache unpickleable configuration value: 'needs_warnings' (because it contains a function, class, or module object) [config.cache]
+WARNING: invalid_status: failed
+		failed needs: 2 (SP_TOO_001, US_63252)
+		used filter: status not in ['open', 'closed', 'done', 'example_2', 'example_3'] [needs.warnings]
+WARNING: type_match: failed
+		failed needs: 1 (TC_001)
+		used filter: my_custom_warning_check [needs.warnings]

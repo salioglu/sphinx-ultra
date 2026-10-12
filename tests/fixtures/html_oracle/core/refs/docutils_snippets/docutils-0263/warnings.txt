@@ -1,0 +1,1 @@
+<SRCDIR>/index.rst:1: WARNING: Multiple roles in interpreted text (both prefix and suffix present; only one allowed). [docutils]

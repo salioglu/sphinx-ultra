@@ -1,0 +1,3 @@
+.. _note::
+
+   content

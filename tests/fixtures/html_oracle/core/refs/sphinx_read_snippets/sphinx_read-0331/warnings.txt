@@ -1,0 +1,2 @@
+<SRCDIR>/index.rst:1: WARNING: unknown document: 'a b' [ref.doc]
+<SRCDIR>/index.rst:1: WARNING: term not in glossary: 'x y' [ref.term]

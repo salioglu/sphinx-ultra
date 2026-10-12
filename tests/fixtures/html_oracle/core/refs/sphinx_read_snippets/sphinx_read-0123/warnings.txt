@@ -1,0 +1,5 @@
+<SRCDIR>/index.rst:2: ERROR: Malformed table.
+Bottom border missing or corrupt.
+
++----+----+
+| A  | B  | [docutils]

@@ -1,0 +1,5 @@
+.. hlist::
+
+   * one
+   * two
+   * three

@@ -1,0 +1,61 @@
+WARNING: Need 'FEAt' has schema warnings:
+  Severity:       warning
+  Field:          id
+  Need path:      FEAt
+  Schema path:    [0] > local > properties > id > pattern
+  User message:   id must be uppercase with numbers and underscores
+  Schema message: "FEAt" does not match "^[A-Z0-9_]+$" [sn_schema_warning.local_fail]
+ERROR: Need 'SPEC_MISSING_APPROVAL' has schema violations:
+  Severity:       violation
+  Need path:      SPEC_MISSING_APPROVAL
+  Schema path:    spec[1] > local > unevaluatedProperties
+  Schema message: Unevaluated properties are not allowed ('priority', 'asil' were unexpected) [sn_schema_violation.local_fail]
+ERROR: Need 'SPEC_MISSING_APPROVAL' has schema violations:
+  Severity:       violation
+  Need path:      SPEC_MISSING_APPROVAL
+  Schema path:    spec-approved-required[2] > local > required
+  User message:   Approval required due to high efforts
+  Schema message: "approved" is a required property [sn_schema_violation.local_fail]
+WARNING: Need 'SPEC_MISSING_APPROVAL' has schema infos:
+  Severity:       info
+  Need path:      SPEC_MISSING_APPROVAL
+  Schema path:    spec-approved-not-given[3] > local > required
+  User message:   Approval not given
+  Schema message: "approved" is a required property [sn_schema_info.local_fail]
+ERROR: Need 'SPEC' has schema violations:
+  Severity:       violation
+  Field:          id
+  Need path:      SPEC
+  Schema path:    spec[1] > local > properties > id > pattern
+  Schema message: "SPEC" does not match "^SPEC_[a-zA-Z0-9_-]*$" [sn_schema_violation.local_fail]
+ERROR: Need 'SPEC' has schema violations:
+  Severity:       violation
+  Need path:      SPEC
+  Schema path:    spec[1] > local > unevaluatedProperties
+  Schema message: Unevaluated properties are not allowed ('priority', 'asil' were unexpected) [sn_schema_violation.local_fail]
+ERROR: Need 'SPEC_SAFE_UNSAFE_FEAT' has schema violations:
+  Severity:       violation
+  Need path:      SPEC_SAFE_UNSAFE_FEAT
+  Schema path:    spec[1] > local > unevaluatedProperties
+  Schema message: Unevaluated properties are not allowed ('priority', 'asil', 'approved', 'links' were unexpected) [sn_schema_violation.local_fail]
+ERROR: Need 'SPEC_SAFE_UNSAFE_FEAT' has schema violations:
+  Severity:       violation
+  Need path:      SPEC_SAFE_UNSAFE_FEAT > links
+  Schema path:    safe-spec-[links]->safe-feat[4] > validate > network > links > contains
+  Schema message: Too few valid links of type 'links' (0 < 1) / nok: FEAT
+
+    Details for FEAT
+    Field:          asil
+    Need path:      SPEC_SAFE_UNSAFE_FEAT > links > FEAT
+    Schema path:    safe-spec-[links]->safe-feat[4] > validate > network > links > contains > local > allOf > 0 > properties > asil > enum
+    Schema message: "QM" is not one of "A", "B" or 2 other candidates [sn_schema_violation.network_contains_too_few]
+ERROR: Need 'SPEC_SAFE_ADD_UNSAFE_FEAT' has schema violations:
+  Severity:       violation
+  Need path:      SPEC_SAFE_ADD_UNSAFE_FEAT
+  Schema path:    spec[1] > local > unevaluatedProperties
+  Schema message: Unevaluated properties are not allowed ('priority', 'asil', 'approved', 'links' were unexpected) [sn_schema_violation.local_fail]
+ERROR: Need 'SPEC_SAFE' has schema violations:
+  Severity:       violation
+  Need path:      SPEC_SAFE
+  Schema path:    spec[1] > local > unevaluatedProperties
+  Schema message: Unevaluated properties are not allowed ('priority', 'asil', 'approved', 'links' were unexpected) [sn_schema_violation.local_fail]

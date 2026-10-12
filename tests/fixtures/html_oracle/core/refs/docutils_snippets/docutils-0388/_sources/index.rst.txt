@@ -1,0 +1,3 @@
+.. note:: inline text
+
+   Body.

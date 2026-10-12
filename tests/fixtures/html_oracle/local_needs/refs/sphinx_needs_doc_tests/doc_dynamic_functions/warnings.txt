@@ -1,0 +1,4 @@
+<SRCDIR>/index.rst:26: WARNING: Need could not be created: 'tags' value is invalid: only one string, dynamic function or variant function allowed per array item. [needs.create_need]
+<SRCDIR>/index.rst:47: WARNING: Need could not be created: Field 'test_func' is invalid: Error parsing dynamic function 'test': Unsupported arg 0 value type [needs.create_need]
+<SRCDIR>/index.rst:53: WARNING: Need could not be created: Field 'test_func' is invalid: Error parsing dynamic function 'test': Unsupported arg 0 value type [needs.create_need]
+<SRCDIR>/index.rst:45: WARNING: Error while executing function 'copy': Need not found [needs.dynamic_function]

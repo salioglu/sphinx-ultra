@@ -1,0 +1,4 @@
+.. glossary::
+
+   term  : cls
+      def
