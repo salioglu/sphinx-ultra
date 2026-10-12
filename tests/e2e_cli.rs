@@ -153,10 +153,7 @@ fn build_emits_sphinx_search_index() {
             "Welcome": [[0, null]],
         })
     );
-    assert_eq!(
-        object["terms"],
-        serde_json::json!({"Some": 1, "instal": 0, "text": 1})
-    );
+    assert_eq!(object["terms"], serde_json::json!({"instal": 0, "text": 1}));
     assert_eq!(
         object["titleterms"],
         serde_json::json!({"instal": 1, "welcom": 0})
@@ -241,10 +238,7 @@ fn search_index_matches_sphinx_fixture_shapes() {
         serde_json::json!({"Installation": [[1, null]], "Welcome": [[0, null]]}),
         serde_json::json!({"instal": 1, "welcom": 0}),
     );
-    assert_eq!(
-        basic["terms"],
-        serde_json::json!({"Some": 1, "instal": 0, "text": 1})
-    );
+    assert_eq!(basic["terms"], serde_json::json!({"instal": 0, "text": 1}));
 
     let missing = assert_search_fixture(
         "basic_missing_ref",
