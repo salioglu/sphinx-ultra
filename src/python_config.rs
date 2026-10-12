@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use crate::config::BuildConfig;
@@ -183,6 +183,11 @@ pub struct ConfPyConfig {
 
     // Custom configurations (catch-all for extension-specific or custom settings)
     pub custom_configs: HashMap<String, serde_json::Value>,
+
+    /// Every assignment the conf.py made, as parsed: the raw namespace the
+    /// typed fields above are extracted from. Carried into
+    /// [`BuildConfig::conf_values`].
+    pub raw_values: BTreeMap<String, serde_json::Value>,
 }
 
 impl PythonConfigParser {
@@ -478,6 +483,11 @@ impl PythonConfigParser {
                 config.custom_configs.insert(key.clone(), value.clone());
             }
         }
+        config.raw_values = self
+            .conf_namespace
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
 
         Ok(config)
     }
@@ -1156,6 +1166,7 @@ impl Default for ConfPyConfig {
             gettext_auto_build: Some(true),
             gettext_additional_targets: Vec::new(),
             custom_configs: HashMap::new(),
+            raw_values: BTreeMap::new(),
         }
     }
 }
@@ -1344,6 +1355,8 @@ impl ConfPyConfig {
         }
         config.tls_cacerts = self.tls_cacerts.clone();
         config.user_agent = self.user_agent.clone();
+
+        config.conf_values = self.raw_values.clone();
 
         Ok(config)
     }

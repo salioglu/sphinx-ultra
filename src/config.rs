@@ -1,6 +1,6 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::python_config::PythonConfigParser;
 
@@ -144,6 +144,17 @@ pub struct BuildConfig {
     /// that differs on every process, wiping the cache directory on every
     /// build for any project that sets two or more `html_context` keys.
     pub html_context: std::collections::BTreeMap<String, serde_json::Value>,
+
+    /// Every value `conf.py` assigned (plus `-D` overrides), as the literal
+    /// it was assigned: Sphinx's `Config` namespace before any defaults.
+    ///
+    /// The typed fields above can't tell "unset" from "set to the default"
+    /// (`html_static_path = ['_static']` is both sphinx-quickstart's
+    /// default and this crate's), and Sphinx's `.buildinfo` hash covers
+    /// every html-category key *as configured*; this map is how
+    /// [`crate::builder::sphinx_build_info_contents`] tells the two apart,
+    /// and hashes a key the typed fields don't model at all.
+    pub conf_values: std::collections::BTreeMap<String, serde_json::Value>,
 
     /// Run directive/role validation during the build
     pub validate_directives: bool,
@@ -442,6 +453,7 @@ impl Default for BuildConfig {
             tags: vec![],
             doctree_dir: None,
             html_context: std::collections::BTreeMap::new(),
+            conf_values: std::collections::BTreeMap::new(),
             validate_directives: true,
 
             numfig: false,
@@ -684,6 +696,38 @@ impl BuildConfig {
         }
     }
 
+    /// `validate_html_logo`/`validate_html_favicon`
+    /// (`builders/html/__init__.py:1404-1423`, run at `config-inited`): a
+    /// logo or favicon that is neither a file under the confdir nor a URL
+    /// is warned about and unset, so the build — and the `.buildinfo`
+    /// hash — see `None`. Returns the warnings, worded as Sphinx words them.
+    pub fn validate_html_logo_and_favicon(&mut self, confdir: &Path) -> Vec<String> {
+        let mut messages = Vec::new();
+        let mut check = |key: &str, label: &str, field: &mut Option<String>| {
+            let Some(value) = field.as_deref() else {
+                return;
+            };
+            // `is_url`: `'://' in url`; an empty value is falsy and skipped.
+            if value.is_empty() || value.contains("://") || confdir.join(value).is_file() {
+                return;
+            }
+            messages.push(format!(
+                "{label} file {} does not exist",
+                crate::utils::py_repr_str(value)
+            ));
+            *field = None;
+            self.conf_values
+                .insert(key.to_string(), serde_json::Value::Null);
+        };
+        let mut html_logo = self.html_logo.take();
+        check("html_logo", "logo", &mut html_logo);
+        let mut html_favicon = self.html_favicon.take();
+        check("html_favicon", "favicon", &mut html_favicon);
+        self.html_logo = html_logo;
+        self.html_favicon = html_favicon;
+        messages
+    }
+
     /// Apply a `-D key=value` override (sphinx-build semantics): the value is
     /// coerced to the type the field already has, dotted keys reach the nested
     /// sections (`output.*`, `theme.*`) and map-typed settings
@@ -698,7 +742,12 @@ impl BuildConfig {
         match key {
             "html_theme" => {
                 self.apply_override("output.html_theme", value)?;
-                return self.apply_override("theme.name", value);
+                let result = self.apply_override("theme.name", value)?;
+                self.conf_values.insert(
+                    key.to_string(),
+                    serde_json::Value::String(value.to_string()),
+                );
+                return Ok(result);
             }
             "templates_path" => {
                 self.apply_override("template_dirs", value)?;
@@ -808,6 +857,14 @@ impl BuildConfig {
 
         // Serde-skipped state does not survive the round trip; carry it.
         applied.confval_type_mismatches = std::mem::take(&mut self.confval_type_mismatches);
+        // A top-level key is a Sphinx setting name: the `.buildinfo` hash
+        // sees the override as conf.py would have. (A dotted key names
+        // this crate's own nesting, not a conf.py setting.)
+        if !key.contains('.') && key != "conf_values" {
+            if let Some(value) = check.get(key) {
+                applied.conf_values.insert(key.to_string(), value.clone());
+            }
+        }
         *self = applied;
         Ok(None)
     }

@@ -25,6 +25,7 @@ pub mod dependencies;
 pub mod genindex;
 pub mod metadata;
 pub mod numbers;
+pub mod objects;
 pub mod py_domain;
 pub mod resolve;
 pub mod std_domain;

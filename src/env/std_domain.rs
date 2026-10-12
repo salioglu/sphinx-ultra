@@ -52,6 +52,23 @@ const PRESEEDED_LABELS: &[(&str, &str, &str)] = &[
     ("search", "search", "Search Page"),
 ];
 
+/// The preseeded labels as the `std:label` inventory records a builder
+/// with no environment behind it (the direct `HTMLBuilder`) writes for
+/// them — the same four `StdDomainData::default` seeds.
+pub(crate) fn preseeded_label_objects() -> Vec<crate::inventory::InvObject> {
+    PRESEEDED_LABELS
+        .iter()
+        .map(|(name, docname, title)| crate::inventory::InvObject {
+            name: (*name).to_string(),
+            objtype: "label".to_string(),
+            priority: -1,
+            docname: (*docname).to_string(),
+            anchor: String::new(),
+            dispname: (*title).to_string(),
+        })
+        .collect()
+}
+
 impl Default for StdDomainData {
     fn default() -> Self {
         let mut labels = BTreeMap::new();

@@ -25,7 +25,7 @@ use crate::env::BuildEnvironment;
 use crate::error::{BuildErrorReport, BuildWarning, ErrorType, WarningType};
 use crate::extensions::{ExtensionLoader, SphinxApp};
 use crate::intersphinx::{self, HttpConfig, Intersphinx, LoadRequest, UreqFetcher};
-use crate::inventory::{InvObject, InventoryFile};
+use crate::inventory::InventoryFile;
 use crate::matching;
 use crate::parser::Parser;
 use crate::utils;
@@ -66,14 +66,6 @@ const DOCTREE_FORMAT_VERSION: u32 = 2;
 
 /// Bytes of the [`DOCTREE_MAGIC`] + [`DOCTREE_FORMAT_VERSION`] header.
 const DOCTREE_HEADER_LEN: usize = DOCTREE_MAGIC.len() + std::mem::size_of::<u32>();
-
-fn std_object_priority(objtype: &str) -> i32 {
-    match objtype {
-        "term" | "token" | "label" | "doc" => -1,
-        "confval" | "envvar" | "cmdoption" => 1,
-        _ => 0,
-    }
-}
 
 /// Sphinx's `root_doc` default (`config.py`), used when the configuration
 /// leaves it unset.
@@ -145,6 +137,10 @@ pub struct SphinxBuilder {
     /// environment-oracle differential diffs; the write phase does not
     /// consume doctrees yet.
     resolved: Mutex<BTreeMap<String, String>>,
+    /// Sphinx's `IndexBuilder`, fed one resolved document at a time by the
+    /// resolve phase (where Sphinx's `write_doc_serialized` feeds it) and
+    /// frozen into `searchindex.js` by [`Self::generate_search_index`].
+    search_index: Mutex<crate::search::SphinxIndexBuilder>,
     /// The general index this build assembled (`IndexEntries.create_index`),
     /// kept beside [`Self::resolved`] for the same reason: it is build
     /// output derived from the environment plus the builder's own uri
@@ -331,328 +327,183 @@ fn stable_dict(entries: impl IntoIterator<Item = (String, StableValue)>) -> Stab
     StableValue::Dict(entries.into_iter().collect())
 }
 
+/// `BuildInfo.__init__`: `{c.name: c.value for c in config.filter({'html'})}`
+/// — every configuration value of the `html` rebuild category, as Sphinx
+/// holds it after `config-inited`.
+///
+/// A key `conf.py` set is hashed as the literal it was set to
+/// ([`BuildConfig::conf_values`]); every other key is hashed at Sphinx's
+/// default, including the defaults Sphinx computes from other values
+/// (`html_title`, `html_short_title`, `singlehtml_sidebars`,
+/// `qthelp_basename`). `html_context` is the one key read from the typed
+/// field, because `-A` adds to it the way `-D html_context.name=value` does.
+///
+/// `html_css_files`/`html_js_files` are hashed as the `(filename, attrs)`
+/// tuples `convert_html_css_files` rewrites them into at `config-inited`.
+/// The builder's `init_css_files` later adds a `priority` to those `attrs`,
+/// but `BuildInfo` has been computed by then, so the hash never sees it.
 fn sphinx_html_config(config: &BuildConfig) -> StableValue {
-    // BuildConfig models the HTML settings that affect Ultra's output, and
-    // those values are represented below with Sphinx's defaults. Sphinx also
-    // hashes HTML-category settings that Ultra does not model yet (for
-    // example html_extra_path, html_sidebars, html_file_suffix,
-    // html_link_suffix, html_search_options, html_baseurl,
-    // html_codeblock_linenos_style, and the mathjax/qthelp option families).
-    // They intentionally remain at their Sphinx defaults here; a conf.py
-    // value for one of those settings is a documented buildinfo hash gap.
-    let default_style = ["sphinx_rtd_theme.css".to_string()];
-    let default_static_path = [std::path::PathBuf::from("_static")];
-    let default_templates_path = [std::path::PathBuf::from("_templates")];
-    let html_title = config.html_title.clone().unwrap_or_else(|| {
-        format!(
+    let conf = |key: &str| config.conf_values.get(key).map(stable_hash_json);
+    let none = StableValue::None;
+    let string = |value: &str| StableValue::String(value.to_string());
+    let empty_list = || StableValue::List(Vec::new());
+    let empty_dict = || stable_dict([]);
+
+    // `copyright` and `project_copyright` are two names for one value
+    // (`Config.__setattr__`); `copyright`'s default is `project_copyright`.
+    let copyright = conf("copyright")
+        .or_else(|| conf("project_copyright"))
+        .unwrap_or_else(|| string(""));
+    let html_title = conf("html_title").unwrap_or_else(|| {
+        StableValue::String(format!(
             "{} {} documentation",
             config.project,
             config.release.as_deref().unwrap_or("")
-        )
+        ))
     });
-    let html_short_title = config
-        .html_short_title
-        .clone()
-        .unwrap_or_else(|| html_title.clone());
-    let copyright = match config.copyright.as_deref() {
-        // This is Ultra's compatibility default, not a value a Sphinx conf.py
-        // supplied. Sphinx's default is the empty string.
-        None | Some("2024, Sphinx Ultra") => String::new(),
-        Some(value) => value.to_string(),
-    };
-    let theme = if config.output.html_theme == "sphinx_rtd_theme"
-        && config.theme.name == "sphinx_rtd_theme"
-    {
-        // Ultra's rendering default is RTD, while Sphinx's HTML config default
-        // is alabaster. A configured non-default theme is represented exactly.
-        "alabaster".to_string()
-    } else {
-        config.output.html_theme.clone()
-    };
-    let style = if config.html_style == default_style {
-        StableValue::None
-    } else {
-        stable_strings(config.html_style.clone())
-    };
-    let static_path = if config.html_static_path == default_static_path {
-        stable_strings(Vec::<String>::new())
-    } else {
-        stable_strings(
-            config
-                .html_static_path
-                .iter()
-                .map(|path| path.to_string_lossy().to_string()),
-        )
-    };
-    let templates_path = if config.templates_path == default_templates_path {
-        stable_strings(Vec::<String>::new())
-    } else {
-        stable_strings(
-            config
-                .templates_path
-                .iter()
-                .map(|path| path.to_string_lossy().to_string()),
-        )
-    };
-    let last_updated = if config.html_last_updated_fmt.as_deref() == Some("%b %d, %Y") {
-        StableValue::None
-    } else {
+    let html_short_title = conf("html_short_title").unwrap_or_else(|| html_title.clone());
+    let html_sidebars = conf("html_sidebars").unwrap_or_else(empty_dict);
+    let singlehtml_sidebars = conf("singlehtml_sidebars").unwrap_or_else(|| html_sidebars.clone());
+    let qthelp_basename = conf("qthelp_basename")
+        .unwrap_or_else(|| StableValue::String(make_filename(&config.project)));
+    let html_context = StableValue::Dict(
         config
-            .html_last_updated_fmt
-            .clone()
-            .map_or(StableValue::None, StableValue::String)
-    };
-    let html_use_opensearch = match config.html_use_opensearch {
-        Some(true) => StableValue::Bool(true),
-        Some(false) | None => StableValue::String(String::new()),
-    };
+            .html_context
+            .iter()
+            .map(|(key, value)| (key.clone(), stable_hash_json(value)))
+            .collect(),
+    );
 
     let mut values = BTreeMap::new();
-    values.insert(
-        "project_copyright".to_string(),
-        StableValue::String(copyright.clone()),
-    );
-    values.insert("copyright".to_string(), StableValue::String(copyright));
-    values.insert("pygments_style".to_string(), StableValue::None);
-    values.insert("templates_path".to_string(), templates_path);
-    values.insert("template_bridge".to_string(), StableValue::None);
-    values.insert(
-        "modindex_common_prefix".to_string(),
-        stable_strings(Vec::<String>::new()),
-    );
-    values.insert("html_theme".to_string(), StableValue::String(theme));
-    values.insert(
-        "html_theme_path".to_string(),
-        stable_strings(Vec::<String>::new()),
-    );
-    values.insert(
-        "html_theme_options".to_string(),
-        stable_hash_json(&config.theme.options),
-    );
-    values.insert("html_title".to_string(), StableValue::String(html_title));
-    values.insert(
-        "html_short_title".to_string(),
-        StableValue::String(html_short_title),
-    );
-    values.insert("html_style".to_string(), style);
-    values.insert(
-        "html_logo".to_string(),
-        config
-            .html_logo
-            .clone()
-            .map_or(StableValue::None, StableValue::String),
-    );
-    values.insert(
-        "html_favicon".to_string(),
-        config
-            .html_favicon
-            .clone()
-            .map_or(StableValue::None, StableValue::String),
-    );
-    values.insert(
-        "html_css_files".to_string(),
-        stable_strings(config.html_css_files.clone()),
-    );
-    values.insert(
-        "html_js_files".to_string(),
-        stable_strings(config.html_js_files.clone()),
-    );
-    values.insert("html_static_path".to_string(), static_path);
-    values.insert(
-        "html_extra_path".to_string(),
-        stable_strings(Vec::<String>::new()),
-    );
-    values.insert("html_last_updated_fmt".to_string(), last_updated);
-    values.insert(
-        "html_last_updated_use_utc".to_string(),
-        StableValue::Bool(false),
-    );
-    values.insert("html_sidebars".to_string(), stable_dict([]));
-    values.insert("html_additional_pages".to_string(), stable_dict([]));
-    values.insert("html_domain_indices".to_string(), StableValue::Bool(true));
-    values.insert("html_permalinks".to_string(), StableValue::Bool(true));
-    values.insert(
-        "html_permalinks_icon".to_string(),
-        StableValue::String("¶".to_string()),
-    );
-    values.insert(
-        "html_use_index".to_string(),
-        StableValue::Bool(config.html_use_index.unwrap_or(true)),
-    );
-    values.insert("html_split_index".to_string(), StableValue::Bool(false));
-    values.insert(
-        "html_copy_source".to_string(),
-        StableValue::Bool(config.html_copy_source.unwrap_or(true)),
-    );
-    values.insert(
-        "html_show_sourcelink".to_string(),
-        StableValue::Bool(config.html_show_sourcelink.unwrap_or(true)),
-    );
-    values.insert(
-        "html_sourcelink_suffix".to_string(),
-        StableValue::String(
-            config
-                .html_sourcelink_suffix
-                .clone()
-                .unwrap_or_else(|| ".txt".to_string()),
+    let defaults = [
+        ("pygments_style", none.clone()),
+        ("templates_path", empty_list()),
+        ("template_bridge", none.clone()),
+        ("modindex_common_prefix", empty_list()),
+        ("html_theme", string("alabaster")),
+        ("html_theme_path", empty_list()),
+        ("html_theme_options", empty_dict()),
+        ("html_style", none.clone()),
+        ("html_logo", none.clone()),
+        ("html_favicon", none.clone()),
+        ("html_static_path", empty_list()),
+        ("html_extra_path", empty_list()),
+        ("html_last_updated_fmt", none.clone()),
+        ("html_last_updated_use_utc", StableValue::Bool(false)),
+        ("html_additional_pages", empty_dict()),
+        ("html_domain_indices", StableValue::Bool(true)),
+        ("html_permalinks", StableValue::Bool(true)),
+        ("html_permalinks_icon", string("¶")),
+        ("html_use_index", StableValue::Bool(true)),
+        ("html_split_index", StableValue::Bool(false)),
+        ("html_copy_source", StableValue::Bool(true)),
+        ("html_show_sourcelink", StableValue::Bool(true)),
+        ("html_sourcelink_suffix", string(".txt")),
+        ("html_use_opensearch", string("")),
+        ("html_file_suffix", none.clone()),
+        ("html_link_suffix", none.clone()),
+        ("html_show_copyright", StableValue::Bool(true)),
+        ("html_show_search_summary", StableValue::Bool(true)),
+        ("html_show_sphinx", StableValue::Bool(true)),
+        ("html_output_encoding", string("utf-8")),
+        ("html_compact_lists", StableValue::Bool(true)),
+        ("html_secnumber_suffix", string(". ")),
+        ("html_search_language", none.clone()),
+        ("html_search_options", empty_dict()),
+        ("html_scaled_image_link", StableValue::Bool(true)),
+        ("html_baseurl", string("")),
+        ("html_codeblock_linenos_style", string("inline")),
+        ("html4_writer", StableValue::Bool(false)),
+        (
+            "mathjax_path",
+            string("https://cdn.jsdelivr.net/npm/mathjax@4/tex-mml-chtml.js"),
         ),
-    );
-    values.insert("html_use_opensearch".to_string(), html_use_opensearch);
-    values.insert("html_file_suffix".to_string(), StableValue::None);
-    values.insert("html_link_suffix".to_string(), StableValue::None);
-    values.insert(
-        "html_show_copyright".to_string(),
-        StableValue::Bool(config.html_show_copyright.unwrap_or(true)),
-    );
-    values.insert(
-        "html_show_search_summary".to_string(),
-        StableValue::Bool(true),
-    );
-    values.insert(
-        "html_show_sphinx".to_string(),
-        StableValue::Bool(config.html_show_sphinx.unwrap_or(true)),
-    );
-    values.insert(
-        "html_context".to_string(),
-        StableValue::Dict(
-            config
-                .html_context
-                .iter()
-                .map(|(key, value)| (key.clone(), stable_hash_json(value)))
-                .collect(),
+        ("mathjax_options", empty_dict()),
+        (
+            "mathjax_inline",
+            stable_strings(["\\(".to_string(), "\\)".to_string()]),
         ),
-    );
-    values.insert(
-        "html_output_encoding".to_string(),
-        StableValue::String("utf-8".to_string()),
-    );
-    values.insert("html_compact_lists".to_string(), StableValue::Bool(true));
-    values.insert(
-        "html_secnumber_suffix".to_string(),
-        StableValue::String(". ".to_string()),
-    );
-    values.insert("html_search_language".to_string(), StableValue::None);
-    values.insert("html_search_options".to_string(), stable_dict([]));
-    values.insert(
-        "html_scaled_image_link".to_string(),
-        StableValue::Bool(true),
-    );
-    values.insert(
-        "html_baseurl".to_string(),
-        StableValue::String(String::new()),
-    );
-    values.insert(
-        "html_codeblock_linenos_style".to_string(),
-        StableValue::String("inline".to_string()),
-    );
-    values.insert("html4_writer".to_string(), StableValue::Bool(false));
-    values.insert(
-        "mathjax_path".to_string(),
-        StableValue::String("https://cdn.jsdelivr.net/npm/mathjax@4/tex-mml-chtml.js".to_string()),
-    );
-    values.insert("mathjax_options".to_string(), stable_dict([]));
-    values.insert(
-        "mathjax_inline".to_string(),
-        stable_strings(["\\(".to_string(), "\\)".to_string()]),
-    );
-    values.insert(
-        "mathjax_display".to_string(),
-        stable_strings(["\\[".to_string(), "\\]".to_string()]),
-    );
-    values.insert("mathjax_config".to_string(), StableValue::None);
-    values.insert("mathjax2_config".to_string(), StableValue::None);
-    values.insert("mathjax3_config".to_string(), StableValue::None);
-    values.insert("mathjax4_config".to_string(), StableValue::None);
-    values.insert(
-        "mathjax_config_path".to_string(),
-        StableValue::String(String::new()),
-    );
-    values.insert("singlehtml_sidebars".to_string(), stable_dict([]));
-    values.insert("htmlhelp_file_suffix".to_string(), StableValue::None);
-    values.insert("htmlhelp_link_suffix".to_string(), StableValue::None);
-    values.insert(
-        "qthelp_basename".to_string(),
-        // Sphinx's default strips spaces from the project name.
-        StableValue::String(config.project.replace(' ', "")),
-    );
-    values.insert("qthelp_namespace".to_string(), StableValue::None);
-    values.insert(
-        "qthelp_theme".to_string(),
-        StableValue::String("nonav".to_string()),
-    );
-    values.insert("qthelp_theme_options".to_string(), stable_dict([]));
+        (
+            "mathjax_display",
+            stable_strings(["\\[".to_string(), "\\]".to_string()]),
+        ),
+        ("mathjax_config", none.clone()),
+        ("mathjax2_config", none.clone()),
+        ("mathjax3_config", none.clone()),
+        ("mathjax4_config", none.clone()),
+        ("mathjax_config_path", string("")),
+        ("htmlhelp_file_suffix", none.clone()),
+        ("htmlhelp_link_suffix", none.clone()),
+        ("qthelp_namespace", none.clone()),
+        ("qthelp_theme", string("nonav")),
+        ("qthelp_theme_options", empty_dict()),
+    ];
+    for (key, default) in defaults {
+        values.insert(key.to_string(), conf(key).unwrap_or(default));
+    }
+    let computed = [
+        ("project_copyright", copyright.clone()),
+        ("copyright", copyright),
+        ("html_title", html_title),
+        ("html_short_title", html_short_title),
+        ("html_sidebars", html_sidebars),
+        ("singlehtml_sidebars", singlehtml_sidebars),
+        ("qthelp_basename", qthelp_basename),
+        ("html_context", html_context),
+        ("html_css_files", html_asset_files(config, "html_css_files")),
+        ("html_js_files", html_asset_files(config, "html_js_files")),
+    ];
+    for (key, value) in computed {
+        values.insert(key.to_string(), value);
+    }
     StableValue::Dict(values)
 }
 
-fn md5_hex(input: &str) -> String {
-    let mut message = input.as_bytes().to_vec();
-    let bit_len = (message.len() as u64) * 8;
-    message.push(0x80);
-    while message.len() % 64 != 56 {
-        message.push(0);
-    }
-    message.extend_from_slice(&bit_len.to_le_bytes());
+/// `convert_html_css_files`/`convert_html_js_files` (`builders/html`,
+/// `config-inited`): a bare filename becomes `(filename, {})`, a
+/// `(filename, attrs)` pair stays, and anything else is dropped with a
+/// warning.
+fn html_asset_files(config: &BuildConfig, key: &str) -> StableValue {
+    let Some(serde_json::Value::Array(entries)) = config.conf_values.get(key) else {
+        return StableValue::List(Vec::new());
+    };
+    StableValue::List(
+        entries
+            .iter()
+            .filter_map(|entry| match entry {
+                serde_json::Value::String(filename) => Some(StableValue::Tuple(vec![
+                    StableValue::String(filename.clone()),
+                    stable_dict([]),
+                ])),
+                serde_json::Value::Array(pair) if pair.len() == 2 => {
+                    Some(StableValue::Tuple(vec![
+                        stable_hash_json(&pair[0]),
+                        stable_hash_json(&pair[1]),
+                    ]))
+                }
+                _ => None,
+            })
+            .collect(),
+    )
+}
 
-    let mut state = [
-        0x67452301_u32,
-        0xefcdab89_u32,
-        0x98badcfe_u32,
-        0x10325476_u32,
-    ];
-    let shifts = [
-        7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 5, 9, 14, 20, 5, 9, 14, 20, 5,
-        9, 14, 20, 5, 9, 14, 20, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 6, 10,
-        15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
-    ];
-    let constants: [u32; 64] = [
-        0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee, 0xf57c0faf, 0x4787c62a, 0xa8304613,
-        0xfd469501, 0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be, 0x6b901122, 0xfd987193,
-        0xa679438e, 0x49b40821, 0xf61e2562, 0xc040b340, 0x265e5a51, 0xe9b6c7aa, 0xd62f105d,
-        0x02441453, 0xd8a1e681, 0xe7d3fbc8, 0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed,
-        0xa9e3e905, 0xfcefa3f8, 0x676f02d9, 0x8d2a4c8a, 0xfffa3942, 0x8771f681, 0x6d9d6122,
-        0xfde5380c, 0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70, 0x289b7ec6, 0xeaa127fa,
-        0xd4ef3085, 0x04881d05, 0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665, 0xf4292244,
-        0x432aff97, 0xab9423a7, 0xfc93a039, 0x655b59c3, 0x8f0ccc92, 0xffeff47d, 0x85845dd1,
-        0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1, 0xf7537e82, 0xbd3af235, 0x2ad7d2bb,
-        0xeb86d391,
-    ];
-    for chunk in message.chunks_exact(64) {
-        let mut words = [0_u32; 16];
-        for (index, word) in words.iter_mut().enumerate() {
-            let start = index * 4;
-            *word = u32::from_le_bytes(chunk[start..start + 4].try_into().unwrap());
-        }
-        let (mut a, mut b, mut c, mut d) = (state[0], state[1], state[2], state[3]);
-        for i in 0..64 {
-            let (f, g) = if i < 16 {
-                ((b & c) | ((!b) & d), i)
-            } else if i < 32 {
-                ((d & b) | ((!d) & c), (5 * i + 1) % 16)
-            } else if i < 48 {
-                (b ^ c ^ d, (3 * i + 5) % 16)
-            } else {
-                (c ^ (b | !d), (7 * i) % 16)
-            };
-            let next = a
-                .wrapping_add(f)
-                .wrapping_add(constants[i])
-                .wrapping_add(words[g])
-                .rotate_left(shifts[i]);
-            a = d;
-            d = c;
-            c = b;
-            b = b.wrapping_add(next);
-        }
-        state[0] = state[0].wrapping_add(a);
-        state[1] = state[1].wrapping_add(b);
-        state[2] = state[2].wrapping_add(c);
-        state[3] = state[3].wrapping_add(d);
+/// `sphinx.util.osutil.make_filename`: everything outside `[a-zA-Z0-9_-]`
+/// stripped, `sphinx` when nothing is left. `qthelp_basename`'s default.
+fn make_filename(name: &str) -> String {
+    let filename: String = name
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+        .collect();
+    if filename.is_empty() {
+        "sphinx".to_string()
+    } else {
+        filename
     }
-    state
-        .iter()
-        .flat_map(|word| word.to_le_bytes())
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+}
+
+fn md5_hex(input: &str) -> String {
+    use md5::{Digest, Md5};
+    format!("{:x}", Md5::digest(input.as_bytes()))
 }
 
 impl SphinxBuilder {
@@ -725,6 +576,7 @@ impl SphinxBuilder {
             extension_loader,
             env,
             resolved: Mutex::new(BTreeMap::new()),
+            search_index: Mutex::new(crate::search::SphinxIndexBuilder::new()),
             genindex: Mutex::new(Vec::new()),
             py_modindex: Mutex::new(env_py_domain::PyModindex::default()),
             intersphinx: Intersphinx::default(),
@@ -915,8 +767,7 @@ impl SphinxBuilder {
         self.copy_static_assets().await?;
 
         // Generate sitemap and search index
-        self.generate_search_index(&processed_docs, &doctrees)
-            .await?;
+        self.generate_search_index().await?;
         tokio::fs::write(
             self.output_dir.join(".buildinfo"),
             sphinx_build_info_contents(&self.config, &self.config.tags)?,
@@ -1762,6 +1613,7 @@ impl SphinxBuilder {
         // A second `build()` on the same builder must not keep the previous
         // one's documents (one of them may since have been deleted).
         self.resolved.lock().unwrap().clear();
+        *self.search_index.lock().unwrap() = crate::search::SphinxIndexBuilder::new();
         let mut unresolvable_domain_refs = 0usize;
         for result in ordered {
             let mut doctree = result.doctree.clone();
@@ -1776,6 +1628,30 @@ impl SphinxBuilder {
             for warning in resolution.warnings {
                 self.add_warning(warning);
             }
+
+            // Sphinx feeds the search index from exactly this resolved
+            // doctree (`write_doc_serialized` → `index_page`), with the
+            // longtitle as plain text and the source-relative filename.
+            let title = env
+                .longtitles
+                .get(&result.docname)
+                .map(crate::doctree::Node::astext)
+                .unwrap_or_default();
+            let filename = result
+                .document
+                .source_path
+                .strip_prefix(&self.source_dir)
+                .unwrap_or(&result.document.source_path)
+                .to_string_lossy()
+                .into_owned();
+            self.search_index.lock().unwrap().feed(
+                &result.docname,
+                &filename,
+                &title,
+                &doctree,
+                env,
+            );
+
             self.resolved
                 .lock()
                 .unwrap()
@@ -1980,119 +1856,18 @@ impl SphinxBuilder {
     async fn generate_indices(&self, _documents: &[Document]) -> Result<()> {
         info!("Generating indices and cross-references");
 
-        let domains = [
-            ("std", self.inventory_std_objects()),
-            ("py", self.inventory_py_objects()),
-        ];
+        // The same `get_objects()` rows the search index lists, through the
+        // same writer the direct `HTMLBuilder` uses.
+        let domains = env::objects::domain_objects(&self.env);
         InventoryFile::dump(
             self.output_dir.join("objects.inv"),
             &self.config.project,
             self.config.version.as_deref().unwrap_or(""),
             &domains,
-            |docname| format!("{docname}.html"),
+            // `StandaloneHTMLBuilder.get_target_uri`: `quote(docname) + link_suffix`.
+            |docname| format!("{}.html", utils::quote_url_path(docname)),
         )
         .await
-    }
-
-    fn inventory_std_objects(&self) -> Vec<InvObject> {
-        let mut objects = Vec::new();
-
-        for docname in self.env.all_docs.keys() {
-            let display_name = self
-                .env
-                .titles
-                .get(docname)
-                .map(env::numbers::clean_astext)
-                .unwrap_or_default();
-            objects.push(InvObject {
-                name: docname.clone(),
-                objtype: "doc".to_string(),
-                priority: -1,
-                docname: docname.clone(),
-                anchor: String::new(),
-                dispname: display_name,
-            });
-        }
-
-        for ((program, option), (docname, anchor)) in &self.env.std.progoptions {
-            let name = program
-                .as_deref()
-                .map(|program| format!("{program}.{option}"))
-                .unwrap_or_else(|| option.clone());
-            objects.push(InvObject {
-                name: name.clone(),
-                objtype: "cmdoption".to_string(),
-                priority: 1,
-                docname: docname.clone(),
-                anchor: anchor.clone(),
-                dispname: name,
-            });
-        }
-
-        for ((objtype, name), (docname, anchor)) in &self.env.std.objects {
-            objects.push(InvObject {
-                name: name.clone(),
-                objtype: objtype.clone(),
-                priority: std_object_priority(objtype),
-                docname: docname.clone(),
-                anchor: anchor.clone(),
-                dispname: name.clone(),
-            });
-        }
-
-        for (name, (docname, anchor, section_name)) in &self.env.std.labels {
-            objects.push(InvObject {
-                name: name.clone(),
-                objtype: "label".to_string(),
-                priority: -1,
-                docname: docname.clone(),
-                anchor: anchor.clone(),
-                dispname: section_name.clone(),
-            });
-        }
-
-        for (name, (docname, anchor)) in &self.env.std.anonlabels {
-            if !self.env.std.labels.contains_key(name) {
-                objects.push(InvObject {
-                    name: name.clone(),
-                    objtype: "label".to_string(),
-                    priority: -1,
-                    docname: docname.clone(),
-                    anchor: anchor.clone(),
-                    dispname: name.clone(),
-                });
-            }
-        }
-
-        objects
-    }
-
-    fn inventory_py_objects(&self) -> Vec<InvObject> {
-        let mut objects = Vec::new();
-        for (name, module) in &self.env.py.modules {
-            objects.push(InvObject {
-                name: name.clone(),
-                objtype: "module".to_string(),
-                priority: 0,
-                docname: module.docname.clone(),
-                anchor: module.node_id.clone(),
-                dispname: name.clone(),
-            });
-        }
-        for (name, object) in &self.env.py.objects {
-            if object.objtype == "module" {
-                continue;
-            }
-            objects.push(InvObject {
-                name: name.clone(),
-                objtype: object.objtype.clone(),
-                priority: if object.aliased { -1 } else { 1 },
-                docname: object.docname.clone(),
-                anchor: object.node_id.clone(),
-                dispname: name.clone(),
-            });
-        }
-        objects
     }
 
     async fn copy_static_assets(&self) -> Result<()> {
@@ -2311,14 +2086,9 @@ impl SphinxBuilder {
         }
     }
 
-    async fn generate_search_index(
-        &self,
-        documents: &[Document],
-        doctrees: &[Doctree],
-    ) -> Result<()> {
+    async fn generate_search_index(&self) -> Result<()> {
         info!("Generating search index");
-        let value =
-            crate::search::build_sphinx_index(documents, doctrees, &self.env, &self.source_dir);
+        let value = self.search_index.lock().unwrap().freeze(&self.env);
         let contents = crate::search::dumps_sphinx_index(&value)?;
         tokio::fs::write(self.output_dir.join("searchindex.js"), contents).await?;
         Ok(())
@@ -2868,5 +2638,103 @@ mod tests {
             "a fully cached build still rebuilds the environment from the \
              persisted doctrees"
         );
+    }
+
+    /// The `config:` hash real `sphinx-build` 9.1.0 writes to `.buildinfo`
+    /// for one-setting `conf.py` files, pinned here so the html-category
+    /// table cannot drift from Sphinx's defaults or from the literal-vs-
+    /// default rule. The `sphinx_rtd_theme` value is from
+    /// `BuildInfo(app.config, app.tags, {'html'})` over the same config,
+    /// because Sphinx cannot load that theme in the oracle environment.
+    #[test]
+    fn buildinfo_config_hash_matches_sphinx_for_configured_values() {
+        let cases = [
+            ("project = 'Fixture'\n", "bc9d5af5c9b6d45a25e31a5ff598283a"),
+            (
+                "project = 'Fixture'\nhtml_theme = 'alabaster'\n",
+                "bc9d5af5c9b6d45a25e31a5ff598283a",
+            ),
+            (
+                "project = 'Fixture'\nhtml_theme = 'classic'\n",
+                "58dd99f3a17211a74d9b5a57b3e09abd",
+            ),
+            (
+                "project = 'Fixture'\nhtml_theme = 'sphinx_rtd_theme'\n",
+                "dbf973fabe50a41cd3aba49a63addfb0",
+            ),
+            (
+                "project = 'Fixture'\nhtml_css_files = ['a.css']\n",
+                "05a38004493ea6ed2731ff1f46a9dbea",
+            ),
+            (
+                "project = 'Fixture'\nhtml_css_files = [('a.css', {'media': 'print'})]\n",
+                "2baebae26e35eb22fb7aa2e2d1aa9597",
+            ),
+            (
+                "project = 'Fixture'\nhtml_js_files = ['b.js']\n",
+                "0e188cc551c4d963314c65091a73a387",
+            ),
+            (
+                "project = 'Fixture'\nhtml_static_path = ['_static']\n",
+                "199d55036ccc652911c8d7544403296b",
+            ),
+            (
+                "project = 'Fixture'\ntemplates_path = ['_templates']\n",
+                "dd8472423e919d99edb63ef88589b4d1",
+            ),
+            (
+                "project = 'Fixture'\nhtml_theme_options = {'nosidebar': True}\n",
+                "a2a03cb33b0b36892e5a3836146f8e60",
+            ),
+            (
+                "project = 'Fixture'\nhtml_last_updated_fmt = '%Y'\n",
+                "7106224b6b475e01e49bd6989dc2fa29",
+            ),
+            (
+                "project = 'Fixture'\nhtml_use_opensearch = 'https://example.org'\n",
+                "0acadda62c6d2f4f946d7a0fa145cd53",
+            ),
+            (
+                "project = 'My.Project v2'\n",
+                "ed09fc06b53dbc75b8ac7d282178aaab",
+            ),
+            (
+                "project = 'Fixture'\nmodindex_common_prefix = ['probe.']\n",
+                "0652c60ff2bdad1e6cafdc981c25594b",
+            ),
+            (
+                "project = 'Fixture'\nhtml_logo = 'logo.png'\nhtml_favicon = 'fav.ico'\n\
+                 html_title = 'Custom Title'\nhtml_short_title = 'Short'\n\
+                 html_show_sphinx = False\nhtml_copy_source = False\n\
+                 copyright = '2026, Me'\nversion = '1.2'\nrelease = '1.2.3'\n",
+                "5b84a1185cee8c88c692fc47d88b91dc",
+            ),
+        ];
+        let dir = tempfile::tempdir().unwrap();
+        for (conf, expected) in cases {
+            std::fs::write(dir.path().join("conf.py"), conf).unwrap();
+            let parsed = crate::python_config::PythonConfigParser::new()
+                .unwrap()
+                .parse_conf_py(dir.path().join("conf.py"))
+                .unwrap();
+            let mut config = parsed.to_build_config().unwrap();
+            // The driver's `config-inited` step: the probe directory holds
+            // no logo or favicon file, so both settings fall back to `None`
+            // exactly as they did in the oracle run.
+            config.validate_html_logo_and_favicon(dir.path());
+            let contents = sphinx_build_info_contents(&config, &config.tags).unwrap();
+            let line = contents
+                .lines()
+                .find(|line| line.starts_with("config: "))
+                .unwrap();
+            assert_eq!(&line["config: ".len()..], expected, "{conf}");
+        }
+    }
+
+    #[test]
+    fn make_filename_strips_like_sphinx() {
+        assert_eq!(make_filename("My.Project v2"), "MyProjectv2");
+        assert_eq!(make_filename("snake_case-ok"), "snake_case-ok");
+        assert_eq!(make_filename("¡!"), "sphinx");
     }
 }

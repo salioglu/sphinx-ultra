@@ -269,7 +269,7 @@ fn parse_literal(chars: &[char], at: &mut usize) -> Option<Option<String>> {
 
 /// `split_index_msg` (`util/index_entries.py:4-18`). `Err` carries the
 /// `ValueError` text verbatim, which is what Sphinx logs.
-fn split_index_msg(entry_type: &str, value: &str) -> Result<Vec<String>, String> {
+pub(crate) fn split_index_msg(entry_type: &str, value: &str) -> Result<Vec<String>, String> {
     match entry_type {
         "single" => split_into(2, "single", value).or_else(|_| split_into(1, "single", value)),
         "pair" => split_into(2, "pair", value),

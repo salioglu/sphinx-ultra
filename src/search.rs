@@ -1,11 +1,12 @@
 use anyhow::Result;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::path::Path;
+use std::sync::LazyLock;
 
-use crate::doctree::{Doctree, Node};
-use crate::document::Document;
+use crate::doctree::{kinds, AttrValue, Doctree, Node};
+use crate::env::objects::{object_type_name, std_search_priority};
 use crate::env::BuildEnvironment;
 
 /// The environment-version map emitted by Sphinx 9.1.0's built-in domains.
@@ -152,10 +153,14 @@ impl SearchIndex {
         words
     }
 
+    /// `IndexBuilder.feed`'s term for one word under this index's language.
     fn term_for_word(&self, word: &str) -> Option<String> {
         match self.language.as_str() {
             "en" => search_term(word),
-            _ => (!word.is_empty()).then(|| word.to_lowercase()),
+            // Every other language Ultra builds is Sphinx's base
+            // `SearchLanguage`: no stemming and no stopwords, lowercased by
+            // `feed`, digit-only words dropped by `word_filter`.
+            _ => index_term(word, word.to_lowercase(), |term| !is_digit_word(term)),
         }
     }
 
@@ -279,8 +284,8 @@ impl SearchIndex {
         let mut titleterms = BTreeMap::<String, BTreeSet<usize>>::new();
         for (index, title) in self.titles.iter().enumerate() {
             for word in search_words(title) {
-                if let Some(stem) = search_term(&word) {
-                    titleterms.entry(stem).or_default().insert(index);
+                if let Some(term) = self.term_for_word(&word) {
+                    titleterms.entry(term).or_default().insert(index);
                 }
             }
         }
@@ -306,197 +311,420 @@ impl SearchIndex {
     }
 }
 
-/// Build the complete Sphinx search index from the live builder state.
-pub fn build_sphinx_index(
-    documents: &[Document],
-    doctrees: &[Doctree],
-    env: &BuildEnvironment,
-    source_dir: &Path,
-) -> Value {
-    let mut records: Vec<(&Document, &Doctree, String)> = documents
-        .iter()
-        .zip(doctrees)
-        .map(|(document, doctree)| {
-            (
-                document,
-                doctree,
-                docname_from_path(&document.source_path, source_dir),
-            )
-        })
-        .collect();
-    records.sort_by(|a, b| a.2.cmp(&b.2));
+// ---------------------------------------------------------------------------
+// Sphinx's IndexBuilder (sphinx/search/__init__.py:202-636)
+// ---------------------------------------------------------------------------
 
-    let docnames: Vec<String> = records.iter().map(|(_, _, name)| name.clone()).collect();
-    let doc_indices: BTreeMap<String, usize> = docnames
-        .iter()
-        .enumerate()
-        .map(|(index, name)| (name.clone(), index))
-        .collect();
-    let filenames: Vec<String> = records
-        .iter()
-        .map(|(document, _, _)| {
-            document
-                .source_path
-                .strip_prefix(source_dir)
-                .unwrap_or(&document.source_path)
-                .to_string_lossy()
-                .to_string()
-        })
-        .collect();
-    let titles: Vec<String> = records
-        .iter()
-        .map(|(document, _, _)| document.title.clone())
-        .collect();
-    let documents_by_docname: BTreeMap<String, &Document> = records
-        .iter()
-        .map(|(document, _, docname)| (docname.clone(), *document))
-        .collect();
+/// What `_feed_visit_nodes` collects from one document: Sphinx's
+/// `WordStore`.
+#[derive(Debug, Default)]
+struct WordStore {
+    words: Vec<String>,
+    titles: Vec<(String, Option<String>)>,
+    title_words: Vec<String>,
+}
 
-    let mut terms = BTreeMap::<String, BTreeSet<usize>>::new();
-    let mut titleterms = BTreeMap::<String, BTreeSet<usize>>::new();
-    let mut alltitles = BTreeMap::<String, Vec<(usize, Option<String>)>>::new();
+/// Sphinx's `IndexBuilder`: fed one *resolved* document at a time by the
+/// build's resolve phase (Sphinx: `write_doc_serialized` → `index_page` →
+/// `feed`), then frozen once into the `searchindex.js` value.
+///
+/// Feeding the resolved doctree is what makes cross-reference text match:
+/// a `:doc:` or `:ref:` without an explicit title indexes the target's
+/// title, which is the text of the reference `ReferencesResolver` built.
+#[derive(Debug, Default)]
+pub struct SphinxIndexBuilder {
+    /// docname -> title (`_titles`); its key set is the document list.
+    titles: BTreeMap<String, String>,
+    /// docname -> source-relative filename (`_filenames`).
+    filenames: BTreeMap<String, String>,
+    /// stemmed word -> docnames (`_mapping`).
+    mapping: BTreeMap<String, BTreeSet<String>>,
+    /// stemmed title word -> docnames (`_title_mapping`).
+    title_mapping: BTreeMap<String, BTreeSet<String>>,
+    /// docname -> every title in the document with its anchor
+    /// (`_all_titles`).
+    all_titles: BTreeMap<String, Vec<(String, Option<String>)>>,
+    /// docname -> its sorted `(entry, target_id, main)` index entries
+    /// (`_index_entries`).
+    index_entries: BTreeMap<String, Vec<(String, String, bool)>>,
+    /// Sphinx memoises `stem` for the duration of each `feed`; one cache
+    /// for the whole build gives the same terms without re-stemming the
+    /// words every document repeats.
+    stems: HashMap<String, String>,
+}
 
-    for (index, (document, doctree, docname)) in records.iter().enumerate() {
-        let body_text = search_text(&doctree.root);
-        let document_title_terms: BTreeSet<String> = search_words(&document.title)
-            .into_iter()
-            .filter_map(|word| search_term(&word))
-            .collect();
-        for word in search_words(&body_text) {
-            if let Some(term) = search_term(&word) {
-                // Sphinx's WordCollector does not add a body occurrence when
-                // the same stem is already indexed by this document's title.
-                if !document_title_terms.contains(&term) {
-                    terms.entry(term).or_default().insert(index);
-                }
-            }
-        }
-        let mut toctree_text = String::new();
-        collect_toctree_search_text(
-            docname,
-            &documents_by_docname,
-            env,
-            &mut BTreeSet::new(),
-            &mut toctree_text,
-        );
-        for word in search_words(&toctree_text) {
-            if let Some(term) = search_term(&word) {
-                terms.entry(term).or_default().insert(index);
-            }
-        }
-        for term in document_title_terms {
-            titleterms.entry(term).or_default().insert(index);
-        }
-        for toctree in &document.toctrees {
-            if let Some(caption) = &toctree.caption {
-                alltitles
-                    .entry(caption.clone())
-                    .or_default()
-                    .push((index, None));
-                for word in search_words(caption) {
-                    if let Some(term) = search_term(&word) {
-                        titleterms.entry(term).or_default().insert(index);
-                    }
-                }
-            }
-        }
-
-        let mut titles_in_doc = Vec::new();
-        collect_titles(&doctree.root, 0, &mut titles_in_doc);
-        if titles_in_doc.is_empty() {
-            titles_in_doc.push((document.title.clone(), None));
-        }
-        for (title, title_id) in titles_in_doc {
-            alltitles.entry(title).or_default().push((index, title_id));
-        }
-
-        // A document's index records are already in Sphinx's document order;
-        // freeze only has to translate docnames to the sorted numeric index.
-        let _ = docname;
+impl SphinxIndexBuilder {
+    pub fn new() -> Self {
+        Self::default()
     }
 
-    let (objects, objtypes, objnames) = search_objects(env, &doc_indices);
-    let mut indexentries = BTreeMap::<String, Vec<(usize, String, bool)>>::new();
-    for (docname, entries) in &env.index_entries {
-        let Some(&doc_index) = doc_indices.get(docname) else {
+    /// `IndexBuilder.feed`, behind the `index_page` gate: a document whose
+    /// metadata carries `:nosearch:` (or `:no-search:`) is fed an empty
+    /// title and an empty document, so it keeps its slot in `docnames` and
+    /// contributes nothing else.
+    pub fn feed(
+        &mut self,
+        docname: &str,
+        filename: &str,
+        title: &str,
+        doctree: &Doctree,
+        env: &BuildEnvironment,
+    ) {
+        let no_search = env.metadata.get(docname).is_some_and(|metadata| {
+            metadata.contains_key("nosearch") || metadata.contains_key("no-search")
+        });
+        let (title, store) = if no_search {
+            ("", WordStore::default())
+        } else {
+            (title, collect_words(doctree, docname, env))
+        };
+
+        self.titles.insert(docname.to_string(), title.to_string());
+        self.filenames
+            .insert(docname.to_string(), filename.to_string());
+        self.all_titles.insert(docname.to_string(), store.titles);
+
+        for word in &store.title_words {
+            if let Some(term) = self.term(word) {
+                self.title_mapping
+                    .entry(term)
+                    .or_default()
+                    .insert(docname.to_string());
+            }
+        }
+        for word in &store.words {
+            let Some(term) = self.term(word) else {
+                continue;
+            };
+            // A term this document's titles already carry is not indexed
+            // again as body text.
+            let already_indexed = self
+                .title_mapping
+                .get(&term)
+                .is_some_and(|docnames| docnames.contains(docname));
+            if !already_indexed {
+                self.mapping
+                    .entry(term)
+                    .or_default()
+                    .insert(docname.to_string());
+            }
+        }
+
+        self.index_entries
+            .insert(docname.to_string(), index_entries_of(env, docname));
+    }
+
+    /// The memoised `stem` plus the "stemmer must not remove words" rule.
+    fn term(&mut self, word: &str) -> Option<String> {
+        let stemmed = match self.stems.get(word) {
+            Some(stemmed) => stemmed.clone(),
+            None => {
+                let stemmed = stem_english(word);
+                self.stems.insert(word.to_string(), stemmed.clone());
+                stemmed
+            }
+        };
+        index_term(word, stemmed, english_word_filter)
+    }
+
+    /// `IndexBuilder.freeze`: the `Search.setIndex` payload.
+    pub fn freeze(&self, env: &BuildEnvironment) -> Value {
+        let docnames: Vec<String> = self.titles.keys().cloned().collect();
+        let titles: Vec<String> = self.titles.values().cloned().collect();
+        let filenames: Vec<String> = docnames
+            .iter()
+            .map(|docname| self.filenames.get(docname).cloned().unwrap_or_default())
+            .collect();
+        let fn2index: BTreeMap<String, usize> = docnames
+            .iter()
+            .enumerate()
+            .map(|(index, docname)| (docname.clone(), index))
+            .collect();
+
+        let terms = index_postings(&self.mapping, &fn2index);
+        let titleterms = index_postings(&self.title_mapping, &fn2index);
+        let (objects, objtypes, objnames) = search_objects(env, &fn2index);
+
+        let mut alltitles = BTreeMap::<String, Vec<(usize, Option<String>)>>::new();
+        for (docname, titlelist) in &self.all_titles {
+            let Some(&index) = fn2index.get(docname) else {
+                continue;
+            };
+            for (title, title_id) in titlelist {
+                alltitles
+                    .entry(title.clone())
+                    .or_default()
+                    .push((index, title_id.clone()));
+            }
+        }
+
+        let mut indexentries = BTreeMap::<String, Vec<(usize, String, bool)>>::new();
+        for (docname, entries) in &self.index_entries {
+            let Some(&index) = fn2index.get(docname) else {
+                continue;
+            };
+            for (entry, entry_id, main) in entries {
+                indexentries.entry(entry.to_lowercase()).or_default().push((
+                    index,
+                    entry_id.clone(),
+                    *main,
+                ));
+            }
+        }
+
+        freeze_search_value(FrozenSearchData {
+            docnames,
+            filenames,
+            titles,
+            terms,
+            titleterms,
+            alltitles,
+            objects,
+            objtypes,
+            objnames,
+            indexentries,
+        })
+    }
+}
+
+/// `IndexBuilder.get_terms`: term -> the sorted indices of its documents.
+fn index_postings(
+    mapping: &BTreeMap<String, BTreeSet<String>>,
+    fn2index: &BTreeMap<String, usize>,
+) -> BTreeMap<String, BTreeSet<usize>> {
+    mapping
+        .iter()
+        .filter_map(|(term, docnames)| {
+            let indices: BTreeSet<usize> = docnames
+                .iter()
+                .filter_map(|docname| fn2index.get(docname).copied())
+                .collect();
+            (!indices.is_empty()).then(|| (term.clone(), indices))
+        })
+        .collect()
+}
+
+/// The `(entry, target_id, main)` triples `feed` records from the
+/// document's `index` nodes: every part `split_index_msg` splits an entry
+/// into, as the sorted set Sphinx builds. An entry `split_index_msg`
+/// rejects is skipped (`except ValueError: pass`); the general index is
+/// where it gets warned about.
+fn index_entries_of(env: &BuildEnvironment, docname: &str) -> Vec<(String, String, bool)> {
+    // Sphinx sorts `(entry, target_id, main)` with `main` as the string
+    // `'main'` or `''`, which orders `''` first.
+    let mut entries = BTreeSet::<(String, String, &str)>::new();
+    for record in env
+        .index_entries
+        .get(docname)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+    {
+        let Ok(parts) = crate::env::genindex::split_index_msg(&record.entry_type, &record.value)
+        else {
             continue;
         };
-        for entry in entries {
-            indexentries
-                .entry(entry.value.to_lowercase())
-                .or_default()
-                .push((doc_index, entry.target_id.clone(), entry.main));
+        let main = if record.main { "main" } else { "" };
+        for part in parts {
+            entries.insert((part, record.target_id.clone(), main));
         }
     }
-
-    freeze_search_value(FrozenSearchData {
-        docnames,
-        filenames,
-        titles,
-        terms,
-        titleterms,
-        alltitles,
-        objects,
-        objtypes,
-        objnames,
-        indexentries,
-    })
+    entries
+        .into_iter()
+        .map(|(entry, target_id, main)| (entry, target_id, main == "main"))
+        .collect()
 }
 
-fn collect_toctree_search_text(
-    docname: &str,
-    documents: &BTreeMap<String, &Document>,
-    env: &BuildEnvironment,
-    seen: &mut BTreeSet<String>,
-    out: &mut String,
-) {
-    if !seen.insert(docname.to_string()) {
-        return;
-    }
-    let Some(document) = documents.get(docname) else {
-        return;
-    };
-    for toctree in &document.toctrees {
-        // Glob entries are expanded by the environment for navigation. Their
-        // raw patterns are not doctree text, but Sphinx does index the
-        // resolved child titles; use the expanded include list so a dead
-        // pattern contributes nothing while `pages/*` contributes Alpha and
-        // Beta rather than the literal pattern or `missing`.
-        if toctree.glob {
-            if let Some(includes) = env.toctree_includes.get(docname) {
-                for target in includes {
-                    if let Some(title) = env.titles.get(target) {
-                        out.push(' ');
-                        out.push_str(&crate::env::numbers::clean_astext(title));
-                    }
-                    collect_toctree_search_text(target, documents, env, seen, out);
-                }
-            }
+/// `IndexBuilder._word_collector`.
+///
+/// Sphinx's `MetadataCollector` has popped the `docinfo` out of the
+/// doctree by the time the collector runs; this crate leaves that field
+/// list in place (see [`crate::env::metadata`]), so the walk starts below
+/// it.
+fn collect_words(doctree: &Doctree, docname: &str, env: &BuildEnvironment) -> WordStore {
+    let mut store = WordStore::default();
+    let docinfo = crate::env::metadata::docinfo_field_list(doctree);
+    for child in &doctree.root.children {
+        if docinfo.is_some_and(|docinfo| std::ptr::eq(docinfo, child)) {
             continue;
         }
-        for entry in &toctree.entries {
-            let joined = crate::env::toctree::docname_join(docname, &entry.target);
-            let target = joined.strip_suffix(".rst").unwrap_or(&joined).to_string();
-            let title = entry.title.clone().or_else(|| {
-                env.titles
-                    .get(&target)
-                    .map(crate::env::numbers::clean_astext)
-            });
-            if let Some(title) = title {
-                out.push(' ');
-                out.push_str(&title);
+        feed_visit_nodes(child, &doctree.root.attrs.ids, &mut store, docname, env);
+    }
+    store
+}
+
+/// `_feed_visit_nodes` (`search/__init__.py:592-636`) over the resolved
+/// doctree, with the two things Sphinx's write phase did to that tree
+/// before the collector saw it folded in: a `toctree` node is visited as
+/// the tree [`crate::env::toctree::resolve_toctree`] replaces it with
+/// (`get_and_resolve_doctree`), and a `system_message` not at all
+/// (`FilterSystemMessages` removes every one at the default
+/// `keep_warnings = False`).
+fn feed_visit_nodes(
+    node: &Node,
+    parent_ids: &[String],
+    store: &mut WordStore,
+    docname: &str,
+    env: &BuildEnvironment,
+) {
+    if node.kind == kinds::COMMENT || node.kind == kinds::SYSTEM_MESSAGE {
+        return;
+    }
+    if node.attrs.classes.iter().any(|class| class == "no-search") {
+        // skip nodes marked with a 'no-search' class
+        return;
+    }
+    match node.kind {
+        "raw" => {
+            if raw_format_is_html(node) {
+                // "Some people might put content in raw HTML that should be
+                // searched, so we just amateurishly strip HTML tags and
+                // index the remaining content"
+                let text = strip_html_tags(&node.astext());
+                store.words.extend(search_words(&text));
             }
-            collect_toctree_search_text(&target, documents, env, seen, out);
+            return;
+        }
+        kinds::TOCTREE => {
+            if let Some(resolved) = crate::env::toctree::resolve_toctree(env, docname, node) {
+                feed_visit_nodes(&resolved, parent_ids, store, docname, env);
+            }
+            return;
+        }
+        "meta" if is_meta_keywords(node) => {
+            if let Some(AttrValue::Str(content)) = node.get("content") {
+                store
+                    .words
+                    .extend(content.split(',').map(|keyword| keyword.trim().to_string()));
+            }
+        }
+        kinds::TEXT => store.words.extend(search_words(&node.astext())),
+        kinds::TITLE => {
+            let title = node.astext();
+            // The first title met is the document's; only later ones carry
+            // their parent's anchor.
+            let is_main_title = store.titles.is_empty();
+            let title_id = if is_main_title {
+                None
+            } else {
+                parent_ids.first().cloned()
+            };
+            store.titles.push((title.clone(), title_id));
+            store.title_words.extend(search_words(&title));
+        }
+        _ => {}
+    }
+    for child in &node.children {
+        feed_visit_nodes(child, &node.attrs.ids, store, docname, env);
+    }
+}
+
+/// `_is_meta_keywords` for the English search language.
+fn is_meta_keywords(node: &Node) -> bool {
+    matches!(node.get("name"), Some(AttrValue::Str(name)) if name == "keywords")
+        && match node.get("lang") {
+            None => true,
+            Some(AttrValue::Str(lang)) => lang == "en",
+            Some(_) => false,
+        }
+}
+
+/// `'html' in node.get('format', '').split()`.
+fn raw_format_is_html(node: &Node) -> bool {
+    match node.get("format") {
+        Some(AttrValue::Str(format)) => format.split_whitespace().any(|f| f == "html"),
+        _ => false,
+    }
+}
+
+/// The three substitutions Sphinx runs over raw HTML before indexing it.
+fn strip_html_tags(text: &str) -> String {
+    static STYLE: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?is)<style.*?</style>").unwrap());
+    static SCRIPT: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?is)<script.*?</script>").unwrap());
+    static TAG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<[^<]+?>").unwrap());
+    let text = STYLE.replace_all(text, "");
+    let text = SCRIPT.replace_all(&text, "");
+    TAG.replace_all(&text, "").into_owned()
+}
+
+/// Render `Search.setIndex(...)` as `sphinx.search.js_index` does: the
+/// payload is `json.dumps(data, separators=(',', ':'), sort_keys=True)`,
+/// so every object's keys are sorted and, with the default
+/// `ensure_ascii`, every non-ASCII character is a `\uXXXX` escape.
+/// `objtypes` and `objnames` are keyed by int in Sphinx, so their keys sort
+/// numerically rather than as the strings JSON makes of them.
+pub fn dumps_sphinx_index(value: &Value) -> Result<String> {
+    let mut out = String::from("Search.setIndex(");
+    write_python_json(value, &mut out, false);
+    out.push(')');
+    Ok(out)
+}
+
+fn write_python_json(value: &Value, out: &mut String, int_keys: bool) {
+    match value {
+        Value::Null => out.push_str("null"),
+        Value::Bool(value) => out.push_str(if *value { "true" } else { "false" }),
+        Value::Number(number) => out.push_str(&number.to_string()),
+        Value::String(string) => write_python_json_string(string, out),
+        Value::Array(items) => {
+            out.push('[');
+            for (index, item) in items.iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                write_python_json(item, out, false);
+            }
+            out.push(']');
+        }
+        Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            if int_keys {
+                keys.sort_by_key(|key| key.parse::<u64>().unwrap_or(u64::MAX));
+            } else {
+                keys.sort();
+            }
+            out.push('{');
+            for (index, key) in keys.iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                write_python_json_string(key, out);
+                out.push(':');
+                let child_int_keys = matches!(key.as_str(), "objtypes" | "objnames");
+                write_python_json(&map[key.as_str()], out, child_int_keys);
+            }
+            out.push('}');
         }
     }
 }
 
-/// Render the JavaScript wrapper used by `sphinx.search.js_index`.
-pub fn dumps_sphinx_index(value: &Value) -> Result<String> {
-    Ok(format!(
-        "Search.setIndex({})",
-        serde_json::to_string(value)?
-    ))
+/// `json.encoder.py_encode_basestring_ascii`: `"` and `\` escaped, the
+/// five short escapes, and every other character outside `U+0020..U+007E`
+/// as `\uXXXX` (surrogate pairs above the BMP).
+fn write_python_json_string(string: &str, out: &mut String) {
+    use std::fmt::Write as _;
+
+    out.push('"');
+    for character in string.chars() {
+        match character {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{8}' => out.push_str("\\b"),
+            '\u{c}' => out.push_str("\\f"),
+            ' '..='~' => out.push(character),
+            _ => {
+                let mut units = [0u16; 2];
+                for unit in character.encode_utf16(&mut units) {
+                    let _ = write!(out, "\\u{unit:04x}");
+                }
+            }
+        }
+    }
+    out.push('"');
 }
 
 struct FrozenSearchData {
@@ -583,41 +811,52 @@ fn postings_to_json(postings: BTreeMap<String, BTreeSet<usize>>) -> Map<String, 
         .collect()
 }
 
-fn docname_from_path(path: &Path, source_dir: &Path) -> String {
-    path.strip_prefix(source_dir)
-        .unwrap_or(path)
-        .with_extension("")
-        .to_string_lossy()
-        .replace('\\', "/")
-}
-
+/// `SearchLanguage.split`: Python's `\w+`. For a `str` pattern `\w` is
+/// `str.isalnum()` plus the underscore, i.e. the letter and number
+/// categories — narrower than `char::is_alphanumeric`, whose `Alphabetic`
+/// property also covers combining marks and some symbols, so a Devanagari
+/// vowel sign or an enclosed letter would join a word here that Sphinx
+/// splits on.
 fn search_words(text: &str) -> Vec<String> {
-    let mut words = Vec::new();
-    let mut current = String::new();
-    for character in text.chars() {
-        if character.is_alphanumeric() || character == '_' {
-            current.push(character);
-        } else if !current.is_empty() {
-            words.push(std::mem::take(&mut current));
-        }
-    }
-    if !current.is_empty() {
-        words.push(current);
-    }
-    words
+    static WORD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[\p{L}\p{N}_]+").unwrap());
+    WORD.find_iter(text)
+        .map(|word| word.as_str().to_string())
+        .collect()
 }
 
+/// The term Sphinx's English search indexes for `word`, or `None` when the
+/// word is dropped: [`index_term`] over the Snowball stem and
+/// `SearchEnglish.word_filter`.
 fn search_term(word: &str) -> Option<String> {
-    if !word.is_empty() && word.chars().all(is_sphinx_digit) {
-        return None;
-    }
-    let stemmed = stem_english(word);
-    if is_english_stopword(&stemmed) {
-        return None;
-    }
-    (!stemmed.is_empty()).then_some(stemmed)
+    index_term(word, stem_english(word), english_word_filter)
 }
 
+/// The one rule `IndexBuilder.feed` applies to title words and body words
+/// alike: the stem when `word_filter` accepts it, else the unstemmed word
+/// when it accepts *that* ("the stemmer must not remove words from search
+/// index" — `Some` stems to the stopword `some` and is indexed verbatim),
+/// else nothing.
+fn index_term(word: &str, stemmed: String, word_filter: impl Fn(&str) -> bool) -> Option<String> {
+    if word_filter(&stemmed) {
+        Some(stemmed)
+    } else if word_filter(word) {
+        Some(word.to_string())
+    } else {
+        None
+    }
+}
+
+/// `SearchEnglish.word_filter`, which runs on the *stemmed* word.
+fn english_word_filter(word: &str) -> bool {
+    !is_digit_word(word) && !is_english_stopword(word)
+}
+
+/// Python `str.isdigit()`: non-empty and every character a digit.
+fn is_digit_word(word: &str) -> bool {
+    !word.is_empty() && word.chars().all(is_sphinx_digit)
+}
+
+/// `SearchEnglish.stem`: Snowball English over the lowercased word.
 fn stem_english(word: &str) -> String {
     EnglishStemmer::new(word).stem()
 }
@@ -713,9 +952,11 @@ fn is_sphinx_digit(character: char) -> bool {
 }
 
 fn is_english_stopword(word: &str) -> bool {
-    ENGLISH_STOPWORDS.contains(&word)
+    ENGLISH_STOPWORDS.binary_search(&word).is_ok()
 }
 
+/// Sphinx's `ENGLISH_STOPWORDS` (`search/en.py`), kept in byte order so
+/// [`is_english_stopword`] can bisect it.
 const ENGLISH_STOPWORDS: &[&str] = &[
     "a",
     "about",
@@ -1029,9 +1270,14 @@ impl EnglishStemmer {
     fn step_1b(&mut self) {
         if let Some(suffix) = self.matching_suffix(&["eedly", "eed"]) {
             let start = self.suffix_start(suffix).unwrap();
-            if start >= self.region1_start
-                && !matches!(self.as_str().as_str(), "succeed" | "proceed" | "exceed")
-            {
+            // Snowball 3's `a_3`: the text *before* the suffix is exactly
+            // `succ`/`proc`/`exc`, so `exceedly` keeps its `eed` here (step
+            // 1c and step 2 then take it to `exceed`), while the whole-word
+            // exceptions of Snowball 2 would have let it become `excee`.
+            let exception = ["succ", "proc", "exc"]
+                .iter()
+                .any(|stem| self.chars[..start].iter().copied().eq(stem.chars()));
+            if start >= self.region1_start && !exception {
                 self.replace_suffix(suffix, "ee");
             }
             return;
@@ -1040,10 +1286,15 @@ impl EnglishStemmer {
             return;
         };
         let start = self.suffix_start(suffix).unwrap();
-        if matches!(suffix, "ing" | "ingly") {
+        // Snowball 3's `a_5` routes `ingly` with `ed`/`edly` through the
+        // generic branch; only a bare `ing` consults the `a_4` exceptions
+        // (`evening`, `inning`, ... stay; `dying` becomes `die`).
+        if suffix == "ing" {
             let special = ["even", "cann", "inn", "earr", "herr", "out"];
-            let prefix = self.chars[..start].iter().collect::<String>();
-            if special.iter().any(|word| *word == prefix) {
+            if special
+                .iter()
+                .any(|word| self.chars[..start].iter().copied().eq(word.chars()))
+            {
                 return;
             }
             if start == 2 && self.chars[start - 1] == 'y' && !Self::is_vowel(self.chars[start - 2])
@@ -1289,44 +1540,75 @@ impl EnglishStemmer {
     }
 }
 
-fn search_text(node: &Node) -> String {
-    if node.kind == crate::doctree::kinds::TITLE {
-        return String::new();
-    }
-    if let Some(text) = &node.text {
-        return text.clone();
-    }
-    let text = node
-        .children
-        .iter()
-        .map(search_text)
-        .collect::<Vec<_>>()
-        .join(" ");
-    text
-}
-
-fn collect_titles(node: &Node, depth: usize, out: &mut Vec<(String, Option<String>)>) {
-    for child in &node.children {
-        if child.kind == crate::doctree::kinds::TITLE {
-            // The first title is the document title. Sphinx omits only that
-            // title's ID; section titles retain their first-level anchors.
-            let id = if !out.is_empty() && depth > 0 {
-                node.attrs.ids.first().cloned()
-            } else {
-                None
-            };
-            out.push((child.astext(), id));
-        }
-        collect_titles(child, depth + 1, out);
-    }
-}
-
 type SearchObjects = (
     BTreeMap<String, Vec<[Value; 5]>>,
     BTreeMap<String, String>,
     BTreeMap<String, [String; 3]>,
 );
 
+/// `IndexBuilder._objtypes`/`_objnames`: one index per `(domain, type)`
+/// in first-seen order, with the type's localized name.
+#[derive(Default)]
+struct ObjectTypes {
+    indices: BTreeMap<(String, String), usize>,
+    objtypes: BTreeMap<String, String>,
+    objnames: BTreeMap<String, [String; 3]>,
+}
+
+impl ObjectTypes {
+    fn index_of(&mut self, domain: &str, objtype: &str) -> usize {
+        let key = (domain.to_string(), objtype.to_string());
+        if let Some(&index) = self.indices.get(&key) {
+            return index;
+        }
+        let index = self.indices.len();
+        self.objtypes
+            .insert(index.to_string(), format!("{domain}:{objtype}"));
+        self.objnames.insert(
+            index.to_string(),
+            [
+                domain.to_string(),
+                objtype.to_string(),
+                object_type_name(domain, objtype),
+            ],
+        );
+        self.indices.insert(key, index);
+        index
+    }
+}
+
+/// `IndexBuilder.get_objects` (`search/__init__.py:363-402`) over
+/// [`crate::env::objects::domain_objects`].
+fn search_objects(env: &BuildEnvironment, fn2index: &BTreeMap<String, usize>) -> SearchObjects {
+    let mut types = ObjectTypes::default();
+    let mut objects = BTreeMap::<String, Vec<[Value; 5]>>::new();
+    for (domain, domain_objects) in crate::env::objects::domain_objects(env) {
+        for object in domain_objects {
+            let Some(&doc_index) = fn2index.get(&object.docname) else {
+                continue;
+            };
+            if object.priority < 0 {
+                continue;
+            }
+            let fullname = py_html_escape(&object.name);
+            let dispname = py_html_escape(&object.dispname);
+            let (prefix, name) = rpartition_dot(&dispname);
+            let type_index = types.index_of(domain, &object.objtype);
+            objects.entry(prefix).or_default().push([
+                Value::from(doc_index),
+                Value::from(type_index),
+                Value::from(object.priority),
+                Value::String(short_anchor(&object.anchor, &fullname, &object.objtype)),
+                Value::String(name),
+            ]);
+        }
+    }
+    (objects, types.objtypes, types.objnames)
+}
+
+/// The same table for the direct [`HTMLBuilder`](crate::HTMLBuilder)
+/// path, whose objects come from [`SearchIndex::add_object`] rather than a
+/// domain registry.
 fn direct_search_objects(index: &SearchIndex) -> SearchObjects {
     let mut references: Vec<&ObjectReference> = index.objects.values().collect();
     references.sort_by(|left, right| {
@@ -1335,194 +1617,73 @@ fn direct_search_objects(index: &SearchIndex) -> SearchObjects {
             .then_with(|| left.name.cmp(&right.name))
     });
 
-    let mut type_indices = BTreeMap::<String, usize>::new();
+    let mut types = ObjectTypes::default();
     let mut objects = BTreeMap::<String, Vec<[Value; 5]>>::new();
-    let mut objtypes = BTreeMap::new();
-    let mut objnames = BTreeMap::new();
-
     for object in references {
-        let (domain, objtype) = object
-            .obj_type
-            .split_once(':')
-            .unwrap_or(("std", object.obj_type.as_str()));
-        let type_index = if let Some(index) = type_indices.get(&object.obj_type) {
-            *index
-        } else {
-            let index = type_indices.len();
-            type_indices.insert(object.obj_type.clone(), index);
-            objtypes.insert(index.to_string(), object.obj_type.clone());
-            objnames.insert(
-                index.to_string(),
-                [
-                    domain.to_string(),
-                    objtype.to_string(),
-                    object_type_label(domain, objtype),
-                ],
-            );
-            index
-        };
-
-        let (prefix, name) = object
-            .name
-            .rsplit_once('.')
-            .map(|(prefix, name)| (prefix.to_string(), name.to_string()))
-            .unwrap_or_else(|| (String::new(), object.name.clone()));
-        let anchor = object.anchor.as_deref().unwrap_or_default();
-        let shortanchor = if anchor == object.name {
-            String::new()
-        } else if anchor == format!("{objtype}-{}", object.name) {
-            "-".to_string()
-        } else {
-            anchor.to_string()
-        };
-        objects.entry(prefix).or_default().push([
-            Value::from(object.docname_idx),
-            Value::from(type_index),
-            Value::from(1),
-            Value::String(shortanchor),
-            Value::String(name),
-        ]);
-    }
-    (objects, objtypes, objnames)
-}
-
-fn search_objects(env: &BuildEnvironment, doc_indices: &BTreeMap<String, usize>) -> SearchObjects {
-    let mut rows = Vec::new();
-    for ((program, option), (docname, anchor)) in &env.std.progoptions {
-        let fullname = program
-            .as_deref()
-            .map(|program| format!("{program}.{option}"))
-            .unwrap_or_else(|| option.clone());
-        rows.push((
-            "std",
-            fullname.clone(),
-            fullname,
-            "cmdoption".to_string(),
-            docname.clone(),
-            anchor.clone(),
-            1,
-        ));
-    }
-    for ((objtype, name), (docname, anchor)) in &env.std.objects {
-        let priority = match objtype.as_str() {
-            "confval" | "envvar" => 1,
-            _ => -1,
-        };
-        rows.push((
-            "std",
-            name.clone(),
-            name.clone(),
-            objtype.clone(),
-            docname.clone(),
-            anchor.clone(),
-            priority,
-        ));
-    }
-    for (name, module) in &env.py.modules {
-        rows.push((
-            "py",
-            name.clone(),
-            name.clone(),
-            "module".to_string(),
-            module.docname.clone(),
-            module.node_id.clone(),
-            0,
-        ));
-    }
-    for (name, object) in &env.py.objects {
-        rows.push((
-            "py",
-            name.clone(),
-            name.clone(),
-            object.objtype.clone(),
-            object.docname.clone(),
-            object.node_id.clone(),
-            if object.aliased { -1 } else { 1 },
-        ));
-    }
-
-    rows.sort_by(|a, b| {
-        a.0.cmp(b.0)
-            .then_with(|| a.1.cmp(&b.1))
-            .then_with(|| a.2.cmp(&b.2))
-            .then_with(|| a.3.cmp(&b.3))
-            .then_with(|| a.4.cmp(&b.4))
-            .then_with(|| a.5.cmp(&b.5))
-            .then_with(|| a.6.cmp(&b.6))
-    });
-
-    let mut type_indices = BTreeMap::<(String, String), usize>::new();
-    let mut objtypes = BTreeMap::new();
-    let mut objnames = BTreeMap::new();
-    let mut objects = BTreeMap::<String, Vec<[Value; 5]>>::new();
-    for (domain, fullname, _dispname, objtype, docname, anchor, priority) in rows {
+        let (domain, objtype) = split_object_type(&object.obj_type);
+        let priority = direct_object_priority(domain, objtype);
         if priority < 0 {
             continue;
         }
-        let Some(&doc_index) = doc_indices.get(&docname) else {
-            continue;
-        };
-        let key = (domain.to_string(), objtype.clone());
-        let type_index = if let Some(index) = type_indices.get(&key) {
-            *index
-        } else {
-            let index = type_indices.len();
-            type_indices.insert(key.clone(), index);
-            objtypes.insert(index.to_string(), format!("{}:{}", domain, objtype));
-            objnames.insert(
-                index.to_string(),
-                [
-                    domain.to_string(),
-                    objtype.clone(),
-                    object_type_label(domain, &objtype),
-                ],
-            );
-            index
-        };
-
-        let (prefix, name) = fullname
-            .rsplit_once('.')
-            .map(|(prefix, name)| (prefix.to_string(), name.to_string()))
-            .unwrap_or_else(|| (String::new(), fullname.clone()));
-        let shortanchor = if anchor == fullname {
-            String::new()
-        } else if anchor == format!("{}-{}", objtype, fullname) {
-            "-".to_string()
-        } else {
-            anchor
-        };
+        let fullname = py_html_escape(&object.name);
+        let dispname = py_html_escape(object.description.as_deref().unwrap_or(&object.name));
+        let (prefix, name) = rpartition_dot(&dispname);
+        let type_index = types.index_of(domain, objtype);
+        let anchor = object.anchor.as_deref().unwrap_or_default();
         objects.entry(prefix).or_default().push([
-            Value::from(doc_index),
+            Value::from(object.docname_idx),
             Value::from(type_index),
             Value::from(priority),
-            Value::String(shortanchor),
+            Value::String(short_anchor(anchor, &fullname, objtype)),
             Value::String(name),
         ]);
     }
-    (objects, objtypes, objnames)
+    (objects, types.objtypes, types.objnames)
 }
 
-fn object_type_label(domain: &str, objtype: &str) -> String {
-    if domain == "std" {
-        return match objtype {
-            "cmdoption" => "program option",
-            "confval" => "configuration value",
-            "envvar" => "environment variable",
-            "term" => "glossary term",
-            "token" => "grammar token",
-            "label" => "reference label",
-            "doc" => "document",
-            _ => objtype,
-        }
-        .to_string();
+/// A direct-path `obj_type` is `domain:type`, or a bare std type.
+pub(crate) fn split_object_type(obj_type: &str) -> (&str, &str) {
+    obj_type.split_once(':').unwrap_or(("std", obj_type))
+}
+
+/// The search priority of a direct-path object, which has no domain
+/// registry behind it: Sphinx's std table, and the Python domain's `0` for
+/// a module and `1` for anything else (aliases are a registry concept).
+pub(crate) fn direct_object_priority(domain: &str, objtype: &str) -> i32 {
+    match domain {
+        "std" => std_search_priority(objtype),
+        "py" if objtype == "module" => 0,
+        _ => 1,
     }
-    match objtype {
-        "classmethod" => "class method",
-        "staticmethod" => "static method",
-        "type" => "type alias",
-        _ => objtype,
+}
+
+/// `prefix, _, name = dispname.rpartition('.')`.
+fn rpartition_dot(dispname: &str) -> (String, String) {
+    match dispname.rsplit_once('.') {
+        Some((prefix, name)) => (prefix.to_string(), name.to_string()),
+        None => (String::new(), dispname.to_string()),
     }
-    .to_string()
+}
+
+/// The anchor abbreviation `get_objects` applies: `''` for an anchor equal
+/// to the full name, `'-'` for `type-fullname`, else the anchor itself.
+fn short_anchor(anchor: &str, fullname: &str, objtype: &str) -> String {
+    if anchor == fullname {
+        String::new()
+    } else if anchor == format!("{objtype}-{fullname}") {
+        "-".to_string()
+    } else {
+        anchor.to_string()
+    }
+}
+
+/// Python `html.escape(s)` with its default `quote=True`.
+fn py_html_escape(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#x27;")
 }
 
 /// Search result returned by the search index
@@ -1681,13 +1842,17 @@ mod tests {
     }
 
     #[test]
-    fn search_drops_words_whose_stems_are_stopwords_in_both_paths() {
-        let words = ["all", "underlying", "others", "ifs", "mostly"];
-        for word in words {
+    fn words_whose_stems_are_stopwords_are_indexed_verbatim_in_both_paths() {
+        // `IndexBuilder.feed`: "the stemmer must not remove words from
+        // search index" — only a word that is a stopword *itself* is dropped.
+        assert_eq!(search_term("all"), None);
+        assert_eq!(search_term("some"), None);
+        let kept = ["underlying", "others", "ifs", "mostly", "Some", "SOME", "A"];
+        for word in kept {
             assert_eq!(
-                search_term(word),
-                None,
-                "Sphinx drops the stopword stem for {word:?}"
+                search_term(word).as_deref(),
+                Some(word),
+                "Sphinx keeps {word:?} unstemmed"
             );
         }
 
@@ -1696,20 +1861,50 @@ mod tests {
             .add_document(
                 "test".to_string(),
                 "test.html".to_string(),
-                words.join(" "),
-                &words.join(" "),
+                "Title".to_string(),
+                "all some underlying others ifs mostly Some SOME A",
             )
             .unwrap();
-        for word in words {
-            assert!(!index.terms.contains_key(word), "indexed {word:?}");
+        for word in kept {
+            assert!(index.terms.contains_key(word), "missing {word:?}");
         }
+        assert!(!index.terms.contains_key("all"));
+        assert!(!index.terms.contains_key("some"));
         let frozen_index = index.to_sphinx_value();
         let frozen_terms = frozen_index["terms"]
             .as_object()
             .expect("frozen terms must be an object");
-        for word in words {
-            assert!(!frozen_terms.contains_key(word), "frozen {word:?}");
+        for word in kept {
+            assert!(frozen_terms.contains_key(word), "frozen {word:?}");
         }
+    }
+
+    #[test]
+    fn non_english_indexes_lowercase_and_drops_digits_only() {
+        let index = SearchIndex::new("de".to_string());
+        assert_eq!(index.term_for_word("Laufen").as_deref(), Some("laufen"));
+        assert_eq!(index.term_for_word("the").as_deref(), Some("the"));
+        assert_eq!(index.term_for_word("2024"), None);
+
+        // Title terms go through the same language rule as body terms.
+        let mut index = SearchIndex::new("de".to_string());
+        index
+            .add_document(
+                "test".to_string(),
+                "test.html".to_string(),
+                "Running Tests".to_string(),
+                "running tests",
+            )
+            .unwrap();
+        let value = index.to_sphinx_value();
+        assert_eq!(
+            value["titleterms"],
+            serde_json::json!({"running": 0, "tests": 0})
+        );
+        assert_eq!(
+            value["terms"],
+            serde_json::json!({"running": 0, "tests": 0})
+        );
     }
 
     #[derive(Debug)]
@@ -1725,9 +1920,10 @@ mod tests {
                 .expect("SPHINX_ULTRA_SEARCH_FIXTURE must point to a readable TSV"),
             None => include_str!("../tests/fixtures/search_english.tsv").to_string(),
         };
-        let headers: Vec<_> = content.lines().take(8).collect();
+        let headers: Vec<_> = content.lines().take(9).collect();
         assert!(headers.contains(&"# sphinx=9.1.0"));
         assert!(headers.contains(&"# docutils=0.22.4"));
+        assert!(headers.contains(&"# snowballstemmer=3.1.1"));
         assert!(headers.contains(&"# generator=tools/gen_search_english_fixture.py"));
         assert!(headers.contains(&"# columns=word<TAB>stem<TAB>term"));
         content
@@ -1778,14 +1974,25 @@ mod tests {
     }
 
     #[test]
-    fn english_search_matches_sphinx_stopwords_and_splitter() {
+    fn english_stopword_table_is_sphinx_s_and_bisectable() {
+        // Sphinx's `ENGLISH_STOPWORDS` has 174 entries; the golden fixture
+        // pins their effect word by word, this pins the table's shape.
         assert_eq!(ENGLISH_STOPWORDS.len(), 174);
-        for stopword in ENGLISH_STOPWORDS {
-            assert!(
-                is_english_stopword(stopword),
-                "missing Sphinx stopword {stopword:?}"
-            );
+        assert!(
+            ENGLISH_STOPWORDS.windows(2).all(|pair| pair[0] < pair[1]),
+            "the stopword table must stay sorted for binary_search"
+        );
+        for stopword in ["a", "can't", "doing", "it's", "yourselves"] {
+            assert!(is_english_stopword(stopword), "{stopword:?}");
         }
+        // The filter is case-sensitive: `Some` is not the stopword `some`.
+        for word in ["Some", "The", "document", ""] {
+            assert!(!is_english_stopword(word), "{word:?}");
+        }
+    }
+
+    #[test]
+    fn splitter_matches_python_word_regex() {
         for (input, expected) in SPLIT_CASES {
             assert_eq!(
                 search_words(input),
@@ -1798,17 +2005,25 @@ mod tests {
 
     #[test]
     fn english_search_terms_match_sphinx_edge_cases() {
+        // Apostrophes never reach the stemmer through `split` (`\w+` cuts
+        // `can't` into `can` and `t`), so only `\w`-only inputs are
+        // observable behaviour.
         let cases = [
             ("the", None),
+            ("The", Some("The")),
+            ("A", Some("A")),
             ("only", Some("onli")),
-            ("'s", Some("'s")),
-            ("dogs'", Some("dog")),
-            ("children's", Some("children")),
-            ("'quoted", Some("quot")),
-            ("O'Reilly", Some("o'reilli")),
+            ("inventory", Some("inventori")),
+            ("eveningly", Some("even")),
+            ("evening", Some("evening")),
+            ("dying", Some("die")),
+            ("exceedly", Some("exceed")),
+            ("exceeded", Some("exceed")),
+            ("agreed", Some("agre")),
             ("½", Some("½")),
             ("Ⅳ", Some("ⅳ")),
             ("¹", None),
+            ("2024", None),
         ];
         for (word, expected) in cases {
             assert_eq!(
@@ -1817,6 +2032,30 @@ mod tests {
                 "term mismatch for {word:?}"
             );
         }
+    }
+
+    #[test]
+    fn raw_html_is_indexed_without_tags_styles_or_scripts() {
+        let text = strip_html_tags(
+            "<p>rawhtmlword <b>boldword</b></p><STYLE>css { rule }</STYLE><script>var x;</script>",
+        );
+        assert_eq!(search_words(&text), vec!["rawhtmlword", "boldword"]);
+    }
+
+    #[test]
+    fn dumps_like_python_json_with_ensure_ascii_and_int_keys() {
+        let value = serde_json::json!({
+            "titles": ["Café \u{1F600}", "tab\there"],
+            "objtypes": {"0": "py:class", "10": "py:data", "2": "py:function"},
+            "alltitles": {"10": [[0, null]], "2": [[1, "two"]]},
+        });
+        let dumped = dumps_sphinx_index(&value).unwrap();
+        assert_eq!(
+            dumped,
+            "Search.setIndex({\"alltitles\":{\"10\":[[0,null]],\"2\":[[1,\"two\"]]},\
+             \"objtypes\":{\"0\":\"py:class\",\"2\":\"py:function\",\"10\":\"py:data\"},\
+             \"titles\":[\"Caf\\u00e9 \\ud83d\\ude00\",\"tab\\there\"]})"
+        );
     }
 
     const SPLIT_CASES: &[(&str, &[&str])] = &[
@@ -1839,13 +2078,19 @@ mod tests {
             &["Café", "naïve", "coöperate", "one", "two"],
         ),
         (
-            "á é C++ Rust's _private",
+            "a\u{301} e\u{301} C++ Rust's _private",
             &["a", "e", "C", "Rust", "s", "_private"],
         ),
         (
             "version 3.12.0 and U.S.A.",
             &["version", "3", "12", "0", "and", "U", "S", "A"],
         ),
+        // Vowel signs (`Mc`/`Mn`) split a Devanagari word where
+        // `char::is_alphanumeric` would keep it whole.
+        ("नमस्ते", &["नमस", "त"]),
+        // Enclosed alphanumerics are symbols (`So`), not letters.
+        ("ⓐⓑⓒ x", &["x"]),
+        ("a\u{345}b", &["a", "b"]),
     ];
 
     #[test]
@@ -1917,11 +2162,255 @@ mod tests {
         assert_eq!(value["objtypes"]["0"], "py:function");
         assert_eq!(
             value["objnames"]["0"],
-            serde_json::json!(["py", "function", "function"])
+            serde_json::json!(["py", "function", "Python function"])
         );
         assert_eq!(
             value["objects"][""],
             serde_json::json!([[0, 0, 1, "thing", "Thing"]])
+        );
+    }
+
+    #[test]
+    fn direct_search_drops_unsearchable_std_types_and_defaults_bare_types_to_std() {
+        let mut index = SearchIndex::new("en".to_string());
+        index
+            .add_document(
+                "index".to_string(),
+                "index.rst".to_string(),
+                "Welcome".to_string(),
+                "Body",
+            )
+            .unwrap();
+        index
+            .add_object("Zebra".to_string(), "index", None, "term", None)
+            .unwrap();
+        index
+            .add_object(
+                "MYVAR".to_string(),
+                "index",
+                Some("envvar-MYVAR".to_string()),
+                "envvar",
+                None,
+            )
+            .unwrap();
+        index
+            .add_object(
+                "pkg".to_string(),
+                "index",
+                Some("module-pkg".to_string()),
+                "py:module",
+                None,
+            )
+            .unwrap();
+
+        let value = index.to_sphinx_value();
+        // A glossary term has `searchprio=-1` and is not listed; the bare
+        // `envvar` is a std type at priority 1; a module is priority 0 and
+        // its `module-pkg` anchor abbreviates to `-`.
+        assert_eq!(
+            value["objects"][""],
+            serde_json::json!([[0, 0, 1, "-", "MYVAR"], [0, 1, 0, "-", "pkg"]])
+        );
+        assert_eq!(
+            value["objtypes"],
+            serde_json::json!({"0": "std:envvar", "1": "py:module"})
+        );
+        assert_eq!(
+            value["objnames"]["0"],
+            serde_json::json!(["std", "envvar", "environment variable"])
+        );
+        assert_eq!(
+            value["objnames"]["1"],
+            serde_json::json!(["py", "module", "Python module"])
+        );
+    }
+
+    /// The builder's read, merge and resolve steps in miniature: parse every
+    /// `(docname, source)` into one environment that knows each document's
+    /// title, metadata and toc, then feed them all. Reading everything
+    /// first matters — a toctree resolves against the tocs of the documents
+    /// it names.
+    fn feed_project(docs: &[(&str, &str)], env: &mut BuildEnvironment) -> SphinxIndexBuilder {
+        use crate::env::toctree as env_toctree;
+
+        let found: BTreeSet<String> = docs.iter().map(|(name, _)| (*name).to_string()).collect();
+        let mut read = Vec::new();
+        for (docname, source) in docs {
+            let doctree = crate::rst::parse_rst(
+                source,
+                &crate::rst::ParseOptions {
+                    source_path: format!("{docname}.rst"),
+                    sphinx: true,
+                    docname: (*docname).to_string(),
+                    found_docs: Some(std::sync::Arc::new(found.clone())),
+                    ..Default::default()
+                },
+            );
+            let title = env_toctree::document_title(&doctree);
+            env.longtitles.insert((*docname).to_string(), title.clone());
+            env.titles.insert((*docname).to_string(), title.clone());
+            env.metadata.insert(
+                (*docname).to_string(),
+                crate::env::metadata::document_metadata(&doctree),
+            );
+            let (toc, _) = env_toctree::build_toc(&doctree, docname);
+            for toctree in env_toctree::toctree_copies(&toc) {
+                env_toctree::note_toctree(env, docname, toctree);
+            }
+            env.tocs.insert((*docname).to_string(), toc);
+            env.all_docs.insert((*docname).to_string(), 0);
+            read.push((*docname, doctree, title.astext()));
+        }
+
+        let mut builder = SphinxIndexBuilder::new();
+        for (docname, doctree, title) in &read {
+            builder.feed(docname, &format!("{docname}.rst"), title, doctree, env);
+        }
+        builder
+    }
+
+    #[test]
+    fn feed_collects_titles_like_sphinx() {
+        let mut env = BuildEnvironment::default();
+        let builder = feed_project(
+            &[
+                (
+                    "index",
+                    "Welcome Guide\n=============\n\n\
+                     .. toctree::\n   :caption: Contents\n\n   child\n\n\
+                     .. toctree::\n   :hidden:\n   :caption: Hidden Caption\n\n   hidden\n\n\
+                     .. secretword in a comment\n\n\
+                     Installation Guide\n------------------\n\n\
+                     Some text. You can not do this.\n\n\
+                     Contents\n~~~~~~~~\n\nMore.\n",
+                ),
+                (
+                    "child",
+                    "Child Title\n===========\n\nChild body.\n\nChild Section\n-------------\n\nDeep.\n",
+                ),
+                ("hidden", "Hidden Doc\n==========\n\nhiddenword.\n"),
+            ],
+            &mut env,
+        );
+        let value = builder.freeze(&env);
+
+        assert_eq!(
+            value["docnames"],
+            serde_json::json!(["child", "hidden", "index"])
+        );
+        assert_eq!(
+            value["titles"],
+            serde_json::json!(["Child Title", "Hidden Doc", "Welcome Guide"])
+        );
+        // Section titles and the caption are titles; the hidden toctree's
+        // caption is not; the duplicate heading lists in document order.
+        assert_eq!(
+            value["alltitles"],
+            serde_json::json!({
+                "Child Section": [[0, "child-section"]],
+                "Child Title": [[0, null]],
+                "Contents": [[2, null], [2, "contents"]],
+                "Hidden Doc": [[1, null]],
+                "Installation Guide": [[2, "installation-guide"]],
+                "Welcome Guide": [[2, null]],
+            })
+        );
+        assert_eq!(
+            value["titleterms"],
+            serde_json::json!({
+                "child": 0, "content": 2, "doc": 1, "guid": 2, "hidden": 1,
+                "instal": 2, "section": 0, "titl": 0, "welcom": 2,
+            })
+        );
+        let terms = value["terms"].as_object().unwrap();
+        // Title words are not body terms for their own document, child
+        // titles are body text of the parent through the resolved toctree,
+        // and the comment is not indexed.
+        assert!(!terms.contains_key("welcom"));
+        assert_eq!(terms["child"], serde_json::json!(2));
+        assert_eq!(terms["section"], serde_json::json!(2));
+        assert!(!terms.contains_key("secretword"));
+        // The hidden document is indexed itself; only its parent's toctree
+        // does not mention it.
+        assert_eq!(terms["hiddenword"], serde_json::json!(1));
+        assert!(!terms.contains_key("hidden"));
+        // `Some`, `You` and `can` survive as unstemmed words; `not`, `do`
+        // and `this` are stopwords.
+        assert_eq!(terms["Some"], serde_json::json!(2));
+        assert_eq!(terms["You"], serde_json::json!(2));
+        assert_eq!(terms["can"], serde_json::json!(2));
+        assert!(!terms.contains_key("not"));
+        assert!(!terms.contains_key("thi"));
+    }
+
+    #[test]
+    fn nosearch_documents_keep_their_slot_and_contribute_nothing() {
+        let mut env = BuildEnvironment::default();
+        let builder = feed_project(
+            &[
+                (
+                    "hidden",
+                    ":nosearch:\n\nHidden Doc\n==========\n\nhiddenword text.\n",
+                ),
+                (
+                    "shown",
+                    ":tocdepth: 1\n\nShown Doc\n=========\n\nshownword text.\n",
+                ),
+            ],
+            &mut env,
+        );
+        let value = builder.freeze(&env);
+        assert_eq!(value["docnames"], serde_json::json!(["hidden", "shown"]));
+        assert_eq!(value["titles"], serde_json::json!(["", "Shown Doc"]));
+        assert_eq!(
+            value["alltitles"],
+            serde_json::json!({"Shown Doc": [[1, null]]})
+        );
+        // The leading field list is metadata, not body text.
+        assert_eq!(
+            value["terms"],
+            serde_json::json!({"shownword": 1, "text": 1})
+        );
+    }
+
+    #[test]
+    fn index_entries_are_split_like_split_index_msg() {
+        let mut env = BuildEnvironment::default();
+        env.index_entries.insert(
+            "index".to_string(),
+            vec![
+                crate::env::IndexEntryRecord {
+                    entry_type: "pair".to_string(),
+                    value: "alpha; beta".to_string(),
+                    target_id: "index-0".to_string(),
+                    main: false,
+                    category_key: None,
+                },
+                crate::env::IndexEntryRecord {
+                    entry_type: "single".to_string(),
+                    value: "Zebra".to_string(),
+                    target_id: "term-Zebra".to_string(),
+                    main: true,
+                    category_key: None,
+                },
+                crate::env::IndexEntryRecord {
+                    entry_type: "pair".to_string(),
+                    value: "lonely".to_string(),
+                    target_id: "index-1".to_string(),
+                    main: false,
+                    category_key: None,
+                },
+            ],
+        );
+        let builder = feed_project(&[("index", "T\n=\n\nBody.\n")], &mut env);
+        let value = builder.freeze(&env);
+        assert_eq!(
+            value["indexentries"],
+            serde_json::json!({
+                "alpha": [[0, "index-0", false]],
+                "beta": [[0, "index-0", false]],
+                "zebra": [[0, "term-Zebra", true]],
+            })
         );
     }
 }

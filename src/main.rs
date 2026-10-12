@@ -3,7 +3,7 @@ use clap::{ArgAction, Parser, Subcommand};
 use log::{info, warn};
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use sphinx_ultra::{analyze_project, BuildConfig, SphinxBuilder};
 
@@ -319,6 +319,24 @@ async fn run_build(args: RunArgs) -> Result<i32> {
     // i.e. after conf.py AND after every override — a rejected value only
     // warns, and the build continues with it.
     for message in config.validate() {
+        warn!("{}", message);
+        config_warnings.push(message);
+    }
+    // ... and checks that a configured logo/favicon exists, also at
+    // `config-inited`, dropping the setting when it does not.
+    let confdir = match (&args.config_file, &args.confdir) {
+        (Some(config_file), _) => config_file
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| args.source.clone()),
+        (None, Some(confdir)) if confdir.is_dir() => confdir.clone(),
+        (None, Some(conf_py)) => conf_py
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| args.source.clone()),
+        (None, None) => args.source.clone(),
+    };
+    for message in config.validate_html_logo_and_favicon(&confdir) {
         warn!("{}", message);
         config_warnings.push(message);
     }
