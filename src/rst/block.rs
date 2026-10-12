@@ -5994,17 +5994,22 @@ impl BlockParser {
             }
             None => crate::env::toctree::ResolvedEntries::default(),
         };
+        let caption = match opt_get(&input.options, "caption") {
+            Some(OptVal::Str(c)) => Some(c.clone()),
+            _ => None,
+        };
         self.toctree_records.push(super::ToctreeRecord {
             glob,
             entries: entries.clone(),
+            caption: caption.clone(),
             source: input.span.source,
             line: input.lineno,
             warnings: resolved.warnings.clone(),
         });
         let mut toctree = Node::elem("toctree", input.span);
-        match opt_get(&input.options, "caption") {
+        match caption {
             // pformat renders a Python None attr value as "True".
-            Some(OptVal::Str(c)) => toctree.set("caption", AttrValue::Str(c.clone())),
+            Some(c) => toctree.set("caption", AttrValue::Str(c)),
             _ => toctree.set("caption", AttrValue::Str("True".to_string())),
         }
         toctree.set("entries", resolved.entries_attr());

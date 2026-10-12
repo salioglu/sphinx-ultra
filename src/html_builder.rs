@@ -8,6 +8,7 @@ use tokio::fs;
 
 use crate::config::BuildConfig;
 use crate::document::Document;
+use crate::inventory::{InvObject, InventoryFile};
 use crate::template::TemplateEngine;
 use crate::utils;
 
@@ -696,66 +697,125 @@ impl HTMLBuilder {
     }
 
     /// Dump search index
-    pub async fn dump_search_index(
-        &self,
-        _search_index: &crate::search::SearchIndex,
-    ) -> Result<()> {
+    pub async fn dump_search_index(&self, search_index: &crate::search::SearchIndex) -> Result<()> {
         if !self.search {
             return Ok(());
         }
 
         info!("Dumping search index");
 
-        // TODO: Implement search index dumping
         let search_index_path = self.outdir.join(&self.searchindex_filename);
-        let search_data = serde_json::json!({
-            "docnames": [],
-            "filenames": [],
-            "titles": [],
-            "terms": {},
-            "objects": {},
-            "objnames": {},
-            "objtypes": {},
-        });
-
-        fs::write(
-            search_index_path,
-            serde_json::to_string_pretty(&search_data)?,
-        )
-        .await?;
+        let contents = crate::search::dumps_sphinx_index(&search_index.to_sphinx_value())?;
+        fs::write(search_index_path, contents).await?;
 
         Ok(())
     }
 
     /// Write build info file
     pub async fn write_build_info(&self) -> Result<()> {
-        let build_info = serde_json::json!({
-            "config": {
-                "extensions": [],
-                "templates_path": [],
-                "source_suffix": ".rst",
-                "master_doc": self.config.root_doc.as_deref().unwrap_or("index"),
-                "version": self.config.version.as_deref().unwrap_or(""),
-                "release": self.config.release.as_deref().unwrap_or(""),
-                "project": self.config.project,
-                "copyright": self.config.copyright.as_deref().unwrap_or(""),
-                "language": self.config.language.as_deref().unwrap_or("en"),
-            },
-            "tags": [],
-            "version": env!("CARGO_PKG_VERSION"),
-        });
-
         let build_info_path = self.outdir.join(".buildinfo");
-        fs::write(build_info_path, serde_json::to_string_pretty(&build_info)?).await?;
+        fs::write(
+            build_info_path,
+            crate::builder::sphinx_build_info_contents(&self.config, &self.config.tags)?,
+        )
+        .await?;
 
         Ok(())
     }
 
+    /// Write the direct builder's inventory from the same search-index object
+    /// records used by its Sphinx-shaped JSON output. The full builder has
+    /// richer environment registries, but both paths use `InventoryFile` for
+    /// the wire format and deterministic ordering.
+    pub async fn dump_object_inventory(
+        &self,
+        search_index: &crate::search::SearchIndex,
+    ) -> Result<()> {
+        let mut std_objects = vec![
+            InvObject {
+                name: "genindex".to_string(),
+                objtype: "label".to_string(),
+                priority: -1,
+                docname: "genindex".to_string(),
+                anchor: String::new(),
+                dispname: "Index".to_string(),
+            },
+            InvObject {
+                name: "modindex".to_string(),
+                objtype: "label".to_string(),
+                priority: -1,
+                docname: "modindex".to_string(),
+                anchor: String::new(),
+                dispname: "Module Index".to_string(),
+            },
+            InvObject {
+                name: "py-modindex".to_string(),
+                objtype: "label".to_string(),
+                priority: -1,
+                docname: "py-modindex".to_string(),
+                anchor: String::new(),
+                dispname: "Python Module Index".to_string(),
+            },
+            InvObject {
+                name: "search".to_string(),
+                objtype: "label".to_string(),
+                priority: -1,
+                docname: "search".to_string(),
+                anchor: String::new(),
+                dispname: "Search Page".to_string(),
+            },
+        ];
+        for (index, docname) in search_index.docnames.iter().enumerate() {
+            std_objects.push(InvObject {
+                name: docname.clone(),
+                objtype: "doc".to_string(),
+                priority: -1,
+                docname: docname.clone(),
+                anchor: String::new(),
+                dispname: search_index.titles.get(index).cloned().unwrap_or_default(),
+            });
+        }
+
+        let mut py_objects = Vec::new();
+        for object in search_index.objects.values() {
+            let Some((domain, objtype)) = object.obj_type.split_once(':') else {
+                continue;
+            };
+            let target_docname = search_index.docnames.get(object.docname_idx);
+            let Some(target_docname) = target_docname else {
+                continue;
+            };
+            let destination = match domain {
+                "std" => &mut std_objects,
+                "py" => &mut py_objects,
+                _ => continue,
+            };
+            destination.push(InvObject {
+                name: object.name.clone(),
+                objtype: objtype.to_string(),
+                priority: 1,
+                docname: target_docname.clone(),
+                anchor: object.anchor.clone().unwrap_or_default(),
+                dispname: object
+                    .description
+                    .clone()
+                    .unwrap_or_else(|| object.name.clone()),
+            });
+        }
+
+        let domains = [("std", std_objects), ("py", py_objects)];
+        InventoryFile::dump(
+            self.outdir.join(INVENTORY_FILENAME),
+            &self.config.project,
+            self.config.version.as_deref().unwrap_or(""),
+            &domains,
+            |docname| format!("{docname}.html"),
+        )
+        .await
+    }
+
     /// Finish the build process
     ///
-    /// Object-inventory dumping used to happen here too; it was removed
-    /// along with the dead `BuildEnvironment`-coupled `dump_inventory`
-    /// (M2 wave 4 task 4) and will come back with a decoupled signature.
     pub async fn finish(&mut self, search_index: &crate::search::SearchIndex) -> Result<()> {
         info!("Finishing HTML build");
 
@@ -767,6 +827,10 @@ impl HTMLBuilder {
 
         // Dump search index
         self.dump_search_index(search_index).await?;
+
+        // Dump the object inventory through the same writer as the full
+        // SphinxBuilder path.
+        self.dump_object_inventory(search_index).await?;
 
         // Write build info
         self.write_build_info().await?;
