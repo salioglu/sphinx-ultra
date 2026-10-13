@@ -60,22 +60,28 @@ fn is_pre_bibliographic(node: &Node) -> bool {
         || node.kind == "decoration"
 }
 
+/// The field list docutils' `DocInfo` transform would turn into the
+/// document's `docinfo`: the first child that is not `PreBibliographic`,
+/// when that child is a field list. Sphinx's `MetadataCollector` pops that
+/// node out of the doctree, so a consumer walking the tree for Sphinx's
+/// view of it (the search index) skips exactly this node.
+pub(crate) fn docinfo_field_list(doctree: &Doctree) -> Option<&Node> {
+    doctree
+        .root
+        .children
+        .iter()
+        .find(|node| !is_pre_bibliographic(node))
+        .filter(|first| first.kind == kinds::FIELD_LIST)
+}
+
 /// The document's metadata: field name -> field body text, empty when the
 /// document does not open with a field list.
 pub fn document_metadata(doctree: &Doctree) -> BTreeMap<String, String> {
     let mut metadata = BTreeMap::new();
 
-    let Some(first) = doctree
-        .root
-        .children
-        .iter()
-        .find(|node| !is_pre_bibliographic(node))
-    else {
+    let Some(first) = docinfo_field_list(doctree) else {
         return metadata;
     };
-    if first.kind != kinds::FIELD_LIST {
-        return metadata;
-    }
 
     for field in &first.children {
         if field.kind != kinds::FIELD {

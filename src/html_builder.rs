@@ -527,9 +527,10 @@ impl HTMLBuilder {
         utils::relative_uri(from, to, &self.link_suffix)
     }
 
-    /// Get target URI for a document
+    /// Get target URI for a document: `quote(docname) + self.link_suffix`,
+    /// as `StandaloneHTMLBuilder.get_target_uri` percent-encodes it.
     pub fn get_target_uri(&self, docname: &str) -> String {
-        format!("{}{}", docname, self.link_suffix)
+        format!("{}{}", utils::quote_url_path(docname), self.link_suffix)
     }
 
     /// Generate indices (mirrors Sphinx's gen_indices)
@@ -726,45 +727,13 @@ impl HTMLBuilder {
     /// Write the direct builder's inventory from the same search-index object
     /// records used by its Sphinx-shaped JSON output. The full builder has
     /// richer environment registries, but both paths use `InventoryFile` for
-    /// the wire format and deterministic ordering.
+    /// the wire format, the std domain's preseeded labels, and the one
+    /// priority table the search index applies to the same objects.
     pub async fn dump_object_inventory(
         &self,
         search_index: &crate::search::SearchIndex,
     ) -> Result<()> {
-        let mut std_objects = vec![
-            InvObject {
-                name: "genindex".to_string(),
-                objtype: "label".to_string(),
-                priority: -1,
-                docname: "genindex".to_string(),
-                anchor: String::new(),
-                dispname: "Index".to_string(),
-            },
-            InvObject {
-                name: "modindex".to_string(),
-                objtype: "label".to_string(),
-                priority: -1,
-                docname: "modindex".to_string(),
-                anchor: String::new(),
-                dispname: "Module Index".to_string(),
-            },
-            InvObject {
-                name: "py-modindex".to_string(),
-                objtype: "label".to_string(),
-                priority: -1,
-                docname: "py-modindex".to_string(),
-                anchor: String::new(),
-                dispname: "Python Module Index".to_string(),
-            },
-            InvObject {
-                name: "search".to_string(),
-                objtype: "label".to_string(),
-                priority: -1,
-                docname: "search".to_string(),
-                anchor: String::new(),
-                dispname: "Search Page".to_string(),
-            },
-        ];
+        let mut std_objects = crate::env::std_domain::preseeded_label_objects();
         for (index, docname) in search_index.docnames.iter().enumerate() {
             std_objects.push(InvObject {
                 name: docname.clone(),
@@ -778,11 +747,8 @@ impl HTMLBuilder {
 
         let mut py_objects = Vec::new();
         for object in search_index.objects.values() {
-            let Some((domain, objtype)) = object.obj_type.split_once(':') else {
-                continue;
-            };
-            let target_docname = search_index.docnames.get(object.docname_idx);
-            let Some(target_docname) = target_docname else {
+            let (domain, objtype) = crate::search::split_object_type(&object.obj_type);
+            let Some(target_docname) = search_index.docnames.get(object.docname_idx) else {
                 continue;
             };
             let destination = match domain {
@@ -793,7 +759,7 @@ impl HTMLBuilder {
             destination.push(InvObject {
                 name: object.name.clone(),
                 objtype: objtype.to_string(),
-                priority: 1,
+                priority: crate::search::direct_object_priority(domain, objtype),
                 docname: target_docname.clone(),
                 anchor: object.anchor.clone().unwrap_or_default(),
                 dispname: object
@@ -809,7 +775,7 @@ impl HTMLBuilder {
             &self.config.project,
             self.config.version.as_deref().unwrap_or(""),
             &domains,
-            |docname| format!("{docname}.html"),
+            |docname| self.get_target_uri(docname),
         )
         .await
     }

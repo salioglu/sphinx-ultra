@@ -1,46 +1,67 @@
 #!/usr/bin/env python3
 """Generate the Sphinx 9.1 English search-language fixture.
 
-Regenerate with:
+Regenerate from the locked oracle profile, which pins sphinx, docutils and
+snowballstemmer (the package that actually defines the stems):
 
-    PYTHONNOUSERSITE=1 uv run --no-project --offline --python 3.12 \
-        --with 'sphinx==9.1.0' --with 'docutils==0.22.4' \
+    uv sync --locked --python 3.12 --project tools/oracle_profiles/core
+    PYTHONNOUSERSITE=1 uv run --locked --python 3.12 \
+        --project tools/oracle_profiles/core \
         python tools/gen_search_english_fixture.py
 
 Generate the complete local oracle instead of the compact committed fixture:
 
-    PYTHONNOUSERSITE=1 uv run --no-project --offline --python 3.12 \
-        --with 'sphinx==9.1.0' --with 'docutils==0.22.4' \
+    PYTHONNOUSERSITE=1 uv run --locked --python 3.12 \
+        --project tools/oracle_profiles/core \
         python tools/gen_search_english_fixture.py --full \
         --output tests/fixtures/.search_english_full.tsv
 
 The fixture is generated from Sphinx's SearchEnglish class rather than from a
 hand-written Porter example. The committed fixture contains every token in the
 RST fixtures, focused review probes and Snowball edge cases, plus a deterministic
-frequency-ranked sample of the larger pinned-source corpus. ``--full`` emits
-all unique words from that corpus for local verification.
+frequency-ranked sample of the pinned sphinx and docutils sources. ``--full``
+emits all unique words from that corpus for local verification.
+
+Each row records the word, its Snowball stem, and the term ``IndexBuilder.feed``
+finally indexes: the stem when ``word_filter`` accepts it, else the word itself
+when that passes (``Some`` stems to the stopword ``some`` and is indexed
+verbatim), else ``-``.
 """
 
 import argparse
 from collections import Counter
-import sysconfig
+from importlib.metadata import version as package_version
 from pathlib import Path
 
 import docutils
 import sphinx
 from sphinx.search.en import SearchEnglish
 
-EXPECTED_DOCUTILS = "0.22.4"
-EXPECTED_SPHINX = "9.1.0"
+EXPECTED_VERSIONS = {
+    "docutils": "0.22.4",
+    "sphinx": "9.1.0",
+    "snowballstemmer": "3.1.1",
+}
 
-assert docutils.__version__ == EXPECTED_DOCUTILS, (
-    f"docutils {docutils.__version__} != {EXPECTED_DOCUTILS}; "
-    "regenerate with the pinned command in the module docstring"
-)
-assert sphinx.__version__ == EXPECTED_SPHINX, (
-    f"sphinx {sphinx.__version__} != {EXPECTED_SPHINX}; "
-    "regenerate with the pinned command in the module docstring"
-)
+
+def check_pinned_versions() -> None:
+    """Refuse to generate against anything but the pinned oracle versions.
+
+    An explicit check rather than ``assert``: ``python -O`` strips asserts,
+    and a fixture generated against snowballstemmer 2.x would silently
+    rewrite dozens of rows toward an older algorithm.
+    """
+    found = {
+        "docutils": docutils.__version__,
+        "sphinx": sphinx.__version__,
+        "snowballstemmer": package_version("snowballstemmer"),
+    }
+    for name, expected in EXPECTED_VERSIONS.items():
+        if found[name] != expected:
+            raise SystemExit(
+                f"{name} {found[name]} != {expected}; "
+                "regenerate with the pinned command in the module docstring"
+            )
 
 
 STANDARD_ENGLISH_SAMPLE = r"""
@@ -87,36 +108,23 @@ running walked cats skies tying lying news atlas early gently singly ugly
 """
 
 REQUIRED_WORDS = [
-    "skis",
-    "idly",
-    "sky",
-    "howe",
-    "cosmos",
-    "bias",
-    "andes",
-    "evening",
-    "dying",
     "vying",
-    "inning",
-    "outing",
-    "canning",
-    "herring",
-    "earring",
-    "geologist",
-    "analogist",
-    "carelessli",
-    "senselessli",
     "inventory",
-    "only",
     "whatever",
-    "'s",
-    "dogs'",
-    "children's",
-    "'quoted",
-    "O'Reilly",
     "½",
     "Ⅳ",
     "¹",
+    # Words whose stem is a stopword but which are not stopwords themselves:
+    # `feed` indexes them verbatim.
+    "Some",
+    "SOME",
+    "A",
+    "The",
+    "If",
+    "underlying",
+    "others",
+    "ifs",
+    "mostly",
     # Snowball's English exception lists.
     "skis",
     "skies",
@@ -144,7 +152,20 @@ REQUIRED_WORDS = [
     "proceed",
     "exceed",
     "succeed",
-    # Step 1b probes.
+    # Step 1b probes: the `eed`/`eedly` prefix exceptions and the `ing`-only
+    # `a_4` exceptions of Snowball 3.
+    "exceedly",
+    "proceedly",
+    "succeedly",
+    "exceeded",
+    "agreed",
+    "eveningly",
+    "dyingly",
+    "lyingly",
+    "outingly",
+    "canningly",
+    "preevening",
+    "flying",
     "evening",
     "pasting",
     "filing",
@@ -217,6 +238,9 @@ REQUIRED_WORDS = [
     "carelessli",
     "senselessli",
 ]
+# Insertion-ordered dedupe; the list above is easier to maintain by topic
+# than to keep free of repeats.
+REQUIRED_WORDS = list(dict.fromkeys(REQUIRED_WORDS))
 
 SOURCE_SUFFIXES = {
     ".cfg",
@@ -279,13 +303,30 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
+def indexed_term(english: SearchEnglish, word: str) -> str | None:
+    """What ``IndexBuilder.feed`` records for ``word``, or ``None``.
+
+    ``feed`` memoises ``stem(word).lower()`` and then keeps the unstemmed
+    word when only the stem is filtered out ("the stemmer must not remove
+    words from search index"); the same rule serves title words and body
+    words.
+    """
+    stemmed = english.stem(word).lower()
+    if english.word_filter(stemmed):
+        return stemmed
+    if english.word_filter(word):
+        return word
+    return None
+
+
 def fixture_row(english: SearchEnglish, word: str) -> str:
     stemmed = english.stem(word)
-    term = stemmed if english.word_filter(stemmed) else None
+    term = indexed_term(english, word)
     return f"{word}\t{stemmed}\t{term or '-'}"
 
 
 def main() -> int:
+    check_pinned_versions()
     args = parse_args()
     root = Path(__file__).resolve().parent.parent
     english = SearchEnglish({})
@@ -307,8 +348,12 @@ def main() -> int:
     words.extend(english.split(STANDARD_ENGLISH_SAMPLE))
     for path in supplemental_paths:
         words.extend(english.split(path.read_text(encoding="utf-8")))
+    # Only pinned sources feed the frequency sample: the sphinx and docutils
+    # packages are locked to one version each, so every machine selects the
+    # same 25,000 words. (The Python standard library is not pinned — its
+    # contents move with every patch release — and is left out for that
+    # reason.)
     source_roots = {
-        "python": Path(sysconfig.get_paths()["stdlib"]),
         "sphinx": Path(sphinx.__file__).resolve().parent,
         "docutils": Path(docutils.__file__).resolve().parent,
     }
@@ -322,9 +367,9 @@ def main() -> int:
     all_words = set(word_counts)
     required_words = set(rst_words) | set(REQUIRED_WORDS)
     if not required_words <= all_words:
-        raise AssertionError("required words were not added to the extraction")
+        raise SystemExit("required words were not added to the extraction")
     if not args.full and len(required_words) > args.limit:
-        raise ValueError(
+        raise SystemExit(
             f"{len(required_words)} required words exceed compact limit {args.limit}"
         )
 
@@ -346,8 +391,9 @@ def main() -> int:
         out_path = root / out_path
     out_path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
-        "# sphinx=9.1.0",
-        "# docutils=0.22.4",
+        f"# sphinx={EXPECTED_VERSIONS['sphinx']}",
+        f"# docutils={EXPECTED_VERSIONS['docutils']}",
+        f"# snowballstemmer={EXPECTED_VERSIONS['snowballstemmer']}",
         "# generator=tools/gen_search_english_fixture.py",
         f"# corpus={'full' if args.full else 'compact'}",
         f"# words={len(selected_words)}",

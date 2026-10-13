@@ -23,20 +23,23 @@
 //!    (`environment/__init__.py:778-823`, `adapters/toctree.py:562`), which
 //!    only make sense once every document has been noted.
 //!
+//! 5. [`resolve_toctree`] — `_resolve_toctree` (`adapters/toctree.py:119`):
+//!    the write-phase expansion of a `toctree` node into nested bullet
+//!    lists, as far as the search index needs it (see its doc comment for
+//!    what the HTML writer will still have to add).
+//!
 //! [`document_title`] is the neighbouring `TitleCollector.process_doc`
 //! (`collectors/title.py:27`), which shares this module's
 //! `SphinxContentsFilter` port.
 //!
 //! NOT here (later wave-4 tasks): `assign_section_numbers` /
 //! `assign_figure_numbers` (they write `toc_secnumbers`/`toc_fignumbers` and
-//! stamp `secnumber` onto the references this module builds) and
-//! `_resolve_toctree`, the write-phase renderer that turns a `toctree` node
-//! into the rendered navigation tree (and emits the `circular toctree
-//! references detected` diagnostic).
+//! stamp `secnumber` onto the references this module builds).
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::doctree::{kinds, AttrValue, Doctree, Node, Span};
+use crate::env::numbers::clean_astext;
 use crate::env::BuildEnvironment;
 use crate::matching;
 use crate::utils::py_repr_str;
@@ -970,6 +973,430 @@ fn first_section(node: &Node) -> Option<&Node> {
     None
 }
 
+// ---------------------------------------------------------------------------
+// 5. _resolve_toctree (sphinx/environment/adapters/toctree.py:119-559)
+// ---------------------------------------------------------------------------
+
+/// The docname and section name each virtual toctree target resolves to:
+/// `StandardDomain._virtual_doc_names` (`domains/std/__init__.py:784-788`),
+/// values included this time.
+const VIRTUAL_DOCS: [(&str, &str, &str); 3] = [
+    ("genindex", "genindex", "Index"),
+    ("modindex", "py-modindex", "Module Index"),
+    ("search", "search", "Search Page"),
+];
+
+/// The `(title, ref)` pairs of a `toctree` node's `entries` attribute, read
+/// back from the Python tuple reprs [`ResolvedEntries::entries_attr`] stores
+/// (`(None, 'intro')`, `('Custom', 'api')`).
+pub(crate) fn toctree_entries(toctree: &Node) -> Vec<(Option<String>, String)> {
+    let Some(AttrValue::List(items)) = toctree.get("entries") else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .filter_map(|item| parse_entry_repr(item))
+        .collect()
+}
+
+/// One `(None, 'ref')` / `('title', 'ref')` tuple repr.
+fn parse_entry_repr(item: &str) -> Option<(Option<String>, String)> {
+    let inner = item.strip_prefix('(')?.strip_suffix(')')?;
+    let (title, rest) = match inner.strip_prefix("None") {
+        Some(rest) => (None, rest),
+        None => {
+            let (title, rest) = parse_py_str(inner)?;
+            (Some(title), rest)
+        }
+    };
+    let (target, rest) = parse_py_str(rest.strip_prefix(", ")?)?;
+    rest.is_empty().then_some((title, target))
+}
+
+/// Inverse of [`py_repr_str`]: the CPython string literal `s` starts with,
+/// decoded, plus whatever follows it.
+fn parse_py_str(s: &str) -> Option<(String, &str)> {
+    let mut chars = s.char_indices();
+    let (_, quote) = chars.next()?;
+    if quote != '\'' && quote != '"' {
+        return None;
+    }
+    let mut out = String::new();
+    while let Some((at, c)) = chars.next() {
+        match c {
+            '\\' => {
+                let (_, escaped) = chars.next()?;
+                let hex_digits = match escaped {
+                    'n' => {
+                        out.push('\n');
+                        continue;
+                    }
+                    'r' => {
+                        out.push('\r');
+                        continue;
+                    }
+                    't' => {
+                        out.push('\t');
+                        continue;
+                    }
+                    'x' => 2,
+                    'u' => 4,
+                    'U' => 8,
+                    other => {
+                        out.push(other);
+                        continue;
+                    }
+                };
+                let mut code = 0u32;
+                for _ in 0..hex_digits {
+                    let (_, digit) = chars.next()?;
+                    code = code.checked_mul(16)? + digit.to_digit(16)?;
+                }
+                out.push(char::from_u32(code)?);
+            }
+            c if c == quote => return Some((out, &s[at + c.len_utf8()..])),
+            c => out.push(c),
+        }
+    }
+    None
+}
+
+fn attr_flag(node: &Node, key: &'static str) -> bool {
+    matches!(node.get(key), Some(AttrValue::Int(n)) if *n != 0)
+}
+
+/// `toctree.attributes.get('caption')` when it is truthy. The parser
+/// stores an absent caption the way docutils prints a `None` attribute,
+/// as the string `True` (`Element.starttag`), so a caption literally
+/// reading `True` is indistinguishable from none and treated as none.
+fn toctree_caption(toctree: &Node) -> Option<&String> {
+    match toctree.get("caption") {
+        Some(AttrValue::Str(caption)) if !caption.is_empty() && caption != "True" => Some(caption),
+        _ => None,
+    }
+}
+
+/// Resolve a `toctree` node into the nested bullet lists Sphinx writes in
+/// its place: `_resolve_toctree` (`adapters/toctree.py:119-220`) with the
+/// arguments the write phase passes for a document's own toctrees
+/// (`get_and_resolve_doctree`: `prune=True`, the node's own `maxdepth`,
+/// `collapse=False`, `includehidden=False`).
+///
+/// `None` is Sphinx's "renders to nothing": a hidden toctree, one with no
+/// entries, or one whose entries all name documents without a title.
+///
+/// The result carries exactly what the search index reads from the resolved
+/// tree — the caption as a `title`, every entry's title text inside
+/// `reference` nodes, pruned to `maxdepth`/`titlesonly`/`tocdepth` like
+/// Sphinx prunes it. Still missing for the HTML writer: the
+/// `toctree-l<N>`/`current` classes and `iscurrent` marks, the relative
+/// `refuri`s, and the `circular toctree references detected` warning (the
+/// circular entry is dropped as Sphinx drops it, but nothing is logged).
+/// `only` nodes are kept with their children: Sphinx evaluates them against
+/// the build tags, which this crate does not evaluate anywhere yet.
+pub fn resolve_toctree(env: &BuildEnvironment, docname: &str, toctree: &Node) -> Option<Node> {
+    if attr_flag(toctree, "hidden") {
+        return None;
+    }
+    let maxdepth = match toctree.get("maxdepth") {
+        Some(AttrValue::Int(depth)) => *depth,
+        _ => -1,
+    };
+    let ancestors = toctree_ancestors(&env.toctree_includes, docname);
+    let walk = ToctreeWalk {
+        env,
+        titles_only: attr_flag(toctree, "titlesonly"),
+        includehidden: attr_flag(toctree, "includehidden"),
+        ancestors: &ancestors,
+    };
+    let entries = walk.entries_from_toctree(toctree, &[], false);
+    if entries.is_empty() {
+        return None;
+    }
+
+    let mut newnode = Node::elem(kinds::COMPACT_PARAGRAPH, Span::ZERO);
+    if let Some(caption) = toctree_caption(toctree) {
+        let mut title = Node::elem(kinds::TITLE, Span::ZERO);
+        title
+            .children
+            .push(Node::text_node(caption.clone(), Span::ZERO));
+        newnode.children.push(title);
+    }
+    newnode.children.extend(entries);
+    newnode.set("toctree", AttrValue::Int(1));
+
+    // Prune to maxdepth. `_toctree_add_classes` runs here in Sphinx; it only
+    // stamps classes, which nothing below reads.
+    let newnode = toctree_copy(&newnode, 1, maxdepth);
+    match newnode.children.last() {
+        // `isinstance(newnode[-1], nodes.Element) and len(newnode[-1]) == 0`
+        // — no titles found.
+        Some(last) if last.kind != kinds::TEXT && last.children.is_empty() => None,
+        _ => Some(newnode),
+    }
+}
+
+/// The per-resolution context `_entries_from_toctree` threads through its
+/// recursion.
+struct ToctreeWalk<'a> {
+    env: &'a BuildEnvironment,
+    titles_only: bool,
+    includehidden: bool,
+    ancestors: &'a [String],
+}
+
+impl ToctreeWalk<'_> {
+    /// `_entries_from_toctree` (`adapters/toctree.py:223-306`).
+    fn entries_from_toctree(
+        &self,
+        toctreenode: &Node,
+        parents: &[String],
+        subtree: bool,
+    ) -> Vec<Node> {
+        let mut entries = Vec::new();
+        for (title, reference) in toctree_entries(toctreenode) {
+            let Some((mut toc, refdoc)) =
+                self.toctree_entry(title.as_deref(), &reference, toctreenode, parents)
+            else {
+                continue;
+            };
+
+            // `:titlesonly:` keeps each entry's top-level title and its
+            // sub-toctrees, and nothing else.
+            if self.titles_only {
+                for top_level in &mut toc.children {
+                    if top_level.children.len() > 1 {
+                        let subtrees = find_toctrees(top_level);
+                        if subtrees.is_empty() {
+                            top_level.children.remove(1);
+                        } else {
+                            top_level.children[1].children = subtrees;
+                        }
+                    }
+                }
+            }
+
+            let mut sub_parents = Vec::with_capacity(parents.len() + 1);
+            sub_parents.push(refdoc);
+            sub_parents.extend_from_slice(parents);
+            self.expand_sub_toctrees(&mut toc, &sub_parents);
+
+            entries.extend(toc.children);
+        }
+
+        if subtree {
+            entries
+        } else {
+            let mut list = Node::elem(kinds::BULLET_LIST, Span::ZERO);
+            list.children = entries;
+            vec![list]
+        }
+    }
+
+    /// `_toctree_entry` (`adapters/toctree.py:309-383`): the toc for one
+    /// entry plus the docname it refers to (`''` for the non-document
+    /// forms), or `None` where Sphinx raises `LookupError`/`KeyError` and
+    /// skips the entry.
+    fn toctree_entry(
+        &self,
+        title: Option<&str>,
+        reference: &str,
+        toctreenode: &Node,
+        parents: &[String],
+    ) -> Option<(Node, String)> {
+        if is_url(reference) {
+            // `_toctree_url_entry`: only a *missing* title falls back to
+            // the URL; an empty explicit title stays empty.
+            let text = title.unwrap_or(reference);
+            return Some((leaf_entry(text, reference), String::new()));
+        }
+        if reference == "self" {
+            // `_toctree_self_entry`: the referencing document's own title.
+            let parent = match toctreenode.get("parent") {
+                Some(AttrValue::Str(parent)) => parent.as_str(),
+                _ => "",
+            };
+            let text = match title {
+                Some(title) if !title.is_empty() => title.to_string(),
+                _ => self
+                    .env
+                    .titles
+                    .get(parent)
+                    .map(clean_astext)
+                    .unwrap_or_default(),
+            };
+            return Some((leaf_entry(&text, reference), String::new()));
+        }
+        if let Some((_, docname, sectionname)) =
+            VIRTUAL_DOCS.iter().find(|(name, _, _)| *name == reference)
+        {
+            // `_toctree_generated_entry`.
+            let text = match title {
+                Some(title) if !title.is_empty() => title,
+                _ => sectionname,
+            };
+            return Some((leaf_entry(text, docname), String::new()));
+        }
+        if parents.iter().any(|parent| parent == reference) {
+            // `circular toctree references detected, ignoring`.
+            return None;
+        }
+        // `env.tocs[ref]` — a KeyError here is the "non-existing document"
+        // path, which `resolve_entries` already warned about at read time.
+        let toc = self.env.tocs.get(reference)?;
+        let tocdepth = self
+            .env
+            .metadata
+            .get(reference)
+            .and_then(|metadata| metadata.get("tocdepth"))
+            .and_then(|depth| depth.trim().parse::<i64>().ok())
+            .unwrap_or(0);
+        Some((
+            self.standard_entry(title, reference, tocdepth, toc),
+            reference.to_string(),
+        ))
+    }
+
+    /// `_toctree_standard_entry` (`adapters/toctree.py:431-452`).
+    fn standard_entry(
+        &self,
+        title: Option<&str>,
+        reference: &str,
+        tocdepth: i64,
+        toc: &Node,
+    ) -> Node {
+        let mut toc =
+            if self.ancestors.iter().any(|ancestor| ancestor == reference) && tocdepth <= 0 {
+                toc.clone()
+            } else {
+                toctree_copy(toc, 2, tocdepth)
+            };
+        if let Some(title) = title.filter(|title| !title.is_empty()) {
+            if toc.children.len() == 1 {
+                replace_entry_title(&mut toc.children[0], reference, title);
+            }
+        }
+        toc
+    }
+
+    /// The `for sub_toc_node in list(toc.findall(addnodes.toctree))` loop
+    /// of `_entries_from_toctree`: every sub-toctree copied into a toc is
+    /// expanded in place; a hidden one stays as the bare node Sphinx leaves
+    /// behind (which renders, and indexes, as nothing).
+    fn expand_sub_toctrees(&self, node: &mut Node, parents: &[String]) {
+        let mut index = 0;
+        while index < node.children.len() {
+            if node.children[index].kind != kinds::TOCTREE {
+                self.expand_sub_toctrees(&mut node.children[index], parents);
+                index += 1;
+                continue;
+            }
+            if attr_flag(&node.children[index], "hidden") && !self.includehidden {
+                index += 1;
+                continue;
+            }
+            let sub_toc_node = node.children.remove(index);
+            let expanded = self.entries_from_toctree(&sub_toc_node, parents, true);
+            let inserted = expanded.len();
+            node.children.splice(index..index, expanded);
+            index += inserted;
+        }
+    }
+}
+
+/// `bullet_list > list_item > compact_paragraph > reference > Text`: the
+/// shape of the URL, `self` and generated entries.
+fn leaf_entry(text: &str, refuri: &str) -> Node {
+    let mut reference = Node::elem(kinds::REFERENCE, Span::ZERO);
+    reference.set("anchorname", AttrValue::Str(String::new()));
+    reference.set("refuri", AttrValue::Str(refuri.to_string()));
+    reference.children.push(Node::text_node(text, Span::ZERO));
+    let mut para = Node::elem(kinds::COMPACT_PARAGRAPH, Span::ZERO);
+    para.children.push(reference);
+    let mut item = Node::elem(kinds::LIST_ITEM, Span::ZERO);
+    item.children.push(para);
+    let mut toc = Node::elem(kinds::BULLET_LIST, Span::ZERO);
+    toc.children.push(item);
+    toc
+}
+
+/// An explicit `Title <ref>` replaces the text of the entry's own
+/// reference (`refuri == ref`, no anchor).
+fn replace_entry_title(node: &mut Node, reference: &str, title: &str) {
+    let is_entry_reference = node.kind == kinds::REFERENCE
+        && matches!(node.get("refuri"), Some(AttrValue::Str(uri)) if uri == reference)
+        && matches!(node.get("anchorname"), Some(AttrValue::Str(anchor)) if anchor.is_empty());
+    if is_entry_reference {
+        node.children = vec![Node::text_node(title, Span::ZERO)];
+        return;
+    }
+    for child in &mut node.children {
+        replace_entry_title(child, reference, title);
+    }
+}
+
+/// `findall(addnodes.toctree)` below `node`, in document order, as the
+/// childless copies the toc holds anyway.
+fn find_toctrees(node: &Node) -> Vec<Node> {
+    let mut out = Vec::new();
+    fn walk(node: &Node, out: &mut Vec<Node>) {
+        for child in &node.children {
+            if child.kind == kinds::TOCTREE {
+                out.push(child.shallow_copy());
+            }
+            walk(child, out);
+        }
+    }
+    walk(node, &mut out);
+    out
+}
+
+/// `_toctree_copy` (`adapters/toctree.py:485-493`): cut and copy a toc at
+/// `maxdepth` (`<= 0` means unlimited).
+fn toctree_copy(node: &Node, depth: i64, maxdepth: i64) -> Node {
+    let depth = (depth - 1).max(1);
+    let mut copied = toctree_copy_seq(node, depth, maxdepth, true);
+    debug_assert_eq!(copied.len(), 1);
+    copied.pop().unwrap_or_else(|| node.shallow_copy())
+}
+
+/// `_toctree_copy_seq` (`adapters/toctree.py:496-559`) with `collapse`
+/// off and `only` conditions taken as true (see [`resolve_toctree`]).
+fn toctree_copy_seq(node: &Node, depth: i64, maxdepth: i64, initial_call: bool) -> Vec<Node> {
+    match node.kind {
+        kinds::COMPACT_PARAGRAPH | kinds::LIST_ITEM => {
+            let mut copy = node.shallow_copy();
+            for child in &node.children {
+                copy.children
+                    .extend(toctree_copy_seq(child, depth, maxdepth, false));
+            }
+            vec![copy]
+        }
+        kinds::BULLET_LIST => {
+            let keep = depth <= 1 || depth <= maxdepth || maxdepth <= 0;
+            if !keep && !initial_call {
+                return Vec::new();
+            }
+            let mut copy = node.shallow_copy();
+            for child in &node.children {
+                copy.children
+                    .extend(toctree_copy_seq(child, depth + 1, maxdepth, false));
+            }
+            vec![copy]
+        }
+        // Sub-toctrees are kept for the caller to expand.
+        kinds::TOCTREE => vec![node.shallow_copy()],
+        kinds::ONLY => node
+            .children
+            .iter()
+            .flat_map(|child| toctree_copy_seq(child, depth, maxdepth, false))
+            .collect(),
+        // References and captions are deep-copied; anything else is
+        // "Unexpected node type" in Sphinx, kept whole here.
+        _ => vec![node.clone()],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1744,5 +2171,105 @@ mod tests {
             document_title(&doctree).pformat(),
             "<title>\n    <no title>\n"
         );
+    }
+
+    #[test]
+    fn toctree_entries_read_back_what_entries_attr_wrote() {
+        let entries = ResolvedEntries {
+            entries: vec![
+                (None, "intro".to_string()),
+                (Some("Custom <x>".to_string()), "api/it's".to_string()),
+                (
+                    Some("say \"hi\"".to_string()),
+                    "https://example.org/a?b=c".to_string(),
+                ),
+                (Some("tab\there".to_string()), "self".to_string()),
+            ],
+            ..Default::default()
+        };
+        let mut toctree = Node::elem(kinds::TOCTREE, Span::ZERO);
+        toctree.set("entries", entries.entries_attr());
+        assert_eq!(toctree_entries(&toctree), entries.entries);
+    }
+
+    /// A three-document project: `index` lists `child`, a URL and an
+    /// explicitly titled `leaf` at `:maxdepth: 2` with a caption; `child`
+    /// lists `leaf` itself from under its second-level section.
+    #[test]
+    fn resolve_toctree_expands_like_sphinx() {
+        let found = docs(&["index", "child", "leaf"]);
+        let mut env = BuildEnvironment::default();
+        let sources = [
+            ("index", "Root\n====\n\n.. toctree::\n   :maxdepth: 2\n   :caption: Contents\n\n   child\n   https://example.org\n   Explicit <leaf>\n"),
+            ("child", "Child\n=====\n\nChild Section\n-------------\n\nChild Sub\n~~~~~~~~~\n\n.. toctree::\n\n   leaf\n"),
+            ("leaf", "Leaf\n====\n\nLeaf Section\n------------\n"),
+        ];
+        let mut doctrees = BTreeMap::new();
+        for (docname, source) in sources {
+            let doctree = parse(source, docname, &found);
+            env.titles
+                .insert(docname.to_string(), document_title(&doctree));
+            let (toc, _) = build_toc(&doctree, docname);
+            for toctree in toctree_copies(&toc) {
+                note_toctree(&mut env, docname, toctree);
+            }
+            env.tocs.insert(docname.to_string(), toc);
+            doctrees.insert(docname, doctree);
+        }
+
+        let toctree = find_toctrees(&doctrees["index"].root)
+            .into_iter()
+            .next()
+            .expect("index has a toctree");
+        // The childless copy carries the attributes; resolution reads only those.
+        let resolved = resolve_toctree(&env, "index", &toctree).expect("renders");
+        assert_eq!(
+            resolved.pformat(),
+            concat!(
+                "<compact_paragraph toctree=\"1\">\n",
+                "    <title>\n",
+                "        Contents\n",
+                "    <bullet_list>\n",
+                "        <list_item>\n",
+                "            <compact_paragraph>\n",
+                "                <reference anchorname=\"\" internal=\"1\" refuri=\"child\">\n",
+                "                    Child\n",
+                "            <bullet_list>\n",
+                "                <list_item>\n",
+                "                    <compact_paragraph>\n",
+                "                        <reference anchorname=\"#child-section\" internal=\"1\" refuri=\"child\">\n",
+                "                            Child Section\n",
+                "        <list_item>\n",
+                "            <compact_paragraph>\n",
+                "                <reference anchorname=\"\" refuri=\"https://example.org\">\n",
+                "                    https://example.org\n",
+                "        <list_item>\n",
+                "            <compact_paragraph>\n",
+                "                <reference anchorname=\"\" internal=\"1\" refuri=\"leaf\">\n",
+                "                    Explicit\n",
+                "            <bullet_list>\n",
+                "                <list_item>\n",
+                "                    <compact_paragraph>\n",
+                "                        <reference anchorname=\"#leaf-section\" internal=\"1\" refuri=\"leaf\">\n",
+                "                            Leaf Section\n",
+            )
+        );
+        // (Verified against sphinx-build 9.1.0 on the same three sources:
+        // the child's own sub-toctree lives under its second-level section
+        // and is pruned by `:maxdepth: 2`, while the explicit entry keeps
+        // the leaf's first-level section.)
+
+        // A hidden toctree renders to nothing.
+        let mut hidden = toctree.clone();
+        hidden.set("hidden", AttrValue::Int(1));
+        assert!(resolve_toctree(&env, "index", &hidden).is_none());
+
+        // `:titlesonly:` keeps the child's title and its sub-toctree only.
+        let mut titles_only = toctree.clone();
+        titles_only.set("titlesonly", AttrValue::Int(1));
+        let resolved = resolve_toctree(&env, "index", &titles_only).expect("renders");
+        let text = resolved.astext();
+        assert!(text.contains("Child") && text.contains("Leaf"));
+        assert!(!text.contains("Child Section"));
     }
 }

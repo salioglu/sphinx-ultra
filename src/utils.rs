@@ -294,6 +294,24 @@ pub(crate) fn py_repr_str(s: &str) -> String {
     out
 }
 
+/// `urllib.parse.quote(s)` with its default `safe='/'`: every byte of the
+/// UTF-8 encoding outside `A-Za-z0-9`, `_.-~` and `/` becomes `%XX`
+/// (upper-case hex). `StandaloneHTMLBuilder.get_target_uri` applies it to
+/// a docname before appending the link suffix, so `my page` links as
+/// `my%20page.html` and reads back as one token in an inventory line.
+pub fn quote_url_path(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for byte in s.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_' | b'.' | b'-' | b'~' | b'/' => {
+                out.push(byte as char)
+            }
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
 /// Python `str.split()` with no separator: split on runs of [`py_isspace`],
 /// dropping the empty leading/trailing/interior fields. Rust's
 /// `str::split_whitespace` is the same shape over a NARROWER set (it misses
@@ -757,6 +775,17 @@ mod path_tests {
         assert_eq!(py_repr_str("a\x1fb\x7f"), "'a\\x1fb\\x7f'");
         assert_eq!(py_repr_str("a\u{2028}b"), "'a\\u2028b'");
         assert_eq!(py_repr_str("é ü"), "'é ü'", "printable non-ASCII stays raw");
+    }
+
+    /// `urllib.parse.quote` with the default `safe='/'`, probed on CPython
+    /// 3.12: `quote('my page')` → `'my%20page'`, `quote('sub/café')` →
+    /// `'sub/caf%C3%A9'`, `quote('a+b&c=d~e')` → `'a%2Bb%26c%3Dd~e'`.
+    #[test]
+    fn quote_url_path_matches_urllib_quote() {
+        assert_eq!(quote_url_path("my page"), "my%20page");
+        assert_eq!(quote_url_path("sub/café"), "sub/caf%C3%A9");
+        assert_eq!(quote_url_path("a+b&c=d~e"), "a%2Bb%26c%3Dd~e");
+        assert_eq!(quote_url_path("plain_name-1.2"), "plain_name-1.2");
     }
 
     /// [`simplify_verbatim`] over Windows-shaped literals, which is the
