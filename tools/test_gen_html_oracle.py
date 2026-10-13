@@ -2,6 +2,7 @@ import copy
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -12,30 +13,42 @@ import docutils
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 from tools.gen_html_oracle import (
+    WORK_ROOT_SENTINEL,
     DiscoveryError,
     DiscoveredCase,
     SchemaError,
+    assert_discovery_inputs_equal,
     assert_discovery_keys_equal,
     StorageError,
     _case_record_from_result,
+    _case_work_root,
+    _classify_runner_result,
     _format_root_leaks,
+    _replace_root_spellings,
     _run_reference_case,
+    _scan_needs_provenance,
     atomic_swap_profile,
     canonical_hash,
     capture_output_tree,
     classify_project,
     discover_cases,
+    discovered_input_hash,
     ensure_unique_case_keys,
     generate_profile,
     profile_record,
+    normalize_runtime_bytes,
     normalize_warnings,
     reduce_sphinx_error_report,
     _find_root_leaks,
+    verify_profile,
     verify_profile_lock,
     store_output_files,
     validate_needs_metadata,
     validate_index_document,
+    validate_profile_tree,
     store_blob,
+    warnings_sidecar_path,
+    zero_schema_timings,
 )
 
 
@@ -139,17 +152,22 @@ def test_rejects_hash_mismatch(tmp_path):
         validate_index_document(document, tmp_path)
 
 
-def test_normalize_warnings_replaces_all_runtime_roots_and_crash_log():
-    case_root = Path(r"C:\oracle\case-123")
+def test_normalize_warnings_replaces_all_runtime_roots_and_crash_log(tmp_path):
+    # Roots are built from tmp_path so the spellings are native to the host;
+    # the Windows-style crash log path is normalized on every platform.
+    case_root = tmp_path / "case-123"
     source_root = case_root / "source"
     output_root = case_root / "html" / "output"
     doctree_root = case_root / "html" / "doctree"
+    separator = os.sep
     raw = (
-        f"{source_root}\\index.rst:1: WARNING: source\n"
-        f"{output_root}\\index.html: output\n"
-        f"{doctree_root}\\index.doctree: doctree\n"
-        f"{case_root}\\warnings.txt: case\n"
+        f"{source_root}{separator}index.rst:1: WARNING: source\n"
+        f"{output_root}{separator}index.html: output\n"
+        f"{doctree_root}{separator}index.doctree: doctree\n"
+        f"{case_root}{separator}warnings.txt: case\n"
+        f"{case_root}-sibling: untouched\n"
         "C:\\tmp\\sphinx-err-abc123.log: crash\n"
+        "/tmp/sphinx-err-abc123.log: crash\n"
     ).encode()
 
     normalized = normalize_warnings(
@@ -160,12 +178,34 @@ def test_normalize_warnings_replaces_all_runtime_roots_and_crash_log():
         case_root=case_root,
     )
 
-    assert b"<SRCDIR>\\index.rst" in normalized.encode()
-    assert b"<OUTDIR>\\index.html" in normalized.encode()
-    assert b"<DOCTREEDIR>\\index.doctree" in normalized.encode()
-    assert b"<CASEDIR>\\warnings.txt" in normalized.encode()
-    assert b"<SPHINX_ERR_LOG>" in normalized.encode()
-    assert str(case_root).encode() not in normalized.encode()
+    assert f"<SRCDIR>{separator}index.rst" in normalized
+    assert f"<OUTDIR>{separator}index.html" in normalized
+    assert f"<DOCTREEDIR>{separator}index.doctree" in normalized
+    assert f"<CASEDIR>{separator}warnings.txt" in normalized
+    assert f"{case_root}-sibling" in normalized
+    assert normalized.count("<SPHINX_ERR_LOG>") == 2
+    assert f"{case_root}{separator}" not in normalized
+
+
+def test_text_and_runtime_normalizers_share_one_root_boundary(tmp_path):
+    root = tmp_path / "source"
+    spelled = str(root.resolve())
+    for suffix, replaced in (
+        ("/index.rst", True),
+        ("\\index.rst", True),
+        ("", True),
+        (": message", True),
+        (")", True),
+        ("-suffix", False),
+        ("_suffix", False),
+        (".txt", False),
+        ("2", False),
+    ):
+        data = f"{spelled}{suffix}".encode()
+        expected = f"<ROOT>{suffix}".encode() if replaced else data
+        assert _replace_root_spellings(data, root, b"<ROOT>") == expected, suffix
+        runtime = normalize_runtime_bytes(data, root)
+        assert runtime == (f"<SRCDIR>{suffix}".encode() if replaced else data), suffix
 
 
 def test_verify_profile_lock_checks_recorded_digest(tmp_path):
@@ -302,7 +342,7 @@ def test_rejects_needs_root_without_pinned_subtree(tmp_path):
         )
 
 
-def test_plantuml_app_extension_is_excluded_and_network_wins():
+def test_plantuml_app_extension_is_excluded_statically():
     files = {
         "conf.py": b"extensions = []\napp.setup_extension('sphinxcontrib.plantuml')\n",
         "index.rst": b"index\n=====\n",
@@ -312,12 +352,16 @@ def test_plantuml_app_extension_is_excluded_and_network_wins():
         "conf.py": b"extensions = ['sphinxcontrib.plantuml']\nintersphinx_mapping = {'x': ('https://example.invalid', None)}\n",
         "index.rst": b"index\n=====\n",
     }
-    assert classify_project(both)[0] == "excluded-network"
+    assert classify_project(both)[0] == "excluded-plantuml"
 
 
-def test_intersphinx_remote_target_with_local_inventory_is_allowed():
+def test_remote_urls_alone_do_not_exclude_a_project():
+    # Network use is decided by the runner's socket guard at build time, so a
+    # URL that is never fetched (html_baseurl, a local-inventory intersphinx
+    # entry) keeps the case in the corpus.
     files = {
         "conf.py": (
+            b"html_baseurl = 'https://example.invalid/docs/'\n"
             b"intersphinx_mapping = {'other': ('https://example.invalid/', 'local.inv')}\n"
         ),
         "index.rst": b"index\n=====\n",
@@ -326,22 +370,100 @@ def test_intersphinx_remote_target_with_local_inventory_is_allowed():
     assert classify_project(files) == (None, None)
 
 
+@pytest.mark.parametrize(
+    ("runner", "exit_code", "expected"),
+    [
+        ({"exception_type": None, "sphinx_error": False, "network_attempted": False}, 0, ("built", None, None)),
+        ({"exception_type": None, "sphinx_error": False, "network_attempted": False}, 1, ("build-error", None, None)),
+        (
+            {"exception_type": "sphinx_needs.errors.NeedsConfigException", "sphinx_error": True, "network_attempted": False},
+            2,
+            ("build-error", "sphinx_needs.errors.NeedsConfigException", None),
+        ),
+        (
+            {"exception_type": "builtins.SystemExit", "sphinx_error": False, "network_attempted": False},
+            1,
+            ("reference-crash", "builtins.SystemExit", None),
+        ),
+        (
+            {"exception_type": "builtins.RuntimeError", "sphinx_error": False, "network_attempted": True},
+            2,
+            ("excluded-network", None, "build attempted a network connection"),
+        ),
+        (
+            {"exception_type": None, "sphinx_error": False, "network_attempted": True},
+            0,
+            ("excluded-network", None, "build attempted a network connection"),
+        ),
+    ],
+)
+def test_runner_result_classification(runner, exit_code, expected):
+    assert _classify_runner_result(runner, exit_code) == expected
+
+
+def test_case_work_root_is_deterministic_and_carries_the_sentinel(tmp_path):
+    case = DiscoveredCase(
+        profile="core",
+        source_set="docutils_snippets",
+        case_id="docutils-0001",
+        origin_path="fixture",
+        files={"index.rst": b""},
+    )
+    root = _case_work_root(tmp_path, case)
+    assert root == _case_work_root(tmp_path, case)
+    assert WORK_ROOT_SENTINEL in root.parts
+    assert root.parts[-3:] == ("core", "docutils_snippets", "docutils-0001")
+    assert _find_root_leaks(str(root).encode(), [])
+    assert _find_root_leaks(f"term {WORK_ROOT_SENTINEL}".encode(), [])
+
+
+def test_needs_provenance_matches_whole_project_segment(tmp_path):
+    root = _fake_needs_root(tmp_path)
+    tests_root = root / "packages" / "sphinx-needs" / "tests"
+    (tests_root / "test_basic.py").write_text(
+        "def test_basic(test_app):\n"
+        "    app = test_app('doc_test/doc_basic')\n"
+        "\n"
+        "def test_basic_latex(test_app):\n"
+        "    app = test_app('doc_test/doc_basic_latex', buildername='latex')\n"
+        "\n"
+        "class TestNested:\n"
+        "    def test_windows(self):\n"
+        "        path = 'tests\\\\doc_test\\\\doc_basic\\\\index.rst'\n",
+        encoding="utf-8",
+    )
+    provenance = _scan_needs_provenance(root, {"doc_basic", "doc_basic_latex"})
+    module = "packages/sphinx-needs/tests/test_basic.py"
+    assert provenance["doc_basic"] == (
+        [
+            f"{module}::TestNested",
+            f"{module}::TestNested::test_windows",
+            f"{module}::test_basic",
+        ],
+        False,
+    )
+    assert provenance["doc_basic_latex"] == ([f"{module}::test_basic_latex"], True)
+
+
 def _run_runner(
     tmp_path: Path,
     *,
     conf: str | None,
     index: str = "Title\n=====\n",
     extra_args: list[str] | None = None,
+    extra_files: dict[str, str] | None = None,
 ):
     source = tmp_path / "src"
     output = tmp_path / "out"
     doctree = tmp_path / "doctree"
     warnings = tmp_path / "warnings.txt"
-    exception_file = tmp_path / "exception.txt"
-    source.mkdir()
+    result_file = tmp_path / "result.json"
+    source.mkdir(parents=True)
     if conf is not None:
         (source / "conf.py").write_text(conf, encoding="utf-8")
     (source / "index.rst").write_text(index, encoding="utf-8")
+    for name, contents in (extra_files or {}).items():
+        (source / name).write_text(contents, encoding="utf-8")
     command = [
         sys.executable,
         str(Path(__file__).with_name("html_oracle_runner.py")),
@@ -357,12 +479,16 @@ def _run_runner(
         "html",
         "--warnings-file",
         str(warnings),
-        "--exception-file",
-        str(exception_file),
+        "--result-file",
+        str(result_file),
     ]
     if extra_args:
         command.extend(extra_args)
     return subprocess.run(command, capture_output=True, text=True), output, warnings
+
+
+def _runner_result(tmp_path: Path) -> dict:
+    return json.loads((tmp_path / "result.json").read_text(encoding="utf-8"))
 
 
 def test_child_runner_denies_network_before_sphinx(tmp_path):
@@ -379,6 +505,104 @@ def test_child_runner_denies_network_before_sphinx(tmp_path):
     assert result.returncode != 0
     assert "network disabled by html oracle" in result.stderr
     assert not (output / "index.html").exists()
+    runner = _runner_result(tmp_path)
+    assert runner["network_attempted"] is True
+    assert runner["setup_error"] is None
+
+
+def test_child_runner_indexes_srcdir_token_for_quoted_source_paths(tmp_path):
+    # A kept literalinclude warning quotes the absolute source path in the
+    # page; the shim indexes <SRCDIR> instead of the path's components.
+    result, output, warnings = _run_runner(
+        tmp_path,
+        conf=(
+            "project = 'srcdir-test'\n"
+            "extensions = []\n"
+            "master_doc = 'index'\n"
+            "keep_warnings = True\n"
+        ),
+        index="Title\n=====\n\n.. literalinclude:: example.py\n   :pyobject: not_there\n",
+        extra_files={"example.py": "def present():\n    pass\n"},
+    )
+    assert result.returncode == 0, result.stderr
+    source = str((tmp_path / "src").resolve())
+    assert source in warnings.read_text(encoding="utf-8")
+    assert source in (output / "index.html").read_text(encoding="utf-8")
+    index_text = (output / "searchindex.js").read_text(encoding="utf-8")
+    assert index_text.startswith("Search.setIndex(") and index_text.endswith(")")
+    terms = json.loads(index_text[len("Search.setIndex(") : -1])["terms"]
+    assert terms["srcdir"] == 0
+    assert terms["exampl"] == 0
+    path_words = {word.lower() for word in re.findall(r"\w+", source)}
+    assert not path_words & set(terms), sorted(path_words & set(terms))
+
+
+def test_buildinfo_hash_ignores_the_virtualenv_location():
+    import sphinx
+    import sphinx.builders.html._build_info as build_info
+    from sphinx.util._serialise import stable_hash
+    from tools import html_oracle_runner
+
+    site_packages = Path(sphinx.__file__).resolve().parent.parent
+    original = build_info.stable_hash
+    try:
+        html_oracle_runner.install_buildinfo_normalizer()
+        values = {
+            "html_static_path": [str(site_packages / "sphinx" / "templates" / "graphviz" / "graphviz.css")],
+            "html_css_files": [("custom.css", {})],
+            "html_theme": "alabaster",
+        }
+        expected = stable_hash(
+            {
+                "html_static_path": ["<SITE_PACKAGES>/sphinx/templates/graphviz/graphviz.css"],
+                "html_css_files": [("custom.css", {})],
+                "html_theme": "alabaster",
+            }
+        )
+        assert build_info.stable_hash(values) == expected
+        assert build_info.stable_hash(values) != stable_hash(values)
+        # Values without the path hash exactly as Sphinx hashes them.
+        plain = {"html_theme": "alabaster", "html_sidebars": {"**": ["a.html"]}}
+        assert build_info.stable_hash(plain) == stable_hash(plain)
+    finally:
+        build_info.stable_hash = original
+
+
+def test_child_runner_reports_setup_failures_distinctly(tmp_path):
+    result, _output, _warnings = _run_runner(
+        tmp_path,
+        conf="project = 'setup-test'\nextensions = []\n",
+        extra_args=["--needs-root", str(tmp_path / "missing")],
+    )
+    # The core profile ignores --needs-root; a local_needs run without a
+    # usable checkout is the setup failure.
+    assert result.returncode == 0, result.stderr
+    assert _runner_result(tmp_path)["setup_error"] is None
+
+    source = tmp_path / "src"
+    command = [
+        sys.executable,
+        str(Path(__file__).with_name("html_oracle_runner.py")),
+        "--profile",
+        "local_needs",
+        "--sourcedir",
+        str(source),
+        "--outputdir",
+        str(tmp_path / "out2"),
+        "--doctree-dir",
+        str(tmp_path / "doctree2"),
+        "--builder",
+        "html",
+        "--warnings-file",
+        str(tmp_path / "warnings2.txt"),
+        "--result-file",
+        str(tmp_path / "result.json"),
+    ]
+    result = subprocess.run(command, capture_output=True, text=True)
+    assert result.returncode == 3
+    runner = _runner_result(tmp_path)
+    assert runner["setup_error"].startswith("RuntimeError: --needs-root is required")
+    assert runner["exception_type"] is None
 
 
 def test_child_runner_uses_pinned_core_versions(tmp_path):
@@ -396,22 +620,37 @@ def test_child_runner_uses_pinned_core_versions(tmp_path):
 
 
 @pytest.mark.parametrize(
-    ("conf_extra", "index", "expected"),
+    ("conf_extra", "index", "expected", "sphinx_error", "exit_code"),
     [
         (
             "from sphinx.errors import ConfigError\nraise ConfigError('bad config')",
             "Title\n=====\n",
             "sphinx.errors.ConfigError",
+            True,
+            2,
         ),
         (
             "numfig = True\nnumfig_format = {'figure': 'Figure %s', 'table': 'Table {number}'}",
             ".. table:: Table\n   :name: table\n\n   =====  =====\n   A      B\n   =====  =====\n   a      b\n   =====  =====\n",
             "builtins.TypeError",
+            False,
+            2,
+        ),
+        (
+            # SystemExit escapes Sphinx's own handler; the runner records it.
+            "import sys\n"
+            "def setup(app):\n"
+            "    app.connect('builder-inited', lambda app: sys.exit(1))\n",
+            "Title\n=====\n",
+            "builtins.SystemExit",
+            False,
+            1,
         ),
     ],
 )
-def test_child_runner_records_qualified_exception_type(tmp_path, conf_extra, index, expected):
-    exception_file = tmp_path / "exception.txt"
+def test_child_runner_records_qualified_exception_type(
+    tmp_path, conf_extra, index, expected, sphinx_error, exit_code
+):
     result, _output, _warnings = _run_runner(
         tmp_path,
         conf=(
@@ -422,8 +661,11 @@ def test_child_runner_records_qualified_exception_type(tmp_path, conf_extra, ind
         ),
         index=index,
     )
-    assert result.returncode == 2
-    assert exception_file.read_text(encoding="utf-8") == expected + "\n"
+    assert result.returncode == exit_code
+    runner = _runner_result(tmp_path)
+    assert runner["exception_type"] == expected
+    assert runner["sphinx_error"] is sphinx_error
+    assert runner["network_attempted"] is False
 
 
 def test_real_sphinx_error_report_reduction_keeps_prefix_header_and_exception(tmp_path):
@@ -491,12 +733,32 @@ def test_real_crash_reports_are_reduced_and_leak_free(
     assert _find_root_leaks(reduced.encode("utf-8"), [REPO_ROOT]) == []
 
 
-def test_root_leak_scan_rejects_runtime_host_details(tmp_path):
-    data = (
-        f"{tmp_path} /home/runner /tmp/sphinx-err-abc.log "
-        r"C:\work\.venv\Lib\site-packages\pkg Linux-6.17.0-1022-azure"
-    ).encode("utf-8")
-    assert _find_root_leaks(data, [tmp_path])
+@pytest.mark.parametrize(
+    "leak",
+    [
+        "/home/runner/work",
+        "/tmp/sphinx-err-abc.log",
+        r"C:\work\.venv\Lib\site-packages\pkg",
+        "/usr/lib/python3.12/site-packages/sphinx",
+        "Platform:             linux; (Linux-6.17.0-1022-azure-x86_64-with-glibc2.39)",
+        f"stemmed {WORK_ROOT_SENTINEL} term",
+    ],
+)
+def test_root_leak_scan_rejects_runtime_host_details(leak):
+    assert _find_root_leaks(f"text\n{leak}\ntext".encode("utf-8"), [])
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "installed into site-packages by pip",
+        "activate the .venv first",
+        "built for linux-x86_64 and windows-latest runners",
+        "see docs/runner/home",
+    ],
+)
+def test_root_leak_scan_accepts_ordinary_document_text(text):
+    assert _find_root_leaks(text.encode("utf-8"), []) == []
 
 
 def test_case_record_stores_exception_type(tmp_path):
@@ -703,6 +965,35 @@ def test_searchindex_policy_replaces_json_escaped_windows_root(tmp_path):
     assert stored == b"<SRCDIR>\\\\index.html\n"
 
 
+def test_schema_report_timings_are_zeroed(tmp_path):
+    report = (
+        b"{\n"
+        b'  "validation_summary": "Schema validation completed with 2 warning(s) in 0.013 seconds. Validated 3486.5 needs/s.",\n'
+        b'  "validated_needs_per_second": 3486.5,\n'
+        b'  "validated_needs_count": 2,\n'
+        b'  "validation_warnings": {}\n'
+        b"}"
+    )
+    expected = (
+        b"{\n"
+        b'  "validation_summary": "Schema validation completed with 2 warning(s) in 0.000 seconds. Validated 0 needs/s.",\n'
+        b'  "validated_needs_per_second": 0,\n'
+        b'  "validated_needs_count": 2,\n'
+        b'  "validation_warnings": {}\n'
+        b"}"
+    )
+    assert zero_schema_timings(report) == expected
+    records = store_output_files(
+        {"schema_violations.json": report, "other.json": report},
+        tmp_path / "profile",
+        "set",
+        "case",
+    )
+    stored = {record["logical_path"]: (tmp_path / "profile" / record["storage_path"]).read_bytes() for record in records}
+    assert stored["schema_violations.json"] == expected
+    assert stored["other.json"] == report
+
+
 def test_non_text_and_needs_json_source_root_leaks_are_still_rejected(tmp_path):
     source = tmp_path / "source"
     source.mkdir()
@@ -756,7 +1047,7 @@ def test_rejects_profile_without_platform(tmp_path):
         validate_index_document(document, tmp_path)
 
 
-def test_verify_warns_for_non_linux_reference_platform(tmp_path, capsys):
+def _basic_project_config(tmp_path: Path) -> Path:
     config = tmp_path / "cases.toml"
     config.write_text(
         """[[source_sets]]
@@ -769,14 +1060,117 @@ count = 1
 """,
         encoding="utf-8",
     )
+    return config
+
+
+def test_verify_warns_for_non_linux_reference_platform(tmp_path, capsys):
+    config = _basic_project_config(tmp_path)
     output = tmp_path / "oracle"
     generate_profile(REPO_ROOT, config, output, profile="core", jobs=1)
-    from tools.gen_html_oracle import verify_profile
+    index_path = output / "core" / "index.json"
+    document = json.loads(index_path.read_text(encoding="utf-8"))
+    document["profiles"]["core"]["platform"] = "darwin"
+    index_path.write_text(json.dumps(document), encoding="utf-8")
 
     verify_profile(REPO_ROOT, config, output, profile="core")
     output_text = capsys.readouterr().out
     assert "WARNING" in output_text
-    assert "platform" in output_text
+    assert "platform is 'darwin'" in output_text
+
+
+def test_verify_accepts_the_canonical_platform_silently(tmp_path, capsys):
+    config = _basic_project_config(tmp_path)
+    output = tmp_path / "oracle"
+    generate_profile(REPO_ROOT, config, output, profile="core", jobs=1)
+    index_path = output / "core" / "index.json"
+    document = json.loads(index_path.read_text(encoding="utf-8"))
+    document["profiles"]["core"]["platform"] = "linux"
+    index_path.write_text(json.dumps(document), encoding="utf-8")
+
+    verify_profile(REPO_ROOT, config, output, profile="core")
+    assert "WARNING" not in capsys.readouterr().out
+
+
+def test_verify_rejects_changed_inputs_under_unchanged_keys(tmp_path):
+    config = _basic_project_config(tmp_path)
+    cases = discover_cases(REPO_ROOT, config, profile="core")
+    ledger = [
+        {
+            "profile": case.profile,
+            "source_set": case.source_set,
+            "case_id": case.case_id,
+            "status": "built",
+            "input_sha256": discovered_input_hash(case),
+        }
+        for case in cases
+    ]
+    assert_discovery_inputs_equal(cases, ledger)
+    cases[0].files["index.rst"] = b"edited\n"
+    with pytest.raises(DiscoveryError, match="input_sha256 mismatch"):
+        assert_discovery_inputs_equal(cases, ledger)
+    ledger[0]["status"] = "excluded-network"
+    assert_discovery_inputs_equal(cases, ledger)
+
+
+def test_runtime_network_use_excludes_the_case(tmp_path):
+    case = DiscoveredCase(
+        profile="core",
+        source_set="html_projects",
+        case_id="network",
+        origin_path="synthetic",
+        files={
+            "conf.py": (
+                b"project = 'network'\nextensions = []\n"
+                b"import urllib.request\n"
+                b"try:\n"
+                b"    urllib.request.urlopen('https://example.invalid/objects.inv')\n"
+                b"except Exception:\n"
+                b"    pass\n"
+            ),
+            "index.rst": b"Title\n=====\n",
+        },
+    )
+    result = _run_reference_case(case, repo_root=REPO_ROOT, needs_root=None)
+    assert result["status"] == "excluded-network"
+    assert result["excluded_reason"] == "build attempted a network connection"
+    assert result["output_files"] == {}
+    assert result["root_leaks"] == []
+    record = _case_record_from_result(case, result, tmp_path / "profile")
+    assert record["status"] == "excluded-network"
+    assert record["excluded_reason"] == "build attempted a network connection"
+    assert record["input_files"] == [] and record["files"] == []
+    assert record["exit_code"] is None and record["warnings"] == ""
+    assert not (tmp_path / "profile").exists()
+
+
+def test_warning_sidecars_are_validated_against_the_ledger(tmp_path):
+    document = _document(tmp_path)
+    case = document["cases"][0]
+    case["warnings"] = "<SRCDIR>/index.rst:1: WARNING: sample\n"
+    case["input_sha256"] = canonical_hash(
+        [(item["logical_path"], item["sha256"]) for item in case["input_files"]]
+    )
+    case["tree_sha256"] = canonical_hash([])
+    sidecar = warnings_sidecar_path(tmp_path, "docutils_snippets", "case")
+    assert sidecar == tmp_path / "warnings" / "docutils_snippets" / "case.txt"
+    with pytest.raises(StorageError, match="missing warnings sidecar"):
+        validate_profile_tree(document, tmp_path)
+    sidecar.parent.mkdir(parents=True)
+    sidecar.write_bytes(b"different\n")
+    with pytest.raises(StorageError, match="sidecar differs"):
+        validate_profile_tree(document, tmp_path)
+    sidecar.write_bytes(case["warnings"].encode("utf-8"))
+    validate_profile_tree(document, tmp_path)
+    stale = tmp_path / "warnings" / "docutils_snippets" / "gone.txt"
+    stale.write_bytes(b"")
+    with pytest.raises(StorageError, match="unreferenced profile artifact: warnings/docutils_snippets/gone.txt"):
+        validate_profile_tree(document, tmp_path)
+    stale.unlink()
+    # An output file literally named warnings.txt is an ordinary artifact.
+    (tmp_path / "refs" / "docutils_snippets" / "case").mkdir(parents=True)
+    (tmp_path / "refs" / "docutils_snippets" / "case" / "warnings.txt").write_bytes(b"")
+    with pytest.raises(StorageError, match="unreferenced profile artifact: refs/docutils_snippets/case/warnings.txt"):
+        validate_profile_tree(document, tmp_path)
 
 
 def test_atomic_swap_failure_preserves_old_profile(tmp_path, monkeypatch):
@@ -816,7 +1210,13 @@ count = 1
     assert len(document["cases"]) == 1
     assert document["cases"][0]["status"] == "built"
     assert (output / "core" / "index.json").is_file()
+    assert (output / "core" / "warnings" / "html_projects" / "basic.txt").is_file()
     assert not (output / "core.staging").exists()
+    assert not (REPO_ROOT / "target" / "html-oracle" / "generator-work" / WORK_ROOT_SENTINEL / "core" / "html_projects" / "basic").exists()
+    tree_bytes = b"".join(
+        path.read_bytes() for path in (output / "core").rglob("*") if path.is_file()
+    )
+    assert WORK_ROOT_SENTINEL.encode() not in tree_bytes
 
 
 def test_generate_profile_is_identical_under_two_output_roots(tmp_path):

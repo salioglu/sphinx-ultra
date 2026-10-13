@@ -1,11 +1,25 @@
 #!/usr/bin/env python3
-"""Run one guarded, deterministic Sphinx oracle build in a child process."""
+"""Run one guarded, deterministic Sphinx oracle build in a child process.
+
+The runner reports to the generator through a JSON result file:
+
+* ``exception_type``: qualified type of the exception that ended the build,
+  including crashes Sphinx itself does not handle, or null when Sphinx
+  returned normally.
+* ``sphinx_error``: whether that exception is a ``sphinx.errors.SphinxError``;
+  the generator files those as build errors and everything else as a
+  reference crash.
+* ``network_attempted``: whether anything tried to open a network connection.
+  Such a case is excluded because its output depends on the network.
+* ``setup_error``: set when the runner's own preconditions failed before the
+  build started; the generator treats the run as fatal.
+"""
 
 from __future__ import annotations
 
 import argparse
 import itertools
-import subprocess
+import json
 import sys
 import uuid
 from pathlib import Path
@@ -15,8 +29,12 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+SETUP_FAILURE_EXIT_CODE = 3
+NETWORK_ATTEMPTS: list[str] = []
+
 
 def reject_network(*_args, **_kwargs):
+    NETWORK_ATTEMPTS.append("socket")
     raise RuntimeError("network disabled by html oracle")
 
 
@@ -30,14 +48,13 @@ def install_shims() -> None:
     uuid.uuid4 = lambda: uuid.UUID(int=next(uuid_counter), version=4)
 
 
-def _git(needs_root: Path, *arguments: str) -> str:
-    command = ["git", "-c", f"safe.directory={needs_root}", "-C", str(needs_root), *arguments]
-    result = subprocess.run(command, check=True, capture_output=True, text=True)
-    return result.stdout.strip()
+def use_needs_checkout(needs_root: Path) -> None:
+    """Import sphinx_needs from the pinned checkout instead of the venv wheel.
 
-
-def verify_needs_checkout(needs_root: Path) -> None:
-    from tools.gen_html_oracle import validate_needs_metadata
+    The git state of the checkout is verified once by the generator; the
+    child only verifies that the import resolves to the pinned source.
+    """
+    from tools.gen_html_oracle import validate_needs_module
 
     root = Path(needs_root).resolve()
     source_root = root / "packages" / "sphinx-needs" / "src"
@@ -45,13 +62,10 @@ def verify_needs_checkout(needs_root: Path) -> None:
     sys.modules.pop("sphinx_needs", None)
     import sphinx_needs
 
-    validate_needs_metadata(
+    validate_needs_module(
         root,
         module_file=Path(sphinx_needs.__file__),
         module_version=sphinx_needs.__version__,
-        commit=_git(root, "rev-parse", "HEAD"),
-        tree=_git(root, "rev-parse", "HEAD:packages/sphinx-needs"),
-        status=_git(root, "status", "--porcelain", "--", "packages/sphinx-needs"),
     )
 
 
@@ -79,35 +93,139 @@ def qualified_exception_type(exception: BaseException) -> str:
     return f"{exception_class.__module__}.{exception_class.__qualname__}"
 
 
-def install_exception_handler(exception_file: Path) -> None:
+class RunnerResult:
+    def __init__(self) -> None:
+        self.exception_type: str | None = None
+        self.sphinx_error = False
+        self.setup_error: str | None = None
+
+    def record(self, exception: BaseException) -> None:
+        from sphinx.errors import SphinxError
+
+        self.exception_type = qualified_exception_type(exception)
+        self.sphinx_error = isinstance(exception, SphinxError)
+
+    def write(self, path: Path) -> None:
+        payload = {
+            "exception_type": self.exception_type,
+            "sphinx_error": self.sphinx_error,
+            "network_attempted": bool(NETWORK_ATTEMPTS),
+            "setup_error": self.setup_error,
+        }
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(payload, sort_keys=True) + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+
+
+def install_search_root_normalizer(source_root: Path) -> None:
+    """Index ``<SRCDIR>`` in place of the absolute source directory.
+
+    A kept system message can quote the absolute source path in page text,
+    and Sphinx would then index that path's components as search terms,
+    which ties the reference to the machine that built it.  The page itself
+    is normalized to ``<SRCDIR>`` by the generator's text policy, so the
+    index is built from the same spelling.  The differential harness applies
+    the matching normalization to Ultra's index.
+    """
+    import sphinx.search
+    from tools.gen_html_oracle import root_pattern
+
+    pattern = root_pattern(source_root)
+    original_init = sphinx.search.IndexBuilder.__init__
+
+    def init_with_normalized_split(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        original_split = self.lang.split
+
+        def split(text: str) -> list[str]:
+            normalized = pattern.sub(b"<SRCDIR>", text.encode("utf-8", "surrogatepass"))
+            return original_split(normalized.decode("utf-8", "surrogatepass"))
+
+        self.lang.split = split
+
+    sphinx.search.IndexBuilder.__init__ = init_with_normalized_split
+
+
+def install_buildinfo_normalizer() -> None:
+    """Hash ``<SITE_PACKAGES>`` in place of the environment's package path.
+
+    ``sphinx.ext.graphviz`` (loaded by sphinx-needs) appends the absolute
+    path of a stylesheet below Sphinx's own package directory to
+    ``html_static_path``, so the ``.buildinfo`` config hash of every such
+    project would otherwise depend on where the profile's virtualenv lives.
+    Only the hash input is rewritten; the build itself is unchanged.
+    """
+    import sphinx
+    import sphinx.builders.html._build_info as build_info
+    from tools.gen_html_oracle import root_pattern
+
+    pattern = root_pattern(Path(sphinx.__file__).resolve().parent.parent)
+    original_stable_hash = build_info.stable_hash
+
+    def normalize(value):
+        if isinstance(value, str):
+            return pattern.sub(b"<SITE_PACKAGES>", value.encode("utf-8", "surrogatepass")).decode(
+                "utf-8", "surrogatepass"
+            )
+        if isinstance(value, dict):
+            return {key: normalize(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [normalize(item) for item in value]
+        if isinstance(value, tuple):
+            return tuple(normalize(item) for item in value)
+        return value
+
+    def stable_hash(obj):
+        return original_stable_hash(normalize(obj))
+
+    build_info.stable_hash = stable_hash
+
+
+def install_exception_handler(result: RunnerResult) -> None:
+    """Record the exception Sphinx reports before its own handler runs."""
     import sphinx._cli.util.errors
 
     original_handle_exception = sphinx._cli.util.errors.handle_exception
 
     def recording_handle_exception(exception: BaseException, *args, **kwargs):
-        exception_file.write_text(
-            qualified_exception_type(exception) + "\n",
-            encoding="utf-8",
-            newline="\n",
-        )
+        result.record(exception)
         return original_handle_exception(exception, *args, **kwargs)
 
     sphinx._cli.util.errors.handle_exception = recording_handle_exception
 
 
+def exit_code_of(system_exit: SystemExit) -> int:
+    code = system_exit.code
+    if code is None:
+        return 0
+    if isinstance(code, int):
+        return code
+    print(code, file=sys.stderr)
+    return 1
+
+
 def build(args: argparse.Namespace) -> int:
-    install_shims()
-    if args.profile == "local_needs":
-        if args.needs_root is None:
-            raise RuntimeError("--needs-root is required for local_needs")
-        verify_needs_checkout(args.needs_root)
-    verify_profile_versions(args.profile)
-
-    args.exception_file.parent.mkdir(parents=True, exist_ok=True)
-    args.exception_file.unlink(missing_ok=True)
-    install_exception_handler(args.exception_file)
-
-    from sphinx.cmd.build import main
+    result = RunnerResult()
+    args.result_file.unlink(missing_ok=True)
+    try:
+        install_shims()
+        if args.profile == "local_needs":
+            if args.needs_root is None:
+                raise RuntimeError("--needs-root is required for local_needs")
+            use_needs_checkout(args.needs_root)
+        verify_profile_versions(args.profile)
+        install_exception_handler(result)
+        install_search_root_normalizer(args.sourcedir)
+        install_buildinfo_normalizer()
+        from sphinx.cmd.build import main
+    except Exception as exc:
+        result.setup_error = f"{type(exc).__name__}: {exc}"
+        result.write(args.result_file)
+        print(result.setup_error, file=sys.stderr)
+        return SETUP_FAILURE_EXIT_CODE
 
     args.warnings_file.parent.mkdir(parents=True, exist_ok=True)
     args.outputdir.mkdir(parents=True, exist_ok=True)
@@ -130,10 +248,17 @@ def build(args: argparse.Namespace) -> int:
         ]
     )
     try:
-        result = main(argv)
+        exit_code = int(main(argv) or 0)
     except SystemExit as exc:
-        return int(exc.code or 0)
-    return int(result or 0)
+        exit_code = exit_code_of(exc)
+        if exit_code != 0:
+            result.record(exc)
+    except BaseException as exc:  # noqa: BLE001 - crashes Sphinx does not handle
+        result.record(exc)
+        print(f"{qualified_exception_type(exc)}: {exc}", file=sys.stderr)
+        exit_code = 2
+    result.write(args.result_file)
+    return exit_code
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -144,7 +269,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--doctree-dir", type=Path, required=True)
     parser.add_argument("--builder", required=True)
     parser.add_argument("--warnings-file", type=Path, required=True)
-    parser.add_argument("--exception-file", type=Path, required=True)
+    parser.add_argument("--result-file", type=Path, required=True)
     parser.add_argument("--needs-root", type=Path)
     return parser.parse_args(argv)
 
@@ -154,8 +279,4 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    try:
-        raise SystemExit(main())
-    except Exception as exc:
-        print(f"{type(exc).__name__}: {exc}", file=sys.stderr)
-        raise
+    raise SystemExit(main())

@@ -1,0 +1,11 @@
+WARNING: 'invalid_status' in 'needs_warnings' is already registered. [needs.config]
+WARNING: cannot cache unpickleable configuration value: 'needs_warnings' (because it contains a function, class, or module object) [config.cache]
+<SRCDIR>/index.rst:11: WARNING: Constraint 'critical' in tags for need SP_TOO_002 FAILED! severity: CRITICAL None [needs.constraint]
+<SRCDIR>/index.rst:32: WARNING: Constraint 'critical' in tags for need SP_3EBFA FAILED! severity: CRITICAL None [needs.constraint]
+<SRCDIR>/index.rst:39: WARNING: Constraint 'team_requirement' in links for need SP_CA3FB FAILED! severity: MEDIUM None [needs.constraint]
+<SRCDIR>/style_test.rst:4: WARNING: Constraint 'critical' in tags for need TEST_STYLE FAILED! severity: CRITICAL None [needs.constraint]
+<SRCDIR>/style_test.rst:11: WARNING: Constraint 'team_requirement' in links for need TEST_STYLE2 FAILED! severity: MEDIUM None [needs.constraint]
+<SRCDIR>/index.rst:42: WARNING: undefined label: 'needs_constraint_failed_options' [ref.ref]
+WARNING: invalid_status: failed
+		failed needs: 8 (SP_TOO_001, SP_TOO_002, SECURITY_REQ, SP_109F4, SP_3EBFA, SP_CA3FB, TEST_STYLE, TEST_STYLE2)
+		used filter: status not in ['open', 'closed', 'done', 'example_2', 'example_3'] [needs.warnings]

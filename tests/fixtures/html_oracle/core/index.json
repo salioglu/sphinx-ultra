@@ -100917,7 +100917,7 @@
       "source_set": "docutils_snippets",
       "status": "built",
       "tree_sha256": "b7714b42e02366d4938fcbcb37b5e0543da3d7646e8bc901c9f2b71b32c8f426",
-      "warnings": "<SRCDIR>/index.rst:1: CRITICAL: Problems with \"raw\" directive path:\nInputError: [Errno 2] No such file or directory: 'target/html-oracle/generator-work/case-xh82xnj2/source/nonexistent-raw-input.html'. [docutils]\n"
+      "warnings": "<SRCDIR>/index.rst:1: CRITICAL: Problems with \"raw\" directive path:\nInputError: [Errno 2] No such file or directory: 'nonexistent-raw-input.html'. [docutils]\n"
     },
     {
       "case_id": "docutils-0522",
@@ -107319,7 +107319,7 @@
       "source_set": "docutils_snippets",
       "status": "built",
       "tree_sha256": "dc8e96b8bd169e4010fbb7ca6d8359b9851fc72fcebff35872866c2bb62b1ea7",
-      "warnings": "<SRCDIR>/index.rst:1: CRITICAL: Problems with \"csv-table\" directive path:\n[Errno 2] No such file or directory: 'target/html-oracle/generator-work/case-xlb2ib7q/source/nonexistent-table-data.csv'.\n\n.. csv-table::\n   :file: nonexistent-table-data.csv [docutils]\n"
+      "warnings": "<SRCDIR>/index.rst:1: CRITICAL: Problems with \"csv-table\" directive path:\n[Errno 2] No such file or directory: 'nonexistent-table-data.csv'.\n\n.. csv-table::\n   :file: nonexistent-table-data.csv [docutils]\n"
     },
     {
       "case_id": "docutils-0555",
@@ -143125,8 +143125,8 @@
         },
         {
           "logical_path": "a.html",
-          "sha256": "80542b5a410bc66b4b3746c5571f82164ca530bc59d6482c1ed7604015b2eb21",
-          "size": 5627,
+          "sha256": "77011cf13be78b72726c6474b6a652432631119abe3cf7570a6b473194feb307",
+          "size": 5297,
           "storage": "ref",
           "storage_path": "refs/environment_projects/inc_basic/a.html"
         },
@@ -143160,15 +143160,15 @@
         },
         {
           "logical_path": "circ_a.html",
-          "sha256": "898b9a1a3e912208cadd314f599025da4d8de910c19294d3a66db3d7e9ad7336",
-          "size": 3480,
+          "sha256": "98de8ba8d9bee04a099a52970529d138ca4935f8ce6cbb4f34f1cd4f795b0424",
+          "size": 3260,
           "storage": "ref",
           "storage_path": "refs/environment_projects/inc_basic/circ_a.html"
         },
         {
           "logical_path": "circ_b.html",
-          "sha256": "bc3d67fc2379884aad6db60da160d4019992dc73ced641ad05d5cdc67f53e0ad",
-          "size": 3480,
+          "sha256": "1a1602bd194e5eb76f0ea3fcbd5bdec6f1a6a86067b5cca90c709dda381b0457",
+          "size": 3260,
           "storage": "ref",
           "storage_path": "refs/environment_projects/inc_basic/circ_b.html"
         },
@@ -143202,15 +143202,15 @@
         },
         {
           "logical_path": "searchindex.js",
-          "sha256": "1d54dd823fec33f6bb28796da37216a969605963ae626a63b84c13db70ea64a3",
-          "size": 1888,
+          "sha256": "480f4bae4fc715dbba651784e737bf991b84082b543934a0ccd97619aecee114",
+          "size": 1711,
           "storage": "ref",
           "storage_path": "refs/environment_projects/inc_basic/searchindex.js"
         },
         {
           "logical_path": "shared/frag.html",
-          "sha256": "ab89acaac685bb43c462a3a5c2ff991921873d052f9e534c8e22ef93478b93f4",
-          "size": 3401,
+          "sha256": "8f71a7e508ddf24c64e79a634bcd271b25dddaa36abfa0874cd0716402bf57cc",
+          "size": 3346,
           "storage": "ref",
           "storage_path": "refs/environment_projects/inc_basic/shared/frag.html"
         },
@@ -143371,8 +143371,8 @@
       "profile": "core",
       "source_set": "environment_projects",
       "status": "built",
-      "tree_sha256": "76be67821f08311a62a8b8344fb73d6bad336b3188d03f36563c954222557a13",
-      "warnings": "<SRCDIR>/a.rst:8: CRITICAL: Problems with \"include\" directive path:\nInputError: [Errno 2] No such file or directory: 'target/html-oracle/generator-work/case-vkkvp6iy/source/missing.rst'. [docutils]\n<SRCDIR>/a.rst:10: CRITICAL: Problem with \"start-after\" option of \"include\" directive:\nText not found. [docutils]\ntarget/html-oracle/generator-work/case-vkkvp6iy/source/circ_b.rst:3: WARNING: circular inclusion in \"include\" directive:\ntarget/html-oracle/generator-work/case-vkkvp6iy/source/circ_a.rst\n> target/html-oracle/generator-work/case-vkkvp6iy/source/circ_b.rst\n> target/html-oracle/generator-work/case-vkkvp6iy/source/circ_a.rst\n> target/html-oracle/generator-work/case-vkkvp6iy/source/a.rst [docutils]\n<SRCDIR>/a.rst:15: WARNING: Object named 'not_there' not found in include file _StrPath('<SRCDIR>/example.py') [docutils]\ntarget/html-oracle/generator-work/case-vkkvp6iy/source/circ_b.rst:3: WARNING: circular inclusion in \"include\" directive:\ntarget/html-oracle/generator-work/case-vkkvp6iy/source/circ_a.rst\n> target/html-oracle/generator-work/case-vkkvp6iy/source/circ_b.rst\n> target/html-oracle/generator-work/case-vkkvp6iy/source/circ_a.rst [docutils]\ntarget/html-oracle/generator-work/case-vkkvp6iy/source/circ_a.rst:3: WARNING: circular inclusion in \"include\" directive:\ntarget/html-oracle/generator-work/case-vkkvp6iy/source/circ_b.rst\n> target/html-oracle/generator-work/case-vkkvp6iy/source/circ_a.rst\n> target/html-oracle/generator-work/case-vkkvp6iy/source/circ_b.rst [docutils]\n<SRCDIR>/shared/frag.rst:3: CRITICAL: Problems with \"include\" directive path:\nInputError: [Errno 2] No such file or directory: 'target/html-oracle/generator-work/case-vkkvp6iy/source/shared/frag2.rst'. [docutils]\n"
+      "tree_sha256": "5b5e71a5a96f24318ce203a343876df50e4dc3320acc418e47a07957b0a1692f",
+      "warnings": "<SRCDIR>/a.rst:8: CRITICAL: Problems with \"include\" directive path:\nInputError: [Errno 2] No such file or directory: 'missing.rst'. [docutils]\n<SRCDIR>/a.rst:10: CRITICAL: Problem with \"start-after\" option of \"include\" directive:\nText not found. [docutils]\ncirc_b.rst:3: WARNING: circular inclusion in \"include\" directive:\ncirc_a.rst\n> circ_b.rst\n> circ_a.rst\n> a.rst [docutils]\n<SRCDIR>/a.rst:15: WARNING: Object named 'not_there' not found in include file _StrPath('<SRCDIR>/example.py') [docutils]\ncirc_b.rst:3: WARNING: circular inclusion in \"include\" directive:\ncirc_a.rst\n> circ_b.rst\n> circ_a.rst [docutils]\ncirc_a.rst:3: WARNING: circular inclusion in \"include\" directive:\ncirc_b.rst\n> circ_a.rst\n> circ_b.rst [docutils]\n<SRCDIR>/shared/frag.rst:3: CRITICAL: Problems with \"include\" directive path:\nInputError: [Errno 2] No such file or directory: 'shared/frag2.rst'. [docutils]\n"
     },
     {
       "case_id": "inc_deps",
@@ -150608,8 +150608,8 @@
         },
         {
           "logical_path": "index.html",
-          "sha256": "9393751b3c7075e84094df9d486edbbce376ad97aaa92d1ee720bde0e1145262",
-          "size": 3872,
+          "sha256": "a073b0fcf1c4a8ee7635ddb07e384e04814a2a328b3d3315602c78bea2a98b7d",
+          "size": 3868,
           "storage": "ref",
           "storage_path": "refs/inventory_projects/dispname_and_header_escape/index.html"
         },
@@ -150638,8 +150638,8 @@
       "input_files": [
         {
           "logical_path": "conf.py",
-          "sha256": "3fe19f88bdc4c78c0e0af7e9aede1b5f40591c5965ef7b2d47ab0dd23b99cc60",
-          "size": 115,
+          "sha256": "c4abe32ada67bd9f2282b8324c127e79768f1246b41733e10f92a17a2e046028",
+          "size": 135,
           "storage": "input",
           "storage_path": "inputs/inventory_projects/dispname_and_header_escape/conf.py"
         },
@@ -150658,7 +150658,7 @@
           "storage_path": "inputs/inventory_projects/dispname_and_header_escape/index.rst"
         }
       ],
-      "input_sha256": "2a3ffb61dc087629efef82ef7178154f9fe91b33d0b32470527fd00c6104c83e",
+      "input_sha256": "74ec66f19a5f30ad4eb90553a2f540c10f41cf19055c44b14afdaa74116f1b5f",
       "needs_exit_code": null,
       "needs_json": null,
       "needs_status": null,
@@ -150672,7 +150672,7 @@
       "profile": "core",
       "source_set": "inventory_projects",
       "status": "built",
-      "tree_sha256": "3fd3c53c8f5ecbd985e0a2cdabb9f61f23a6d08dc79a2bdc2b428164182648c0",
+      "tree_sha256": "65d02e742b217df3ec516ac076eceb76c22dba82a27fb4f46beeba3b7f2987f3",
       "warnings": ""
     },
     {
@@ -150860,8 +150860,8 @@
         },
         {
           "logical_path": "conf.py",
-          "sha256": "6c85f622765a0cf907969b8a5fcc17586114c2b7b206e84836ca0bb0b711e2b8",
-          "size": 87,
+          "sha256": "9e0ae713c53ef3b217daf96e3943f5c2eea26f582ab7fa1ae09d47da8aadbf67",
+          "size": 107,
           "storage": "input",
           "storage_path": "inputs/inventory_projects/empty_version_minimal/conf.py"
         },
@@ -150873,7 +150873,7 @@
           "storage_path": "inputs/inventory_projects/empty_version_minimal/index.rst"
         }
       ],
-      "input_sha256": "354c1e6bc3b1d9e0820c8c9723fc7fd1c00e18c7bb11e8c4e2d2073f0e85dbf6",
+      "input_sha256": "1e2a7a4d5d41915065baa2cd07ff03701153bddb386c5ed892d1451db833587f",
       "needs_exit_code": null,
       "needs_json": null,
       "needs_status": null,
@@ -151038,8 +151038,8 @@
         },
         {
           "logical_path": "b.html",
-          "sha256": "61520ea9d4ca526723d035c432cf6bb0a47126650aa38fc28d3915fa5ff34175",
-          "size": 3353,
+          "sha256": "5f5841562b294d2dc3e3ad4fdbf072248369bd66b924048b238a5668d3ff391b",
+          "size": 3349,
           "storage": "ref",
           "storage_path": "refs/inventory_projects/std_objects_and_docs/b.html"
         },
@@ -151103,8 +151103,8 @@
         },
         {
           "logical_path": "conf.py",
-          "sha256": "05c5871de7f73bd3e253b3ea01791835c62008af9a51daa70a47cd38823f3ee9",
-          "size": 87,
+          "sha256": "3d427bec366bbb2d38326799d80a55b2b3fe1c632d30fcb01b785c7187efe7e7",
+          "size": 107,
           "storage": "input",
           "storage_path": "inputs/inventory_projects/std_objects_and_docs/conf.py"
         },
@@ -151116,7 +151116,7 @@
           "storage_path": "inputs/inventory_projects/std_objects_and_docs/index.rst"
         }
       ],
-      "input_sha256": "078b37886378dec05e5678079ae7e34af30d8d0be478de4631b364c521174273",
+      "input_sha256": "82ddf3733c4f2e7c13af1dd628d59b8c91668eb2100b5610e39c6b768fce3253",
       "needs_exit_code": null,
       "needs_json": null,
       "needs_status": null,
@@ -151130,7 +151130,7 @@
       "profile": "core",
       "source_set": "inventory_projects",
       "status": "built",
-      "tree_sha256": "0133bde83ede3d4326d864a3f8167b81b3c9fe06f127c69a6edbc72fa5e1e7c4",
+      "tree_sha256": "590862439851a3bdf07feaece951faf8f81288eec73eb779b7a865f97d9bfa95",
       "warnings": ""
     },
     {
@@ -151325,8 +151325,8 @@
         },
         {
           "logical_path": "conf.py",
-          "sha256": "f5949ed3a75c6c8a5806e46b54ae76358ea85a0d90b9c965eca99db8beae3c11",
-          "size": 95,
+          "sha256": "22747a1a9512c681260e110cdae1ed5a0e07d50ca8aad80e1760b0c686a37677",
+          "size": 115,
           "storage": "input",
           "storage_path": "inputs/inventory_projects/unicode_names/conf.py"
         },
@@ -151338,7 +151338,7 @@
           "storage_path": "inputs/inventory_projects/unicode_names/index.rst"
         }
       ],
-      "input_sha256": "9c6eb39cd3e7dd0207fcbbef759a04ad6364379336859d297ca5c5cfca22db2e",
+      "input_sha256": "f6f29a137db2de8504b0d30010eb576c9e7125172dc2352e520a1880356a3a53",
       "needs_exit_code": null,
       "needs_json": null,
       "needs_status": null,
@@ -246247,7 +246247,10 @@
   "profiles": {
     "core": {
       "determinism_shims": [
-        "uuid.uuid4=counter"
+        "uuid.uuid4=counter",
+        "search.split=<SRCDIR>",
+        "buildinfo.site_packages=<SITE_PACKAGES>",
+        "schema_violations.json.timings=0"
       ],
       "docutils": "0.22.4",
       "lock_path": "tools/oracle_profiles/core/uv.lock",

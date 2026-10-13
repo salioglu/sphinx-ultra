@@ -15,14 +15,13 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 use support::diagnostics::{run_bounded, run_bounded_with_timeout, ExitStatusKind, ProcessOutput};
 use support::html_oracle::{
-    apply_retention, bounded_assertion_message,
-    build_report_with_platforms_reference_cases_and_bin, case_key, compare_file, compare_trees,
-    compare_warnings, compare_warnings_with_roots, diagnose_html, diagnose_inventory,
-    diagnose_needs_json, diagnose_searchindex, diagnose_warnings, group_first_divergences,
-    load_fixture_suite, materialize_case_expected, materialize_case_inputs,
-    mismatch_diagnostics_with_source_root, parse_keep, read_record, resolve_ultra_binary,
-    status_name, walk_tree, warning_diagnostics_with_roots, write_logical_file, CaseRecord,
-    CaseResult, CaseStatus, IndexDocument, InventoryRecord, Keep, Policy,
+    apply_retention, bounded_assertion_message, build_report, case_key, compare_file,
+    compare_trees, compare_warnings, compare_warnings_with_roots, diagnose_html,
+    diagnose_inventory, diagnose_needs_json, diagnose_searchindex, diagnose_warnings,
+    group_first_divergences, load_fixture_suite, materialize_case_expected,
+    materialize_case_inputs, parse_keep, read_record, resolve_ultra_binary, status_name, walk_tree,
+    warning_diagnostics_with_roots, write_logical_file, CaseRecord, CaseResult, CaseStatus,
+    IndexDocument, InventoryRecord, Keep, Policy, ReportInputs,
 };
 
 fn minimal_case() -> serde_json::Value {
@@ -390,13 +389,13 @@ fn comparator_normalizes_all_runtime_tokens_in_warnings() {
 
 #[test]
 fn comparator_reduces_real_sphinx_error_report() {
+    // The committed sidecar mirrors the ledger's `warnings` field for this
+    // build-error case; the generator already reduced Sphinx's report and
+    // normalized the source directory to <SRCDIR>.
     let expected = String::from_utf8_lossy(include_bytes!(
-        "fixtures/html_oracle/core/refs/html_projects/literalinclude/warnings.txt"
+        "fixtures/html_oracle/core/warnings/html_projects/literalinclude.txt"
     ))
-    .replace(
-        "/home/runner/work/sphinx-ultra/sphinx-ultra/target/html-oracle/generator-work/case-2usubfn1/source",
-        "<SRCDIR>",
-    );
+    .into_owned();
     let actual = br#"
 Configuration error!
 
@@ -526,14 +525,198 @@ fn comparator_reports_missing_and_unexpected_files() {
         (String::from("index.html"), b"same".to_vec()),
         (String::from("extra.css"), b"extra".to_vec()),
     ]);
-    let diagnostics = compare_trees(&expected, &actual, None, None, None, None);
+    let diagnostics = compare_trees(&expected, &actual, None, None, None);
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(diagnostics[0].category, "unexpected-file");
     assert_eq!(diagnostics[0].logical_path, "extra.css");
 
     let actual = BTreeMap::new();
-    let diagnostics = compare_trees(&expected, &actual, None, None, None, None);
+    let diagnostics = compare_trees(&expected, &actual, None, None, None);
     assert_eq!(diagnostics[0].category, "missing-file");
+}
+
+#[test]
+fn comparator_localizes_tree_mismatches_and_status_class() {
+    let expected = BTreeMap::from([(
+        String::from("index.html"),
+        b"<html><div class=\"body\" role=\"main\">\nA\n</div><footer>ok</footer></html>".to_vec(),
+    )]);
+    let actual = BTreeMap::from([(
+        String::from("index.html"),
+        b"<html><div class=\"body\" role=\"main\">\nB\n</div><footer>ok</footer></html>".to_vec(),
+    )]);
+    let diagnostics = compare_trees(
+        &expected,
+        &actual,
+        Some(CaseStatus::Built),
+        Some(CaseStatus::BuildError),
+        None,
+    );
+    assert_eq!(
+        diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.category.as_str())
+            .collect::<Vec<_>>(),
+        ["status", "html-body"]
+    );
+    assert!(compare_trees(
+        &expected,
+        &expected,
+        Some(CaseStatus::Built),
+        Some(CaseStatus::Built),
+        None
+    )
+    .is_empty());
+}
+
+#[test]
+fn comparator_parses_real_searchindex_wrapper_with_and_without_semicolon() {
+    let reference = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/html_oracle/core/refs/html_projects/basic/searchindex.js");
+    let bytes = fs::read(&reference).expect("committed searchindex reference");
+    let value = support::html_oracle::parse_json_value(&bytes, true)
+        .expect("Sphinx's `Search.setIndex(...)` without a semicolon parses");
+    assert!(value.get("docnames").is_some());
+    let mut with_semicolon = bytes.clone();
+    with_semicolon.extend_from_slice(b";\n");
+    assert_eq!(
+        support::html_oracle::parse_json_value(&with_semicolon, true).unwrap(),
+        value
+    );
+    assert!(compare_file("searchindex.js", &bytes, &with_semicolon, None).is_empty());
+    assert!(support::html_oracle::parse_json_value(b"Search.setIndex({}", true).is_err());
+}
+
+#[test]
+fn comparator_maps_ultra_source_path_terms_onto_the_srcdir_token() {
+    // The reference indexed <SRCDIR> for document 0; Ultra indexed the stems
+    // of its own absolute input directory for the same document.
+    let expected = json!({
+        "terms": {"example": 0, "srcdir": 0, "titl": [0, 1], "work": 1},
+        "titleterms": {"titl": [0, 1]},
+    });
+    let actual_text = json!({
+        "terms": {
+            "example": 0,
+            "home": 0,
+            "runner": 0,
+            "work": [0, 1],
+            "html_oracl": 0,
+            "run": 0,
+            "input": 0,
+            "titl": [0, 1]
+        },
+        "titleterms": {"titl": [0, 1]},
+    });
+    let source_root = Path::new("/home/runner/work/html_oracle/runs/case/input");
+    let actual = format!("Search.setIndex({actual_text})");
+    let expected_bytes = format!("Search.setIndex({expected})");
+    assert!(compare_file(
+        "searchindex.js",
+        expected_bytes.as_bytes(),
+        actual.as_bytes(),
+        Some(source_root),
+    )
+    .is_empty());
+    // Without the source root nothing is rewritten.
+    assert!(!compare_file(
+        "searchindex.js",
+        expected_bytes.as_bytes(),
+        actual.as_bytes(),
+        None,
+    )
+    .is_empty());
+    // A document the reference did not mark keeps its terms ("work" in
+    // document 1), and a real extra term still shows.
+    let mut actual_value = actual_text.clone();
+    actual_value["terms"]["bogus"] = json!(0);
+    let actual = format!("Search.setIndex({actual_value})");
+    let diagnostics = compare_file(
+        "searchindex.js",
+        expected_bytes.as_bytes(),
+        actual.as_bytes(),
+        Some(source_root),
+    );
+    assert_eq!(diagnostics.len(), 1);
+    assert!(diagnostics[0].actual.contains("bogus"));
+    assert!(diagnostics[0].actual.contains("\"work\": 1"));
+    assert!(diagnostics[0].actual.contains("\"srcdir\": 0"));
+    assert!(!diagnostics[0].actual.contains("runner"));
+}
+
+#[test]
+fn comparator_zeroes_schema_report_timings_on_both_sides() {
+    let expected = b"{\n  \"validation_summary\": \"Schema validation completed with 0 warning(s) in 0.000 seconds. Validated 0 needs/s.\",\n  \"validated_needs_per_second\": 0,\n  \"validated_needs_count\": 2,\n  \"validation_warnings\": {}\n}";
+    let actual = b"{\r\n  \"validation_summary\": \"Schema validation completed with 0 warning(s) in 0.013 seconds. Validated 153.8 needs/s.\",\r\n  \"validated_needs_per_second\": 153.8,\r\n  \"validated_needs_count\": 2,\r\n  \"validation_warnings\": {}\r\n}";
+    assert_eq!(
+        support::html_oracle::policy_for_path("schema_violations.json"),
+        Policy::NeedsSchemaReport
+    );
+    assert_eq!(
+        support::html_oracle::policy_for_path("nested/schema_violations.json"),
+        Policy::NeedsSchemaReport
+    );
+    assert!(compare_file("schema_violations.json", expected, actual, None).is_empty());
+    let mut changed = actual.to_vec();
+    changed.extend_from_slice(b"\n");
+    let diagnostics = compare_file("schema_violations.json", expected, &changed, None);
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].category, "text-value");
+    // Other JSON files keep their timings.
+    assert!(!compare_file("report.json", expected, actual, None).is_empty());
+    assert_eq!(
+        support::html_oracle::zero_schema_timings(actual),
+        support::html_oracle::zero_schema_timings(&support::html_oracle::zero_schema_timings(
+            actual
+        ))
+    );
+}
+
+#[test]
+fn comparator_folds_lone_carriage_returns_like_the_generator() {
+    assert!(compare_file("index.html", b"a\rb\r\nc\n", b"a\nb\nc\n", None).is_empty());
+    assert!(compare_warnings(b"w\r", b"w\n", None, None).is_empty());
+}
+
+#[test]
+fn committed_ledgers_load_and_validate() {
+    let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/html_oracle");
+    let suite = load_fixture_suite(&fixture_root)
+        .unwrap_or_else(|error| panic!("committed HTML oracle ledgers must load: {error}"));
+    for (profile, document) in &suite.profiles {
+        let record = &document.profiles[profile];
+        assert_eq!(record.platform, "linux");
+        assert_eq!(record.sphinx, "9.1.0");
+        assert!(record
+            .determinism_shims
+            .contains(&"uuid.uuid4=counter".to_string()));
+        assert!(!document.cases.is_empty(), "{profile} has no cases");
+        assert!(
+            document.cases.iter().any(|case| case.status.is_runnable()),
+            "{profile} has no runnable case"
+        );
+    }
+    let core = &suite.profiles["core"].profiles["core"];
+    assert_eq!(core.docutils, "0.22.4");
+    assert_eq!(core.needs_version, None);
+    let local_needs = &suite.profiles["local_needs"].profiles["local_needs"];
+    assert_eq!(local_needs.docutils, "0.21.2");
+    assert_eq!(local_needs.needs_version.as_deref(), Some("8.5.0"));
+    assert_eq!(
+        local_needs.needs_commit.as_deref(),
+        Some("58bcb59d861da95f2aca79f343e8bae6ec5c1250")
+    );
+    assert_eq!(
+        local_needs.needs_tree.as_deref(),
+        Some("958172a89defcec69704f6b9d61e482e7c4e8409")
+    );
+    assert!(local_needs
+        .determinism_shims
+        .contains(&"needs_reproducible_json=1".to_string()));
+    assert!(suite.profiles["local_needs"]
+        .cases
+        .iter()
+        .any(|case| !case.origin.pytest_node_ids.is_empty()));
 }
 
 #[test]
@@ -891,15 +1074,12 @@ fn report_compacts_diagnostics_and_aggregates_common_mismatches() {
             &actual,
         ),
     ];
-    let (report, markdown) = build_report_with_platforms_reference_cases_and_bin(
-        2,
-        0,
-        0,
-        &results,
-        &BTreeMap::new(),
-        &[],
-        Some("C:/ultra/sphinx-ultra.exe"),
-    );
+    let (report, markdown) = build_report(&ReportInputs {
+        total_cases: 2,
+        results: &results,
+        ultra_bin: Some("C:/ultra/sphinx-ultra.exe"),
+        ..Default::default()
+    });
     let serialized = serde_json::to_vec(&report).unwrap();
     assert!(serialized.len() < 1_000_000);
     let common = &report["common_mismatches"][0];
@@ -951,7 +1131,11 @@ fn report_counts_failing_cases_by_file_kind() {
             "b",
         ),
     ];
-    let (report, _) = support::html_oracle::build_report(3, 0, 0, &results);
+    let (report, _) = build_report(&ReportInputs {
+        total_cases: 3,
+        results: &results,
+        ..Default::default()
+    });
     assert_eq!(report["failing_cases_by_file_kind"]["html"], 1);
     assert_eq!(report["failing_cases_by_file_kind"]["static"], 1);
     assert_eq!(report["failing_cases_by_file_kind"]["needs.json"], 1);
@@ -972,7 +1156,13 @@ fn report_synthetic_data_is_sorted_and_contains_summary_counts() {
         report_case("core", "a-set", "a-case", true, None, None),
         report_case("core", "a-set", "b-case", false, Some("warning"), Some(2)),
     ];
-    let (report, markdown) = support::html_oracle::build_report(5, 1, 1, &results);
+    let (report, markdown) = build_report(&ReportInputs {
+        total_cases: 5,
+        excluded_cases: 1,
+        reference_crash_cases: 1,
+        results: &results,
+        ..Default::default()
+    });
     assert_eq!(report["total_cases"], 5);
     assert_eq!(report["scheduled_cases"], 3);
     assert_eq!(report["passed_cases"], 1);
@@ -1001,8 +1191,12 @@ fn report_synthetic_data_is_sorted_and_contains_summary_counts() {
 fn report_prints_reference_platform_and_host_difference_note() {
     let results = vec![report_case("core", "synthetic", "case", true, None, None)];
     let platforms = BTreeMap::from([(String::from("core"), String::from("reference-test"))]);
-    let (_report, markdown) =
-        support::html_oracle::build_report_with_platforms(1, 0, 0, &results, &platforms);
+    let (_report, markdown) = build_report(&ReportInputs {
+        total_cases: 1,
+        results: &results,
+        reference_platforms: &platforms,
+        ..Default::default()
+    });
     assert!(markdown.contains("| core | reference-test |"));
     assert!(markdown.contains("Reference platform: `reference-test`"));
     assert!(markdown.contains("Separator and path differences are expected when"));
@@ -1020,14 +1214,13 @@ fn report_places_exception_type_next_to_build_error_and_reference_crash_status()
         status: "reference-crash".to_string(),
         exception_type: Some("TypeError".to_string()),
     };
-    let (report, markdown) = support::html_oracle::build_report_with_platforms_and_reference_cases(
-        2,
-        0,
-        1,
-        &[build_error],
-        &BTreeMap::new(),
-        &[reference_crash],
-    );
+    let (report, markdown) = build_report(&ReportInputs {
+        total_cases: 2,
+        reference_crash_cases: 1,
+        results: &[build_error],
+        reference_cases: &[reference_crash],
+        ..Default::default()
+    });
     assert_eq!(report["cases"][0]["html_status"], "build-error");
     assert_eq!(
         report["cases"][0]["exception_type"],
@@ -1054,7 +1247,11 @@ fn report_synthetic_first_divergences_are_capped_at_twenty_five() {
             )
         })
         .collect::<Vec<_>>();
-    let (report, markdown) = support::html_oracle::build_report(30, 0, 0, &results);
+    let (report, markdown) = build_report(&ReportInputs {
+        total_cases: 30,
+        results: &results,
+        ..Default::default()
+    });
     assert_eq!(report["first_divergences"].as_array().unwrap().len(), 25);
     assert_eq!(report["first_divergences"][0]["expected_line"], 1);
     assert!(markdown.contains("| 1 | expected-0 | actual-0 | 1 |"));
@@ -1142,11 +1339,6 @@ fn html_oracle_exhaustive() {
             (profile.clone(), platform)
         })
         .collect::<BTreeMap<_, _>>();
-    if let Some(filter) = &filter {
-        if !all_cases.iter().any(|case| case_key(case).contains(filter)) {
-            panic!("HTML_ORACLE_FILTER matched no ledger case: {filter}");
-        }
-    }
     let total_cases = all_cases.len();
     let excluded_cases = all_cases
         .iter()
@@ -1165,6 +1357,14 @@ fn html_oracle_exhaustive() {
                 .is_none_or(|filter| case_key(case).contains(filter))
         })
         .collect::<Vec<_>>();
+    if let Some(filter) = &filter {
+        // A filter that selects only excluded or reference-crash cases would
+        // otherwise produce an empty, green run.
+        assert!(
+            !jobs.is_empty(),
+            "HTML_ORACLE_FILTER matched no runnable ledger case: {filter}"
+        );
+    }
     let run_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/html-oracle/runs");
     fs::create_dir_all(&run_root).expect("create HTML oracle run root");
     let worker_count = std::thread::available_parallelism()
@@ -1200,15 +1400,15 @@ fn html_oracle_exhaustive() {
         worker.join().expect("HTML oracle worker should not panic");
     }
 
-    let (report, markdown) = build_report_with_platforms_reference_cases_and_bin(
+    let (report, markdown) = build_report(&ReportInputs {
         total_cases,
         excluded_cases,
         reference_crash_cases,
-        &results,
-        &reference_platforms,
-        &reference_cases,
-        Some(&ultra_bin),
-    );
+        results: &results,
+        reference_platforms: &reference_platforms,
+        reference_cases: &reference_cases,
+        ultra_bin: Some(&ultra_bin),
+    });
     let report_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("target/html-oracle");
     let report_json = report_root.join("report.json");
     let report_markdown = report_root.join("report.md");
@@ -1227,11 +1427,21 @@ fn html_oracle_exhaustive() {
     }
 }
 
+/// The Ultra executable, as an absolute path: cases run with the input
+/// directory as the working directory, so a relative override must be
+/// resolved against the test's own working directory first.
 fn selected_ultra_binary() -> String {
-    resolve_ultra_binary(
+    let selected = resolve_ultra_binary(
         std::env::var("HTML_ORACLE_ULTRA_BIN").ok().as_deref(),
         env!("CARGO_BIN_EXE_sphinx-ultra"),
-    )
+    );
+    let path = Path::new(&selected);
+    if path.is_absolute() || path.components().count() == 1 {
+        return selected;
+    }
+    std::env::current_dir()
+        .map(|cwd| cwd.join(path).to_string_lossy().into_owned())
+        .unwrap_or(selected)
 }
 
 fn run_html_case(
@@ -1269,8 +1479,11 @@ fn run_html_case(
     fs::write(expected_dir.join("warnings.txt"), case.warnings.as_bytes())
         .map_err(|error| format!("write expected warnings: {error}"))?;
 
+    // Like the reference build, Ultra runs from the source directory so
+    // cwd-relative paths in its output are source-relative.
     let mut command = Command::new(selected_ultra_binary());
     command
+        .current_dir(&input_dir)
         .arg(&input_dir)
         .arg(&actual_dir)
         .args(["-b", "html", "-d"])
@@ -1281,10 +1494,10 @@ fn run_html_case(
     let process = run_bounded(command);
     let actual_status = process_status(&process);
     let mut diagnostics = if actual_status.is_some() {
-        compare_output_trees(
+        compare_trees(
             &expected_tree,
             &walk_tree(&actual_dir)?,
-            case.status,
+            Some(case.status),
             actual_status,
             Some(&input_dir),
         )
@@ -1370,6 +1583,7 @@ fn run_needs_case(
     let needs_warnings = run_dir.join("actual-needs-warnings.txt");
     let mut command = Command::new(selected_ultra_binary());
     command
+        .current_dir(input_dir)
         .arg(input_dir)
         .arg(actual_needs_dir)
         .args(["-b", "needs", "-D", "needs_reproducible_json=1", "-d"])
@@ -1388,10 +1602,10 @@ fn run_needs_case(
         ) {
             vec![diagnostic]
         } else {
-            compare_output_trees(
+            compare_trees(
                 &expected_tree,
                 &actual_tree,
-                expected_status,
+                Some(expected_status),
                 Some(actual_status),
                 Some(input_dir),
             )
@@ -1444,63 +1658,4 @@ fn process_diagnostic(process: &ProcessOutput) -> support::html_oracle::Diagnost
         actual: format!("{}\n{}", process.stdout, process.stderr),
         detail,
     }
-}
-
-fn compare_output_trees(
-    expected: &BTreeMap<String, Vec<u8>>,
-    actual: &BTreeMap<String, Vec<u8>>,
-    expected_status: CaseStatus,
-    actual_status: Option<CaseStatus>,
-    source_root: Option<&Path>,
-) -> Vec<support::html_oracle::Diagnostic> {
-    let mut paths = expected
-        .keys()
-        .cloned()
-        .collect::<std::collections::BTreeSet<_>>();
-    paths.extend(actual.keys().cloned());
-    let mut diagnostics = Vec::new();
-    for path in paths {
-        match (expected.get(&path), actual.get(&path)) {
-            (Some(expected), Some(actual)) => {
-                diagnostics.extend(mismatch_diagnostics_with_source_root(
-                    &path,
-                    expected,
-                    actual,
-                    source_root,
-                ));
-            }
-            (Some(expected), None) => diagnostics.push(support::html_oracle::Diagnostic {
-                category: "missing-file".to_string(),
-                logical_path: path,
-                first_expected_line: Some(1),
-                expected: String::from_utf8_lossy(expected).into_owned(),
-                actual: String::new(),
-                detail: "file exists only in expected output".to_string(),
-            }),
-            (None, Some(actual)) => diagnostics.push(support::html_oracle::Diagnostic {
-                category: "unexpected-file".to_string(),
-                logical_path: path,
-                first_expected_line: None,
-                expected: String::new(),
-                actual: String::from_utf8_lossy(actual).into_owned(),
-                detail: "file exists only in actual output".to_string(),
-            }),
-            (None, None) => unreachable!(),
-        }
-    }
-    if let Some(actual_status) = actual_status {
-        let expected_error = expected_status == CaseStatus::BuildError;
-        let actual_error = actual_status == CaseStatus::BuildError;
-        if expected_error != actual_error {
-            diagnostics.push(support::html_oracle::Diagnostic {
-                category: "status".to_string(),
-                logical_path: String::new(),
-                first_expected_line: None,
-                expected: status_name(expected_status).to_string(),
-                actual: status_name(actual_status).to_string(),
-                detail: "build status class differs".to_string(),
-            });
-        }
-    }
-    diagnostics
 }
