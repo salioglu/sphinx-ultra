@@ -52,6 +52,22 @@ pass. The exact commands are in the module docstring of
 
 - Set `PYTHONNOUSERSITE=1`. A user-site Pygments silently changes
   highlighted output.
+- Run the generator's pytest first (commands in the same docstring). Each
+  case builds under `target/html-oracle/generator-work/zqoraclerootzq/`, with
+  Sphinx's working directory set to the case's source directory; the
+  sentinel segment is what the root-leak scan looks for, so never rename it
+  into something a document could contain.
+- A case that opens a network connection during the build is recorded as
+  `excluded-network`; only PlantUML projects are excluded statically.
+- The runner's shims (listed as `determinism_shims` in each `index.json`)
+  also index `<SRCDIR>` where a kept warning quotes the absolute source
+  path, hash `<SITE_PACKAGES>` in place of the virtualenv path that
+  `sphinx.ext.graphviz` adds to `html_static_path` (so `.buildinfo` is
+  machine-independent), and zero the timings in sphinx-needs'
+  `schema_violations.json`. The Rust comparator applies the same rewrites
+  to Ultra's output.
+- Per-case `warnings/<set>/<case>.txt` sidecars are review copies of the
+  ledger's `warnings` field; the ledger is authoritative.
 - `local_needs` requires `--needs-root` pointing to a sphinx-needs checkout
   at the commit and `packages/sphinx-needs` tree pinned in
   `tools/html_oracle_cases.toml`, with that subtree clean. The generator

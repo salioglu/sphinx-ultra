@@ -20,5 +20,10 @@
 # cannot be mistaken for text.
 *.inv -text
 
-# HTML oracle fixtures are byte-exact hashed references, never text.
-tests/fixtures/html_oracle/** -text
+# HTML oracle fixtures are byte-exact hashed references, never text. They are
+# captured Sphinx output, not source: `linguist-generated` collapses them in
+# pull-request diffs and keeps them out of the language statistics. (Code
+# scanning's default setup still analyses them; its alerts on the
+# third-party template scripts embedded in them, such as sphinx-needs'
+# permalink.html, are dismissed as test fixtures.)
+tests/fixtures/html_oracle/** -text linguist-generated=true

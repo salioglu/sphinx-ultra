@@ -12,6 +12,8 @@ same variables for every command and keep the invocations locked and offline:
 
     uv run --locked --offline --python 3.12 --project tools/oracle_profiles/core \
         python -m pytest tools/test_gen_html_oracle.py -q
+    uv run --locked --offline --python 3.12 --project tools/oracle_profiles/local_needs \
+        python -m pytest tools/test_gen_html_oracle.py -q -k local_needs
     uv run --locked --offline --python 3.12 --project tools/oracle_profiles/core \
         python tools/gen_html_oracle.py --config tools/html_oracle_cases.toml \
         --out tests/fixtures/html_oracle --profile core -j 4
@@ -28,12 +30,22 @@ same variables for every command and keep the invocations locked and offline:
         --needs-root $env:SPHINX_NEEDS_ROOT
 
 The source fixtures are read-only inputs.  The generated profile subtrees are
-replaced atomically and can be regenerated independently.  Snippet projects
-use Sphinx's default ``keep_warnings = False``; warnings remain captured from
-the dedicated ``-w`` warning file.  Text-policy output normalizes the complete
-source-root token to ``<SRCDIR>`` while non-text output remains subject to the
-root-leak check.  Root-leak validation scans every case and reports the
-complete sorted profile/source-set/case/file list in one failure.
+replaced atomically and can be regenerated independently.  Each profile holds
+``index.json`` (the ledger), ``inputs/`` and ``refs/`` per case, content
+addressed ``blobs/`` for static assets, and ``warnings/<set>/<case>.txt``
+sidecars that mirror the ledger's ``warnings`` field for review.  Snippet
+projects use Sphinx's default ``keep_warnings = False``; warnings remain
+captured from the dedicated ``-w`` warning file.
+
+Every case builds in a deterministic work directory below
+``target/html-oracle/generator-work/`` whose path carries the
+``zqoraclerootzq`` sentinel, and Sphinx runs with the source directory as its
+working directory so cwd-relative Docutils paths are source-relative.
+Text-policy output normalizes the complete source-root token to ``<SRCDIR>``
+while non-text output remains subject to the root-leak check, which also
+rejects the sentinel wherever it survives (for example as a stemmed search
+term).  Root-leak validation scans every case and reports the complete sorted
+profile/source-set/case/file list in one failure.
 """
 
 from __future__ import annotations
@@ -48,7 +60,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -189,7 +200,6 @@ class DiscoveredCase:
     variants_not_captured: bool = False
     status: CaseStatus = "built"
     excluded_reason: str | None = None
-    confoverrides: dict[str, Any] = field(default_factory=dict)
 
     @property
     def key(self) -> tuple[str, str, str]:
@@ -281,41 +291,19 @@ def _literal_strings(tree: ast.AST) -> list[str]:
 
 
 def classify_project(files: dict[str, bytes]) -> tuple[CaseStatus | None, str | None]:
-    """Classify statically excluded projects before importing their conf.py."""
+    """Classify statically excluded projects before importing their conf.py.
+
+    Only PlantUML is excluded statically: it needs a Java toolchain.  Network
+    use is detected at build time by the runner's socket guard, so a remote
+    URL in ``conf.py`` or in a document excludes a case only when something
+    actually tries to connect.
+    """
     conf_bytes = files.get("conf.py", b"")
     try:
         tree = ast.parse(conf_bytes.decode("utf-8"), filename="conf.py")
     except (SyntaxError, UnicodeDecodeError):
         tree = ast.Module(body=[], type_ignores=[])
     strings = _literal_strings(tree)
-    allowed_intersphinx_urls: set[int] = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Assign):
-            continue
-        if not any(
-            isinstance(target, ast.Name) and target.id == "intersphinx_mapping"
-            for target in node.targets
-        ) or not isinstance(node.value, ast.Dict):
-            continue
-        for mapping in node.value.values:
-            if not isinstance(mapping, (ast.List, ast.Tuple)) or len(mapping.elts) < 2:
-                continue
-            url, inventory = mapping.elts[:2]
-            if not (
-                isinstance(url, ast.Constant)
-                and isinstance(url.value, str)
-                and re.search(r"https?://", url.value)
-                and isinstance(inventory, ast.Constant)
-                and isinstance(inventory.value, str)
-                and inventory.value in files
-            ):
-                continue
-            allowed_intersphinx_urls.add(id(url))
-    remote = any(
-        re.search(r"https?://", node.value) and id(node) not in allowed_intersphinx_urls
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Constant) and isinstance(node.value, str)
-    )
     plantuml = False
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -332,8 +320,6 @@ def classify_project(files: dict[str, bytes]) -> tuple[CaseStatus | None, str | 
                     for argument in node.args
                 )
         plantuml |= "sphinxcontrib.plantuml" in strings
-    if remote:
-        return "excluded-network", "conf.py references a remote URL"
     if plantuml:
         return "excluded-plantuml", "conf.py loads sphinxcontrib.plantuml"
     return None, None
@@ -357,6 +343,13 @@ def _scan_needs_provenance(
     tests_root = needs_root / "packages" / "sphinx-needs" / "tests"
     matches: dict[str, set[str]] = {name: set() for name in project_names}
     variants_by_project = {name: False for name in project_names}
+    # A test references a project by its complete ``doc_test/<name>`` path
+    # segment; a bare substring would credit ``doc_basic`` with every
+    # ``doc_basic_*`` test.
+    needles = {
+        name: re.compile(rf"(?:^|[\\/])doc_test[\\/]{re.escape(name)}(?=$|[\\/])")
+        for name in project_names
+    }
     for path in sorted(tests_root.rglob("*.py")):
         if path.is_symlink() or not path.is_file():
             continue
@@ -376,13 +369,8 @@ def _scan_needs_provenance(
                 segment = ast.get_source_segment(source, node) or ""
                 strings = _literal_strings(node)
                 for project_name in project_names:
-                    needle = f"doc_test/{project_name}".replace("\\", "/")
-                    alternate = f"doc_test\\{project_name}"
-                    matched = any(
-                        project_name in value
-                        and ("doc_test" in value or needle in value or alternate in value)
-                        for value in strings
-                    )
+                    needle = needles[project_name]
+                    matched = any(needle.search(value) for value in strings)
                     if matched:
                         suffix = "::" + "::".join(self.scopes) if self.scopes else ""
                         matches[project_name].add(relative + suffix)
@@ -488,7 +476,8 @@ def discover_cases(
             if len(fixture_cases) != entry["count"]:
                 raise DiscoveryError(f"{source_set}: expected {entry['count']} cases, found {len(fixture_cases)}")
             identifiers = [str(item["name"]) for item in fixture_cases]
-            ids = assign_case_ids(identifiers)
+            if len(set(identifiers)) != len(identifiers):
+                raise DiscoveryError(f"{source_set}: duplicate snippet names")
             for index, item in enumerate(fixture_cases):
                 files = {
                     "conf.py": BASE_CONF_PY.encode("utf-8"),
@@ -528,7 +517,6 @@ def discover_cases(
                         files=files,
                         status=status or "built",
                         excluded_reason=reason,
-                        confoverrides=dict(project.get("conf", {})),
                     )
                 )
         elif kind == "html_projects":
@@ -556,7 +544,10 @@ def discover_cases(
                 raise DiscoveryError(f"{source_set}: expected {entry['count']} projects, found {len(projects)}")
             ids = assign_case_ids([str(project["name"]) for project in projects])
             for index, project in enumerate(projects):
-                files = {"conf.py": _python_conf(project.get("conf", {}), project=project["project"])}
+                # tests/fixtures/inventory was built with smartquotes off, so
+                # the reference conf.py carries the same override.
+                conf = {"smartquotes": False, **project.get("conf", {})}
+                files = {"conf.py": _python_conf(conf, project=project["project"])}
                 for name, contents in project["files"].items():
                     files[_source_file_name(name)] = str(contents).encode("utf-8")
                 status, reason = classify_project(files)
@@ -569,7 +560,6 @@ def discover_cases(
                         files=files,
                         status=status or "built",
                         excluded_reason=reason,
-                        confoverrides={"smartquotes": False, **project.get("conf", {})},
                     )
                 )
         elif kind == "sphinx_needs_doc_tests":
@@ -600,9 +590,77 @@ def assert_discovery_keys_equal(
         raise DiscoveryError("discovery and ledger key sets mismatch")
 
 
+def discovered_input_hash(case: DiscoveredCase) -> str:
+    """Return the canonical hash the ledger records for a case's inputs."""
+    return canonical_hash(
+        [
+            (_safe_relative_path(path, f"input logical path {path}"), hashlib.sha256(data).hexdigest())
+            for path, data in case.files.items()
+        ]
+    )
+
+
+def assert_discovery_inputs_equal(
+    cases: list[DiscoveredCase], ledger_cases: list[dict[str, Any]]
+) -> None:
+    """Fail when a source fixture changed under an unchanged case key.
+
+    Statically excluded cases record no inputs, and runtime-excluded cases
+    (network) record none either, so only ledger cases with inputs are
+    compared.
+    """
+    expected = {case.key: discovered_input_hash(case) for case in cases}
+    for ledger_case in ledger_cases:
+        if str(ledger_case.get("status", "")).startswith("excluded-"):
+            continue
+        key = (ledger_case["profile"], ledger_case["source_set"], ledger_case["case_id"])
+        if ledger_case["input_sha256"] != expected[key]:
+            raise DiscoveryError(
+                f"input_sha256 mismatch for {'/'.join(key)}: the source fixture changed; "
+                "regenerate the profile"
+            )
+
+
 NEEDS_VERSION = "8.5.0"
 NEEDS_COMMIT = "58bcb59d861da95f2aca79f343e8bae6ec5c1250"
 NEEDS_TREE = "958172a89defcec69704f6b9d61e482e7c4e8409"
+
+
+def validate_needs_module(
+    needs_root: Path,
+    *,
+    module_file: Path,
+    module_version: str,
+) -> None:
+    """Validate that the imported sphinx_needs is the pinned checkout source."""
+    root, _doc_test_root = _needs_root_paths(needs_root)
+    source_root = (root / "packages" / "sphinx-needs" / "src").resolve()
+    try:
+        module_path = Path(module_file).resolve()
+        inside_source = module_path.is_relative_to(source_root)
+    except OSError:
+        inside_source = False
+    if not inside_source:
+        raise RuntimeError("needs provenance: sphinx_needs imported outside pinned source")
+    if module_version != NEEDS_VERSION:
+        raise RuntimeError(f"needs provenance: version {module_version!r} != {NEEDS_VERSION!r}")
+
+
+def validate_needs_checkout_state(
+    needs_root: Path,
+    *,
+    commit: str,
+    tree: str,
+    status: str,
+) -> None:
+    """Validate the git observations of the pinned sphinx-needs checkout."""
+    _needs_root_paths(needs_root)
+    if commit != NEEDS_COMMIT:
+        raise RuntimeError("needs provenance: git commit does not match pinned commit")
+    if tree != NEEDS_TREE:
+        raise RuntimeError("needs provenance: sphinx-needs tree does not match pinned tree")
+    if status:
+        raise RuntimeError("needs provenance: packages/sphinx-needs subtree is dirty")
 
 
 def validate_needs_metadata(
@@ -615,23 +673,31 @@ def validate_needs_metadata(
     status: str,
 ) -> None:
     """Validate the pinned local sphinx-needs checkout observations."""
+    validate_needs_module(needs_root, module_file=module_file, module_version=module_version)
+    validate_needs_checkout_state(needs_root, commit=commit, tree=tree, status=status)
+
+
+def _git(needs_root: Path, *arguments: str) -> str:
+    command = ["git", "-c", f"safe.directory={needs_root}", "-C", str(needs_root), *arguments]
+    result = subprocess.run(command, check=True, capture_output=True, text=True)
+    return result.stdout.strip()
+
+
+def verify_needs_checkout(needs_root: Path) -> Path:
+    """Verify the checkout's git state once, before any case builds.
+
+    The per-case runner only verifies that its import resolves to this
+    checkout, so the three git subprocesses run once per generation instead
+    of once per build.
+    """
     root, _doc_test_root = _needs_root_paths(needs_root)
-    source_root = (root / "packages" / "sphinx-needs" / "src").resolve()
-    try:
-        module_path = Path(module_file).resolve()
-        inside_source = module_path.is_relative_to(source_root)
-    except OSError:
-        inside_source = False
-    if not inside_source:
-        raise RuntimeError("needs provenance: sphinx_needs imported outside pinned source")
-    if module_version != NEEDS_VERSION:
-        raise RuntimeError(f"needs provenance: version {module_version!r} != {NEEDS_VERSION!r}")
-    if commit != NEEDS_COMMIT:
-        raise RuntimeError("needs provenance: git commit does not match pinned commit")
-    if tree != NEEDS_TREE:
-        raise RuntimeError("needs provenance: sphinx-needs tree does not match pinned tree")
-    if status:
-        raise RuntimeError("needs provenance: packages/sphinx-needs subtree is dirty")
+    validate_needs_checkout_state(
+        root,
+        commit=_git(root, "rev-parse", "HEAD"),
+        tree=_git(root, "rev-parse", "HEAD:packages/sphinx-needs"),
+        status=_git(root, "status", "--porcelain", "--", "packages/sphinx-needs"),
+    )
+    return root
 
 
 class StorageError(ValueError):
@@ -640,14 +706,21 @@ class StorageError(ValueError):
 
 RootLeak = tuple[str, str, str, str]
 
+# Every generator work directory carries this path segment.  It is a single
+# ``\w+`` token so it survives tokenization and stemming, which lets the leak
+# scan catch a work-directory path even after the search indexer split it
+# into words.
+WORK_ROOT_SENTINEL = "zqoraclerootzq"
+
+# Host details that must never reach a reference.  Each pattern is anchored
+# to the shape in which the detail leaks (a path segment or Sphinx's error
+# report) so ordinary document text cannot trip it.
 _RUNTIME_LEAK_PATTERNS = (
-    (re.compile(rb"(?i)(?:site-packages|\.venv)"), Path("<site-packages/.venv>")),
+    (re.compile(re.escape(WORK_ROOT_SENTINEL.encode("ascii"))), Path("<generator-work>")),
+    (re.compile(rb"(?i)[\\/](?:site-packages|\.venv)[\\/]"), Path("<site-packages/.venv>")),
     (re.compile(rb"(?i)[\\/]home[\\/]runner(?:[\\/]|$)"), Path("</home/runner>")),
     (re.compile(rb"(?i)[\\/]tmp[\\/]sphinx-err-[^\\s/\\\\]+"), Path("</tmp/sphinx-err>")),
-    (
-        re.compile(rb"(?i)\b(?:linux|darwin|windows|macos)-[A-Za-z0-9_.-]+"),
-        Path("<platform>"),
-    ),
+    (re.compile(rb"(?im)^Platform:\s+\S+;\s+\("), Path("<platform>")),
 )
 
 
@@ -695,9 +768,48 @@ def _is_text_policy(logical_path: str) -> bool:
     )
 
 
+def root_pattern(root: Path) -> re.Pattern[bytes]:
+    """Compile every spelling of ``root`` followed by a path boundary.
+
+    The boundary (a separator, end of data, or any byte that cannot continue
+    a path component) is shared by every normalizer here and by the runner's
+    search-index shim, and mirrors ``replace_token`` in
+    ``tests/support/html_oracle.rs``.
+    """
+    spellings = sorted(_root_spellings(root), key=len, reverse=True)
+    alternation = b"|".join(re.escape(spelling) for spelling in spellings)
+    return re.compile(b"(?:" + alternation + rb")(?=[\\/]|$|[^A-Za-z0-9_.-])")
+
+
+def _replace_root_spellings(data: bytes, root: Path, token: bytes) -> bytes:
+    return root_pattern(root).sub(token, data)
+
+
 def _replace_source_root_tokens(data: bytes, source_root: Path) -> bytes:
-    for spelling in sorted(_root_spellings(source_root), key=len, reverse=True):
-        data = re.sub(re.escape(spelling) + rb"(?=[\\/]|$)", b"<SRCDIR>", data)
+    return _replace_root_spellings(data, source_root, b"<SRCDIR>")
+
+
+_SCHEMA_TIMING_PATTERNS = (
+    (re.compile(rb"(Schema validation completed with \d+ warning\(s\) in )\d+\.\d+( seconds\.)"), rb"\g<1>0.000\g<2>"),
+    (re.compile(rb"(Validated )\d+(?:\.\d+)?( needs/s\.)"), rb"\g<1>0\g<2>"),
+    (re.compile(rb'("validated_needs_per_second": )\d+(?:\.\d+)?'), rb"\g<1>0"),
+)
+
+
+def _is_schema_report(logical_path: str) -> bool:
+    return logical_path.replace("\\", "/").rsplit("/", 1)[-1] == "schema_violations.json"
+
+
+def zero_schema_timings(data: bytes) -> bytes:
+    """Zero the wall-clock figures sphinx-needs writes into its schema report.
+
+    ``schema_violations.json`` records the validation duration and the
+    derived needs-per-second rate, which change on every build.  Both sides
+    of the differential apply the same rewrite (see ``Policy::NeedsSchemaReport``
+    in ``tests/support/html_oracle.rs``).
+    """
+    for pattern, replacement in _SCHEMA_TIMING_PATTERNS:
+        data = pattern.sub(replacement, data)
     return data
 
 
@@ -712,6 +824,8 @@ def _normalize_reference_bytes(
     normalized = data.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
     if source_root is not None:
         normalized = _replace_source_root_tokens(normalized, source_root)
+    if _is_schema_report(logical_path):
+        normalized = zero_schema_timings(normalized)
     return normalized
 
 
@@ -735,6 +849,23 @@ def _check_root_leaks(data: bytes, roots: list[Path], logical_path: str) -> None
         raise StorageError(f"root leak in {logical_path}: {leaks[0]}")
 
 
+def _read_output_tree(output_root: Path) -> dict[str, bytes]:
+    """Read a built output tree as logical path -> bytes, rejecting symlinks."""
+    output_root = Path(output_root)
+    if not output_root.is_dir():
+        raise StorageError(f"output tree does not exist: {output_root}")
+    output_files: dict[str, bytes] = {}
+    for path in sorted(output_root.rglob("*")):
+        if path.is_symlink():
+            raise StorageError(f"symlink in captured output: {path}")
+        if not path.is_file():
+            continue
+        logical_path = path.relative_to(output_root).as_posix()
+        _safe_relative_path(logical_path, f"captured logical path {logical_path}")
+        output_files[logical_path] = path.read_bytes()
+    return output_files
+
+
 def capture_output_tree(
     output_root: Path,
     profile_root: Path,
@@ -745,27 +876,12 @@ def capture_output_tree(
     source_root: Path | None = None,
 ) -> list[FileRecord]:
     """Capture an output tree into refs/blobs and return logical file records."""
-    output_root = Path(output_root)
-    profile_root = Path(profile_root)
-    if not output_root.is_dir():
-        raise StorageError(f"output tree does not exist: {output_root}")
-    records: list[FileRecord] = []
-    roots = root_paths or []
-    output_files: dict[str, bytes] = {}
-    for path in sorted(output_root.rglob("*")):
-        if path.is_symlink():
-            raise StorageError(f"symlink in captured output: {path}")
-        if not path.is_file():
-            continue
-        logical_path = path.relative_to(output_root).as_posix()
-        _safe_relative_path(logical_path, f"captured logical path {logical_path}")
-        output_files[logical_path] = path.read_bytes()
     return store_output_files(
-        output_files,
-        profile_root,
+        _read_output_tree(output_root),
+        Path(profile_root),
         source_set,
         case_id,
-        root_paths=roots,
+        root_paths=root_paths or [],
         source_root=source_root,
     )
 
@@ -1144,16 +1260,6 @@ def validate_index_document(document: object, profile_root: Path) -> IndexDocume
     }
 
 
-def _replace_runtime_root(data: bytes, root: Path, token: bytes) -> bytes:
-    for spelling in sorted(_root_spellings(root), key=len, reverse=True):
-        data = re.sub(
-            re.escape(spelling) + rb"(?=[\\/]|$|[^A-Za-z0-9_.-])",
-            token,
-            data,
-        )
-    return data
-
-
 def normalize_runtime_bytes(
     raw: bytes,
     source_root: Path,
@@ -1174,7 +1280,7 @@ def normalize_runtime_bytes(
         key=lambda item: len(str(Path(item[0]).resolve())),
         reverse=True,
     ):
-        normalized = _replace_runtime_root(normalized, root, token)
+        normalized = _replace_root_spellings(normalized, root, token)
     normalized = re.sub(
         rb"(?:[A-Za-z]:[\\/]|/)[^\r\n \t]*sphinx-err-[^\r\n \t]*\.log",
         b"<SPHINX_ERR_LOG>",
@@ -1259,8 +1365,6 @@ def reduce_sphinx_error_report(warnings: str) -> str:
 
 
 def _write_input_tree(case: DiscoveredCase, profile_root: Path) -> list[FileRecord]:
-    if case.status.startswith("excluded-"):
-        return []
     records: list[FileRecord] = []
     for logical_path, data in sorted(case.files.items()):
         logical_path = _safe_relative_path(logical_path, f"input logical path {logical_path}")
@@ -1282,10 +1386,17 @@ def _write_input_tree(case: DiscoveredCase, profile_root: Path) -> list[FileReco
     return records
 
 
+def warnings_sidecar_path(profile_root: Path, source_set: str, case_id: str) -> Path:
+    """Return the review copy of a case's warnings.
+
+    Sidecars live beside, not inside, the captured output tree so an output
+    file named ``warnings.txt`` cannot collide with them.
+    """
+    return Path(profile_root) / "warnings" / source_set / f"{case_id}.txt"
+
+
 def _write_warnings(profile_root: Path, case: DiscoveredCase, warnings: str) -> None:
-    if case.status.startswith("excluded-"):
-        return
-    path = profile_root / "refs" / case.source_set / case.case_id / "warnings.txt"
+    path = warnings_sidecar_path(profile_root, case.source_set, case.case_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(warnings, encoding="utf-8", newline="")
 
@@ -1314,7 +1425,12 @@ def profile_record(repo_root: Path, profile: str) -> ProfileRecord:
         "lock_sha256": hashlib.sha256(
             lock_path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
         ).hexdigest(),
-        "determinism_shims": ["uuid.uuid4=counter"]
+        "determinism_shims": [
+            "uuid.uuid4=counter",
+            "search.split=<SRCDIR>",
+            "buildinfo.site_packages=<SITE_PACKAGES>",
+            "schema_violations.json.timings=0",
+        ]
         + (["needs_reproducible_json=1"] if profile == "local_needs" else []),
     }
     return record
@@ -1337,26 +1453,61 @@ def verify_profile_lock(repo_root: Path, profile: ProfileRecord) -> None:
         )
 
 
+def _case_work_root(repo_root: Path, case: DiscoveredCase) -> Path:
+    """Return the deterministic work directory of one case.
+
+    The sentinel segment lets the leak scan recognise this path in any
+    spelling, and the fixed layout makes two regenerations build in the same
+    place.
+    """
+    return (
+        repo_root
+        / "target"
+        / "html-oracle"
+        / "generator-work"
+        / WORK_ROOT_SENTINEL
+        / case.profile
+        / case.source_set
+        / case.case_id
+    )
+
+
+def _classify_runner_result(
+    runner: dict[str, Any], exit_code: int
+) -> tuple[CaseStatus, str | None, str | None]:
+    """Map a runner result file to (status, exception_type, excluded_reason)."""
+    exception_type = runner.get("exception_type")
+    if runner.get("network_attempted"):
+        return "excluded-network", None, "build attempted a network connection"
+    if exception_type is None:
+        return ("built" if exit_code == 0 else "build-error"), None, None
+    if runner.get("sphinx_error"):
+        return "build-error", exception_type, None
+    return "reference-crash", exception_type, None
+
+
 def _run_reference_case(
     case: DiscoveredCase,
     *,
     repo_root: Path,
     needs_root: Path | None,
 ) -> dict[str, Any]:
-    work_root = repo_root / "target" / "html-oracle" / "generator-work"
-    work_root.mkdir(parents=True, exist_ok=True)
-    temporary = Path(tempfile.mkdtemp(prefix="case-", dir=work_root))
+    case_root = _case_work_root(repo_root, case)
+    if case_root.exists():
+        shutil.rmtree(case_root)
+    case_root.mkdir(parents=True)
+    label = f"{case.profile}/{case.source_set}/{case.case_id}"
     try:
-        source_root = temporary / "source"
+        source_root = case_root / "source"
         materialize_case(case, source_root)
         environment = os.environ.copy()
         environment["PYTHONNOUSERSITE"] = "1"
 
         def run_builder(builder: str, name: str) -> dict[str, Any]:
-            output_root = temporary / name / "output"
-            doctree_root = temporary / name / "doctree"
-            warnings_path = temporary / name / "warnings.txt"
-            exception_path = temporary / name / "exception.txt"
+            output_root = case_root / name / "output"
+            doctree_root = case_root / name / "doctree"
+            warnings_path = case_root / name / "warnings.txt"
+            result_path = case_root / name / "result.json"
             command = [
                 sys.executable,
                 str(repo_root / "tools" / "html_oracle_runner.py"),
@@ -1372,50 +1523,38 @@ def _run_reference_case(
                 builder,
                 "--warnings-file",
                 str(warnings_path),
-                "--exception-file",
-                str(exception_path),
+                "--result-file",
+                str(result_path),
             ]
             if needs_root is not None:
                 command.extend(["--needs-root", str(needs_root)])
-            result = subprocess.run(
+            # Sphinx runs from the source directory, as a user would, so the
+            # cwd-relative paths Docutils prints are source-relative.
+            process = subprocess.run(
                 command,
-                cwd=repo_root,
+                cwd=source_root,
                 env=environment,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 check=False,
             )
-            exception_bytes = exception_path.read_bytes() if exception_path.is_file() else b""
-            exception_text = normalize_runtime_bytes(
-                exception_bytes,
-                source_root,
-                output_root=output_root,
-                doctree_root=doctree_root,
-                case_root=temporary,
-            ).decode("utf-8", errors="replace").strip()
-            exception_type = exception_text or None
-            if result.returncode == 0:
-                status: CaseStatus = "built"
-            elif exception_type is not None and exception_type.startswith("sphinx.errors."):
-                status = "build-error"
-            elif exception_type is not None:
-                status = "reference-crash"
-            else:
-                status = "build-error"
+            stderr = process.stderr.decode("utf-8", errors="replace")
+            if not result_path.is_file():
+                raise StorageError(
+                    f"{label}: runner wrote no result file "
+                    f"(exit {process.returncode}): {stderr.strip()[-2000:]}"
+                )
+            runner = json.loads(result_path.read_text(encoding="utf-8"))
+            if runner.get("setup_error"):
+                raise StorageError(f"{label}: runner setup failed: {runner['setup_error']}")
+            status, exception_type, excluded_reason = _classify_runner_result(
+                runner, process.returncode
+            )
             output_files: dict[str, bytes] = {}
             root_leaks: list[RootLeak] = []
-            if output_root.is_dir():
-                for path in sorted(output_root.rglob("*")):
-                    if path.is_symlink():
-                        raise StorageError(f"symlink in captured output: {path}")
-                    if not path.is_file():
-                        continue
-                    logical_path = path.relative_to(output_root).as_posix()
-                    data = _normalize_reference_bytes(
-                        logical_path,
-                        path.read_bytes(),
-                        source_root,
-                    )
+            if status != "excluded-network" and output_root.is_dir():
+                for logical_path, raw in _read_output_tree(output_root).items():
+                    data = _normalize_reference_bytes(logical_path, raw, source_root)
                     leak_roots = [output_root, doctree_root, repo_root]
                     if not _is_text_policy(logical_path):
                         leak_roots.insert(0, source_root)
@@ -1428,20 +1567,20 @@ def _run_reference_case(
                 source_root,
                 output_root=output_root,
                 doctree_root=doctree_root,
-                case_root=temporary,
+                case_root=case_root,
             )
             if status in {"build-error", "reference-crash"}:
                 warnings = reduce_sphinx_error_report(warnings)
-            warning_leaks = _find_root_leaks(
+            if status != "excluded-network" and _find_root_leaks(
                 warnings.encode("utf-8"),
-                [source_root, output_root, doctree_root, temporary, repo_root],
-            )
-            if warning_leaks:
+                [source_root, output_root, doctree_root, case_root, repo_root],
+            ):
                 root_leaks.append((case.profile, case.source_set, case.case_id, "warnings"))
             return {
                 "status": status,
-                "exit_code": result.returncode,
+                "exit_code": process.returncode,
                 "exception_type": exception_type,
+                "excluded_reason": excluded_reason,
                 "warnings": warnings,
                 "output_files": output_files,
                 "root_leaks": root_leaks,
@@ -1459,18 +1598,28 @@ def _run_reference_case(
         )
         if case.profile == "local_needs" and html_result["status"] in {"built", "build-error"}:
             needs_result = run_builder("needs", "needs")
-            result["root_leaks"].extend(needs_result["root_leaks"])
-            result.update(
-                {
-                    "needs_status": needs_result["status"],
-                    "needs_exit_code": needs_result["exit_code"],
-                    "needs_warnings": needs_result["warnings"],
-                    "needs_json_bytes": needs_result["output_files"].get("needs.json"),
-                }
-            )
+            if needs_result["status"] == "excluded-network":
+                result.update(
+                    {
+                        "status": "excluded-network",
+                        "excluded_reason": needs_result["excluded_reason"],
+                        "output_files": {},
+                        "root_leaks": [],
+                    }
+                )
+            else:
+                result["root_leaks"].extend(needs_result["root_leaks"])
+                result.update(
+                    {
+                        "needs_status": needs_result["status"],
+                        "needs_exit_code": needs_result["exit_code"],
+                        "needs_warnings": needs_result["warnings"],
+                        "needs_json_bytes": needs_result["output_files"].get("needs.json"),
+                    }
+                )
         return result
     finally:
-        shutil.rmtree(temporary, ignore_errors=True)
+        shutil.rmtree(case_root, ignore_errors=True)
 
 
 def _build_case_worker(
@@ -1483,6 +1632,7 @@ def _build_case_worker(
             "status": case.status,
             "exit_code": None,
             "exception_type": None,
+            "excluded_reason": case.excluded_reason,
             "warnings": "",
             "output_files": {},
             "root_leaks": [],
@@ -1497,30 +1647,30 @@ def _case_record_from_result(
 ) -> CaseRecord:
     status = result["status"]
     excluded = status.startswith("excluded-")
-    input_files = _write_input_tree(case, profile_root)
-    output_files = result["output_files"]
-    files = store_output_files(
-        output_files,
-        profile_root,
-        case.source_set,
-        case.case_id,
-        root_paths=[profile_root],
-    )
-    warnings = result["warnings"]
-    _write_warnings(profile_root, case, warnings)
-    if excluded:
-        input_files = []
-        files = []
+    input_files: list[FileRecord] = []
+    files: list[FileRecord] = []
     needs_json = None
-    if not excluded and result.get("needs_json_bytes") is not None:
-        needs_records = store_output_files(
-            {"needs/needs.json": result["needs_json_bytes"]},
+    warnings = ""
+    if not excluded:
+        input_files = _write_input_tree(case, profile_root)
+        files = store_output_files(
+            result["output_files"],
             profile_root,
             case.source_set,
             case.case_id,
             root_paths=[profile_root],
         )
-        needs_json = needs_records[0]
+        warnings = result["warnings"]
+        _write_warnings(profile_root, case, warnings)
+        if result.get("needs_json_bytes") is not None:
+            needs_records = store_output_files(
+                {"needs/needs.json": result["needs_json_bytes"]},
+                profile_root,
+                case.source_set,
+                case.case_id,
+                root_paths=[profile_root],
+            )
+            needs_json = needs_records[0]
     return {
         "profile": case.profile,
         "source_set": case.source_set,
@@ -1528,8 +1678,8 @@ def _case_record_from_result(
         "status": status,
         "exit_code": None if excluded else result["exit_code"],
         "exception_type": None if excluded else result.get("exception_type"),
-        "warnings": "" if excluded else warnings,
-        "excluded_reason": case.excluded_reason if excluded else None,
+        "warnings": warnings,
+        "excluded_reason": (result.get("excluded_reason") or case.excluded_reason) if excluded else None,
         "origin": {
             "source_set": case.source_set,
             "origin_path": case.origin_path,
@@ -1583,9 +1733,35 @@ def validate_profile_tree(document: IndexDocument, profile_root: Path) -> None:
             relative = path.relative_to(profile_root).as_posix()
             if relative in referenced:
                 continue
-            if directory_name == "refs" and path.name == "warnings.txt":
-                continue
             raise StorageError(f"unreferenced profile artifact: {relative}")
+    _validate_warning_sidecars(document, profile_root)
+
+
+def _validate_warning_sidecars(document: IndexDocument, profile_root: Path) -> None:
+    """Every non-excluded case has exactly one sidecar equal to its warnings."""
+    expected: dict[str, str] = {}
+    for case in document["cases"]:
+        if case["status"].startswith("excluded-"):
+            continue
+        path = warnings_sidecar_path(profile_root, case["source_set"], case["case_id"])
+        expected[path.relative_to(profile_root).as_posix()] = case["warnings"]
+    directory = profile_root / "warnings"
+    found: set[str] = set()
+    if directory.exists():
+        for path in sorted(directory.rglob("*")):
+            if path.is_symlink():
+                raise StorageError(f"symlink in profile tree: {path}")
+            if not path.is_file():
+                continue
+            relative = path.relative_to(profile_root).as_posix()
+            if relative not in expected:
+                raise StorageError(f"unreferenced profile artifact: {relative}")
+            if path.read_bytes() != expected[relative].encode("utf-8"):
+                raise StorageError(f"warnings sidecar differs from ledger: {relative}")
+            found.add(relative)
+    missing = sorted(set(expected) - found)
+    if missing:
+        raise StorageError(f"missing warnings sidecar: {missing[0]}")
 
 
 def generate_profile(
@@ -1605,8 +1781,10 @@ def generate_profile(
     if staging.exists():
         shutil.rmtree(staging)
     staging.mkdir(parents=True)
-    for directory in ("inputs", "refs", "blobs"):
+    for directory in ("inputs", "refs", "blobs", "warnings"):
         (staging / directory).mkdir()
+    if profile == "local_needs" and needs_root is not None:
+        needs_root = verify_needs_checkout(needs_root)
     cases = discover_cases(repo_root, config_path, profile=profile, needs_root=needs_root)
     workers = max(1, jobs or (os.cpu_count() or 1))
     raw_results: list[dict[str, Any]] = []
@@ -1661,8 +1839,11 @@ def verify_profile(
             f"WARNING: {profile} reference platform is {reference_platform!r}; "
             "canonical references use 'linux'."
         )
+    if profile == "local_needs" and needs_root is not None:
+        needs_root = verify_needs_checkout(needs_root)
     discovered = discover_cases(repo_root, config_path, profile=profile, needs_root=needs_root)
     assert_discovery_keys_equal(discovered, validated["cases"])
+    assert_discovery_inputs_equal(discovered, validated["cases"])
     counts: dict[str, dict[str, int]] = {}
     for case in validated["cases"]:
         source_counts = counts.setdefault(case["source_set"], {})

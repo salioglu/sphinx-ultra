@@ -1,0 +1,1 @@
+<SRCDIR>/test_styles.rst:22: WARNING: The 'style_col' option has never had any effect (it was collected but never applied) and will be removed; the line can be deleted. [needs.deprecated]

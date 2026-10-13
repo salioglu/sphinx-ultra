@@ -1,0 +1,1 @@
+<SRCDIR>/index.rst:15: WARNING: No loaded extension provides a 'dropdown' directive, so the needs report is rendered with 'admonition' instead. Load an extension that provides it, for example sphinx-design, or choose the directive yourself with needs_render_context = {'report_directive': ...} [needs.needreport]

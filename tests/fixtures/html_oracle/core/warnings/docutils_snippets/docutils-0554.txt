@@ -1,0 +1,5 @@
+<SRCDIR>/index.rst:1: CRITICAL: Problems with "csv-table" directive path:
+[Errno 2] No such file or directory: 'nonexistent-table-data.csv'.
+
+.. csv-table::
+   :file: nonexistent-table-data.csv [docutils]

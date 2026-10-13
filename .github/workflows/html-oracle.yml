@@ -35,6 +35,20 @@ jobs:
       - name: Sync local-needs profile
         run: uv sync --locked --python 3.12 --project tools/oracle_profiles/local_needs
 
+      - name: Test the generator (core profile)
+        env:
+          SPHINX_NEEDS_ROOT: ${{ github.workspace }}/sphinx-needs
+        run: >-
+          uv run --locked --python 3.12 --project tools/oracle_profiles/core python
+          -m pytest tools/test_gen_html_oracle.py -q
+
+      - name: Test the generator (local-needs profile)
+        env:
+          SPHINX_NEEDS_ROOT: ${{ github.workspace }}/sphinx-needs
+        run: >-
+          uv run --locked --python 3.12 --project tools/oracle_profiles/local_needs python
+          -m pytest tools/test_gen_html_oracle.py -q -k local_needs
+
       - name: Generate core references
         run: >-
           uv run --locked --python 3.12 --project tools/oracle_profiles/core python

@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -12,9 +10,12 @@ use flate2::read::ZlibDecoder;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Policy {
-    Warnings,
     SearchIndex,
     NeedsJson,
+    /// sphinx-needs' `schema_violations.json`: text, with the wall-clock
+    /// validation figures zeroed on both sides (the oracle runner zeroes
+    /// them in the reference).
+    NeedsSchemaReport,
     ObjectsInventory,
     TextCrlf,
     ExactBytes,
@@ -204,6 +205,32 @@ impl IndexDocument {
                 &format!("profile {profile_name} lock_sha256"),
             )?;
             validate_relative_path(&profile.lock_path, "lock_path")?;
+            if profile.sphinx.is_empty() || profile.docutils.is_empty() {
+                return Err(format!(
+                    "profile {profile_name} lacks a sphinx or docutils version"
+                ));
+            }
+            if profile.determinism_shims.is_empty() {
+                return Err(format!(
+                    "profile {profile_name} records no determinism shims"
+                ));
+            }
+            let needs_pins = [
+                &profile.needs_version,
+                &profile.needs_commit,
+                &profile.needs_tree,
+            ];
+            let pinned = needs_pins.iter().filter(|pin| pin.is_some()).count();
+            let expected = if profile_name_is_local_needs(profile_name) {
+                needs_pins.len()
+            } else {
+                0
+            };
+            if pinned != expected {
+                return Err(format!(
+                    "profile {profile_name} must record {expected} sphinx-needs pins, found {pinned}"
+                ));
+            }
         }
 
         let mut previous_key: Option<(&str, &str, &str)> = None;
@@ -247,12 +274,20 @@ impl IndexDocument {
             let input_entries = case
                 .input_files
                 .iter()
-                .map(|record| self.validate_file_record(profile_root, record, FileStorage::Input))
+                .map(|record| {
+                    self.validate_file_record(profile_root, record, &[FileStorage::Input])
+                })
                 .collect::<Result<Vec<_>, _>>()?;
             let output_entries = case
                 .files
                 .iter()
-                .map(|record| self.validate_file_record(profile_root, record, record.storage))
+                .map(|record| {
+                    self.validate_file_record(
+                        profile_root,
+                        record,
+                        &[FileStorage::Ref, FileStorage::Blob],
+                    )
+                })
                 .collect::<Result<Vec<_>, _>>()?;
             if case.status.is_excluded() {
                 continue;
@@ -275,7 +310,7 @@ impl IndexDocument {
                 expected.insert(record.storage_path.clone());
             }
             if let Some(record) = &case.needs_json {
-                self.validate_file_record(profile_root, record, FileStorage::Ref)?;
+                self.validate_file_record(profile_root, record, &[FileStorage::Ref])?;
                 expected.insert(record.storage_path.clone());
             }
         }
@@ -286,12 +321,12 @@ impl IndexDocument {
         &self,
         profile_root: &Path,
         record: &FileRecord,
-        expected_storage: FileStorage,
+        allowed_storages: &[FileStorage],
     ) -> Result<(String, String), String> {
-        if record.storage != expected_storage {
+        if !allowed_storages.contains(&record.storage) {
             return Err(format!(
-                "storage kind mismatch for {}: expected {:?}, got {:?}",
-                record.logical_path, expected_storage, record.storage
+                "storage kind {:?} is not allowed for {}: expected one of {:?}",
+                record.storage, record.logical_path, allowed_storages
             ));
         }
         validate_relative_path(&record.logical_path, "logical_path")?;
@@ -346,6 +381,25 @@ fn validate_case(case: &CaseRecord, local_needs: bool) -> Result<(), String> {
     validate_file_records_sorted(&case.files, "files")?;
     if case.origin.origin_path.is_empty() {
         return Err(format!("empty origin_path for {}", case.case_id));
+    }
+    if case
+        .origin
+        .pytest_node_ids
+        .windows(2)
+        .any(|pair| pair[0] >= pair[1])
+    {
+        return Err(format!(
+            "pytest_node_ids for {} are not sorted and unique",
+            case.case_id
+        ));
+    }
+    // The generator only detects uncaptured variants inside tests it
+    // credited to the case, so the flag implies at least one node id.
+    if case.origin.variants_not_captured && case.origin.pytest_node_ids.is_empty() {
+        return Err(format!(
+            "{} reports uncaptured variants without any pytest node id",
+            case.case_id
+        ));
     }
     validate_status_fields(case)?;
 
@@ -630,9 +684,6 @@ fn validate_reverse_artifacts(
                         .map_err(|error| error.to_string())?
                         .to_string_lossy()
                         .replace(std::path::MAIN_SEPARATOR, "/");
-                    if relative.ends_with("/warnings.txt") {
-                        continue;
-                    }
                     if !expected.contains(&relative) {
                         return Err(format!("unreferenced artifact {relative}"));
                     }
@@ -661,15 +712,13 @@ pub fn sha256_hex(bytes: &[u8]) -> String {
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-pub fn profile_root(fixtures_root: &Path, profile: &str) -> PathBuf {
-    fixtures_root.join(profile)
-}
-
 pub fn policy_for_path(logical_path: &str) -> Policy {
     if logical_path == "searchindex.js" {
         Policy::SearchIndex
     } else if logical_path.rsplit('/').next() == Some("needs.json") {
         Policy::NeedsJson
+    } else if logical_path.rsplit('/').next() == Some("schema_violations.json") {
+        Policy::NeedsSchemaReport
     } else if logical_path == "objects.inv" {
         Policy::ObjectsInventory
     } else if logical_path.ends_with(".buildinfo") {
@@ -711,9 +760,13 @@ pub fn compare_file(
             None,
         ),
         Policy::ObjectsInventory => compare_inventory_file(logical_path, expected, actual),
-        Policy::TextCrlf => {
-            let expected = normalize_crlf(expected);
-            let actual = replace_source_root_token(&normalize_crlf(actual), source_root, true);
+        Policy::TextCrlf | Policy::NeedsSchemaReport => {
+            let mut expected = normalize_crlf(expected);
+            let mut actual = replace_source_root_token(&normalize_crlf(actual), source_root, true);
+            if policy_for_path(logical_path) == Policy::NeedsSchemaReport {
+                expected = zero_schema_timings(&expected);
+                actual = zero_schema_timings(&actual);
+            }
             if expected == actual {
                 Vec::new()
             } else {
@@ -725,7 +778,7 @@ pub fn compare_file(
                 )]
             }
         }
-        Policy::Warnings | Policy::ExactBytes => {
+        Policy::ExactBytes => {
             if expected == actual {
                 Vec::new()
             } else {
@@ -770,7 +823,6 @@ pub fn compare_warnings_with_roots(
     expected_roots: Option<WarningRoots<'_>>,
     actual_roots: Option<WarningRoots<'_>>,
 ) -> Vec<Diagnostic> {
-    let _policy = Policy::Warnings;
     let expected = normalize_warning_bytes_with_roots(expected, expected_roots);
     let actual = normalize_warning_bytes_with_roots(actual, actual_roots);
     if expected == actual {
@@ -785,13 +837,17 @@ pub fn compare_warnings_with_roots(
     }
 }
 
+/// Compares two output trees file by file, localizing each mismatch with the
+/// per-path diagnoser, and reports a differing build-status class.
+///
+/// This is the one comparator behind the exhaustive report; `source_root`
+/// is Ultra's input directory, whose spelling is normalized to `<SRCDIR>`.
 pub fn compare_trees(
     expected: &BTreeMap<String, Vec<u8>>,
     actual: &BTreeMap<String, Vec<u8>>,
-    expected_warnings: Option<&[u8]>,
-    actual_warnings: Option<&[u8]>,
     expected_status: Option<CaseStatus>,
     actual_status: Option<CaseStatus>,
+    source_root: Option<&Path>,
 ) -> Vec<Diagnostic> {
     let mut paths = BTreeSet::new();
     paths.extend(expected.keys().cloned());
@@ -816,13 +872,15 @@ pub fn compare_trees(
                 detail: "file exists only in expected output".to_string(),
             }),
             (Some(expected), Some(actual)) => {
-                diagnostics.extend(compare_file(&path, expected, actual, None));
+                diagnostics.extend(mismatch_diagnostics_with_source_root(
+                    &path,
+                    expected,
+                    actual,
+                    source_root,
+                ));
             }
             (None, None) => unreachable!(),
         }
-    }
-    if let (Some(expected), Some(actual)) = (expected_warnings, actual_warnings) {
-        diagnostics.extend(compare_warnings(expected, actual, None, None));
     }
     if let (Some(expected), Some(actual)) = (expected_status, actual_status) {
         let expected_is_error = expected == CaseStatus::BuildError;
@@ -866,7 +924,7 @@ fn compare_json_file(
     } else {
         actual.to_vec()
     };
-    let actual_value = match parse_json_value(&actual, searchindex_wrapper) {
+    let mut actual_value = match parse_json_value(&actual, searchindex_wrapper) {
         Ok(value) => value,
         Err(error) => {
             return vec![invalid_diagnostic(
@@ -876,6 +934,9 @@ fn compare_json_file(
             )]
         }
     };
+    if searchindex_wrapper {
+        normalize_searchindex_source_root(&mut actual_value, &expected_value, actual_source_root);
+    }
     if expected_value == actual_value {
         Vec::new()
     } else {
@@ -901,12 +962,18 @@ pub fn parse_json_value(bytes: &[u8], searchindex_wrapper: bool) -> Result<Value
     };
     let text = String::from_utf8(text).map_err(|error| error.to_string())?;
     let payload = if searchindex_wrapper {
+        // Sphinx writes `Search.setIndex(...)` without a trailing semicolon;
+        // Ultra may append one.
         let trimmed = text.trim_end();
         let prefix = "Search.setIndex(";
-        if !trimmed.starts_with(prefix) || !trimmed.ends_with(");") {
+        let Some(inner) = trimmed
+            .strip_prefix(prefix)
+            .and_then(|rest| rest.strip_suffix(';').or(Some(rest)))
+            .and_then(|rest| rest.strip_suffix(')'))
+        else {
             return Err("missing Search.setIndex(...) wrapper".to_string());
-        }
-        &trimmed[prefix.len()..trimmed.len() - 2]
+        };
+        inner
     } else {
         text.as_str()
     };
@@ -1008,18 +1075,6 @@ fn format_inventory(inventory: &(Vec<u8>, Vec<InventoryRecord>)) -> String {
         .collect::<Vec<_>>()
         .join("\n");
     format!("{header}{records}")
-}
-
-fn normalize_warning_bytes(bytes: &[u8], source_root: Option<&Path>) -> String {
-    normalize_warning_bytes_with_roots(
-        bytes,
-        source_root.map(|source_root| WarningRoots {
-            source_root: Some(source_root),
-            output_root: None,
-            doctree_root: None,
-            case_root: None,
-        }),
-    )
 }
 
 fn normalize_warning_bytes_with_roots(bytes: &[u8], roots: Option<WarningRoots<'_>>) -> String {
@@ -1125,6 +1180,117 @@ fn is_exception_message_line(line: &str) -> bool {
             .is_some_and(|character| character.is_ascii_alphabetic() || character == '_')
 }
 
+/// The search-index token Sphinx indexes for the source directory.
+///
+/// The oracle runner indexes `<SRCDIR>` wherever page text quotes the
+/// absolute source directory (a kept system message, for example), so a
+/// reference never carries the components of the generating machine's path.
+/// This term is what that token becomes after Sphinx's `\w+` split and
+/// lower-casing.
+const SRCDIR_TERM: &str = "srcdir";
+
+/// Rewrites Ultra's search index the way the oracle runner rewrote Sphinx's:
+/// in every document where the reference indexed `srcdir`, the terms that
+/// Ultra derived from its own absolute source directory are replaced by
+/// `srcdir`.
+///
+/// Ultra's terms are stems, so a path component matches a term when the
+/// term is the component itself, a suffix-stripped prefix of it (at most
+/// four characters shorter), or its Snowball `y`-to-`i` form.  Only
+/// documents the reference marks are touched, and `srcdir` is added only
+/// where such a term was removed, so a document whose page lacks the
+/// quoted path keeps its visible mismatch.
+pub fn normalize_searchindex_source_root(
+    actual: &mut Value,
+    expected: &Value,
+    source_root: Option<&Path>,
+) {
+    let Some(source_root) = source_root else {
+        return;
+    };
+    let components = source_root
+        .to_string_lossy()
+        .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+        .filter(|component| !component.is_empty())
+        .map(str::to_ascii_lowercase)
+        .collect::<BTreeSet<_>>();
+    for key in ["terms", "titleterms"] {
+        let marked_docs = expected
+            .get(key)
+            .and_then(|terms| terms.get(SRCDIR_TERM))
+            .map(posting_docs)
+            .unwrap_or_default();
+        if marked_docs.is_empty() {
+            continue;
+        }
+        let Some(terms) = actual.get_mut(key).and_then(Value::as_object_mut) else {
+            continue;
+        };
+        let mut rewritten_docs = BTreeSet::new();
+        let mut removed_terms = Vec::new();
+        for (term, postings) in terms.iter_mut() {
+            if term == SRCDIR_TERM
+                || !components
+                    .iter()
+                    .any(|component| stem_matches_component(term, component))
+            {
+                continue;
+            }
+            let docs = posting_docs(postings);
+            let kept = docs
+                .iter()
+                .copied()
+                .filter(|doc| !marked_docs.contains(doc))
+                .collect::<BTreeSet<_>>();
+            if kept.len() == docs.len() {
+                continue;
+            }
+            rewritten_docs.extend(docs.difference(&kept).copied());
+            if kept.is_empty() {
+                removed_terms.push(term.clone());
+            } else {
+                *postings = docs_posting(&kept);
+            }
+        }
+        for term in removed_terms {
+            terms.remove(&term);
+        }
+        if !rewritten_docs.is_empty() {
+            let mut docs = terms.get(SRCDIR_TERM).map(posting_docs).unwrap_or_default();
+            docs.extend(rewritten_docs);
+            terms.insert(SRCDIR_TERM.to_string(), docs_posting(&docs));
+        }
+    }
+}
+
+fn stem_matches_component(term: &str, component: &str) -> bool {
+    if term == component {
+        return true;
+    }
+    if let Some(rest) = component.strip_prefix(term) {
+        return rest.len() <= 4;
+    }
+    term.strip_suffix('i')
+        .and_then(|stem| component.strip_prefix(stem))
+        .is_some_and(|rest| rest.starts_with('y') && rest.len() <= 5)
+}
+
+fn posting_docs(postings: &Value) -> BTreeSet<u64> {
+    match postings {
+        Value::Number(number) => number.as_u64().into_iter().collect(),
+        Value::Array(items) => items.iter().filter_map(Value::as_u64).collect(),
+        _ => BTreeSet::new(),
+    }
+}
+
+fn docs_posting(docs: &BTreeSet<u64>) -> Value {
+    if docs.len() == 1 {
+        Value::from(*docs.iter().next().expect("one document"))
+    } else {
+        Value::Array(docs.iter().map(|doc| Value::from(*doc)).collect())
+    }
+}
+
 fn replace_source_root_token(
     bytes: &[u8],
     source_root: Option<&Path>,
@@ -1219,13 +1385,52 @@ fn replace_token(bytes: &[u8], token: &[u8], replacement: &[u8]) -> Vec<u8> {
     output
 }
 
+/// Zeroes the validation duration and needs-per-second rate sphinx-needs
+/// writes into `schema_violations.json`, exactly as `zero_schema_timings`
+/// in `tools/gen_html_oracle.py` does for the reference.
+pub fn zero_schema_timings(bytes: &[u8]) -> Vec<u8> {
+    use regex::bytes::Regex;
+    use std::sync::LazyLock;
+
+    static PATTERNS: LazyLock<[(Regex, &[u8]); 3]> = LazyLock::new(|| {
+        [
+            (
+                Regex::new(
+                    r"(Schema validation completed with \d+ warning\(s\) in )\d+\.\d+( seconds\.)",
+                )
+                .expect("valid regex"),
+                b"${1}0.000${2}",
+            ),
+            (
+                Regex::new(r"(Validated )\d+(?:\.\d+)?( needs/s\.)").expect("valid regex"),
+                b"${1}0${2}",
+            ),
+            (
+                Regex::new(r#"("validated_needs_per_second": )\d+(?:\.\d+)?"#)
+                    .expect("valid regex"),
+                b"${1}0",
+            ),
+        ]
+    });
+    let mut output = bytes.to_vec();
+    for (pattern, replacement) in PATTERNS.iter() {
+        output = pattern.replace_all(&output, *replacement).into_owned();
+    }
+    output
+}
+
+/// Folds CRLF and lone CR to LF, matching the generator's text policy.
 fn normalize_crlf(bytes: &[u8]) -> Vec<u8> {
     let mut normalized = Vec::with_capacity(bytes.len());
     let mut index = 0;
     while index < bytes.len() {
-        if bytes[index] == b'\r' && bytes.get(index + 1) == Some(&b'\n') {
+        if bytes[index] == b'\r' {
             normalized.push(b'\n');
-            index += 2;
+            index += if bytes.get(index + 1) == Some(&b'\n') {
+                2
+            } else {
+                1
+            };
         } else {
             normalized.push(bytes[index]);
             index += 1;
@@ -1688,7 +1893,6 @@ pub fn rerun_filter(case_key: &str, filter: Option<&str>) -> Option<String> {
 
 #[derive(Debug)]
 pub struct FixtureSuite {
-    pub root: PathBuf,
     pub profiles: BTreeMap<String, IndexDocument>,
 }
 
@@ -1719,10 +1923,7 @@ pub fn load_fixture_suite(root: &Path) -> Result<FixtureSuite, String> {
         }
         profiles.insert(profile.to_string(), document);
     }
-    Ok(FixtureSuite {
-        root: root.to_path_buf(),
-        profiles,
-    })
+    Ok(FixtureSuite { profiles })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -1786,13 +1987,14 @@ fn report_diagnostic(diagnostic: &Diagnostic) -> ReportDiagnostic {
     }
 }
 
+/// The identity of a mismatch across cases: what differed and the two
+/// contents, hashed.  Computed without rendering a diff.
 fn mismatch_key(diagnostic: &Diagnostic) -> MismatchKey {
-    let report = report_diagnostic(diagnostic);
     MismatchKey {
-        category: report.category,
-        logical_path: report.logical_path,
-        expected_sha256: report.expected_sha256,
-        actual_sha256: report.actual_sha256,
+        category: diagnostic.category.clone(),
+        logical_path: diagnostic.logical_path.clone(),
+        expected_sha256: sha256_hex(diagnostic.expected.as_bytes()),
+        actual_sha256: sha256_hex(diagnostic.actual.as_bytes()),
     }
 }
 
@@ -1820,14 +2022,13 @@ fn common_mismatches(results: &[CaseResult]) -> (Vec<CommonMismatch>, BTreeSet<M
             result.profile, result.source_set, result.case_id
         );
         for diagnostic in &result.diagnostics {
-            let key = mismatch_key(diagnostic);
-            let entry = grouped
-                .entry(key.clone())
-                .or_insert_with(|| CommonMismatchAggregate {
+            let entry = grouped.entry(mismatch_key(diagnostic)).or_insert_with(|| {
+                CommonMismatchAggregate {
                     case_keys: BTreeSet::new(),
                     source_sets: BTreeSet::new(),
                     diagnostic: report_diagnostic(diagnostic),
-                });
+                }
+            });
             entry.case_keys.insert(case_key.clone());
             entry.source_sets.insert(result.source_set.clone());
         }
@@ -1918,66 +2119,45 @@ fn failing_cases_by_file_kind(results: &[CaseResult]) -> BTreeMap<String, usize>
     counts
 }
 
-pub fn build_report(
-    total_cases: usize,
-    excluded_cases: usize,
-    reference_crash_cases: usize,
-    results: &[CaseResult],
-) -> (Value, String) {
-    build_report_with_platforms(
-        total_cases,
-        excluded_cases,
-        reference_crash_cases,
-        results,
-        &BTreeMap::new(),
-    )
+/// Everything a report is built from.  Tests fill the fields they exercise
+/// and take the rest from `Default`.
+#[derive(Debug, Clone, Copy)]
+pub struct ReportInputs<'a> {
+    pub total_cases: usize,
+    pub excluded_cases: usize,
+    pub reference_crash_cases: usize,
+    pub results: &'a [CaseResult],
+    pub reference_platforms: &'a BTreeMap<String, String>,
+    pub reference_cases: &'a [ReferenceCase],
+    pub ultra_bin: Option<&'a str>,
 }
 
-pub fn build_report_with_platforms(
-    total_cases: usize,
-    excluded_cases: usize,
-    reference_crash_cases: usize,
-    results: &[CaseResult],
-    reference_platforms: &BTreeMap<String, String>,
-) -> (Value, String) {
-    build_report_with_platforms_and_reference_cases(
-        total_cases,
-        excluded_cases,
-        reference_crash_cases,
-        results,
-        reference_platforms,
-        &[],
-    )
+static NO_PLATFORMS: BTreeMap<String, String> = BTreeMap::new();
+
+impl Default for ReportInputs<'_> {
+    fn default() -> Self {
+        Self {
+            total_cases: 0,
+            excluded_cases: 0,
+            reference_crash_cases: 0,
+            results: &[],
+            reference_platforms: &NO_PLATFORMS,
+            reference_cases: &[],
+            ultra_bin: None,
+        }
+    }
 }
 
-pub fn build_report_with_platforms_and_reference_cases(
-    total_cases: usize,
-    excluded_cases: usize,
-    reference_crash_cases: usize,
-    results: &[CaseResult],
-    reference_platforms: &BTreeMap<String, String>,
-    reference_cases: &[ReferenceCase],
-) -> (Value, String) {
-    build_report_with_platforms_reference_cases_and_bin(
+pub fn build_report(inputs: &ReportInputs<'_>) -> (Value, String) {
+    let ReportInputs {
         total_cases,
         excluded_cases,
         reference_crash_cases,
         results,
         reference_platforms,
         reference_cases,
-        None,
-    )
-}
-
-pub fn build_report_with_platforms_reference_cases_and_bin(
-    total_cases: usize,
-    excluded_cases: usize,
-    reference_crash_cases: usize,
-    results: &[CaseResult],
-    reference_platforms: &BTreeMap<String, String>,
-    reference_cases: &[ReferenceCase],
-    ultra_bin: Option<&str>,
-) -> (Value, String) {
+        ultra_bin,
+    } = *inputs;
     let mut results = results.to_vec();
     results.sort_by(case_result_order);
     let passed_cases = results.iter().filter(|result| result.passed).count();
@@ -2018,14 +2198,12 @@ pub fn build_report_with_platforms_reference_cases_and_bin(
     let failing_cases_by_file_kind = failing_cases_by_file_kind(&results);
     let (common_mismatches, common_keys) = common_mismatches(&results);
     for result in &mut results {
-        result.common_mismatch_count = result
-            .diagnostics
-            .iter()
-            .filter(|diagnostic| common_keys.contains(&mismatch_key(diagnostic)))
-            .count();
-        result
-            .diagnostics
-            .retain(|diagnostic| !common_keys.contains(&mismatch_key(diagnostic)));
+        let diagnostics = std::mem::take(&mut result.diagnostics);
+        let (common, specific): (Vec<_>, Vec<_>) = diagnostics
+            .into_iter()
+            .partition(|diagnostic| common_keys.contains(&mismatch_key(diagnostic)));
+        result.common_mismatch_count = common.len();
+        result.diagnostics = specific;
     }
     let summary_json = summary
         .iter()
@@ -2650,10 +2828,6 @@ fn walk_tree_inner(
     Ok(())
 }
 
-pub fn mismatch_diagnostics(logical_path: &str, expected: &[u8], actual: &[u8]) -> Vec<Diagnostic> {
-    mismatch_diagnostics_with_source_root(logical_path, expected, actual, None)
-}
-
 pub fn mismatch_diagnostics_with_source_root(
     logical_path: &str,
     expected: &[u8],
@@ -2681,7 +2855,10 @@ pub fn mismatch_diagnostics_with_source_root(
             parse_json_value(expected, true),
             parse_json_value(&actual, true),
         ) {
-            (Ok(expected), Ok(actual)) => diagnose_searchindex(&expected, &actual),
+            (Ok(expected), Ok(mut actual)) => {
+                normalize_searchindex_source_root(&mut actual, &expected, source_root);
+                diagnose_searchindex(&expected, &actual)
+            }
             _ => compare_file(logical_path, expected, &actual, source_root),
         }
     } else if logical_path.rsplit('/').next() == Some("needs.json") {
@@ -2718,30 +2895,6 @@ pub fn mismatch_diagnostics_with_source_root(
         diagnostic.logical_path = logical_path.to_string();
     }
     diagnostics
-}
-
-pub fn warning_diagnostics(
-    expected: &[u8],
-    actual: &[u8],
-    expected_source_root: Option<&Path>,
-    actual_source_root: Option<&Path>,
-) -> Vec<Diagnostic> {
-    warning_diagnostics_with_roots(
-        expected,
-        actual,
-        expected_source_root.map(|source_root| WarningRoots {
-            source_root: Some(source_root),
-            output_root: None,
-            doctree_root: None,
-            case_root: None,
-        }),
-        actual_source_root.map(|source_root| WarningRoots {
-            source_root: Some(source_root),
-            output_root: None,
-            doctree_root: None,
-            case_root: None,
-        }),
-    )
 }
 
 pub fn warning_diagnostics_with_roots(
