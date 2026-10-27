@@ -14,9 +14,9 @@ Verified local evidence:
 | tests/fixtures/basic, basic_missing_ref, deps_image, intersphinx, literalinclude, toctree_forms, toctree_glob | 7 checked-in HTML-ish fixture projects |
 | SPHINX_PROJECTS in tools/gen_inventory_fixture.py | 4 Sphinx-built inventory projects; handcrafted .inv files remain parser fixtures |
 | tests/fixtures/pattern_differential.json and tools/gen_pattern_fixture.py | 881 parser-only pattern cases, outside the HTML oracle because they are not documents |
-| C:\Users\johnm\Documents\repos\sphinx-needs\packages\sphinx-needs\tests\doc_test | 142 local sibling doc_test projects with conf.py |
+| a sphinx-needs checkout at the pinned commit, `packages/sphinx-needs/tests/doc_test` | 142 local sibling doc_test projects with conf.py |
 
-The sibling checkout was verified at sphinx-needs 8.5.0, commit 58bcb59d861da95f2aca79f343e8bae6ec5c1250, with subtree tree 958172a89defcec69704f6b9d61e482e7c4e8409. Its importable package is packages/sphinx-needs/src/sphinx_needs and its documentation projects are packages/sphinx-needs/tests/doc_test. The checkout has unrelated root-level dirt, but packages/sphinx-needs is clean; generation must reject dirt inside that subtree.
+The sphinx-needs checkout (passed with `--needs-root`) was verified at sphinx-needs 8.5.0, commit 58bcb59d861da95f2aca79f343e8bae6ec5c1250, with subtree tree 958172a89defcec69704f6b9d61e482e7c4e8409. Its importable package is packages/sphinx-needs/src/sphinx_needs and its documentation projects are packages/sphinx-needs/tests/doc_test. The checkout has unrelated root-level dirt, but packages/sphinx-needs is clean; generation must reject dirt inside that subtree.
 
 ## Reference profiles
 

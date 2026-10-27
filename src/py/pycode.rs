@@ -6,7 +6,7 @@
 //! `SP/pycode/parser.py:623-627` → `DefinitionFinder`,
 //! `SP/pycode/parser.py:514-588`, sphinx 9.1.0). Ground truth: research spec
 //! §3.5 (cited as [INC §3.5]),
-//! `docs/superpowers/plans/2026-09-01-m2-wave4.5-research-spec-include-literalinclude.md`.
+//! `docs/plans/2026-09-01-m2-wave4.5-research-spec-include-literalinclude.md`.
 //!
 //! `DefinitionFinder` is a **token-stream scanner, not an AST walk**: it reads
 //! the `tokenize` stream and keeps two stacks — a dotted `context` of

@@ -10,7 +10,7 @@
 //! expansion happening *before* the posixpath join, dispname `-` stored
 //! verbatim) mirrors `sphinx/util/inventory.py` `InventoryFile.loads` /
 //! `_loads_v1` / `_loads_v2` / `dump` byte-for-byte; see
-//! docs/superpowers/plans/2026-08-31-m2-wave4-research-spec-inventory-intersphinx.md
+//! docs/plans/2026-08-31-m2-wave4-research-spec-inventory-intersphinx.md
 //! §1 for the file:line citations this was built against.
 //!
 //! The previous reader here decoded the whole file with

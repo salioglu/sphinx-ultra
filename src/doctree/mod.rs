@@ -1,6 +1,6 @@
 //! Typed doctree IR with docutils-equivalent node semantics (M2 wave 1).
 //!
-//! Design (recorded in docs/superpowers/plans/2026-08-07-m2-wave-map.md):
+//! Design (recorded in docs/plans/2026-08-07-m2-wave-map.md):
 //! docutils-mirror generic node — node identity and attributes are data, not
 //! Rust types, so the pseudo-XML parity serializer is a direct dump and
 //! docutils transforms/writers port line-by-line. One `Node` struct covers

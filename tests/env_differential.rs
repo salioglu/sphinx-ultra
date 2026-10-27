@@ -712,7 +712,7 @@ const HIGHLIGHT_STAMP_ATTRS: [&str; 3] = ["language", "force", "linenos"];
 /// directives' node shapes — see tools/gen_env_fixture.py) instead of
 /// dropping out of the comparison over three stamped attributes.
 ///
-/// The transform belongs to wave 5 (docs/superpowers/plans/
+/// The transform belongs to wave 5 (docs/plans/
 /// 2026-08-07-m2-wave-map.md lists it among the exemptions that wave is
 /// expected to delete, as "the `linenos` flag a captioned `code-block`
 /// stamps onto its `literal_block`" — the same pass, met there through
@@ -1729,7 +1729,7 @@ fn resolved_doctrees_match_oracle() {
 }
 
 /// The exemption arithmetic the docs quote (docs/IMPLEMENTATION_STATUS.md,
-/// ROADMAP.md, CHANGELOG.md, README.md), computed from the tables and the
+/// docs/ROADMAP.md, CHANGELOG.md, README.md), computed from the tables and the
 /// fixture rather than by hand (panel fix round B, [29]): how many
 /// documents' resolved doctrees and how many projects' warning streams are
 /// compared byte-for-byte, how many documents are skipped wholesale, and
@@ -1827,7 +1827,7 @@ fn exemption_arithmetic_matches_the_documented_numbers() {
          {} stamp-exempt ({byte_exact_documents} documents byte-for-byte), {} \
          warning-exempt projects ({byte_exact_warning_projects} warning streams \
          byte-for-byte) — update the constants AND the doc sites \
-         (docs/IMPLEMENTATION_STATUS.md, ROADMAP.md, CHANGELOG.md, README.md)",
+         (docs/IMPLEMENTATION_STATUS.md, docs/ROADMAP.md, CHANGELOG.md, README.md)",
         projects.len(),
         documents.len(),
         wholesale.len(),

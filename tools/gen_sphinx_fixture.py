@@ -13,7 +13,7 @@ produces spurious fixture churn.
 
 THE SPHINX ORACLE. This fixture records what a REAL `sphinx-build` read phase
 produces for each snippet: the probe-validated minimal deterministic harness
-(docs/superpowers/plans/2026-08-13-m2-wave3-probes.md, section "## sphinx-oracle",
+(docs/plans/2026-08-13-m2-wave3-probes.md, section "## sphinx-oracle",
 "harness3") drives `sphinx.util.docutils._parse_str_to_doctree` with
 `default_settings=env.settings` and `transforms=app.registry.get_transforms()`
 against a temp srcdir carrying a minimal conf.py with `extensions = []`.

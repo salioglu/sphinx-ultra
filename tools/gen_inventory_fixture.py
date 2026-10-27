@@ -19,7 +19,7 @@ never a hand-derived expectation.
 Design verified empirically in this session against sphinx 9.1.0 / docutils
 0.22.4 under the pinned uv invocation above, against
 sphinx/util/inventory.py (InventoryFile.loads/_loads_v1/_loads_v2/dump) and
-docs/superpowers/plans/2026-08-31-m2-wave4-research-spec-inventory-intersphinx.md
+docs/plans/2026-08-31-m2-wave4-research-spec-inventory-intersphinx.md
 section 1 (exact byte framing, `$`-suffix expansion order, error texts).
 
 Harness notes:

@@ -334,10 +334,10 @@ def main() -> int:
     supplemental_paths = [
         root / "README.md",
         root / "CHANGELOG.md",
-        root / "CONTRIBUTING.md",
-        root / "ROADMAP.md",
+        root / "docs" / "CONTRIBUTING.md",
+        root / "docs" / "ROADMAP.md",
         root / "docs" / "README.md",
-        root / "docs" / "QUICK_START.md",
+        root / "docs" / "getting-started.md",
     ]
     words: list[str] = []
     rst_words: list[str] = []

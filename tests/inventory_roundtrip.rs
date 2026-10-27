@@ -204,7 +204,7 @@ fn ok_cases_parse_to_expected_table() {
 
 // ---------------------------------------------------------------------------
 // Test 2: malformed headers raise the exact ValueError text
-// (docs/superpowers/plans/2026-08-31-m2-wave4-research-spec-inventory-intersphinx.md §1)
+// (docs/plans/2026-08-31-m2-wave4-research-spec-inventory-intersphinx.md §1)
 // ---------------------------------------------------------------------------
 
 #[test]
