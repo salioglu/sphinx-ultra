@@ -184,9 +184,8 @@ fn column_width(text: &str) -> usize {
 /// Definition-list term split on the docutils classifier delimiter
 /// `' +: +'` (one-or-more spaces, colon, one-or-more spaces).
 fn split_classifiers(term: &str) -> Vec<String> {
-    lazy_static::lazy_static! {
-        static ref CLASSIFIER_RE: regex::Regex = regex::Regex::new(" +: +").unwrap();
-    }
+    static CLASSIFIER_RE: std::sync::LazyLock<regex::Regex> =
+        std::sync::LazyLock::new(|| regex::Regex::new(" +: +").unwrap());
     CLASSIFIER_RE.split(term).map(str::to_string).collect()
 }
 
@@ -8971,8 +8970,8 @@ fn strip_backslashes(s: &str) -> String {
 /// leftmost-first captures match Python's backtracking on this pattern
 /// (pinned by the py_sig_match tests, incl. the greedy-arglist edge).
 fn py_sig_match(sig: &str) -> Option<crate::py::arglist::PySigMatch> {
-    lazy_static::lazy_static! {
-        static ref PY_SIG_RE: regex::Regex = regex::Regex::new(
+    static PY_SIG_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(
             r"(?x)^ ([\w.]*\.)?               # class name(s)
                   (\w+) \s*                   # thing name
                   (?: \[ \s* (.*?) \s* \] )?  # optional: type parameters list
@@ -8980,8 +8979,8 @@ fn py_sig_match(sig: &str) -> Option<crate::py::arglist::PySigMatch> {
                    (?: \s* ->\s* (.*) )?      #           return annotation
                   )? $",
         )
-        .expect("py_sig_re compiles");
-    }
+        .expect("py_sig_re compiles")
+    });
     let caps = PY_SIG_RE.captures(sig)?;
     let group = |i: usize| caps.get(i).map(|m| m.as_str().to_string());
     let span_of = |i: usize| caps.get(i).map(|m| (m.start(), m.end())).unwrap_or((0, 0));
@@ -9440,11 +9439,9 @@ fn is_inline_or_text(node: &Node) -> bool {
 /// delimiter match (the scan would have split there), so the flag is
 /// exactly `self._delimiters_re.match(sub_target)` (`_object.py:589`).
 fn split_type_delimiters(target: &str) -> Vec<(String, bool)> {
-    lazy_static::lazy_static! {
-        static ref DELIMITERS_RE: regex::Regex =
-            regex::Regex::new(r"\s*[\[\](),](?:\s*o[rf]\s)?\s*|\s+o[rf]\s+|\s*\|\s*|\.\.\.")
-                .unwrap();
-    }
+    static DELIMITERS_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"\s*[\[\](),](?:\s*o[rf]\s)?\s*|\s+o[rf]\s+|\s*\|\s*|\.\.\.").unwrap()
+    });
     let mut out = Vec::new();
     let mut last = 0;
     for m in DELIMITERS_RE.find_iter(target) {

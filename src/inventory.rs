@@ -124,17 +124,17 @@ pub fn posix_join(uri: &str, location: &str) -> String {
     }
 }
 
-lazy_static::lazy_static! {
-    /// `r'(.+?)\s+(\S+)\s+(-?\d+)\s+?(\S*)\s+(.*)'`, anchored at the start to
-    /// match Python's `re.match` (which only requires the match to *start*
-    /// at position 0, not consume the whole line) — `inventory.py:115-119`.
-    static ref V2_LINE_RE: regex::Regex =
-        regex::Regex::new(r"^(.+?)\s+(\S+)\s+(-?\d+)\s+?(\S*)\s+(.*)").unwrap();
-    /// Header-field whitespace-run collapse: `re.sub('\s+', ' ', s)` — applied
-    /// only to the Project/Version header values, never to entry lines
-    /// (`inventory.py:178-179`).
-    static ref WHITESPACE_RUN_RE: regex::Regex = regex::Regex::new(r"\s+").unwrap();
-}
+/// `r'(.+?)\s+(\S+)\s+(-?\d+)\s+?(\S*)\s+(.*)'`, anchored at the start to
+/// match Python's `re.match` (which only requires the match to *start*
+/// at position 0, not consume the whole line) — `inventory.py:115-119`.
+static V2_LINE_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"^(.+?)\s+(\S+)\s+(-?\d+)\s+?(\S*)\s+(.*)").unwrap()
+});
+/// Header-field whitespace-run collapse: `re.sub('\s+', ' ', s)` — applied
+/// only to the Project/Version header values, never to entry lines
+/// (`inventory.py:178-179`).
+static WHITESPACE_RUN_RE: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r"\s+").unwrap());
 
 /// Inventory file handler - mirrors Sphinx's InventoryFile class
 pub struct InventoryFile;
