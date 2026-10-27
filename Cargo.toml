@@ -31,6 +31,11 @@ exclude = [
     "*.sh",
     "/sphinx-ultra.yaml",
     "/static/*.md",
+    "/assets",
+    "/deny.toml",
+    "/release-please-config.json",
+    "/.release-please-manifest.json",
+    "/.claude",
 ]
 
 [dependencies]

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "rust",
+  "bump-minor-pre-major": true,
+  "bump-patch-for-minor-pre-major": false,
+  "include-v-in-tag": true,
+  "include-component-in-tag": false,
+  "separate-pull-requests": false,
+  "pull-request-title-pattern": "chore(main): release ${version}",
+  "pull-request-header": ":robot: Release PR. Merging it tags the release, publishes the binaries and the crate.",
+  "changelog-sections": [
+    { "type": "feat", "section": "Added" },
+    { "type": "fix", "section": "Fixed" },
+    { "type": "perf", "section": "Performance" },
+    { "type": "revert", "section": "Reverted" },
+    { "type": "deps", "section": "Dependencies" },
+    { "type": "docs", "section": "Documentation", "hidden": true },
+    { "type": "refactor", "section": "Internal", "hidden": true },
+    { "type": "test", "section": "Internal", "hidden": true },
+    { "type": "ci", "section": "Internal", "hidden": true },
+    { "type": "build", "section": "Internal", "hidden": true },
+    { "type": "chore", "section": "Internal", "hidden": true },
+    { "type": "style", "section": "Internal", "hidden": true }
+  ],
+  "packages": {
+    ".": {
+      "package-name": "sphinx-ultra",
+      "changelog-path": "CHANGELOG.md"
+    }
+  }
+}

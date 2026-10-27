@@ -1,0 +1,56 @@
+name: release-please
+
+# Maintains the release pull request from Conventional Commits on main:
+# version bump in Cargo.toml and Cargo.lock, the CHANGELOG section, the
+# release notes. Merging that PR creates the tag and the GitHub release,
+# after which this workflow calls release.yml to build the binaries and
+# publish the crate. See docs/RELEASING.md.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    name: Release PR / tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write        # create the tag and the release
+      pull-requests: write   # open and update the release PR
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - id: release
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          # A pull request opened with GITHUB_TOKEN does not trigger CI, so
+          # the required checks never report and the release PR can only be
+          # merged by an admin bypass. A fine-grained PAT (contents: write,
+          # pull requests: write) in RELEASE_PLEASE_TOKEN fixes that; the
+          # workflow falls back to GITHUB_TOKEN when it is absent.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
+
+  # The tag above was created by a workflow token, so `push: tags` does not
+  # fire for it. Call the release build directly instead.
+  build:
+    name: Build and publish
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.release-please.outputs.tag_name }}
+    secrets: inherit
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
