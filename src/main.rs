@@ -89,7 +89,7 @@ struct SphinxBuildCli {
     /// Specific files to (re)build — accepted, not supported yet
     filenames: Vec<PathBuf>,
 
-    /// Builder to use (only 'html' is supported in 0.4)
+    /// Builder to use (only 'html' is supported so far)
     #[arg(short = 'b', long = "builder", default_value = "html")]
     builder: String,
 
@@ -523,7 +523,7 @@ async fn run_sphinx_build_mode(sb: SphinxBuildCli) -> i32 {
             }
             other => {
                 eprintln!(
-                    "make-mode target '{other}' is not supported yet — sphinx-ultra 0.4 supports 'html' and 'clean' only"
+                    "make-mode target '{other}' is not supported yet — sphinx-ultra supports 'html' and 'clean' only"
                 );
                 return 2;
             }
@@ -531,7 +531,7 @@ async fn run_sphinx_build_mode(sb: SphinxBuildCli) -> i32 {
     } else {
         if sb.builder != "html" {
             eprintln!(
-                "builder '{}' is not supported yet — sphinx-ultra 0.4 supports 'html' only",
+                "builder '{}' is not supported yet — sphinx-ultra supports 'html' only",
                 sb.builder
             );
             return 2;

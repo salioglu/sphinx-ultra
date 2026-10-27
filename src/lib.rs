@@ -1,6 +1,27 @@
-//! Sphinx Ultra Builder
+//! # sphinx-ultra
 //!
-//! A high-performance Rust-based Sphinx documentation builder designed for large codebases.
+//! A reimplementation of `sphinx-build -b html` in Rust, built for large
+//! documentation trees and verified against real Sphinx output.
+//!
+//! The crate is used through its binary, `sphinx-ultra`, which accepts both
+//! its native `build`/`clean`/`stats` subcommands and the `sphinx-build`
+//! argument shape (`sphinx-ultra SOURCEDIR OUTPUTDIR -b html`). The library
+//! surface below is what that binary is built from: [`SphinxBuilder`] runs
+//! the read → merge → resolve → write pipeline over a persisted
+//! [`BuildEnvironment`], [`BuildConfig`] loads `conf.py` (a declarative
+//! subset), YAML or JSON configuration, and the `rst`, `doctree`, `env`,
+//! `py` and `intersphinx` modules are ports of the corresponding docutils
+//! and Sphinx subsystems, each pinned by a differential test against the
+//! upstream implementation.
+//!
+//! The project is pre-1.0. The current status of every subsystem, with
+//! evidence, is kept in the repository's `docs/IMPLEMENTATION_STATUS.md`.
+#![doc(
+    html_logo_url = "https://raw.githubusercontent.com/salioglu/sphinx-ultra/main/assets/icon.svg"
+)]
+#![doc(
+    html_favicon_url = "https://raw.githubusercontent.com/salioglu/sphinx-ultra/main/assets/icon.svg"
+)]
 
 pub mod builder;
 pub mod cache;
