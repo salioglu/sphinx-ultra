@@ -9,22 +9,25 @@ permissions:
 jobs:
   generate:
     runs-on: ubuntu-latest
+    timeout-minutes: 180
     env:
       PYTHONNOUSERSITE: "1"
 
     steps:
       - name: Check out sphinx-ultra
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Check out pinned sphinx-needs
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: useblocks/sphinx-needs
           ref: 58bcb59d861da95f2aca79f343e8bae6ec5c1250
           path: sphinx-needs
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
 
       - name: Install Python 3.12
         run: uv python install 3.12
@@ -53,14 +56,14 @@ jobs:
         run: >-
           uv run --locked --python 3.12 --project tools/oracle_profiles/core python
           tools/gen_html_oracle.py --config tools/html_oracle_cases.toml
-          --out tests/fixtures/html_oracle --profile core -j 12
+          --out tests/fixtures/html_oracle --profile core -j "$(nproc)"
 
       - name: Generate local-needs references
         run: >-
           uv run --locked --python 3.12 --project tools/oracle_profiles/local_needs python
           tools/gen_html_oracle.py --config tools/html_oracle_cases.toml
           --out tests/fixtures/html_oracle --profile local_needs
-          --needs-root "${{ github.workspace }}/sphinx-needs" -j 12
+          --needs-root "${{ github.workspace }}/sphinx-needs" -j "$(nproc)"
 
       - name: Verify core references
         run: >-
@@ -76,7 +79,7 @@ jobs:
           --needs-root "${{ github.workspace }}/sphinx-needs"
 
       - name: Upload HTML oracle corpus
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: html-oracle
           path: tests/fixtures/html_oracle

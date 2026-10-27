@@ -1,35 +1,44 @@
 version: 2
 updates:
-  # Enable version updates for Cargo
+  # Rust dependencies. Minor and patch bumps travel together in one PR a week;
+  # a semver-major bump (for a 0.x crate, a minor bump) gets its own PR so an
+  # API break never blocks the security patches it would otherwise ride with.
+  # The uv-locked oracle profiles under tools/oracle_profiles/ are deliberate
+  # pins of the Sphinx toolchain and are NOT covered here.
   - package-ecosystem: "cargo"
     directory: "/"
     schedule:
       interval: "weekly"
       day: "monday"
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: "deps"
-      prefix-development: "dev-deps"
+      prefix-development: "deps"
     labels:
       - "dependencies"
     groups:
-      production-dependencies:
-        patterns:
-          - "*"
-        exclude-patterns:
-          - "criterion"
-          - "proptest"
-          - "tempfile"
+      rust-minor-patch:
+        update-types: ["minor", "patch"]
+      rust-major:
+        update-types: ["major"]
 
-  # Enable version updates for GitHub Actions
+  # GitHub Actions are pinned to commit SHAs with a version comment; Dependabot
+  # updates both. One PR per week for all of them.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
       day: "monday"
     open-pull-requests-limit: 3
+    cooldown:
+      default-days: 7
     commit-message:
       prefix: "ci"
     labels:
       - "github-actions"
       - "dependencies"
+    groups:
+      actions:
+        patterns: ["*"]
