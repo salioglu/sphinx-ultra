@@ -80,3 +80,6 @@ sphinx-ultra
 docs/api/
 docs/.nojekyll
 docs/index.html
+
+# Local knowledge-graph output (graphify)
+graphify-out/

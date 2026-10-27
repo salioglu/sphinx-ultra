@@ -1,34 +1,19 @@
-# Basic Sphinx Ultra Example
+# Basic example
 
-This example demonstrates the minimal setup required for a Sphinx Ultra project.
+The minimal layout for a sphinx-ultra project:
 
-## Files Included
+- `sphinx-ultra.yaml`: the native configuration (every field optional; see
+  [docs/configuration.md](../../docs/configuration.md))
+- `index.rst`: the root document with a `toctree`
+- `validation-examples.rst`: a page exercising directives the built-in
+  validators check
 
-- `sphinx-ultra.yaml` - Main configuration file
-- `index.rst` - Documentation entry point
-- `getting-started.rst` - Getting started guide
-- `configuration.rst` - Configuration options
-- `api.rst` - API reference
-- `examples.rst` - Usage examples
-
-## Building
+## Build
 
 ```bash
 # From this directory
-sphinx-ultra build --source . --output _build
-
-# Or with live reload
-sphinx-ultra serve --source . --port 8000
+sphinx-ultra . _build/html -b html          # sphinx-build style
+sphinx-ultra build --source . --output _build   # native style
 ```
 
-## Features Demonstrated
-
-- Basic RST syntax
-- Code highlighting
-- Table of contents
-- Cross-references
-- Theme configuration
-
-## Performance
-
-This basic example should build in under 1 second and demonstrate the speed advantages of Sphinx Ultra over traditional Sphinx.
+`_build/` is git-ignored. There is no live-reload server yet (roadmap M3).
