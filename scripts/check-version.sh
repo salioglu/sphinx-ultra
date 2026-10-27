@@ -1,5 +1,5 @@
 #!/bin/bash
-set -euo pipefail
+set -uo pipefail
 
 # Colors for output
 RED='\033[0;31m'
@@ -14,7 +14,7 @@ get_cargo_version() {
 
 # Function to get the current git tag (if any)
 get_git_tag() {
-    if git describe --exact-match --tags HEAD 2>/dev/null; then
+    if git describe --exact-match --tags --match 'v[0-9]*' HEAD 2>/dev/null; then
         return 0
     else
         return 1
@@ -23,7 +23,7 @@ get_git_tag() {
 
 # Function to get the latest git tag
 get_latest_git_tag() {
-    git describe --tags --abbrev=0 2>/dev/null || echo "none"
+    git describe --tags --abbrev=0 --match 'v[0-9]*' 2>/dev/null || echo "none"
 }
 
 # Main validation function
@@ -88,11 +88,11 @@ if [ $exit_code -eq 1 ]; then
     echo -e "\n${RED}Recommendations:${NC}"
     echo -e "1. Update Cargo.toml version to match the git tag, OR"
     echo -e "2. Delete the current tag and create a new one with the correct version"
-    echo -e "3. Use the release script (scripts/release.sh) to automate this process"
+    echo -e "3. Prefer the release-please flow described in docs/RELEASING.md"
 elif [ $exit_code -eq 2 ]; then
     echo -e "\n${YELLOW}Recommendations:${NC}"
     echo -e "1. Bump the version in Cargo.toml before creating a new release"
-    echo -e "2. Use the release script (scripts/release.sh) to automate this process"
+    echo -e "2. Prefer the release-please flow described in docs/RELEASING.md"
 fi
 
 exit $exit_code
