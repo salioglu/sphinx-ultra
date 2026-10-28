@@ -1,6 +1,6 @@
 [package]
 name = "sphinx-ultra"
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 # MSRV-aware dependency resolution (Cargo 1.84+). Edition 2021 defaults to
 # resolver v2, which happily picks a dependency version whose own
