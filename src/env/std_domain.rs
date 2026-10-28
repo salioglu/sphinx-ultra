@@ -6,7 +6,7 @@
 //! `note_object`, `_note_term`, `add_program_option`); the *resolution*
 //! half lives in [`crate::env::resolve`].
 //!
-//! See `docs/superpowers/plans/2026-08-31-m2-wave4-research-spec-sphinx-env-toctree-domains.md`
+//! See `docs/plans/2026-08-31-m2-wave4-research-spec-sphinx-env-toctree-domains.md`
 //! §4 for the attribute-by-attribute mapping this port is drawn from.
 
 use std::collections::{BTreeMap, HashMap};

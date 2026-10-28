@@ -4,7 +4,7 @@
 //! Ported from Sphinx 9.1.0's `sphinx/ext/intersphinx/` (`_load.py`,
 //! `_resolve.py`, `_shared.py`); every message text, ordering rule and
 //! fallback below is cited to the file:line it mirrors, collected in
-//! `docs/superpowers/plans/2026-08-31-m2-wave4-research-spec-inventory-intersphinx.md`
+//! `docs/plans/2026-08-31-m2-wave4-research-spec-inventory-intersphinx.md`
 //! §3-§4.
 //!
 //! The three phases, in the order a build runs them:

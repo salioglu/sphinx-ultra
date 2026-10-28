@@ -4,7 +4,7 @@
 //! — the assembly half that turns the collected 5-tuples into the grouped,
 //! sorted structure `genindex.html` renders.
 //!
-//! See `docs/superpowers/plans/2026-08-31-m2-wave4-research-spec-sphinx-env-toctree-domains.md`
+//! See `docs/plans/2026-08-31-m2-wave4-research-spec-sphinx-env-toctree-domains.md`
 //! §6 for the attribute-by-attribute mapping this port is drawn from.
 //!
 //! **What feeds it.** Everything here reads `index` nodes out of a finished

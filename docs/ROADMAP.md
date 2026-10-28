@@ -1,9 +1,9 @@
 # Sphinx Ultra Roadmap
 
 **This is the canonical roadmap.** It supersedes the planning content in
-[VALIDATION_FEATURES_PLAN.md](VALIDATION_FEATURES_PLAN.md) (now archived) and the
+[VALIDATION_FEATURES_PLAN.md](archive/VALIDATION_FEATURES_PLAN.md) (now archived) and the
 scattered status/priority sections that previously lived in the README and
-[docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md). Statuses here were
+[IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md). Statuses here were
 established by a full code audit (call-graph traced from `src/main.rs`, behavior
 verified by running the binary and differentially compared against Sphinx 9.1.0) in
 August 2026.
@@ -27,9 +27,10 @@ Scope principles:
   must be reproducible, and the binary must install and run on every advertised
   platform with no undocumented dependencies.
 - **Parity targets:** Sphinx **9.1.x** (Python ≥3.12, docutils ≥0.21) and sphinx-needs
-  **8.3.x**, tracked as upstream moves.
+  **8.5.x** (the HTML oracle pins sphinx-needs 8.5.0; the research inventories were
+  written against 8.3), tracked as upstream moves.
 
-## 2. Where we actually are (verified baseline, 2026-09)
+## 2. Where we actually are (verified baseline, 2026-10)
 
 The single most important fact is unchanged since 0.3.0: **the shipped build path
 emits the raw RST/Markdown source, HTML-escaped, inside `<html><body>` — it does not
@@ -57,10 +58,10 @@ feeding intersphinx).
 | BuildEnvironment & resolution | **Working** | M2 wave 4 (2026-08-31). The build is a real read → merge → resolve → write pipeline over a serialized `BuildEnvironment` (bincode, `ENV_VERSION`-stamped, per-document doctrees under the `-d` dir). Live: the global toctree graph with relations (parents/prev/next) and Sphinx's consistency warnings (nonexisting/excluded entries, self-reference, circular toctrees, orphans, "document isn't included in any toctree"); section + figure numbering (`numfig`, `numfig_secnum_depth`, `numfig_format`, `:numbered:`); the **std domain** — label/term/option/envvar/confval/program collection and `ref`/`numref`/`doc`/`term`/`option`/`envvar` resolution with Sphinx's duplicate-label and dangling-reference warnings; `nitpick_ignore`/`nitpick_ignore_regex`. Wave 4.5 (2026-09-04) added the **py domain**: object and module registration into `domaindata['py']` (insertion-ordered, with aliased entries, `duplicate object description of …` and `more than one target found for cross-reference …` warnings), py cross-reference resolution for `:py:func:`/`:py:class:`/`:py:meth:`/`:py:mod:`/… — which **re-scoped the nitpicky skip notice** (its python-domain population is gone; it survives as `N cross-domain reference(s) not validated` for the `c`/`cpp`/`js`/`rst` domains M5 adds) — `:any:` resolution as the domainless role it actually is, the `builtin_resolver` fallback, and toc object entries. Evidence: an environment-layer differential oracle (`tools/gen_env_fixture.py`, `tests/env_differential.rs`) that builds **29 multi-document projects** (84 documents) with a real `sphinx-build` 9.1.0 and compares every recorded key — `tocs`, `toc_num_entries`, `toctree_includes`, `files_to_rebuild`, relations, `toc_secnumbers`/`toc_fignumbers`, the std registries, index entries, genindex, the whole warning stream, and each document's fully cross-reference-resolved doctree — at **zero divergence** over one cold build per project (warm-equals-cold is the separate, narrower claim above). Strict, self-cleaning exemption tables remain, each pinned to the work that closes it: 24 of 29 projects' warning streams match byte-for-byte (3 differ only by `image file not readable`, 1 by the write-phase circular-toctree warning, 1 because its whole oracle warning set is docutils *reporter* output that this crate keeps in-tree only), and 35 of 84 documents' resolved doctrees match byte-for-byte (43 are skipped wholesale — an unresolved `toctree` node, an image without `candidates`, an unapplied `PropagateTargets`, or the `orphan` docinfo field list Sphinx removes — and 6 are compared in full except for the highlight stamp; the arithmetic is computed from the tables and asserted by the test itself). A sixth table added in wave 4.5, `KNOWN_HIGHLIGHT_STAMP_GAPS`, is narrower than the rest: it still compares the entire tree and forgives nothing but the *presence* of a `HighlightLanguageTransform` attribute we do not emit at all — never a directive-set `linenos="1"` — while the `inc_highlight` project compares directive-set `language`/`force`/`linenos` at full strength. An exemption whose project *stops* diverging fails the test, so the tables shrink on their own. |
 | genindex & domain indices | **Working (data)** | M2 wave 4: `index` directive/role entries are collected per Sphinx's `IndexDomain.process_doc` (incl. the `invalid … index entry` warning) and assembled by a port of `IndexEntries.create_index` — single/pair/triple/see/seealso, `!main` promotion, Symbols/`_` grouping, sub-entry ordering, and the "dropped index entry" notice. Pinned by the env oracle's `genindex` key across the corpus and by `src/env/genindex.rs`'s own tests. **No `genindex.html` is written** — the page render needs the wave-5 HTML writer. Wave 4.5 added the **py-modindex** data — `PythonModuleIndex.generate`'s grouping, `modindex_common_prefix` stripping, the collapse/deprecated/platform/synopsis columns — recorded by the env oracle. Its page, like `genindex.html`, needs the wave-5 HTML writer. |
 | Markdown parser | **Prototype** | pulldown-cmark events discarded except text; no headings/code/lists → `.md` titles and TOCs are always empty. |
-| HTML rendering | **Placeholder** | Escaped raw source in `<html><body>`. `HTMLBuilder` (800 lines) + `TemplateEngine` (minijinja) exist but are never invoked. |
+| HTML rendering | **Placeholder** | Escaped raw source in `<html><body>`. `HTMLBuilder` (800 lines) + `TemplateEngine` (minijinja) exist but are never invoked. **0.6.0: the gap is measured** — the HTML oracle (1,264 core + 142 sphinx-needs reference builds) is red by design at 0 passing until the writer lands. |
 | Themes | **None** | `html_theme` is parsed and then ignored; no theme loading, no templates rendered, static shims copied but unreferenced. |
-| Search | **Dead code** | In-memory index exists (non-Sphinx format); no `searchindex.js` emitted; no `searchtools.js` exists. |
-| objects.inv | **Working (reader + writer)** | M2 wave 4 rewrote both halves bytewise. The reader is binary-safe end to end (the M1 reader lossily UTF-8-converted the zlib payload and then split it on `str::lines`, corrupting any inventory whose compressed bytes contained a stray `\r`/`\n` or non-UTF-8 sequence — a property real inventories have); it handles v1 and v2, `$`-suffix anchor expansion, `-` dispname expansion, and reproduces Sphinx's own `ValueError` texts verbatim. The writer mirrors `InventoryFile.dump` (header escaping, zlib level 9, alphabetical domain order, sorted `get_objects()`, suffix compression). Evidence: `tests/fixtures/inventories/` — 12 committed `.inv` files (4 written by a real `sphinx-build` 9.1.0, 3 handcrafted-valid, 5 handcrafted-malformed) whose expectations are whatever Sphinx's own `InventoryFile.loads` returns or raises, checked by `tests/inventory_roundtrip.rs`. **The writer has no production call site**: nothing writes an `objects.inv` into a build output until the wave-5 HTML writer's finish task. The reader is live — intersphinx is its consumer. |
+| Search | **Working (artifact)** | 0.6.0: `searchindex.js` in Sphinx 9.1's `Search.setIndex` schema — a port of `IndexBuilder` over the resolved doctrees (toctree expansion, every `title`, `:nosearch:`, comments/raw blocks, index entries, domain objects, `json.dumps(sort_keys=True)` layout) with a Snowball English stemmer and Sphinx's stopword rules, pinned by a 25,000-word fixture from the locked oracle profile. Not yet: `search.html`, `searchtools.js`/`language_data.js`, other languages (M3). |
+| objects.inv | **Working (reader + writer)** | M2 wave 4 rewrote both halves bytewise. The reader is binary-safe end to end (the M1 reader lossily UTF-8-converted the zlib payload and then split it on `str::lines`, corrupting any inventory whose compressed bytes contained a stray `\r`/`\n` or non-UTF-8 sequence — a property real inventories have); it handles v1 and v2, `$`-suffix anchor expansion, `-` dispname expansion, and reproduces Sphinx's own `ValueError` texts verbatim. The writer mirrors `InventoryFile.dump` (header escaping, zlib level 9, alphabetical domain order, sorted `get_objects()`, suffix compression). Evidence: `tests/fixtures/inventories/` — 12 committed `.inv` files (4 written by a real `sphinx-build` 9.1.0, 3 handcrafted-valid, 5 handcrafted-malformed) whose expectations are whatever Sphinx's own `InventoryFile.loads` returns or raises, checked by `tests/inventory_roundtrip.rs`. **The writer has no production call site**: nothing writes an `objects.inv` into a build output until the wave-5 HTML writer's finish task. The reader is live — intersphinx is its consumer. **0.6.0: the writer is live** — every build writes `objects.inv` from the `get_objects()` port (`src/env/objects.rs`), records matching `sphinx-build` for every HTML fixture. |
 | intersphinx | **Working** | M2 wave 4: `intersphinx_mapping` (named and unnamed, with Sphinx's `ConfigError` texts for malformed entries), inventory loading with the on-disk cache and its refresh semantics, `intersphinx_disabled_reftypes`, the `:external:`/`:external+inv:` role family, the missing-reference hook, and the shared HTTP configuration group (`tls_verify`, `tls_cacerts`, `user_agent`, `intersphinx_timeout`). Verified **offline**: 54 tests across `src/intersphinx/` and `src/env/resolve/intersphinx_tests.rs`, driving the real code over the committed `.inv` fixtures through an injected fetcher. Remote fetching is implemented (`src/intersphinx/fetch.rs`, `ureq` + rustls) and deliberately has **no test that touches the network** — the seam is a trait so the suite stays hermetic. |
 | Extensions | **Stub** | Loading any extension prints one line and stores an inert record. Zero behavioral effect. (The never-used pyo3 dependency was removed 2026-08.) |
 | Validation systems | **Two of three live** | Directive/role validation runs in every build (default on, false-positive heuristics fixed/demoted, Unknown silent). Wave 4.5 audited every built-in validator against the parser's own probe-verified `option_spec` tables, in both directions, and fixed six drifts between the two: four of them invented `Unknown option '…'` warnings Sphinx has no counterpart for — the class of bug that fails `-W` on a project `sphinx-build` accepts — one (`include`'s) was latent, because that validator never consults its own option list, and one (`figure`'s missing `figname`) was a gap in the PARSER's table that the audit compared against. Two mechanical tests now hold the two lists together for all ten validators. Cross-reference validation is no longer the M1 heuristic scanner: wave 4 replaced it with the std domain + Sphinx's own resolution pass, and with it Sphinx's `warn_dangling` semantics — **all seven `warn_dangling` std reftypes now warn about broken targets without `-n`**: `ref`, `numref`, `doc`, `term`, `keyword`, `option`, `confval` (`domains/std/__init__.py:748-766`), with `-n`/`nitpicky` reserved for everything else. Wave 4.5 added the py domain's resolution and **re-scoped the "skipping python-domain references" notice** (it survives as `N cross-domain reference(s) not validated` for the `c`/`cpp`/`js`/`rst` domains M5 adds): `:py:*:` roles, `:any:`, duplicate object descriptions and ambiguous cross-references all warn now, `-n` included. That is a behavior change for existing projects (see CHANGELOG). The M1 `src/domains/` module was deleted once nothing called it. Constraint engine stays library-only until sphinx-needs items exist (M4) — no `ContentItem` producer yet; its always-success placeholder trait impls were deleted so future wiring can't silently no-op. |
@@ -68,10 +69,24 @@ feeding intersphinx).
 | conf.py support | **Working (declarative subset)** | Multi-line lists/dicts/tuples, string concat, triple quotes parsed (2026-08); every dropped construct warns with its line. Dynamic values await the M5 sidecar. |
 | YAML/JSON config | **Working** | Serde defaults added 2026-08; partial configs load, both shipped YAML examples verified by tests. `--config` also accepts conf.py now. |
 | CLI | **sphinx-build compatible** | Native `build/clean/stats` plus a full `sphinx-build` argument mode (2026-08): positional dirs, `-b html`, `-M html/clean`, `-D`/`-A`, `-d`, `-n`, `-q`, `-E`, `-a`, `-T`, `-t`, `-c`, `-j auto`, `-W`/`--keep-going`/`-w`, repeatable `-v`; pre-set `RUST_LOG` respected. Exit codes: 1 on errors/`-W`, 2 on usage/unsupported-builder/config errors (measured against sphinx-build 9.1.0). |
-| CI/release | **Working, with one vacuous job** | Fixed 2026-08: publish gated on validation+build, Cargo.lock committed + `--locked` everywhere, SHA-256 checksums + install.sh verification, aarch64-linux artifact built, vacuous `integration_test.rs` replaced by a real E2E suite. **Known defect (fix open as PR #54, which is repo-wide and lands ahead of the wave-4 branch):** the `MSRV (1.85)` job and the `beta` matrix leg do not test what they name. Both set the toolchain with `rustup default`, which rustup ranks *below* the repo's `rust-toolchain.toml` (`channel = "stable"`), so both jobs compile with stable. Verified locally: in this checkout `rustup show active-toolchain` reports `stable … (overridden by rust-toolchain.toml)`, and only `RUSTUP_TOOLCHAIN=1.85` — which outranks the file — actually selects 1.85. Until #54 merges the MSRV is checked by hand (`RUSTUP_TOOLCHAIN=1.85 cargo check --locked --all-targets`, green as of wave 4) and not by CI. |
-| Dependencies | **Pruned 2026-08** | 16 zero-call-site deps removed (incl. pyo3/pythonize, which carried two RUSTSEC advisories and linked libpython into every build). Wave 4 added two with real call sites: `bincode` (environment + doctree persistence) and `ureq` with rustls (intersphinx inventory fetching; `resolver = "3"` keeps MSRV-incompatible versions out). minijinja/flate2 remain — flate2 is now live in the `objects.inv` reader; minijinja still serves the built-not-wired template stack. |
+| CI/release | **Working** | The MSRV and beta legs test their claimed toolchains since #54 (2026-09). 2026-10: actions pinned to commit SHAs, `cargo deny` + dependency review + scheduled audit + OpenSSF Scorecard, release-please automation (release PR → tag → binaries with checksums and build-provenance attestations → crates.io), `scripts/install.sh` verifying checksums. |
+| Dependencies | **Pruned 2026-08** | 16 zero-call-site deps removed (incl. pyo3/pythonize, which carried two RUSTSEC advisories and linked libpython into every build). Wave 4 added two with real call sites: `bincode` (environment + doctree persistence) and `ureq` with rustls (intersphinx inventory fetching; `resolver = "3"` keeps MSRV-incompatible versions out). minijinja/flate2 remain — flate2 is now live in the `objects.inv` reader; minijinja still serves the built-not-wired template stack. 2026-10: lockfile refreshed past RUSTSEC-2026-0346/0347/0348/0349 (rustls), 0381 (webpki-roots), 0382 (rustls-webpki) and 0386 (tokio); `bincode` and `serde_yaml`'s `unsafe-libyaml` stay under documented exceptions in `deny.toml` (the safe-Rust YAML crate needs MSRV 1.89). |
 
-Full evidence (file:line per finding) lives in [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md).
+**Update, 2026-10 (v0.6.0).** Three of the write-side artifacts are no longer dead
+code: every build now writes `searchindex.js` (a port of Sphinx 9.1's `IndexBuilder`
+fed from the resolved doctrees, with a Snowball English stemmer pinned by a
+25,000-word fixture), `objects.inv` (the writer is live, from one `get_objects()`
+port the search index shares) and `.buildinfo` (`stable_hash` over the `conf.py`
+literals), each checked against real `sphinx-build` output (PRs #61, #62, #68,
+@johnml1135). The same work added the **HTML differential oracle** (#63, #69):
+1,264 core and 142 sphinx-needs reference builds by real Sphinx 9.1.0 /
+sphinx-needs 8.5.0, compared file by file against the binary by an `#[ignore]`d
+test that is red by design — 0 cases pass, because **the page body is still the
+escaped-source placeholder**. That placeholder, `genindex.html`, `py-modindex.html`,
+`search.html` and the reporter channel (docutils `system_message`s are recorded but
+never printed, so a missing `include` file leaves `-W` green) are what M2 wave 5 is.
+
+Full evidence (file:line per finding) lives in [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md).
 
 ## 3. Architecture blueprint (the spine everything hangs on)
 
@@ -145,6 +160,10 @@ Load-bearing decisions:
 
 Each milestone has acceptance criteria; a milestone is done when its criteria pass in
 CI, not when its code merges. Versions are indicative; semver discipline starts at 1.0.
+The version labels on the headings are the original estimates: 0.6.0 (2026-10-14)
+shipped M2's search/inventory/`.buildinfo` artifacts and the HTML oracle rather than
+M3, so M3 and later will release as 0.7 and up. release-please derives each version
+from the commits since the last release (see [RELEASING.md](RELEASING.md)).
 
 ### M1 — v0.4 "Honest, solid core" (foundation repair)
 
@@ -223,7 +242,7 @@ and CI can be trusted.
   commented-out `integration_test.rs` is deleted. (Grows with every subsequent
   M1 item.)
 
-**Acceptance:** every command in README/QUICK_START works as written; both shipped
+**Acceptance:** every command in README/getting-started works as written; both shipped
 YAML examples load; `cargo test` includes E2E; pattern behavior matches Sphinx 9.1 in
 a generated differential suite; releases are reproducible (`--locked`) and the publish
 job cannot outrun validation; building requires no Python.
@@ -312,6 +331,15 @@ survives only for the `c`/`cpp`/`js`/`rst` domains M5 adds), and file dependenci
 now include every included file. Evidence: the environment oracle at 29 projects /
 84 documents and the read-phase doctree oracle at 489 cases, both zero divergence.
 
+**Wave 4.75 (0.6.0, 2026-09-22 → 2026-10-13, @johnml1135 with review fixes by Claude).**
+Delivered ahead of wave 5 from the write-side bullets above: the Sphinx-format
+`searchindex.js` (`IndexBuilder` port + Snowball English, `resolve_toctree`),
+`objects.inv` written by the live build, `.buildinfo` with Sphinx's hashes computed
+from the `conf.py` literals, and the HTML/needs.json differential oracle with its
+generator, locked uv profiles, manual regeneration workflow and report. Wave 5 is
+therefore exactly the HTML writer, the three index/search pages, the asset pipeline
+and the reporter channel.
+
 **Acceptance:** a golden-corpus differential harness (§10) builds a set of real-world
 Sphinx projects with both `sphinx-build` and `sphinx-ultra` and diffs normalized
 doctree/HTML output; corpus includes at least one nontrivial OSS project's docs
@@ -332,11 +360,12 @@ the corpus; anchors byte-match Sphinx for the corpus pages.
   source-link synthesis).
 - **Search, byte-compatible:** `searchindex.js` in `Search.setIndex` schema
   (docnames/docurls/filenames/titles/terms/titleterms/alltitles/indexentries/objects/
-  objtypes/objnames/envversion). Stemming must match the JS side exactly or search
-  breaks: **classic Porter for English** (Sphinx's shipped JS `PorterStemmer`, not
-  rust-stemmers' Porter2) and Snowball for da/de/es/fi/fr/hu/it/nl/no/pt/ro/ru/sv/tr,
-  with generated stemmer-parity tests against Sphinx (same mechanism as the pattern
-  tests). CJK segmentation (ja MeCab/TinySegmenter-class, zh jieba-class) is deferred
+  objtypes/objnames/envversion) — **delivered in 0.6.0** for English: the index side
+  ports Sphinx's own `SearchEnglish` (Snowball English, as `snowballstemmer` stems it),
+  pinned by a 25,000-word fixture. Remaining: Snowball for da/de/es/fi/fr/hu/it/nl/no/
+  pt/ro/ru/sv/tr with the same generated parity mechanism, and a verified match
+  between the indexed terms and the stemmer in the shipped `searchtools.js` (Sphinx's
+  JS side), since the two must agree or search breaks. CJK segmentation (ja MeCab/TinySegmenter-class, zh jieba-class) is deferred
   to M7. Ship working `searchtools.js`/`language_data.js`/`sphinx_highlight.js`/
   `documentation_options.js`, render `search.html`/`genindex.html`/domain indices
   from real templates.
@@ -352,7 +381,7 @@ the corpus; anchors byte-match Sphinx for the corpus pages.
   Post-M5: also watch bridged-extension inputs (autodoc'd Python modules) with a
   kept-warm sidecar. This is the sphinx-autobuild replacement and the headline DX
   win (millisecond no-op rebuilds; see
-  [docs/research/extensions.md](docs/research/extensions.md)).
+  [research/extensions.md](research/extensions.md)).
 
 **Acceptance:** the five wave-1/2 themes render the differential corpus with correct
 navigation (collapse/current classes), working client-side search (query parity spot
@@ -422,7 +451,7 @@ after a docstring change is <500ms on the corpus project.
 ### M6 — v0.9 "sphinx-needs, first-class"
 
 Target: sphinx-needs **8.3** semantics (verified inventory:
-[docs/research/sphinx-needs.md](docs/research/sphinx-needs.md)), with
+[research/sphinx-needs.md](research/sphinx-needs.md)), with
 legacy 7.x spellings accepted-and-warned. Order of attack:
 
 1. **Core need objects:** `needs_types`-driven directive synthesis, all need options,
@@ -591,9 +620,9 @@ absorbed by RTD Addons); sphinx-tabs (compat shim over sphinx-design).
 ## 7. Sphinx feature coverage commitments
 
 The full inventory (verified against Sphinx 9.1 in August 2026) lives in
-[docs/research/sphinx-features.md](docs/research/sphinx-features.md) (companions:
-[themes](docs/research/themes.md), [extensions](docs/research/extensions.md),
-[sphinx-needs](docs/research/sphinx-needs.md)) and will be encoded into the
+[research/sphinx-features.md](research/sphinx-features.md) (companions:
+[themes](research/themes.md), [extensions](research/extensions.md),
+[sphinx-needs](research/sphinx-needs.md)) and will be encoded into the
 differential harness; tier roll-up:
 
 - **Tier 0 — required for the drop-in claim** (M1–M3): full docutils RST; toctree
@@ -636,7 +665,7 @@ and gets an explicit milestone when the M6 harness first encounters it.
 | Area | Commitment |
 |---|---|
 | CI | 3-OS matrix + MSRV job + `--locked`; fmt/clippy `-D warnings`; cargo-audit + cargo-deny; coverage gate; benchmark regression gate; E2E suite; differential-corpus job (nightly); fuzzing (parser, patterns) |
-| Releases | tag→version validation → build (5+ targets incl. aarch64-linux and musl, unblocked by the pyo3 removal) → checksums/SBOM → gated crates.io publish; reproducible with committed Cargo.lock; CHANGELOG enforced by release script |
+| Releases | release-please PR → tag→version validation → build (6 targets incl. aarch64-linux and musl) → SHA-256 checksums + build-provenance attestations → gated crates.io publish; reproducible with committed Cargo.lock; CHANGELOG enforced by release script |
 | Packaging | crates.io (clean metadata, exclude list), GitHub binaries, PyPI wheels via maturin (post-M5), Homebrew tap; install.sh target list generated from the release matrix; checksum-verified installs |
 | Runtime deps | Core binary: zero (no Python, static musl build); bridge features degrade gracefully with actionable messages |
 | Exit codes & CI trust | Errors → non-zero always; `-W` semantics; `--keep-going`; structured warning categories with `suppress_warnings` |
@@ -650,10 +679,13 @@ and gets an explicit milestone when the M6 harness first encounters it.
    text, output tree (new in M1 — this is the class of test whose absence shipped the
    relative-path crash and the unloadable YAML examples).
 3. **Differential harness** (the backbone, M2+): build a corpus with real
-   `sphinx-build` (pinned 9.1.x, in Docker) and sphinx-ultra; compare normalized
-   outputs (doctree JSON, HTML DOM with volatile bits stripped, searchindex terms,
-   objects.inv entries, needs.json). Publish per-project compat reports; every
-   compatibility claim in docs links to a green harness run.
+   `sphinx-build` (pinned 9.1.0 in locked `uv` profiles under `tools/oracle_profiles/`,
+   generated on Linux by the manual `html-oracle.yml` workflow) and sphinx-ultra;
+   compare the whole output tree, `searchindex.js`, `objects.inv`, `needs.json`,
+   warnings and exit class. **Exists since 0.6.0** (`tests/html_differential.rs`,
+   1,264 core + 142 sphinx-needs cases, red by design until the HTML writer); its
+   report is the per-case compat ledger. Every compatibility claim in docs links to
+   a green harness run.
 4. **Generated parity tests**: pattern matching and anchor slugs generated
    directly against `sphinx.util.matching`/docutils id rules (catches the `**`-class
    divergences mechanically).
@@ -661,7 +693,8 @@ and gets an explicit milestone when the M6 harness first encounters it.
 6. **Property tests** (proptest, already a dev-dep): parser never panics on arbitrary
    input (the tab-indent panic class); pattern translate/match round-trips.
 7. **Performance benchmarks** with regression gates; the current bench suite is
-   rewritten once the parser is real (today's numbers measure paragraph-skimming).
+   rewritten with the HTML writer (it still hands the parser a nonexistent `test.rst`
+   and panics; CI only compiles it).
 8. **Fuzzing** (cargo-fuzz) for the RST/MyST parsers and objects.inv reader.
 
 ## 11. Risks

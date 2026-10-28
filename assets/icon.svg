@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="sphinx-ultra icon">
+  <!-- sphinx-ultra app icon / favicon: the mark on a rounded navy tile. -->
+  <rect width="256" height="256" rx="48" fill="#14213D"/>
+  <g transform="translate(16 16) scale(0.875)">
+      <g fill="#F2743D">
+        <rect x="12" y="92"  width="44" height="11" rx="5.5"/>
+        <rect x="24" y="116" width="32" height="11" rx="5.5"/>
+        <rect x="8"  y="140" width="48" height="11" rx="5.5"/>
+      </g>
+      <path fill="#F2743D" d="M98 46 H168 Q174 46 174 52 L174 72 L150 76 L150 212 L122 228 L104 214 L104 168 L52 182 Q44 184 46 176 Q58 120 74 92 Q82 58 98 46 Z"/>
+      <path fill="#FBE3D3" d="M150 76 C162 72 172 76 173 86 C174 96 172 104 176 110 C186 116 196 122 198 128 C198 132 190 134 184 136 C186 142 190 148 188 152 C184 156 180 156 178 158 C182 164 186 172 182 182 C178 194 166 206 150 212 Z"/>
+      <path fill="#14213D" d="M158 100 Q168 93 178 100 Q168 107 158 100 Z"/>
+  </g>
+</svg>

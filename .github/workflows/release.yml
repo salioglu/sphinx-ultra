@@ -1,212 +1,253 @@
 name: Release
 
+# Builds the release binaries for a tag, attaches them (with SHA-256 checksums
+# and a build-provenance attestation) to the GitHub release, and publishes the
+# crate. Three ways in:
+#
+#   workflow_call   from release-please.yml, right after it created the
+#                   release for a merged release PR. This is the normal path:
+#                   a tag created with GITHUB_TOKEN does not fire `push: tags`.
+#   push: tags      a tag pushed by hand (the manual fallback in
+#                   docs/RELEASING.md); the release is created here if missing.
+#   workflow_dispatch  re-run the artifacts for an existing tag.
+#
+# Jobs that compile dependency code run with a read-only, non-persisted token;
+# only the final publish job can write to the release.
 on:
+  workflow_call:
+    inputs:
+      tag:
+        description: The release tag, e.g. v0.7.0
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The release tag, e.g. v0.7.0
+        required: true
+        type: string
   push:
     tags:
-      - 'v*'
+      - "v*"
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
+# When a PAT is configured for release-please, its tag DOES fire `push: tags`
+# as well as the workflow_call; the push-triggered run is skipped so the
+# artifacts are built exactly once. A hand-pushed tag has no such commit.
 jobs:
   validate-version:
     name: Validate Version Consistency
+    if: "github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'chore(main): release')"
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          persist-credentials: false
 
-    - name: Get tag version
-      id: tag_version
-      shell: bash
-      run: |
-        VERSION=${GITHUB_REF#refs/tags/v}
-        echo "version=$VERSION" >> $GITHUB_OUTPUT
-        echo "Tag version: $VERSION"
+      - name: Compare the tag with Cargo.toml
+        id: version
+        shell: bash
+        run: |
+          TAG_VERSION="${RELEASE_TAG#v}"
+          CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -n1 | sed 's/version = "\(.*\)"/\1/')
+          echo "Tag version:        $TAG_VERSION"
+          echo "Cargo.toml version: $CARGO_VERSION"
+          if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
+            echo "::error::Tag $RELEASE_TAG does not match Cargo.toml version $CARGO_VERSION."
+            echo "Fix Cargo.toml (or delete and re-create the tag); see docs/RELEASING.md."
+            exit 1
+          fi
+          echo "version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
 
-    - name: Get Cargo.toml version
-      id: cargo_version
-      shell: bash
-      run: |
-        CARGO_VERSION=$(grep '^version = ' Cargo.toml | head -n1 | sed 's/version = "\(.*\)"/\1/')
-        echo "version=$CARGO_VERSION" >> $GITHUB_OUTPUT
-        echo "Cargo.toml version: $CARGO_VERSION"
+      - name: Check that Cargo.lock is in sync
+        shell: bash
+        run: |
+          if ! cargo metadata --locked --format-version 1 > /dev/null; then
+            echo "::error::Cargo.lock is out of sync with Cargo.toml; the --locked builds below would fail."
+            echo "Run 'cargo update --workspace', commit Cargo.lock, and re-tag."
+            exit 1
+          fi
 
-    - name: Validate version consistency
-      shell: bash
-      run: |
-        TAG_VERSION="${{ steps.tag_version.outputs.version }}"
-        CARGO_VERSION="${{ steps.cargo_version.outputs.version }}"
-        
-        echo "Comparing versions:"
-        echo "  Tag version: $TAG_VERSION"
-        echo "  Cargo.toml version: $CARGO_VERSION"
-        
-        if [ "$TAG_VERSION" != "$CARGO_VERSION" ]; then
-          echo "❌ ERROR: Version mismatch detected!"
-          echo "The git tag version ($TAG_VERSION) does not match Cargo.toml version ($CARGO_VERSION)"
-          echo ""
-          echo "To fix this:"
-          echo "1. Update Cargo.toml version to match the tag, OR"
-          echo "2. Delete this tag and create a new one with the correct version"
-          echo "3. Use scripts/release.sh to automate releases safely"
-          exit 1
-        fi
-        
-        echo "✅ Version consistency check passed!"
-
-    - name: Validate Cargo.lock is in sync
-      shell: bash
-      run: |
-        if ! cargo metadata --locked --format-version 1 > /dev/null; then
-          echo "❌ ERROR: Cargo.lock is out of sync with Cargo.toml!"
-          echo "The release build uses --locked and would fail on every platform."
-          echo ""
-          echo "To fix this:"
-          echo "1. Run 'cargo update --workspace' and commit Cargo.lock"
-          echo "2. Delete this tag and re-tag the fixed commit"
-          echo "3. Use scripts/release.sh to automate releases safely"
-          exit 1
-        fi
-        echo "✅ Cargo.lock is in sync!"
-
-  build-release:
-    name: Build Release
+  build:
+    name: Build (${{ matrix.platform }})
     needs: validate-version
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        # `platform` is the user-facing archive name; `target` stays the
-        # Rust triple used for building. install.sh detects platforms by
-        # these names — keep them in sync.
+        # `platform` is the user-facing archive name; `target` is the Rust
+        # triple. scripts/install.sh detects platforms by these names.
         include:
-        - os: ubuntu-latest
-          target: x86_64-unknown-linux-gnu
-          platform: linux-x86_64
-          binary_name: sphinx-ultra
-        - os: ubuntu-latest
-          target: x86_64-unknown-linux-musl
-          platform: linux-x86_64-musl
-          binary_name: sphinx-ultra
-          use_cross: true
-        - os: ubuntu-24.04-arm
-          target: aarch64-unknown-linux-gnu
-          platform: linux-aarch64
-          binary_name: sphinx-ultra
-        - os: windows-latest
-          target: x86_64-pc-windows-msvc
-          platform: windows-x86_64
-          binary_name: sphinx-ultra.exe
-        - os: macos-latest
-          target: x86_64-apple-darwin
-          platform: macos-x86_64
-          binary_name: sphinx-ultra
-        - os: macos-latest
-          target: aarch64-apple-darwin
-          platform: macos-aarch64
-          binary_name: sphinx-ultra
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            platform: linux-x86_64
+            binary_name: sphinx-ultra
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            platform: linux-x86_64-musl
+            binary_name: sphinx-ultra
+            use_cross: true
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            platform: linux-aarch64
+            binary_name: sphinx-ultra
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            platform: windows-x86_64
+            binary_name: sphinx-ultra.exe
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            platform: macos-x86_64
+            binary_name: sphinx-ultra
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            platform: macos-aarch64
+            binary_name: sphinx-ultra
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          persist-credentials: false
 
-    - name: Get the release version from the tag
-      shell: bash
-      run: |
-        VERSION=${GITHUB_REF#refs/tags/v}
-        echo "RELEASE_VERSION=$VERSION" >> $GITHUB_ENV
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
 
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        targets: ${{ matrix.target }}
+      # cross builds in a container with a complete musl toolchain, so the
+      # build cannot break when the runner image or host toolchain drifts.
+      - name: Install cross
+        if: matrix.use_cross
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        with:
+          tool: cross
 
-    # cross builds in a container with a complete musl toolchain, so the
-    # build cannot break when the runner image or host toolchain drifts
-    - name: Install cross
-      if: matrix.use_cross
-      uses: taiki-e/install-action@cross
+      - name: Build
+        run: ${{ matrix.use_cross && 'cross' || 'cargo' }} build --locked --release --target ${{ matrix.target }}
 
-    - name: Build release binary
-      run: ${{ matrix.use_cross && 'cross' || 'cargo' }} build --locked --release --target ${{ matrix.target }}
+      - name: Build archive
+        shell: bash
+        env:
+          VERSION: ${{ needs.validate-version.outputs.version }}
+        run: |
+          staging="sphinx-ultra-${VERSION}-${{ matrix.platform }}"
+          mkdir -p "$staging" dist
+          cp "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" "$staging/"
+          cp README.md LICENSE CHANGELOG.md "$staging/"
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            7z a "dist/$staging.zip" "$staging"
+            asset="$staging.zip"
+          else
+            tar czf "dist/$staging.tar.gz" "$staging"
+            asset="$staging.tar.gz"
+          fi
+          cd dist
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$asset" > "$asset.sha256"
+          else
+            shasum -a 256 "$asset" > "$asset.sha256"
+          fi
+          cat "$asset.sha256"
 
-    - name: Strip release binary (linux and macos)
-      if: matrix.os != 'windows-latest'
-      run: strip "target/${{ matrix.target }}/release/${{ matrix.binary_name }}"
+      - name: Upload archive
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: archive-${{ matrix.platform }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
 
-    - name: Build archive
-      shell: bash
-      run: |
-        staging="sphinx-ultra-${{ env.RELEASE_VERSION }}-${{ matrix.platform }}"
-        mkdir -p "$staging"
+  publish-release:
+    name: Publish release
+    needs: [validate-version, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write       # attach the archives to the release
+      id-token: write       # sign the provenance attestation
+      attestations: write   # store it
+    steps:
+      - name: Download archives
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: archive-*
+          path: dist
+          merge-multiple: true
 
-        cp "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" "$staging/"
-        cp {README.md,LICENSE,CHANGELOG.md} "$staging/"
+      - name: List
+        run: ls -la dist
 
-        if [ "${{ matrix.os }}" = "windows-latest" ]; then
-          7z a "$staging.zip" "$staging"
-          echo "ASSET=$staging.zip" >> $GITHUB_ENV
-        else
-          tar czf "$staging.tar.gz" "$staging"
-          echo "ASSET=$staging.tar.gz" >> $GITHUB_ENV
-        fi
+      # One SLSA build-provenance attestation covering every archive:
+      #   gh attestation verify <archive> --repo salioglu/sphinx-ultra
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
 
-    - name: Generate checksum
-      shell: bash
-      run: |
-        if command -v sha256sum >/dev/null 2>&1; then
-          sha256sum "${{ env.ASSET }}" > "${{ env.ASSET }}.sha256"
-        else
-          shasum -a 256 "${{ env.ASSET }}" > "${{ env.ASSET }}.sha256"
-        fi
-        cat "${{ env.ASSET }}.sha256"
-
-    - name: Upload release archive
-      uses: softprops/action-gh-release@v3
-      with:
-        files: |
-          ${{ env.ASSET }}
-          ${{ env.ASSET }}.sha256
+      # On the release-please path the release already exists with its notes
+      # and only gains the files; on a hand-pushed tag it is created here with
+      # generated notes.
+      - name: Upload to the GitHub release
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          generate_release_notes: ${{ github.event_name == 'push' }}
+          fail_on_unmatched_files: true
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.sha256
 
   publish-crate:
     name: Publish to crates.io
-    needs: [validate-version, build-release]
+    needs: [validate-version, build]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write       # crates.io Trusted Publishing (OIDC)
     steps:
-    - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          persist-credentials: false
 
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
 
-    - name: Check for crates.io token
-      id: check_token
-      run: |
-        if [ -z "${{ secrets.CARGO_REGISTRY_TOKEN }}" ]; then
-          echo "has_token=false" >> $GITHUB_OUTPUT
-          echo "::notice::Skipping crates.io publishing - CARGO_REGISTRY_TOKEN not set"
-        else
-          echo "has_token=true" >> $GITHUB_OUTPUT
-        fi
+      # Preferred: crates.io Trusted Publishing, a short-lived token minted
+      # from this workflow's OIDC identity (set up once on crates.io, see
+      # docs/RELEASING.md). Fallback: the CARGO_REGISTRY_TOKEN secret.
+      - name: Check for a legacy registry token
+        id: legacy
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          if [ -n "$CARGO_REGISTRY_TOKEN" ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else echo "present=false" >> "$GITHUB_OUTPUT"; fi
 
-    - name: Publish to crates.io
-      if: steps.check_token.outputs.has_token == 'true'
-      run: cargo publish --locked
-      env:
-        CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      - name: Authenticate with crates.io (Trusted Publishing)
+        if: steps.legacy.outputs.present != 'true'
+        id: auth
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1.0.6
 
-    - name: Show crates.io setup instructions
-      if: steps.check_token.outputs.has_token == 'false'
-      run: |
-        echo "ℹ️ Skipping crates.io publishing because CARGO_REGISTRY_TOKEN is not set"
-        echo ""
-        echo "To enable automatic crates.io publishing:"
-        echo "1. Generate a token at https://crates.io/me"
-        echo "2. Add it as a secret named CARGO_REGISTRY_TOKEN in your GitHub repository"
-        echo "3. Go to: Settings → Secrets and variables → Actions → New repository secret"
-        echo ""
-        echo "For now, you can publish manually with:"
-        echo "  cargo publish"
+      - name: Publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN || steps.auth.outputs.token }}
+        run: cargo publish --locked

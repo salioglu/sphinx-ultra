@@ -2,7 +2,7 @@
 # Git pre-push hook to validate version consistency
 #
 # This hook prevents pushing tags that don't match the Cargo.toml version.
-# To install: cp scripts/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+# To install: scripts/dev.sh install-hooks
 
 set -euo pipefail
 
@@ -13,7 +13,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 # Read from stdin (git provides: local_ref local_sha remote_ref remote_sha)
-while read local_ref local_sha remote_ref remote_sha; do
+while read -r local_ref _local_sha _remote_ref _remote_sha; do
     # Check if this is a tag push
     if [[ $local_ref == refs/tags/* ]]; then
         tag_name=${local_ref#refs/tags/}
@@ -30,7 +30,9 @@ while read local_ref local_sha remote_ref remote_sha; do
                 exit 1
             fi
             
-            cargo_version=$(grep '^version = ' Cargo.toml | head -n1 | sed 's/version = "\(.*\)"/\1/')
+            # Read Cargo.toml from the commit being tagged, not from the
+            # working tree, which may already be on a newer version.
+            cargo_version=$(git show "$_local_sha:Cargo.toml" | grep '^version = ' | head -n1 | sed 's/version = "\(.*\)"/\1/')
             
             echo "  Tag version: $tag_version"
             echo "  Cargo.toml version: $cargo_version"
@@ -42,11 +44,10 @@ while read local_ref local_sha remote_ref remote_sha; do
                 echo -e "${YELLOW}To fix this:${NC}"
                 echo "1. Update Cargo.toml version to $tag_version, OR"
                 echo "2. Delete this tag and create one matching Cargo.toml version ($cargo_version)"
-                echo "3. Use scripts/release.sh to automate releases safely"
+                echo "3. Prefer the release-please flow (docs/RELEASING.md)"
                 echo ""
                 echo "Commands to fix:"
                 echo "  git tag -d $tag_name  # Delete the tag"
-                echo "  ./scripts/release.sh $cargo_version  # Create proper release"
                 exit 1
             fi
             

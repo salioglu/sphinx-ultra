@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: 📚 Documentation
-    url: https://github.com/salioglu/sphinx-ultra/blob/main/README.md
-    about: Check our documentation for usage instructions and examples
+    url: https://github.com/salioglu/sphinx-ultra/tree/main/docs
+    about: Getting started, configuration, implementation status and the roadmap
   - name: 💬 Discussions
     url: https://github.com/salioglu/sphinx-ultra/discussions
     about: Ask questions and discuss ideas with the community

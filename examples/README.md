@@ -1,60 +1,37 @@
-# Sphinx Ultra Examples
+# Examples
 
-This directory contains example projects demonstrating various features of Sphinx Ultra.
+## `basic/`: a minimal project
 
-## Available Examples
-
-### 1. Basic Project (`basic/`)
-A minimal example showing the basic structure and configuration.
-
-### 2. API Documentation (`api-docs/`)
-Example of documenting a Python API with autodoc.
-
-### 3. Multi-language Project (`multi-lang/`)
-Documentation project with multiple languages.
-
-### 4. Custom Theme (`custom-theme/`)
-Example of creating and using a custom theme.
-
-### 5. Plugin Example (`plugin-example/`)
-Demonstration of creating and using Sphinx Ultra plugins.
-
-## Running Examples
-
-Each example includes its own README with specific instructions. Generally:
-
-1. Navigate to the example directory
-2. Build the documentation:
-
-   ```bash
-   sphinx-ultra build --source . --output _build
-   ```
-
-3. Serve locally:
-
-   ```bash
-   sphinx-ultra serve --source . --port 8000
-   ```
-
-## Configuration Files
-
-Each example includes:
-- `sphinx-ultra.yaml` - Main configuration
-- `index.rst` or `index.md` - Entry point
-- Sample content files
-- Custom assets (if applicable)
-
-## Performance Benchmarks
-
-The `benchmarks/` directory contains projects of various sizes for performance testing:
-- Small (10 files)
-- Medium (100 files)
-- Large (1,000 files)
-- Extra Large (10,000 files)
-
-Run benchmarks with:
+A two-page project with a `sphinx-ultra.yaml` configuration. It shows the
+layout sphinx-ultra expects and is loaded by a unit test, so its
+configuration always matches the current schema.
 
 ```bash
-cd benchmarks/large
-time sphinx-ultra build --source . --output _build
+# From the repository root, sphinx-build style
+sphinx-ultra examples/basic examples/basic/_build/html -b html
+
+# Or with the native interface
+sphinx-ultra build --source examples/basic --output examples/basic/_build
 ```
+
+The output tree contains `searchindex.js`, `objects.inv` and `.buildinfo` in
+Sphinx 9.1's formats and one `.html` file per page. Note that the page body
+is still a placeholder (the escaped source), see the project
+[README](../README.md#what-works-today).
+
+## Library examples (`cargo run --example`)
+
+Two Rust examples exercise library APIs that the binary does not use yet:
+
+| Example | What it shows |
+|---|---|
+| `cargo run --example directive_validation` | The directive and role validators that run in every build, called directly on RST text |
+| `cargo run --example constraint_validation` | The sphinx-needs-style constraint engine (a library module; nothing produces items for it in the build until sphinx-needs support lands, roadmap M6) |
+
+## Fixture projects
+
+The projects under [`tests/fixtures/`](../tests/fixtures/) (`basic`,
+`basic_missing_ref`, `deps_image`, `intersphinx`, `literalinclude`,
+`toctree_forms`, `toctree_glob`) are small Sphinx projects used by the
+end-to-end suite and by the HTML oracle; each has a `conf.py` and can be built
+the same way.

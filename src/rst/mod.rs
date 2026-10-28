@@ -7,7 +7,7 @@
 //! promotion, target propagation, transition hoisting, message filtering)
 //! are explicitly NOT applied here; they arrive as separate components in
 //! later waves. Behavior sources: the committed differential fixture and the
-//! probe notes in docs/superpowers/plans/2026-08-07-m2-wave1-probes.md.
+//! probe notes in docs/plans/2026-08-07-m2-wave1-probes.md.
 
 pub(crate) mod block;
 pub(crate) mod digits;

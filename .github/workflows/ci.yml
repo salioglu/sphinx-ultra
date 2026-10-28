@@ -2,21 +2,37 @@ name: CI
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [main]
   pull_request:
-    branches: [ main, develop ]
+    branches: [main]
 
+# Least privilege for every job; nothing here writes to the repository.
 permissions:
   contents: read
 
+# A new push to the same branch or pull request supersedes the running build.
+# Only pull-request runs are cancelled by a newer push; a run on main always
+# completes so every main commit has a full result.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
 
+# Third-party actions are pinned to a commit SHA (the comment carries the
+# version); Dependabot keeps both in sync. Checkouts do not persist the token:
+# dependency build scripts and proc-macros run in these jobs. The job names "Test (ubuntu-latest,
+# stable)", "Benchmark", "Code Coverage" and "Security Audit" are the required
+# status checks of the `Protect main` ruleset: rename them there first.
 jobs:
   test:
     name: Test
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
         rust: [stable, beta]
@@ -25,164 +41,180 @@ jobs:
             rust: beta
           - os: macos-latest
             rust: beta
-
     # rust-toolchain.toml pins `stable` and outranks `rustup default` (what
-    # dtolnay/rust-toolchain sets), so without this env the beta leg silently
-    # tested stable. RUSTUP_TOOLCHAIN outranks the file.
+    # dtolnay/rust-toolchain sets), so without this env the beta leg would
+    # silently test stable. RUSTUP_TOOLCHAIN outranks the file.
     env:
       RUSTUP_TOOLCHAIN: ${{ matrix.rust }}
-
     steps:
-    - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        toolchain: ${{ matrix.rust }}
-        components: rustfmt, clippy
+      - name: Install Rust (${{ matrix.rust }})
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: ${{ matrix.rust }}
+          components: rustfmt, clippy
 
-    - name: Cache cargo registry
-      uses: actions/cache@v6
-      with:
-        path: ~/.cargo/registry
-        key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: ${{ matrix.rust }}
+          # Pull-request runs read the cache but only main writes it, so PR
+          # churn cannot evict the caches every run depends on.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
-    - name: Cache cargo index
-      uses: actions/cache@v6
-      with:
-        path: ~/.cargo/git
-        key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+      # fmt/clippy are style gates pinned to stable; the beta leg exists to
+      # catch upcoming rustc/std regressions in build+tests, not to enforce
+      # beta's shifting lint set.
+      - name: Check formatting
+        if: matrix.rust == 'stable'
+        run: cargo fmt --all -- --check
 
-    - name: Cache cargo build
-      uses: actions/cache@v6
-      with:
-        path: target
-        key: ${{ runner.os }}-${{ matrix.rust }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+      - name: Clippy
+        if: matrix.rust == 'stable'
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
-    # fmt/clippy are style gates pinned to stable; the beta leg exists to
-    # catch upcoming rustc/std regressions in build+tests, not to enforce
-    # beta's shifting lint set.
-    - name: Check formatting
-      if: matrix.rust == 'stable'
-      run: cargo fmt --all -- --check
-
-    - name: Run clippy
-      if: matrix.rust == 'stable'
-      run: cargo clippy --locked --all-targets --all-features -- -D warnings
-
-    - name: Run tests
-      run: cargo test --locked --verbose --all-features
+      - name: Test
+        run: cargo test --locked --all-features
 
   benchmark:
     name: Benchmark
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-    - uses: actions/checkout@v7
-
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-
-    - name: Cache cargo registry
-      uses: actions/cache@v6
-      with:
-        path: ~/.cargo/registry
-        key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-
-    - name: Cache cargo index
-      uses: actions/cache@v6
-      with:
-        path: ~/.cargo/git
-        key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
-
-    - name: Cache cargo build
-      uses: actions/cache@v6
-      with:
-        path: target
-        key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
-
-    - name: Run benchmarks
-      run: cargo bench --locked --no-run
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: bench
+      # Compile only: the benchmarks are rewritten with the HTML writer
+      # (docs/testing.md), and a timing run on shared runners proves nothing.
+      - name: Compile benchmarks
+        run: cargo bench --locked --no-run
 
   msrv:
     name: MSRV (1.85)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # Outranks rust-toolchain.toml (which pins stable); without this the job
-    # silently checked with stable and the MSRV claim was never tested.
+    # would silently check with stable and the MSRV claim would go untested.
     env:
       RUSTUP_TOOLCHAIN: "1.85"
     steps:
-    - uses: actions/checkout@v7
-
-    - name: Install MSRV toolchain
-      uses: dtolnay/rust-toolchain@master
-      with:
-        toolchain: "1.85"
-
-    - name: Cache cargo
-      uses: actions/cache@v6
-      with:
-        path: |
-          ~/.cargo/registry
-          target
-        key: msrv-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-    - name: Check with MSRV
-      run: cargo check --locked --all-targets
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: "1.85"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: msrv
+      - name: Check with the minimum supported Rust
+        run: cargo check --locked --all-targets
 
   musl:
     name: Musl Build (release target)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-    - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # cross builds in a container with a complete musl toolchain, so the
+      # build cannot break when the runner image or host toolchain drifts.
+      - name: Install cross
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        with:
+          tool: cross
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: musl
+      # A full build (not check) so link errors surface here, not at release time.
+      - name: Build musl binary
+        run: cross build --locked --target x86_64-unknown-linux-musl
 
-    # cross builds in a container with a complete musl toolchain, so the
-    # build cannot break when the runner image or host toolchain drifts
-    - name: Install cross
-      uses: taiki-e/install-action@cross
-
-    - name: Cache cargo registry
-      uses: actions/cache@v6
-      with:
-        path: ~/.cargo/registry
-        key: musl-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-
-    # A full build (not check) so link errors surface here, not at release time
-    - name: Build musl binary
-      run: cross build --locked --target x86_64-unknown-linux-musl
-
+  # Required check: known vulnerabilities (cargo audit) plus the license, ban
+  # and registry-source policy of deny.toml. The unmaintained/unsound class of
+  # advisory is checked by the job below, which is not required, so a newly
+  # archived crate does not block unrelated pull requests; deny.toml records
+  # the accepted exceptions with their reasons.
   security:
     name: Security Audit
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-    - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install cargo-audit and cargo-deny
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        with:
+          tool: cargo-audit,cargo-deny
+      - name: cargo audit
+        run: cargo audit
+      - name: cargo deny (licenses, bans, sources)
+        run: cargo deny --all-features check licenses bans sources
 
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
+  advisories:
+    name: Advisories (unmaintained, unsound)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        with:
+          tool: cargo-deny
+      - name: cargo deny (advisories)
+        run: cargo deny --all-features check advisories
 
-    - name: Install cargo-audit
-      run: cargo install cargo-audit
-
-    - name: Run security audit
-      run: cargo audit
+  dependency-review:
+    name: Dependency Review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Blocks a pull request that adds a dependency with a known advisory or
+      # a license outside the allow-list; the same policy as deny.toml, applied
+      # to the diff by GitHub's dependency graph.
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: moderate
+          allow-licenses: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, Zlib, Unicode-3.0, Unicode-DFS-2016, MPL-2.0, CC0-1.0, BSL-1.0, OpenSSL, CDLA-Permissive-2.0
 
   coverage:
     name: Code Coverage
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
-    - uses: actions/checkout@v7
-
-    - name: Install Rust
-      uses: dtolnay/rust-toolchain@stable
-      with:
-        components: llvm-tools-preview
-
-    - name: Install cargo-llvm-cov
-      uses: taiki-e/install-action@cargo-llvm-cov
-
-    - name: Generate coverage report
-      run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
-
-    - name: Upload coverage reports to Codecov
-      uses: codecov/codecov-action@v7
-      with:
-        token: ${{ secrets.CODECOV_TOKEN }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+          components: llvm-tools-preview
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        with:
+          tool: cargo-llvm-cov
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: coverage
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Generate coverage report
+        run: cargo llvm-cov --locked --all-features --workspace --lcov --output-path lcov.info
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: lcov.info
+          fail_ci_if_error: false

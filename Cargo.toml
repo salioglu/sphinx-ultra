@@ -9,7 +9,7 @@ edition = "2021"
 # advertise, silently and only for other people. v3 declines those versions.
 resolver = "3"
 authors = ["Sphinx Ultra Team <sinan@alioglu.org>"]
-description = "High-performance Rust-based Sphinx documentation builder for large codebases"
+description = "sphinx-build reimplemented in Rust: a Sphinx documentation builder for large trees, verified against real Sphinx output"
 license = "MIT"
 readme = "README.md"
 homepage = "https://salioglu.github.io/sphinx-ultra"
@@ -31,15 +31,23 @@ exclude = [
     "*.sh",
     "/sphinx-ultra.yaml",
     "/static/*.md",
+    "/assets",
+    "/deny.toml",
+    "/release-please-config.json",
+    "/.release-please-manifest.json",
+    "/.claude",
 ]
 
 [dependencies]
 # Core dependencies
-tokio = { version = "1.0", features = ["full"] }
+# Only the runtime, the #[tokio::main]/#[tokio::test] macros and async fs are used.
+tokio = { version = "1.0", features = ["rt-multi-thread", "macros", "fs"] }
 clap = { version = "4.0", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-serde_yaml = "0.9"
+# serde_yaml is archived upstream (its backend unsafe-libyaml carries RUSTSEC-2024-0449);
+# yaml-serde is the YAML organization's maintained fork with the same API and crate path.
+serde_yaml = { package = "yaml_serde", version = "0.10" }
 anyhow = "1.0"
 thiserror = "2.0"
 log = "0.4"
@@ -50,7 +58,6 @@ tempfile = "3.0"
 
 # String processing and templating
 regex = "1.0"
-lazy_static = "1.4"
 pulldown-cmark = "0.13"
 unicode-normalization = "0.1"
 unicode-width = "0.2"

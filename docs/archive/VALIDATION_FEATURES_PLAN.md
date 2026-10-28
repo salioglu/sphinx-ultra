@@ -4,8 +4,8 @@
 > The project's scope has changed: sphinx-ultra now targets **full Sphinx and
 > sphinx-needs parity with no feature exclusions** — the "Notable Exclusions"
 > section below (search, theming, templating) no longer applies. The canonical
-> plan is **[ROADMAP.md](ROADMAP.md)**; verified implementation status is
-> **[docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md)**.
+> plan is **[ROADMAP.md](../ROADMAP.md)**; verified implementation status is
+> **[docs/IMPLEMENTATION_STATUS.md](../IMPLEMENTATION_STATUS.md)**.
 >
 > Note also that the "Implemented ✅ / Complete" claims below (domain system,
 > directive & role validation) refer to library modules with unit tests; the 2026-08

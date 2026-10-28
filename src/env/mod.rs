@@ -1,7 +1,7 @@
 //! Serialized `BuildEnvironment` — the persistent build-state record that
 //! mirrors Sphinx's `BuildEnvironment` (`environment/__init__.py`), scoped to
 //! the fields this wave's read-and-resolve phase populates (see
-//! `docs/superpowers/plans/2026-08-31-m2-wave4-research-spec-sphinx-env-toctree-domains.md`
+//! `docs/plans/2026-08-31-m2-wave4-research-spec-sphinx-env-toctree-domains.md`
 //! §1 for the full attribute-by-attribute mapping this struct is drawn
 //! from).
 //!

@@ -3,7 +3,7 @@
 //! Every expected value here is probe-verified against sphinx 9.1.0 /
 //! docutils 0.22.4 — the defaults by probe D and the `max_len` truthiness
 //! rule by probes C1-C5 of the research spec
-//! (`docs/superpowers/plans/2026-09-01-m2-wave4.5-research-spec-signature-config.md`
+//! (`docs/plans/2026-09-01-m2-wave4.5-research-spec-signature-config.md`
 //! §1.2), never from memory.
 
 use super::PySigConfig;

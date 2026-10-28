@@ -1,0 +1,81 @@
+# cargo-deny configuration: advisories, licenses, bans and sources.
+# Run locally with `scripts/dev.sh deny` or `cargo deny check`.
+# Reference: https://embarkstudios.github.io/cargo-deny/checks/cfg.html
+
+[graph]
+# The release targets. cargo-deny evaluates the lockfile for every one of
+# them, so a platform-only dependency cannot slip past the checks.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-gnu",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+]
+all-features = true
+
+[advisories]
+version = 2
+db-urls = ["https://github.com/rustsec/advisory-db"]
+# Unmaintained and unsound crates are reported as warnings by default; the
+# CI job runs with `--deny warnings`, so each one must be listed here with a
+# reason until it is replaced.
+yanked = "deny"
+ignore = [
+    # bincode 2 is unmaintained (archived 2025-12). It serialises this crate's
+    # own cache files (per-document doctrees and env.bin under the cache
+    # directory), which are never untrusted input, and replacing it changes
+    # the on-disk cache format. Revisit when the cache format next changes.
+    { id = "RUSTSEC-2025-0141", reason = "bincode: cache persistence only, no untrusted input; format change scheduled with the next cache-version bump" },
+    # unsafe-libyaml backs serde_yaml, the loader for sphinx-ultra.yaml. The
+    # only safe-Rust serde YAML crate (serde-saphyr) requires Rust 1.89 and
+    # this crate's MSRV is 1.85; the forks (serde_yaml_ng, serde_norway) keep
+    # the same unsafe-libyaml dependency. Swap to serde-saphyr at the next
+    # MSRV bump.
+    { id = "RUSTSEC-2024-0449", reason = "serde_yaml/unsafe-libyaml: parses the project's own config file; replacement blocked on MSRV 1.89" },
+]
+
+[licenses]
+version = 2
+# Every license that is acceptable for a dependency of an MIT-licensed
+# command-line tool. Add to this list deliberately, never with a wildcard.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "MPL-2.0",
+    "CC0-1.0",
+    "BSL-1.0",
+    "OpenSSL",
+    "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.8
+
+[[licenses.clarify]]
+# ring ships its license text in a non-standard file layout.
+crate = "ring"
+expression = "MIT AND ISC AND OpenSSL"
+license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+deny = [
+]
+skip = [
+]
+skip-tree = [
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

@@ -1,538 +1,271 @@
-# Sphinx Ultra Rust Builder
+<div align="center">
 
-[![Crates.io](https://img.shields.io/crates/v/sphinx-ultra.svg)](https://crates.io/crates/sphinx-ultra)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/logo-dark.svg">
+  <img src="assets/logo.svg" width="168" alt="sphinx-ultra: a sphinx in profile with speed streaks">
+</picture>
+
+# sphinx-ultra
+
+**`sphinx-build`, reimplemented in Rust.**<br>
+Parity is verified against real Sphinx 9.1 output, one oracle at a time.
+
+[![Crates.io](https://img.shields.io/crates/v/sphinx-ultra.svg?logo=rust)](https://crates.io/crates/sphinx-ultra)
+[![Downloads](https://img.shields.io/crates/d/sphinx-ultra.svg)](https://crates.io/crates/sphinx-ultra)
+[![docs.rs](https://img.shields.io/docsrs/sphinx-ultra?logo=docs.rs)](https://docs.rs/sphinx-ultra)
 [![CI](https://github.com/salioglu/sphinx-ultra/actions/workflows/ci.yml/badge.svg)](https://github.com/salioglu/sphinx-ultra/actions/workflows/ci.yml)
-[![Documentation](https://github.com/salioglu/sphinx-ultra/actions/workflows/docs.yml/badge.svg)](https://salioglu.github.io/sphinx-ultra)
-[![Release](https://github.com/salioglu/sphinx-ultra/actions/workflows/release.yml/badge.svg)](https://github.com/salioglu/sphinx-ultra/releases)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org)
-[![Sponsor](https://img.shields.io/badge/sponsor-GitHub-pink.svg)](https://github.com/sponsors/salioglu)
+[![Coverage](https://codecov.io/gh/salioglu/sphinx-ultra/branch/main/graph/badge.svg)](https://codecov.io/gh/salioglu/sphinx-ultra)
+[![MSRV](https://img.shields.io/badge/MSRV-1.85-orange.svg?logo=rust)](https://github.com/salioglu/sphinx-ultra/blob/main/Cargo.toml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Sponsor](https://img.shields.io/badge/sponsor-%E2%9D%A4-ff69b4?logo=github)](https://github.com/sponsors/salioglu)
 
-A high-performance Rust-based Sphinx documentation builder designed for large codebases with thousands of files.
+[Install](#install) · [Quick start](#quick-start) · [What works today](#what-works-today) · [How parity is verified](#how-parity-is-verified) · [Roadmap](#roadmap) · [Documentation](#documentation) · [Contributing](#contributing)
 
-## ⚠️ Development Status
+</div>
 
-**🚧 Pre-1.0: not yet recommended for production documentation workflows.**
+---
 
-**Mission (see [ROADMAP.md](ROADMAP.md)):** sphinx-ultra 1.0 will be a
-production-grade, drop-in replacement for `sphinx-build -b html` — full Sphinx
-feature parity (target: Sphinx 9.1.x), **sphinx-needs built in as a first-class
-feature** (target: 8.3.x), support for the 5 most popular themes and 15+ most
-popular extensions — at 10–100× the speed. **No Sphinx or sphinx-needs feature is
-excluded from scope**; features are phased, never excluded. The earlier
-validation-only scoping is retired.
+> **Pre-1.0. Not yet a replacement for `sphinx-build` in production.**
+>
+> Everything *behind* the page is real and oracle-verified: a docutils-fidelity
+> RST parser, a persisted build environment with the toctree graph, numbering,
+> the std and Python domains, intersphinx, and Sphinx's own warnings. Since 0.6.0
+> the build also writes `searchindex.js`, `objects.inv` and `.buildinfo` in
+> Sphinx 9.1's formats. **The HTML page body itself is still a placeholder**
+> (the escaped source text), and there are no themes, `genindex.html`,
+> `search.html`, Markdown, extensions or sphinx-needs yet. See
+> [What works today](#what-works-today) and
+> [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md), which is
+> audited file-and-line against the binary.
 
-**Honest current state (verified by code audit, 2026-08-31):** everything up to the
-page render is real — a docutils-fidelity RST parser, a `BuildEnvironment` with the
-toctree graph, numbering, the std domain, index data and intersphinx, and Sphinx's
-own warnings coming out of all of it, each pinned against a real `sphinx-build`
-9.1.0 by committed differential fixtures. **The HTML is still a placeholder**: the
-build writes the source text, escaped, with no rendering, themes, search index,
-`genindex.html` or `objects.inv`. That is the M2 wave-5 HTML writer. The Markdown
-parser is still a prototype (`.md` titles and TOCs come out empty), and `conf.py`
-support is a declarative subset — dynamic values need the M5 Python sidecar. The
-full, file-and-line-level status audit lives in
-[docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md).
+## Why
 
-## ✨ Features
+Sphinx is the standard for Python and hardware/automotive documentation, and
+it is slow on large trees: tens of minutes for tens of thousands of pages, and
+a full rebuild whenever `conf.py` moves. sphinx-ultra is a from-scratch Rust
+implementation of the same pipeline with one rule: **compatibility is verified,
+never claimed.** Every "Sphinx-compatible" statement in this repository is
+backed by a differential test against the real `sphinx-build` 9.1.0 or
+docutils 0.22.4, run from a pinned environment and committed as a fixture.
 
-### ✅ Working today
+The 1.0 target is a drop-in `sphinx-build -b html` with sphinx-needs built in,
+the five most used themes, the most used extensions, and parallel, incremental
+builds that are 10–100× faster. The plan is in
+[docs/ROADMAP.md](docs/ROADMAP.md).
 
-- **🚀 Parallel build pipeline**: Rayon-based, scales across cores (`-j`)
-- **📂 Pattern-based file discovery**: Sphinx-style `include_patterns` /
-  `exclude_patterns` engine, verified against `sphinx.util.matching` 9.1.0 by a
-  committed 881-case differential suite (zero divergence)
-- **🧰 sphinx-build compatible CLI**: `sphinx-ultra SOURCEDIR OUTPUTDIR` with
-  `-b html`, `-M html`/`-M clean` make-mode, `-D`/`-A` overrides, `-d`, `-n`,
-  `-q`, `-E`, `-a`, `-T`, `-t`, `-c`, `-j auto`, `-W`/`--keep-going`/`-w` —
-  quickstart Makefiles work unchanged
-- **🔄 Incremental cache**: cache hits write their output, `--clean
-  --incremental` is safe, config changes invalidate automatically (blake3
-  fingerprint), and a document is re-read when a file it depends on changes;
-  sphinx-build mode is incremental by default
-- **🌐 Build environment & cross-references**: a serialized `BuildEnvironment`
-  with the global toctree graph and relations, `numfig` section/figure
-  numbering, the std domain (labels, glossary terms, `option`/`envvar`/
-  `confval`), general-index data, an `objects.inv` reader/writer, and
-  **intersphinx** resolution incl. the `:external:` roles — verified against a
-  real `sphinx-build` 9.1.0 across a 29-project / 84-document environment
-  oracle
-- **🐍 Python domain & file inclusion**: the fourteen `py:*` directives with
-  a real signature grammar (defaults, annotations, PEP 695 type parameters,
-  `:param:`/`:type:`/`:raises:`/`:returns:` doc fields), `:py:*:` and `:any:`
-  cross-reference resolution, `py-modindex` data, and `include` /
-  `literalinclude` with the full docutils and Sphinx option sets (incl.
-  `:pyobject:`) — verified against the same oracles
-- **⚠️ Build validation**: toctree consistency (nonexisting/excluded entries,
-  self-reference, circular toctrees, orphans, "isn't included in any
-  toctree"); directive/role validation on every build; cross-reference
-  resolution with Sphinx's own texts and categories — a broken reference of
-  any of Sphinx's seven `warn_dangling` std reftypes (`:ref:`, `:numref:`,
-  `:doc:`, `:term:`, `:keyword:`, `:option:`, `:confval:`) warns in a
-  default build (`unknown document:`, `undefined label:`,
-  `term not in glossary:`, …), and `-n`/nitpicky widens that to the
-  remaining reference types — all through Sphinx-style warnings, `-W`, and
-  `-w warnfile`
-- **🔧 Config auto-detection**: conf.py (simple assignments only, for now) →
-  sphinx-ultra.yaml → .yml → .json → defaults
-- **📊 Statistics**: `stats` command with project analysis
-- **🏗️ CLI**: `build`, `clean`, `stats`
+## Install
 
-### 🧩 Built but not yet wired into `build` (activation is roadmap M2–M4)
-
-- **🔍 Constraint engine** inspired by sphinx-needs (library + examples; wiring
-  waits for sphinx-needs item extraction in M4)
-- **🖥️ Sphinx-mirroring HTML builder, minijinja template engine, search index**
-  (library code, currently bypassed by the build path — the M2 wave-5 HTML
-  writer revives it)
-- **📇 The `objects.inv` writer**: real and byte-verified against inventories a
-  real `sphinx-build` produced, but nothing writes one into your output tree
-  until the HTML writer lands. (The *reader* is live — intersphinx uses it.)
-  The same applies to the general index: the data is computed, the
-  `genindex.html` page is not yet rendered.
-
-### 📋 Roadmap
-
-The canonical, milestone-by-milestone plan — real docutils-fidelity parsing, theme
-engine (alabaster, sphinx-rtd-theme, furo, pydata-sphinx-theme, sphinx-book-theme),
-byte-compatible search and objects.inv, 16-extension support matrix (autodoc via a
-Python sidecar, myst-parser, sphinx-design, copybutton, mermaid, …), first-class
-sphinx-needs, i18n, LaTeX/EPUB/man builders, live-reload dev server, and the
-production-readiness workstream — is in **[ROADMAP.md](ROADMAP.md)**.
-
-## 🚀 Quick Start
-
-### Prerequisites
-
-- Rust 1.85 or newer (declared MSRV, verified in CI)
-- Cargo
-
-### Installation
+**From crates.io** (Rust 1.85 or newer):
 
 ```bash
-# Clone and build from source
+cargo install sphinx-ultra --locked
+```
+
+**Prebuilt binaries** for Linux (x86_64 glibc and musl, aarch64), macOS
+(x86_64, Apple Silicon) and Windows (x86_64) are attached to every
+[GitHub release](https://github.com/salioglu/sphinx-ultra/releases/latest),
+each with a `.sha256` checksum. On Linux and macOS the install script
+downloads the right archive, verifies the checksum and installs to
+`~/.local/bin`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/salioglu/sphinx-ultra/main/scripts/install.sh | sh
+```
+
+**From source:**
+
+```bash
 git clone https://github.com/salioglu/sphinx-ultra.git
 cd sphinx-ultra
-cargo build --release
-
-# The binary will be available at target/release/sphinx-ultra
+cargo build --release          # binary at target/release/sphinx-ultra
 ```
 
-### Basic Usage
+## Quick start
 
-```bash
-# Build documentation
-./target/release/sphinx-ultra build --source docs --output _build
-
-# Clean build artifacts
-./target/release/sphinx-ultra clean --output _build
-
-# Show project statistics
-./target/release/sphinx-ultra stats --source docs
-
-# Get help
-./target/release/sphinx-ultra --help
-```
-
-### Available Commands
-
-- `build`: Build documentation from source files
-- `clean`: Remove build artifacts and output files  
-- `stats`: Display project statistics and analysis
-
-### sphinx-build Compatible Mode
-
-Invocations that don't start with a subcommand are parsed exactly like
-`sphinx-build`, so existing Makefiles and CI scripts work by swapping the
-binary name:
+sphinx-ultra accepts `sphinx-build`'s argument shape, so a quickstart
+`Makefile` works by swapping the binary name:
 
 ```bash
 # Classic sphinx-build style
 sphinx-ultra docs _build/html -b html
 
-# Make-mode (what sphinx-quickstart Makefiles invoke): output goes to _build/html
+# Make-mode, what `make html` runs: output goes to _build/html
 sphinx-ultra -M html docs _build
 
-# Overrides, nitpicky mode, fresh environment, quiet
-sphinx-ultra docs _build -D project=MyDocs -n -E -q -j auto
+# Overrides, nitpicky mode, fresh environment, quiet, all cores, warnings as errors
+sphinx-ultra docs _build -D project=MyDocs -n -E -q -j auto -W -w warnings.log
 ```
 
-Supported: positional `SOURCEDIR OUTPUTDIR`, `-b html` (other builders exit 2
-until their milestones land), `-M html`/`-M clean`, `-D key=value`,
-`-A name=value`, `-d doctreedir`, `-n`, `-q`, `-E`, `-a`, `-T`, `-t tag`,
-`-c confdir`, `-j N|auto`, `-W`, `--keep-going`, `-w file`, repeatable `-v`.
-sphinx-build mode is incremental by default (`-E` discards the saved
-environment, `-a` rewrites everything), and a pre-set `RUST_LOG` always wins
-over the verbosity flags. One caveat: a source directory literally named
-`build`, `clean`, or `stats` must be written with a path prefix
-(`sphinx-ultra ./build _build`).
+Supported: positional `SOURCEDIR OUTPUTDIR`, `-b html`, `-M html`/`-M clean`,
+`-c`, `-d`, `-D`, `-A`, `-t`, `-n`, `-q`, `-E`, `-a`, `-T`, `-j N|auto`, `-W`,
+`--keep-going`, `-w FILE`, repeatable `-v`. Other builders and make-mode
+targets exit 2 with an explicit message. Exit codes follow sphinx-build: 0 on
+success, 1 on build errors or `-W` with warnings, 2 on usage and configuration
+errors. sphinx-build mode is incremental by default.
 
-### Build Options
+The native interface is also available:
 
 ```bash
-# Parallel processing
-sphinx-ultra build --jobs 8 --source docs --output _build
-
-# Incremental builds
-sphinx-ultra build --incremental --source docs --output _build
-
-# Clean before build
-sphinx-ultra build --clean --source docs --output _build
-
-# Save warnings to file
-sphinx-ultra build --warning-file warnings.log --source docs --output _build
-
-# Fail on warnings (useful for CI)
-sphinx-ultra build --fail-on-warning --source docs --output _build
-```
-
-## 🔧 Configuration
-
-Sphinx Ultra supports multiple configuration formats and can auto-detect your setup:
-
-### Configuration Priority
-
-1. **conf.py** (Sphinx standard) - Automatically detected and parsed
-2. **sphinx-ultra.yaml** - Native YAML configuration  
-3. **sphinx-ultra.yml** - Alternative YAML format
-4. **sphinx-ultra.json** - JSON configuration
-5. **Default settings** - Used if no config file found
-
-### Sphinx conf.py Support
-
-Sphinx Ultra can read existing Sphinx `conf.py` files, **currently limited to
-simple single-line assignments** (strings, booleans, integers, single-line lists):
-
-```python
-# conf.py — this subset parses today
-project = 'My Documentation'
-version = '1.0'
-extensions = ['sphinx.ext.autodoc', 'sphinx.ext.viewcode']
-html_theme = 'sphinx_rtd_theme'
-```
-
-> Multi-line lists, dicts, tuples, string concatenation, and triple-quoted
-> strings parse natively; every construct the parser cannot handle (computed
-> values, f-strings) produces a `conf.py:<line>` warning instead of being
-> silently dropped. Executing dynamic conf.py in your project's venv arrives
-> with the M5 sidecar.
-
-### YAML Configuration
-
-Create a `sphinx-ultra.yaml` file for native configuration.
-
-> Every field is optional — a partial YAML file loads with sensible defaults
-> for whatever it omits.
-
-```yaml
-# Project information
-project: "My Documentation"
-version: "1.0.0"
-copyright: "2024, My Company"
-
-# Build settings
-parallel_jobs: 8
-max_cache_size_mb: 500
-cache_expiration_hours: 24
-
-# Output configuration
-output:
-  html_theme: "sphinx_rtd_theme"
-  syntax_highlighting: true
-  highlight_theme: "github"
-  search_index: true
-  minify_html: false
-
-# File pattern matching (Sphinx-style)
-include_patterns:
-  - "**/*.rst"
-  - "**/*.md"
-exclude_patterns:
-  - "_build/**"
-  - "drafts/**"
-
-# Extensions (limited support currently)
-extensions:
-  - "sphinx.ext.autodoc"
-  - "sphinx.ext.viewcode"
-  - "sphinx.ext.intersphinx"
-
-# Theme configuration
-theme:
-  name: "sphinx_rtd_theme"
-  options: {}
-  custom_css: []
-  custom_js: []
-
-# Optimization settings
-optimization:
-  parallel_processing: true
-  incremental_builds: true
-  document_caching: true
-```
-
-### Configuration Fields
-
-Many standard Sphinx configuration options are **parsed**; note that a number of
-them are not yet consumed by the build (see
-[docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md) § Configuration).
-The options that demonstrably change behavior today are project metadata,
-`parallel_jobs`, `include_patterns`/`exclude_patterns`, and `fail_on_warning`.
-Parsed categories include:
-- Project metadata (project, version, copyright, author)
-- HTML output options (theme, static paths, CSS/JS files)  
-- Extension configuration
-- Template and static file paths
-- **File pattern matching** (`include_patterns`, `exclude_patterns`) - [compatibility guide](docs/SPHINX_PATTERNS_COMPATIBILITY.md) (close to Sphinx; remaining verified divergences tracked in [ROADMAP.md](ROADMAP.md) M1)
-- Build optimization settings
-
-## 📈 Performance
-
-> **Important caveat:** the numbers below were measured on the **current
-> placeholder pipeline** (which does not yet perform full RST rendering, theming,
-> or search indexing). They demonstrate the parallel-I/O architecture, not
-> end-to-end documentation-build performance. Honest, corpus-based benchmarks with
-> regression gates arrive with the real parser (ROADMAP M2, §10).
-
-| Files | Build Time | Processing Rate | Memory Usage |
-|-------|------------|-----------------|--------------|
-| 2 files | 8ms | 250 files/sec | ~10MB |  
-| 51 files | 44ms | 1,159 files/sec | ~15MB |
-| 100+ files | ~85ms* | 1,176 files/sec* | ~20MB* |
-
-*Projected based on linear scaling
-
-### Performance Features
-
-- **Parallel Processing**: Utilizes all CPU cores for maximum throughput
-- **Change Detection**: blake3-based staleness checks; cache hits write their
-  output, and any configuration change invalidates the cache automatically
-- **Memory Efficient**: Low memory footprint even for large projects
-- **Minimal I/O**: Efficient file operations and batch processing
-
-### Comparison Notes
-
-While we don't have direct Sphinx comparison benchmarks yet, the processing speeds above represent significant performance improvements for documentation builds. The actual performance gain depends on:
-
-- Number of files and their complexity
-- Available CPU cores  
-- Disk I/O speed
-- Whether incremental builds are enabled
-
-## 🏗️ Architecture
-
-The Rust builder consists of several key components:
-
-- **Parser**: RST/Markdown parsing (prototype today; docutils-fidelity parser is ROADMAP M2)
-- **Cache**: Incremental build cache with blake3 change detection
-- **Renderer**: minijinja-based template engine (built, not yet wired — ROADMAP M2)
-- **Builder**: Parallel processing engine (rayon)
-
-## 🔍 Advanced Usage
-
-### Incremental Builds
-
-Enable faster rebuilds by only processing changed files:
-
-```bash
-sphinx-ultra build --incremental --source docs --output _build
-```
-
-Cache hits always write their output (a cached rebuild produces a complete
-output tree), `--clean --incremental` is safe, and any configuration change
-invalidates the cache automatically. `max_cache_size_mb` and
-`cache_expiration_hours` in the config control retention.
-
-### Parallel Processing
-
-Control the number of parallel jobs:
-
-```bash
-# Use 16 parallel jobs for maximum performance on large projects
-sphinx-ultra build --jobs 16 --source docs --output _build
-
-# Use 1 job for debugging or memory-constrained environments  
-sphinx-ultra build --jobs 1 --source docs --output _build
-```
-
-### Warning and Error Handling
-
-```bash
-# Save all warnings and errors to a log file
-sphinx-ultra build --warning-file build.log --source docs --output _build
-
-# Treat warnings as errors (useful for CI/CD)
-sphinx-ultra build --fail-on-warning --source docs --output _build
-
-# Combine both for strict CI builds
-sphinx-ultra build -w build.log -W --source docs --output _build
-```
-
-### Configuration File Usage
-
-```bash
-# Use a specific configuration file
-sphinx-ultra build --config my-config.yaml --source docs --output _build
-
-# Configuration auto-detection order:
-# 1. conf.py (if present)
-# 2. sphinx-ultra.yaml  
-# 3. sphinx-ultra.yml
-# 4. sphinx-ultra.json
-# 5. Default configuration
-```
-
-### Clean Builds
-
-```bash
-# Clean output directory before building
-sphinx-ultra build --clean --source docs --output _build
-
-# Or clean manually
+sphinx-ultra build --source docs --output _build --jobs 8 --incremental
 sphinx-ultra clean --output _build
-```
-
-### Project Analysis
-
-```bash
-# Get detailed project statistics
 sphinx-ultra stats --source docs
 ```
 
-Output includes:
-- Number of source files discovered
-- Total lines of documentation
-- Average and largest file sizes  
-- Directory depth analysis
-- Cross-reference count
+Configuration is auto-detected in this order: `conf.py` (a declarative subset
+is parsed, not executed), `sphinx-ultra.yaml`, `.yml`, `.json`, then defaults.
+Details are in [docs/configuration.md](docs/configuration.md); a tour of the
+CLI is in [docs/getting-started.md](docs/getting-started.md).
 
-## 🐛 Debugging and Troubleshooting
+## What works today
 
-### Enable Verbose Logging
+Status as of v0.6.0, established by tracing the binary's call graph and
+running it. Every row marked *verified* has a committed differential fixture
+generated from the pinned upstream toolchain.
 
-```bash
-# Debug-level logging for detailed build information
-# (note: --verbose goes before the subcommand)
-sphinx-ultra --verbose build --source docs --output _build
+| Subsystem | Status | Verified by |
+|---|---|---|
+| **RST parsing** — docutils block + inline grammar, the docutils body directives, Sphinx's directives and roles (`toctree`, `versionadded`, `code-block`, `only`, `math`, `index`, `glossary`, the `py:*` and std object directives, …) | ✅ Working | 735 docutils + 489 Sphinx read-phase cases, zero divergence; `contents`/`sectnum`/`meta`/`role` and `rst_prolog`/`rst_epilog` are not implemented yet |
+| **Build environment** — persisted `BuildEnvironment`, toctree graph and relations, `numfig` numbering, toctree consistency warnings (missing or excluded entries, orphans, multiple parents), Sphinx's outdated-document computation | ✅ Working | 29-project / 84-document environment oracle, zero divergence on every compared key |
+| **std domain + cross-references** — labels, glossary terms, `option`/`envvar`/`confval`, `:ref:`/`:numref:`/`:doc:`/`:term:`/`:any:`, nitpicky mode, Sphinx's dangling-reference warnings | ✅ Working | environment oracle |
+| **Python domain** — all fourteen `py:*` directives with a real signature grammar (`ast.unparse` port, PEP 695), doc fields, `:py:*:` resolution, `py-modindex` data | ✅ Working | environment oracle, 122 py signature/config cases; the bare `.. function::` spellings that `primary_domain` routes to `py` are not wired yet |
+| **`include` / `literalinclude`** — full option sets incl. `:pyobject:`, `:diff:`, `:dedent:`; included files tracked as rebuild dependencies | ⚠️ Partial | environment oracle; a *missing* include file is not reported yet (see below) |
+| **intersphinx** — `intersphinx_mapping` validation, local and HTTPS inventories with TLS options and an on-disk cache, `:external:` roles | ✅ Working | 12-file `objects.inv` oracle |
+| **`searchindex.js`, `objects.inv`, `.buildinfo`** — Sphinx 9.1 formats: a port of `IndexBuilder` with the Snowball English stemmer, the inventory writer, `stable_hash` config/tag hashes | ✅ Working (0.6.0) | 25k-word stemming fixture; artifacts compared against `sphinx-build` for every HTML fixture |
+| **Incremental builds** — blake3 config fingerprint, per-document doctrees, dependency-driven invalidation | ✅ Working | end-to-end CLI suite |
+| **Warnings and exit codes** — Sphinx's texts and `[type.subtype]` categories, `-W`, `-w`, `--keep-going` | ✅ Working | environment oracle (full warning stream), CLI suite |
+| **Directive and role validation** — 10 + 10 built-in validators on every build | ⚠️ Partial | unknown directives stay silent |
+| **General index** — `genindex` data at Sphinx parity | ⚠️ Partial | environment oracle; no `genindex.html` page yet |
+| **`conf.py`** — strings, numbers, booleans, nested lists/dicts/tuples, string concatenation; every unsupported construct warns with its line | ⚠️ Partial | CLI suite; dynamic values need the Python sidecar (M5) |
+| **HTML pages** | 🔴 Placeholder | each page is `<html><body>` + the escaped source; the 1,406-case HTML oracle is red by design until the writer lands |
+| **Themes, templates, `search.html`, `genindex.html`, static assets** | 🔴 Not yet | library code exists (minijinja engine, `HTMLBuilder` mirror), not wired |
+| **Markdown / MyST** | 🔴 Not yet | `.md` files get a page but no parsed structure |
+| **Extensions, autodoc, sphinx-needs** | 🔴 Not yet | listing an extension has no effect; a constraint engine exists as a library |
+| **Other builders (`dirhtml`, `latex`, …), live-reload server** | 🔴 Not yet | roadmap M3 and M7 |
+
+Two gaps are worth knowing before you point `-W` at a real project:
+
+- **docutils-level diagnostics are not printed yet.** Messages docutils
+  records *inside* the doctree (unknown directives, a missing or circular
+  `include`, title-underline problems) are built faithfully but do not reach
+  stderr or the `-w` file, so a broken include path drops its content silently
+  and `-W` stays green. This is the first item of the HTML-writer wave.
+- **References into the `c`, `cpp`, `js` and `rst` domains are counted, not
+  resolved**, until those domains land (M5).
+
+## How parity is verified
+
+Each layer of the pipeline has its own oracle: a Python generator runs the
+pinned upstream (`sphinx==9.1.0`, `docutils==0.22.4`, `sphinx-needs==8.5.0`)
+from a locked environment, records what it produces, and a Rust test replays
+the same input through sphinx-ultra and compares byte-for-byte. The fixtures
+are committed; CI needs no Python.
+
+| Oracle | Cases | Compares |
+|---|---|---|
+| docutils doctree | 735 | pseudo-XML of the parse layer |
+| Sphinx read phase | 489 | pseudo-XML after Sphinx's directives and roles |
+| Build environment | 29 projects, 84 documents | `tocs`, relations, numbering, std and py registries, index entries, resolved doctrees, the full warning stream |
+| Pattern matching | 881 | `sphinx.util.matching` verdicts for `include_patterns` / `exclude_patterns` |
+| `objects.inv` | 12 inventories | header bytes and decoded records, both directions |
+| English search terms | 25,000 words | Snowball stem and final indexed term |
+| **HTML output** | 1,264 core + 142 sphinx-needs projects | the whole output tree, `searchindex.js`, `objects.inv`, `needs.json`, warnings, exit class — *red by design until the HTML writer; run on demand* |
+
+The test suite is 1,125 tests across 14 targets, all green on Linux, macOS and
+Windows. Regeneration commands and the exemption tables (every known gap is
+pinned so that fixing it fails a test until the entry is removed) are in
+[docs/testing.md](docs/testing.md).
+
+## Performance
+
+No end-to-end numbers are published yet. The parallel read phase, the
+incremental environment and the search/inventory writers are real, but a
+benchmark that stops at a placeholder page would measure the wrong thing.
+Corpus-based benchmarks with regression gates arrive with the HTML writer
+(roadmap M2 wave 5 and M7).
+
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph read["read (parallel, rayon)"]
+        A[discover sources<br/>include/exclude patterns] --> B[docutils-fidelity<br/>RST parser]
+        B --> C[doctree IR<br/>bincode-persisted]
+    end
+    subgraph merge["merge"]
+        C --> D[BuildEnvironment<br/>tocs · std/py domains · index · dependencies]
+    end
+    subgraph resolve["resolve"]
+        D --> E[toctree graph · numbering<br/>xref resolution · intersphinx]
+        E --> F[Sphinx-format warnings]
+    end
+    subgraph write["write"]
+        E --> G[searchindex.js · objects.inv · .buildinfo]
+        E --> H[HTML pages<br/><i>placeholder today</i>]
+    end
+    O1[(docutils oracle)] -.pins.-> B
+    O2[(Sphinx env oracle)] -.pins.-> D
+    O3[(HTML oracle)] -.will pin.-> H
 ```
 
-### Common Issues
+The crate is one binary plus a library (`sphinx_ultra`) whose modules mirror
+the subsystems above: `rst/` and `doctree/` (parser and IR), `env/` (the
+environment, toctree, numbering, std and py domains, genindex, objects),
+`py/` (signature grammar), `intersphinx/`, `search.rs`, `inventory.rs`,
+`builder.rs` (the pipeline) and `config.rs` / `python_config.rs`. API docs
+are on [docs.rs](https://docs.rs/sphinx-ultra).
 
-**Configuration Loading Errors**
-- Ensure YAML/JSON syntax is valid
-- Check that required fields are present
-- Use `--config` to specify config file explicitly
+## Roadmap
 
-**Build Failures**
-- Check file permissions in source and output directories
-- Verify source files are valid RST/Markdown
-- Review warning output for specific issues
+| Milestone | Theme | Status |
+|---|---|---|
+| M1 | Honest, solid core: trustworthy CLI, exit codes, cache, patterns | ✅ shipped in 0.4.0 |
+| M2 | A real doctree: parser, environment, domains, `include`, search/inventory artifacts | 🟡 waves 1–4.5 shipped (0.4.1–0.6.0); **wave 5, the HTML writer, is next** |
+| M3 | Themes and search: alabaster, sphinx-rtd-theme, furo, pydata, book; `search.html` | ⬜ |
+| M4 | Extensions wave 1, native: mathjax, copybutton, extlinks, autosectionlabel, todo, graphviz, mermaid, sphinx-design, napoleon, … | ⬜ |
+| M5 | Python bridge: dynamic `conf.py`, autodoc, autosummary, myst-parser | ⬜ |
+| M6 | sphinx-needs, first-class | ⬜ |
+| M7 | Production: benchmarks, i18n, LaTeX/EPUB/man builders, live reload, 1.0 | ⬜ |
 
-**Performance Issues**
-- Reduce parallel jobs if memory-constrained: `--jobs 1`
-- Check for large files that may slow processing
+The full plan, with the theme and extension support matrices and the testing
+strategy, is [docs/ROADMAP.md](docs/ROADMAP.md).
 
-### Getting Help
+## Documentation
 
-- Use `sphinx-ultra --help` for command overview
-- Use `sphinx-ultra build --help` for build options
-- Check project issues on GitHub
-- Enable verbose logging for debugging
+| Document | What it covers |
+|---|---|
+| [docs/getting-started.md](docs/getting-started.md) | Installation, both CLI modes, a first build, troubleshooting |
+| [docs/configuration.md](docs/configuration.md) | `conf.py` subset, the YAML/JSON schema, `-D` overrides, which keys the build consumes |
+| [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md) | Audited status of every subsystem with evidence and known divergences |
+| [docs/testing.md](docs/testing.md) | The oracles, how to regenerate fixtures, how to run the HTML differential |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Milestones, support matrices, risks |
+| [docs/SPHINX_PATTERNS_COMPATIBILITY.md](docs/SPHINX_PATTERNS_COMPATIBILITY.md) | `include_patterns` / `exclude_patterns` semantics |
+| [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) · [docs/RELEASING.md](docs/RELEASING.md) · [docs/SECURITY.md](docs/SECURITY.md) | Development workflow, the release process, the security policy |
+| [CHANGELOG.md](CHANGELOG.md) | Release history |
 
-## 🤝 Contributing
+## Contributing
 
-**We welcome contributors!** This project is in active development and needs help with:
-
-- 🧪 **Testing**: Try the builder on various documentation projects
-- 🐛 **Bug Reports**: Report issues with parsing, rendering, or performance
-- 💡 **Feature Ideas**: Suggest improvements or new capabilities
-- 📝 **Documentation**: Help improve setup guides and usage examples
-- 🔧 **Code**: Contribute to core features, optimizations, or new functionality
-
-### Development Setup
-
-```bash
-# Clone and build
-git clone https://github.com/salioglu/sphinx-ultra.git
-cd sphinx-ultra
-./dev.sh setup
-
-# Install git pre-commit hooks (recommended)
-./dev.sh install-hooks
-
-# Run development commands
-./dev.sh fmt           # Format code
-./dev.sh clippy        # Run linter
-./dev.sh test          # Run tests
-./dev.sh pre-commit    # Run all pre-commit checks
-./dev.sh check         # Run all checks including tests
-
-# Build documentation
-./dev.sh docs
-```
-
-Please see [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
-
-**Priority Areas**: We need help with:
-
-- 🧪 **Testing**: Try the builder on various documentation projects and report results
-- 🐛 **Bug Reports**: Report issues with parsing, rendering, or performance  
-- 💡 **Feature Validation**: Test existing features and suggest improvements
-- 📝 **Documentation**: Help improve setup guides and usage examples
-- 🔧 **Core Features**: Contribute to parsing, theming, or search functionality
-- 🎨 **Themes**: Develop modern, responsive documentation themes
-- 🔌 **Extensions**: Expand Sphinx extension compatibility
-
-### What Currently Works Well
-
-- Fast parallel file processing (rayon)
-- Configuration auto-detection (conf.py subset → YAML → JSON → defaults)
-- Pattern-based file discovery with Sphinx-parity `[!…]`/pruning semantics
-- Toctree missing-reference/orphan warnings with `-W`/`-w`
-
-### What Needs Development
-
-- Advanced theming and templating
-- Search index functionality  
-- Live development server
-- Full Sphinx directive compatibility
-
-## 📦 Releases
-
-This project uses an automated release system with version validation to ensure consistency.
-
-### For Users
-
-Download pre-built binaries from the [Releases page](https://github.com/salioglu/sphinx-ultra/releases).
-
-### For Maintainers
+Issues, test reports from real documentation trees, and pull requests are
+welcome. The development loop is:
 
 ```bash
-# Setup release environment (one-time)
-./scripts/setup.sh
-
-# Create a new patch release (0.1.2 → 0.1.3)
-./scripts/release.sh --patch
-
-# Create a new minor release (0.1.2 → 0.2.0)
-./scripts/release.sh --minor
-
-# Create a new major release (0.1.2 → 1.0.0)
-./scripts/release.sh --major
-
-# Preview what a release would do
-./scripts/release.sh --dry-run --patch
+scripts/dev.sh setup           # toolchain components, cargo-audit, cargo-deny, cargo-llvm-cov
+scripts/dev.sh check           # fmt + clippy -D warnings + cargo test --locked
+scripts/dev.sh install-hooks   # pre-commit and pre-push hooks
 ```
 
-The release script automatically:
+Commits follow [Conventional Commits](https://www.conventionalcommits.org/)
+(`feat:`, `fix:`, `docs:`, …); release-please turns them into the changelog
+and the next version. Read [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) before
+your first pull request, and [docs/SECURITY.md](docs/SECURITY.md) for how to
+report a vulnerability privately.
 
-- ✅ Runs tests to ensure quality
-- ✅ Updates `Cargo.toml` version  
-- ✅ Creates and pushes git tags
-- ✅ Triggers GitHub Actions to build and publish
+## License
 
-**Version Safety**: The system prevents version mismatches between git tags and `Cargo.toml`. See [`scripts/README.md`](scripts/README.md) for detailed documentation.
+MIT. See [LICENSE](LICENSE).
 
-## 📄 License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
+sphinx-ultra is an independent project. It reimplements the behaviour of
+[Sphinx](https://www.sphinx-doc.org/), [docutils](https://docutils.sourceforge.io/)
+and [sphinx-needs](https://sphinx-needs.readthedocs.io/), whose test suites and
+source are the oracles this project is measured against. Thanks to
+[@johnml1135](https://github.com/johnml1135) for the search index, inventory
+and `.buildinfo` writers and the HTML oracle corpus.

@@ -5,10 +5,10 @@
 //! `multi_line_parameter_list` measurement (`_object.py:291-312`).
 //!
 //! Ground truth, cited throughout as [PY §n] / [SIG §n]:
-//! - [PY] docs/superpowers/plans/2026-09-01-m2-wave4.5-research-spec-py-domain.md
+//! - [PY] docs/plans/2026-09-01-m2-wave4.5-research-spec-py-domain.md
 //!   (§2.1 arglist node shapes, §2.2 pseudo fallback, §2.4 type parameter
 //!   lists, §1.6 probe outputs);
-//! - [SIG] docs/superpowers/plans/2026-09-01-m2-wave4.5-research-spec-signature-config.md
+//! - [SIG] docs/plans/2026-09-01-m2-wave4.5-research-spec-signature-config.md
 //!   (§1.3 measurement, §1.4 attr placement, appendix A.1 matrix).
 //!
 //! Expected pformats in the test module are verbatim probe output against the

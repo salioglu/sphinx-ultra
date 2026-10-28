@@ -1,33 +1,22 @@
 //! Parser for extracting directives and roles from RST content
 
 use super::{ParsedDirective, ParsedRole, SourceLocation};
-use lazy_static::lazy_static;
 use regex::Regex;
 use std::collections::HashMap;
 
-lazy_static! {
-    /// Regex for matching directive patterns
-    static ref DIRECTIVE_REGEX: Regex = Regex::new(
-        r"(?m)^\.\. ([a-zA-Z][a-zA-Z0-9_-]*)::(.*?)$"
-    ).unwrap();
+/// Regex for matching directive patterns
+static DIRECTIVE_REGEX: std::sync::LazyLock<Regex> =
+    std::sync::LazyLock::new(|| Regex::new(r"(?m)^\.\. ([a-zA-Z][a-zA-Z0-9_-]*)::(.*?)$").unwrap());
 
-    /// Regex for matching directive options
-    static ref OPTION_REGEX: Regex = Regex::new(
-        r"(?m)^\s+:([a-zA-Z][a-zA-Z0-9_-]*): ?(.*?)$"
-    ).unwrap();
+/// Regex for matching directive options
+static OPTION_REGEX: std::sync::LazyLock<Regex> =
+    std::sync::LazyLock::new(|| Regex::new(r"(?m)^\s+:([a-zA-Z][a-zA-Z0-9_-]*): ?(.*?)$").unwrap());
 
-    /// Regex for matching role patterns. Backtick form only: the bare
-    /// ':name:word' form is not role syntax, and matching it made ordinary
-    /// prose and code samples parse as roles.
-    static ref ROLE_REGEX: Regex = Regex::new(
-        r":([a-zA-Z][a-zA-Z0-9_-]*):(`[^`]+`)"
-    ).unwrap();
-
-    /// Regex for parsing role with display text
-    static ref ROLE_WITH_TEXT_REGEX: Regex = Regex::new(
-        r"`([^<]+)<([^>]+)>`"
-    ).unwrap();
-}
+/// Regex for matching role patterns. Backtick form only: the bare
+/// ':name:word' form is not role syntax, and matching it made ordinary
+/// prose and code samples parse as roles.
+static ROLE_REGEX: std::sync::LazyLock<Regex> =
+    std::sync::LazyLock::new(|| Regex::new(r":([a-zA-Z][a-zA-Z0-9_-]*):(`[^`]+`)").unwrap());
 
 /// Directives whose directive-line text is body content, not arguments
 /// (docutils admonition semantics: `.. note:: inline text` is a one-line note).

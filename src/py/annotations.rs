@@ -20,9 +20,9 @@
 //! `except SyntaxError` arm (`_annotations.py:250-251`).
 //!
 //! Ground truth, cited throughout as [PY §n] / [SIG §n]:
-//! - [PY] docs/superpowers/plans/2026-09-01-m2-wave4.5-research-spec-py-domain.md
+//! - [PY] docs/plans/2026-09-01-m2-wave4.5-research-spec-py-domain.md
 //!   (§2.3 semantics, §2.6 leaf classes, §1.6 probe outputs);
-//! - [SIG] docs/superpowers/plans/2026-09-01-m2-wave4.5-research-spec-signature-config.md
+//! - [SIG] docs/plans/2026-09-01-m2-wave4.5-research-spec-signature-config.md
 //!   (§4.2 `pending_xref_condition` pair, §5.1 short literal chains).
 //!
 //! Every expected pformat in the test module is copied verbatim from probe

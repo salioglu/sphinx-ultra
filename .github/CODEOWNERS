@@ -1,0 +1,7 @@
+# Review ownership. Workflow, policy and release-automation changes always
+# get the maintainer's review.
+*                       @salioglu
+/.github/               @salioglu
+/deny.toml              @salioglu
+/release-please-config.json      @salioglu
+/.release-please-manifest.json   @salioglu

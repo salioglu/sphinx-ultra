@@ -9,10 +9,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-lazy_static::lazy_static! {
-    /// Cache for compiled regex patterns
-    static ref PATTERN_CACHE: Mutex<HashMap<String, Regex>> = Mutex::new(HashMap::new());
-}
+/// Cache for compiled regex patterns
+static PATTERN_CACHE: std::sync::LazyLock<Mutex<HashMap<String, Regex>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Translates shell-style glob pattern to regex pattern.
 ///

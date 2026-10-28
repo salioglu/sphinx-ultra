@@ -30,9 +30,9 @@ inc_* projects (T14) plus unit/e2e tests.
 
 Design verified empirically in this session against sphinx 9.1.0 / docutils
 0.22.4 under the pinned uv invocation above; see
-docs/superpowers/plans/2026-08-31-m2-wave4-research-read-fixtures-oracles.md
+docs/plans/2026-08-31-m2-wave4-research-read-fixtures-oracles.md
 section 2 (env attribute shapes, relations quirk, lazy-i18n label trap) and
-docs/superpowers/plans/2026-08-31-m2-wave4-research-spec-sphinx-env-toctree-domains.md
+docs/plans/2026-08-31-m2-wave4-research-spec-sphinx-env-toctree-domains.md
 section 8 (exact warning texts several corpus projects below are built to
 trigger byte-identically).
 
