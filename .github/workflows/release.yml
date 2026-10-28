@@ -37,13 +37,25 @@ env:
   CARGO_TERM_COLOR: always
   RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
-# When a PAT is configured for release-please, its tag DOES fire `push: tags`
-# as well as the workflow_call; the push-triggered run is skipped so the
-# artifacts are built exactly once. A hand-pushed tag has no such commit.
+# One release-please release can start this workflow twice: release-please.yml
+# calls it, and when RELEASE_PLEASE_TOKEN is a PAT the tag it creates also
+# fires `push: tags`. The tag-push run stands down for a release-please commit
+# so the artifacts are built once; a hand-pushed tag on any other commit
+# still builds here.
+#
+# A called workflow gets its caller's `github` context, so the workflow_call
+# run also reports event_name 'push', but on refs/heads/main; only the
+# tag-push run is on refs/tags/. The release commit carries the release PR's
+# title, "chore: release main" (the subject of a squash or rebase merge, the
+# body of a merge commit), or its branch, release-please--branches--main (the
+# subject of a merge commit).
 jobs:
   validate-version:
     name: Validate Version Consistency
-    if: "github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'chore(main): release')"
+    if: >-
+      github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/') ||
+      !(contains(github.event.head_commit.message, 'chore: release main') ||
+        contains(github.event.head_commit.message, 'release-please--branches--'))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -206,7 +218,7 @@ jobs:
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          generate_release_notes: ${{ github.event_name == 'push' }}
+          generate_release_notes: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
           fail_on_unmatched_files: true
           files: |
             dist/*.tar.gz
@@ -235,6 +247,9 @@ jobs:
       # Preferred: crates.io Trusted Publishing, a short-lived token minted
       # from this workflow's OIDC identity (set up once on crates.io, see
       # docs/RELEASING.md). Fallback: the CARGO_REGISTRY_TOKEN secret.
+      # crates.io matches the top-level workflow (the `workflow_ref` claim):
+      # release-please.yml on the normal path, release.yml for a hand-pushed
+      # tag or a manual run, so both are registered as trusted publishers.
       - name: Check for a legacy registry token
         id: legacy
         env:

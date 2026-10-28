@@ -13,7 +13,7 @@ pushes tags.
    the patch, everything else is listed without a bump.
 2. **release-please maintains a release PR.** On every push to `main` the
    [`release-please.yml`](../.github/workflows/release-please.yml) workflow
-   opens or updates a pull request titled `chore(main): release X.Y.Z` that
+   opens or updates a pull request titled `chore: release main` that
    bumps `Cargo.toml` and `Cargo.lock`, prepends the new section to
    `CHANGELOG.md` (grouped as Added / Fixed / Performance / Dependencies /
    Documentation), and updates `.release-please-manifest.json`. Review the
@@ -26,7 +26,10 @@ pushes tags.
    the tag matches `Cargo.toml` and that `Cargo.lock` is in sync, builds the
    six platform archives with `--locked`, attaches each archive, its
    `.sha256` and a build-provenance attestation to the release, and runs
-   `cargo publish --locked` with `CARGO_REGISTRY_TOKEN`.
+   `cargo publish --locked` (see [crates.io publishing](#cratesio-publishing)).
+   With `RELEASE_PLEASE_TOKEN` set, the new tag also fires `release.yml`'s
+   `push: tags` trigger; that run sees the release-please commit and skips,
+   so the release is built once.
 5. **Check the release page** once the workflow is green: six archives, six
    checksums, the crate on crates.io, and docs.rs building.
 
@@ -35,10 +38,25 @@ pushes tags.
 | Secret | Purpose | Without it |
 |---|---|---|
 | `RELEASE_PLEASE_TOKEN` | A fine-grained personal access token for this repository with **Contents: read and write** and **Pull requests: read and write**. release-please opens the release PR with it, so CI runs on that PR and the required checks report | The PR is opened with `GITHUB_TOKEN`, which does not trigger workflows: the required checks never run and only an admin bypass can merge it |
-| `CARGO_REGISTRY_TOKEN` | A crates.io API token with `publish-update` scope for `sphinx-ultra` | The `Publish to crates.io` job prints a warning and skips; publish by hand from the tag with `cargo publish --locked` |
+| `CARGO_REGISTRY_TOKEN` | Legacy: a crates.io API token with `publish-update` scope for `sphinx-ultra`. While it is set, it is used instead of Trusted Publishing | `cargo publish` authenticates with Trusted Publishing (below) |
 | `CODECOV_TOKEN` | Coverage upload (CI, not release) | Coverage upload is skipped |
 
 Tokens expire. The release workflow states clearly which one is missing.
+
+### crates.io publishing
+
+`cargo publish` authenticates with crates.io Trusted Publishing: a
+short-lived token minted from the workflow's OIDC identity, so no crates.io
+secret is stored. In the crate's settings on crates.io, add a GitHub trusted
+publisher for `salioglu/sphinx-ultra` for each of these workflows:
+
+- `release-please.yml`, for a normal release. crates.io matches the run's
+  top-level workflow (the OIDC `workflow_ref` claim), and on this path that
+  is the caller, not `release.yml`.
+- `release.yml`, for a hand-pushed tag or a manual run of the workflow.
+
+Then delete the `CARGO_REGISTRY_TOKEN` secret and revoke that token on
+crates.io; while the secret exists, the workflow uses it instead.
 
 ## Verifying a release
 
@@ -68,6 +86,14 @@ not exist, and attaches the artifacts. The pre-push hook installed by
 `scripts/dev.sh install-hooks` refuses a `vX.Y.Z` tag whose version differs
 from `Cargo.toml`. Afterwards, set `.release-please-manifest.json` to the
 released version on `main` so release-please continues from it.
+
+A tag push on a release-please commit (subject or body `chore: release main`)
+is skipped, since release-please builds those itself. To build or rebuild
+the artifacts for any existing tag, run the workflow by hand:
+
+```bash
+gh workflow run release.yml -f tag=v0.7.1
+```
 
 ## Version policy
 
