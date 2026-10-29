@@ -5,9 +5,8 @@
   "bump-patch-for-minor-pre-major": false,
   "include-v-in-tag": true,
   "include-component-in-tag": false,
-  "separate-pull-requests": false,
   "pull-request-title-pattern": "chore(main): release ${version}",
-  "pull-request-header": ":robot: Release PR. Merging it tags the release, publishes the binaries and the crate.",
+  "pull-request-header": ":robot: Release PR. Merging it tags the release and builds it; the binaries and the crate are published once a maintainer approves the `release` deployment.",
   "changelog-sections": [
     { "type": "feat", "section": "Added" },
     { "type": "fix", "section": "Fixed" },

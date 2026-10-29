@@ -2,9 +2,10 @@ name: release-please
 
 # Maintains the release pull request from Conventional Commits on main:
 # version bump in Cargo.toml and Cargo.lock, the CHANGELOG section, the
-# release notes. Merging that PR creates the tag and the GitHub release,
-# after which this workflow calls release.yml to build the binaries and
-# publish the crate. See docs/RELEASING.md.
+# release notes. Other merges only update that PR; nothing is released until
+# a maintainer merges it. Then this workflow creates the tag and the GitHub
+# release and calls release.yml, whose publish jobs wait for approval in the
+# `release` environment. See docs/RELEASING.md.
 on:
   push:
     branches: [main]
@@ -40,8 +41,9 @@ jobs:
           # workflow falls back to GITHUB_TOKEN when it is absent.
           token: ${{ secrets.RELEASE_PLEASE_TOKEN || secrets.GITHUB_TOKEN }}
 
-  # The tag above was created by a workflow token, so `push: tags` does not
-  # fire for it. Call the release build directly instead.
+  # release.yml has no tag trigger, so this call is how a merged release PR
+  # gets built. Uploading the binaries and publishing the crate still wait
+  # for a reviewer of the `release` environment.
   build:
     name: Build and publish
     needs: release-please

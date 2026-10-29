@@ -2,17 +2,17 @@ name: Release
 
 # Builds the release binaries for a tag, attaches them (with SHA-256 checksums
 # and a build-provenance attestation) to the GitHub release, and publishes the
-# crate. Three ways in:
+# crate. Two ways in, and no tag trigger, so nothing publishes by itself:
 #
-#   workflow_call   from release-please.yml, right after it created the
-#                   release for a merged release PR. This is the normal path:
-#                   a tag created with GITHUB_TOKEN does not fire `push: tags`.
-#   push: tags      a tag pushed by hand (the manual fallback in
-#                   docs/RELEASING.md); the release is created here if missing.
-#   workflow_dispatch  re-run the artifacts for an existing tag.
+#   workflow_call      from release-please.yml, right after it created the tag
+#                      and the release for a merged release PR. The normal path.
+#   workflow_dispatch  by hand, for a release created outside release-please
+#                      or to rebuild one (docs/RELEASING.md).
 #
-# Jobs that compile dependency code run with a read-only, non-persisted token;
-# only the final publish job can write to the release.
+# Jobs that compile dependency code run with a read-only, non-persisted token.
+# Only the two publish jobs can write to the release or mint a crates.io
+# token, and they run in the `release` environment: they wait until a
+# required reviewer approves the deployment.
 on:
   workflow_call:
     inputs:
@@ -26,36 +26,17 @@ on:
         description: The release tag, e.g. v0.7.0
         required: true
         type: string
-  push:
-    tags:
-      - "v*"
 
 permissions:
   contents: read
 
 env:
   CARGO_TERM_COLOR: always
-  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+  RELEASE_TAG: ${{ inputs.tag }}
 
-# One release-please release can start this workflow twice: release-please.yml
-# calls it, and when RELEASE_PLEASE_TOKEN is a PAT the tag it creates also
-# fires `push: tags`. The tag-push run stands down for a release-please commit
-# so the artifacts are built once; a hand-pushed tag on any other commit
-# still builds here.
-#
-# A called workflow gets its caller's `github` context, so the workflow_call
-# run also reports event_name 'push', but on refs/heads/main; only the
-# tag-push run is on refs/tags/. The release commit carries the release PR's
-# title, "chore: release main" (the subject of a squash or rebase merge, the
-# body of a merge commit), or its branch, release-please--branches--main (the
-# subject of a merge commit).
 jobs:
   validate-version:
     name: Validate Version Consistency
-    if: >-
-      github.event_name != 'push' || !startsWith(github.ref, 'refs/tags/') ||
-      !(contains(github.event.head_commit.message, 'chore: release main') ||
-        contains(github.event.head_commit.message, 'release-please--branches--'))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
@@ -185,6 +166,7 @@ jobs:
   publish-release:
     name: Publish release
     needs: [validate-version, build]
+    environment: release    # waits for a required reviewer to approve
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -211,14 +193,12 @@ jobs:
             dist/*.tar.gz
             dist/*.zip
 
-      # On the release-please path the release already exists with its notes
-      # and only gains the files; on a hand-pushed tag it is created here with
-      # generated notes.
+      # The release already exists with its notes (release-please created it,
+      # or `gh release create` on the manual path); it only gains the files.
       - name: Upload to the GitHub release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          generate_release_notes: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
           fail_on_unmatched_files: true
           files: |
             dist/*.tar.gz
@@ -228,6 +208,7 @@ jobs:
   publish-crate:
     name: Publish to crates.io
     needs: [validate-version, build]
+    environment: release    # approved together with publish-release
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -248,8 +229,8 @@ jobs:
       # from this workflow's OIDC identity (set up once on crates.io, see
       # docs/RELEASING.md). Fallback: the CARGO_REGISTRY_TOKEN secret.
       # crates.io matches the top-level workflow (the `workflow_ref` claim):
-      # release-please.yml on the normal path, release.yml for a hand-pushed
-      # tag or a manual run, so both are registered as trusted publishers.
+      # release-please.yml on the normal path, release.yml for a manual run,
+      # so both are registered as trusted publishers.
       - name: Check for a legacy registry token
         id: legacy
         env:
