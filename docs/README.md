@@ -27,7 +27,7 @@ at <https://docs.rs/sphinx-ultra> and <https://salioglu.github.io/sphinx-ultra/>
 |---|---|
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Ground rules, the development loop, commit conventions, where things live |
 | [testing.md](testing.md) | The oracle suites and their counts, how to regenerate fixtures, how to run the HTML differential |
-| [RELEASING.md](RELEASING.md) | How a release happens (release-please PR, tag, binaries, crates.io) and the manual fallback |
+| [RELEASING.md](RELEASING.md) | How a release happens (release-please PR, tag, approval, binaries, crates.io) and how to release by hand |
 
 ## Records
 

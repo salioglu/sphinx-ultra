@@ -13,11 +13,12 @@ in [docs/testing.md](../docs/testing.md).
 
 ## Releasing
 
-Releases are automated by [release-please](https://github.com/googleapis/release-please):
+Releases are prepared by [release-please](https://github.com/googleapis/release-please):
 merging the release PR it maintains creates the tag and the GitHub release,
-and `.github/workflows/release.yml` then builds the binaries and publishes
-the crate. The whole flow, and the manual fallback for an emergency, is
-described in [docs/RELEASING.md](../docs/RELEASING.md). The former
+and `.github/workflows/release.yml` then builds the binaries; attaching them
+and publishing the crate wait for a maintainer's approval. The whole flow,
+and how to release by hand in an emergency, is described in
+[docs/RELEASING.md](../docs/RELEASING.md). The former
 `release.sh` (bump, tag, push by hand) is retired; `main` is protected and
 only accepts pull requests.
 
