@@ -74,7 +74,7 @@ chrono = { version = "0.4", features = ["serde"] }
 blake3 = "1.0"
 
 # HTML and web
-html-escape = "0.2"
+html-escape = "0.3"
 
 # Compression (objects.inv inventory format)
 flate2 = "1.0"
@@ -88,12 +88,12 @@ pathdiff = "0.2"
 # Binary serialization (cached doctree round-trip)
 bincode = { version = "2", features = ["serde"] }
 ureq = { version = "3.4.0", default-features = false, features = ["rustls", "gzip"] }
-md-5 = "0.10"
+md-5 = "0.11"
 
 [dev-dependencies]
 criterion = { version = "0.7", features = ["html_reports"] }
 proptest = "1.0"
-sha2 = "0.10"
+sha2 = "0.11"
 tempfile = "3.0"
 
 [[bin]]
