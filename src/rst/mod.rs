@@ -1747,6 +1747,9 @@ mod tests {
     /// element is a source path goes through `doc2path` too, doubling the
     /// suffix and putting a relative path under the source directory; a
     /// node location is the source made absolute, `path:` without a line.
+    /// A name joined under the source directory takes the platform's
+    /// separator (`Path::join`, `/src\index.rst` on Windows); a rooted
+    /// table path replaces the source directory and keeps its spelling.
     #[test]
     fn log_locations_render_like_sphinx() {
         use crate::diagnostics::Location;
@@ -1756,22 +1759,23 @@ mod tests {
             path: path.to_string(),
             line,
         };
+        let under = |name: &str| srcdir.join(name).display().to_string();
         let rows = [
             (LogLocation::None, Location::None),
-            (LogLocation::Doc, path("/src/index.rst", None)),
-            (LogLocation::DocLine(7), path("/src/index.rst", Some(7))),
-            (LogLocation::DocLine(0), path("/src/index.rst", None)),
+            (LogLocation::Doc, path(&under("index.rst"), None)),
+            (LogLocation::DocLine(7), path(&under("index.rst"), Some(7))),
+            (LogLocation::DocLine(0), path(&under("index.rst"), None)),
             (
                 LogLocation::Node { source: 0, line: 3 },
                 path("/src/index.rst", Some(3)),
             ),
             (
                 LogLocation::Node { source: 1, line: 6 },
-                path("/src/part.rst", Some(6)),
+                path(&under("part.rst"), Some(6)),
             ),
             (
                 LogLocation::Node { source: 1, line: 0 },
-                Location::Verbatim("/src/part.rst:".to_string()),
+                Location::Verbatim(format!("{}:", under("part.rst"))),
             ),
             (
                 LogLocation::Tuple { source: 0, line: 1 },
@@ -1779,7 +1783,7 @@ mod tests {
             ),
             (
                 LogLocation::Tuple { source: 1, line: 6 },
-                path("/src/part.rst.rst", Some(6)),
+                path(&under("part.rst.rst"), Some(6)),
             ),
         ];
         for (location, expected) in rows {
@@ -1801,7 +1805,10 @@ mod tests {
         };
         assert_eq!(
             warning.diagnostic(&sources, srcdir, "index").render(true),
-            "/src/part.rst.rst:12: WARNING: non-whitespace stripped by dedent"
+            format!(
+                "{}:12: WARNING: non-whitespace stripped by dedent",
+                under("part.rst.rst")
+            )
         );
     }
 
