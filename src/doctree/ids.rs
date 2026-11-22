@@ -14,12 +14,13 @@
 //! which hold nodes by identity ([`Uid`]), are its
 //! [`Registries`](crate::transforms::state::Registries).
 
+use std::collections::HashMap;
+
 use unicode_normalization::UnicodeNormalization;
 
-use super::messages;
 use super::pending::PendingTransform;
 use super::{AttrValue, Node, Uid};
-use crate::transforms::state::{DocumentState, NodeView, PendingRecord};
+use crate::transforms::state::{DocLoc, DocumentState, NodeView, PendingRecord};
 use crate::utils::py_isspace;
 
 /// docutils `_non_id_translate_digraphs` (applied after lowercasing).
@@ -339,9 +340,10 @@ impl DocumentState {
     /// The registry half of docutils `note_substitution_def(subdef,
     /// def_name, msgnode)` (`nodes.py:2056-2073`), for the whitespace-
     /// normalized `name`: the definition is the name's latest, and its
-    /// fully normalized form maps to it. The duplicate-name error and the
-    /// old definition's `dupname` stay with the caller, which holds the
-    /// tree.
+    /// fully normalized form maps to it. The duplicate-name error stays
+    /// with the caller, which holds the tree; the old definition's
+    /// `dupname` waits for the complete tree
+    /// ([`Self::dupname_redefined_substitutions`]).
     pub(crate) fn note_substitution_def(&mut self, subdef: &mut Node, name: &str) {
         let uid = self.identify(subdef);
         self.registries
@@ -350,6 +352,38 @@ impl DocumentState {
         self.registries
             .substitution_names
             .insert(fully_normalize_name(name), name.to_string());
+    }
+
+    /// docutils `note_substitution_def`'s `dupname(oldnode, name)`
+    /// (`nodes.py:2056-2073`), once the tree is complete: each definition
+    /// of a name but the last one registered loses the name, whether it
+    /// sits in `root` or in a subtree the parse detached.
+    pub(crate) fn dupname_redefined_substitutions(&mut self, root: &mut Node) {
+        let definitions = &self.registries.substitution_defs;
+        let last: HashMap<&str, Uid> = definitions
+            .iter()
+            .map(|(name, uid)| (name.as_str(), *uid))
+            .collect();
+        let redefined: HashMap<Uid, &str> = definitions
+            .iter()
+            .filter(|(name, uid)| last[name.as_str()] != *uid)
+            .map(|(name, uid)| (*uid, name.as_str()))
+            .collect();
+        if redefined.is_empty() {
+            return;
+        }
+        fn walk(node: &mut Node, redefined: &HashMap<Uid, &str>) {
+            if let Some(name) = node.uid().and_then(|uid| redefined.get(&uid)) {
+                dupname(node, name);
+            }
+            for child in &mut node.children {
+                walk(child, redefined);
+            }
+        }
+        walk(root, &redefined);
+        for node in &mut self.detached {
+            walk(node, &redefined);
+        }
     }
 
     /// docutils `note_pending(pending)` (`nodes.py:2081-2083`): queues the
@@ -370,40 +404,24 @@ impl DocumentState {
 
     /// docutils `note_implicit_target(node, msgnode)` (`nodes.py:1996-2000`):
     /// [`Self::set_id`], then `set_name_id_map(..., explicit=False)`.
-    /// Returns the messages the node's duplicate names raise, located at
-    /// `line` of `source`. docutils appends them to `msgnode`; the caller
-    /// places them there.
-    pub(crate) fn note_implicit_target(
-        &mut self,
-        node: &mut Node,
-        line: u32,
-        source: &str,
-    ) -> Vec<Node> {
-        self.note_target(node, false, line, source)
+    /// Returns the messages the node's duplicate names raise, reported at
+    /// `loc` ([`Self::report`]). docutils appends them to `msgnode`; the
+    /// caller places them there, or drops them where docutils has none.
+    pub(crate) fn note_implicit_target(&mut self, node: &mut Node, loc: DocLoc) -> Vec<Node> {
+        self.note_target(node, false, loc)
     }
 
     /// docutils `note_explicit_target(node, msgnode)` (`nodes.py:2002-2007`):
     /// [`Self::note_implicit_target`] with the names bound as explicit.
-    pub(crate) fn note_explicit_target(
-        &mut self,
-        node: &mut Node,
-        line: u32,
-        source: &str,
-    ) -> Vec<Node> {
-        self.note_target(node, true, line, source)
+    pub(crate) fn note_explicit_target(&mut self, node: &mut Node, loc: DocLoc) -> Vec<Node> {
+        self.note_target(node, true, loc)
     }
 
     /// `set_id` plus `set_name_id_map`, applying each reported duplicate
     /// the way `set_duplicate_name_id` does: the node in hand loses the
     /// name at once, an earlier node (already placed in the parser's tree)
-    /// through a [`DupnameFixup`], and the message is built here.
-    fn note_target(
-        &mut self,
-        node: &mut Node,
-        explicit: bool,
-        line: u32,
-        source: &str,
-    ) -> Vec<Node> {
+    /// through a [`DupnameFixup`], and the message is reported here.
+    fn note_target(&mut self, node: &mut Node, explicit: bool, loc: DocLoc) -> Vec<Node> {
         let id = self.set_id(node);
         let duplicates = self.names.bind(NodeView::of(node), &id, explicit);
         let mut reported = Vec::with_capacity(duplicates.len());
@@ -417,8 +435,7 @@ impl DocumentState {
                     node_id,
                 });
             }
-            let mut message =
-                messages::system_message(duplicate.level, &duplicate.message, line, source);
+            let mut message = self.report(duplicate.level, &duplicate.message, loc, Vec::new());
             if duplicate.backrefs {
                 message.attrs.backrefs.push(id.clone());
             }
@@ -492,13 +509,14 @@ fn dupname(node: &mut Node, name: &str) {
 }
 
 /// Post-parse pass: move `name` from `names` to `dupnames` on the node
-/// carrying `node_id` (the FIRST occurrence keeps its id, loses its name).
-pub fn apply_dupname_fixups(root: &mut Node, fixups: &[DupnameFixup]) {
-    if fixups.is_empty() {
-        return;
-    }
+/// carrying `node_id` (the FIRST occurrence keeps its id, loses its name),
+/// in the tree or in a subtree the parse detached: docutils marks the node
+/// object wherever it lives.
+pub fn apply_dupname_fixups(root: &mut Node, detached: &mut [Node], fixups: &[DupnameFixup]) {
     for fixup in fixups {
-        apply_one_fixup(root, fixup);
+        if !apply_one_fixup(root, fixup) {
+            detached.iter_mut().any(|node| apply_one_fixup(node, fixup));
+        }
     }
 }
 
@@ -628,13 +646,13 @@ mod tests {
         let mut s1 = Node::elem(kinds::SECTION, Span::ZERO);
         s1.attrs.names.push("duplicate".into());
         assert!(state
-            .note_implicit_target(&mut s1, 3, "<snippet>")
+            .note_implicit_target(&mut s1, DocLoc::at(0, 3))
             .is_empty());
         assert_eq!(s1.attrs.ids, vec!["duplicate"]);
 
         let mut s2 = Node::elem(kinds::SECTION, Span::ZERO);
         s2.attrs.names.push("duplicate".into());
-        let reported = state.note_implicit_target(&mut s2, 7, "<snippet>");
+        let reported = state.note_implicit_target(&mut s2, DocLoc::at(0, 7));
         let [msg] = reported.as_slice() else {
             panic!("one INFO, got {reported:?}");
         };
@@ -656,7 +674,7 @@ mod tests {
         );
         let mut root = Node::elem(kinds::DOCUMENT, Span::ZERO);
         root.children.push(s1);
-        apply_dupname_fixups(&mut root, &fixups);
+        apply_dupname_fixups(&mut root, &mut [], &fixups);
         let s1 = &root.children[0];
         assert!(s1.attrs.names.is_empty());
         assert_eq!(s1.attrs.dupnames, vec!["duplicate"]);
@@ -669,7 +687,7 @@ mod tests {
         for (i, title) in ["!!!", "123", "..."].iter().enumerate() {
             let mut s = Node::elem(kinds::SECTION, Span::ZERO);
             s.attrs.names.push(fully_normalize_name(title));
-            state.note_implicit_target(&mut s, 1, "<snippet>");
+            state.note_implicit_target(&mut s, DocLoc::at(0, 1));
             assert_eq!(s.attrs.ids, vec![format!("id{}", i + 1)]);
             assert_eq!(s.attrs.names.len(), 1); // names kept, no collision
         }
@@ -690,10 +708,10 @@ mod tests {
         let mut state = DocumentState::default();
         let mut t1 = target("dup", Some("https://1/"));
         assert!(state
-            .note_explicit_target(&mut t1, 1, "<snippet>")
+            .note_explicit_target(&mut t1, DocLoc::at(0, 1))
             .is_empty());
         let mut t2 = target("dup", Some("https://2/"));
-        let reported = state.note_explicit_target(&mut t2, 3, "<snippet>");
+        let reported = state.note_explicit_target(&mut t2, DocLoc::at(0, 3));
         let [msg] = reported.as_slice() else {
             panic!("one WARNING, got {reported:?}");
         };
@@ -704,9 +722,9 @@ mod tests {
 
         let mut state = DocumentState::default();
         let mut i1 = target("t", None);
-        state.note_explicit_target(&mut i1, 1, "<snippet>");
+        state.note_explicit_target(&mut i1, DocLoc::at(0, 1));
         let mut i2 = target("t", None);
-        let reported = state.note_explicit_target(&mut i2, 5, "<snippet>");
+        let reported = state.note_explicit_target(&mut i2, DocLoc::at(0, 5));
         let [msg] = reported.as_slice() else {
             panic!("one WARNING, got {reported:?}");
         };

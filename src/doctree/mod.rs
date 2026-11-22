@@ -387,9 +387,10 @@ impl Node {
     /// `" -> "`, and `desc_parameterlist` / `desc_optional` /
     /// `desc_type_parameter_list` wrap in `()` / `[]` / `[]`.
     ///
-    /// A `system_message` gives `Element.astext()`, its body, without the
-    /// `source:line: (TYPE/level) ` prefix of docutils' own override: that
-    /// body is the message text Sphinx's warning stream prints.
+    /// A `system_message` gives docutils' own override,
+    /// `'{source}:{line}: ({type}/{level}) {body}'` (`nodes.py:2516-2519`),
+    /// its `line` empty when it has none; the body alone is
+    /// [`Node::element_astext`].
     ///
     /// Unlike [`Node::astext`], which joins every child with `""`.
     pub fn astext_docutils(&self) -> String {
@@ -411,8 +412,31 @@ impl Node {
             "desc_optional" | "desc_type_parameter_list" => {
                 format!("[{}]", self.join_children_astext(", "))
             }
-            _ => self.join_children_astext(self.child_text_separator()),
+            kinds::SYSTEM_MESSAGE => {
+                let attr = |key: &'static str| match self.get(key) {
+                    Some(AttrValue::Str(value)) => value.clone(),
+                    Some(AttrValue::Int(value)) => value.to_string(),
+                    _ => String::new(),
+                };
+                format!(
+                    "{}:{}: ({}/{}) {}",
+                    attr("source"),
+                    attr("line"),
+                    attr("type"),
+                    attr("level"),
+                    self.element_astext()
+                )
+            }
+            _ => self.element_astext(),
         }
+    }
+
+    /// docutils `Element.astext()`: the children's `astext()` joined with
+    /// the class's `child_text_separator`, with no class override on top.
+    /// For a `system_message` that is its body, without the location
+    /// prefix: the text Sphinx's warning stream prints for it.
+    pub fn element_astext(&self) -> String {
+        self.join_children_astext(self.child_text_separator())
     }
 
     fn join_children_astext(&self, separator: &str) -> String {
@@ -825,9 +849,10 @@ mod tests {
     /// The class-level `child_text_separator`s and `astext` overrides of
     /// docutils' option lists and of Sphinx's `pending_xref` and signature
     /// nodes — everything [`Node::astext_docutils`] dispatches on besides
-    /// the `TextElement`/`Element` split. A `system_message` gives its
-    /// body: docutils' `system_message.astext()` prefixes
-    /// `source:line: (TYPE/level) `, which Sphinx's warning stream strips.
+    /// the `TextElement`/`Element` split. A `system_message` overrides
+    /// `astext()` with its `source:line: (TYPE/level) ` prefix, which
+    /// Sphinx's warning stream strips again: [`Node::element_astext`] is
+    /// the body it prints.
     //
     // oracle (docutils 0.22.4 / sphinx 9.1.0, scratchpad t4probe):
     //   option_list_item '-a, --all=FILE  description here' (sep '  '),
@@ -837,7 +862,10 @@ mod tests {
     //   desc_type_parameter_list(T, U) '[T, U]', desc_returns('int') ' -> int',
     //   desc_signature(l1, l2) 'l1l2' and 'l1 l2' with is_multiline,
     //   pending_xref(literal a, literal b) 'ab';
-    //   Element.astext(system_message 'Boom here.') 'Boom here.'.
+    //   system_message('Boom here.', literal_block('x', 'x'), line=3,
+    //   source='<snippet>').astext() '<snippet>:3: (WARNING/2) Boom here.\n\nx',
+    //   Element.astext of it 'Boom here.\n\nx'; without a line
+    //   '<snippet>:: (ERROR/3) Boom.'.
     #[test]
     fn astext_docutils_follows_class_overrides() {
         let tree = parse("-a, --all=FILE  description here\n-b X  other\n", false);
@@ -904,8 +932,21 @@ mod tests {
         );
         assert_eq!(xref.astext_docutils(), "ab");
 
-        let message = messages::system_message(messages::WARNING, "Boom here.", 3, "<snippet>");
-        assert_eq!(message.astext_docutils(), "Boom here.");
+        let message = messages::system_message(
+            messages::WARNING,
+            "Boom here.",
+            "<snippet>",
+            Some(3),
+            vec![messages::literal_block("x")],
+        );
+        assert_eq!(
+            message.astext_docutils(),
+            "<snippet>:3: (WARNING/2) Boom here.\n\nx"
+        );
+        assert_eq!(message.element_astext(), "Boom here.\n\nx");
+        let line_less =
+            messages::system_message(messages::ERROR, "Boom.", "<snippet>", None, Vec::new());
+        assert_eq!(line_less.astext_docutils(), "<snippet>:: (ERROR/3) Boom.");
     }
 
     /// [SQ §7.9 item 3]: every Text the inliner builds from null-escaped

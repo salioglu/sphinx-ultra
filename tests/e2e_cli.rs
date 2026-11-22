@@ -1861,6 +1861,51 @@ fn sphinx_build_mode_stderr_equals_warning_file() {
     assert_eq!(String::from_utf8(result.stderr).unwrap(), written);
 }
 
+/// A logger warning raised inside an included file prints the path Sphinx's
+/// log translator makes of its location: a node location is the included
+/// file made absolute, a tuple location goes through `doc2path`, which
+/// appends `.rst` again. Bytes probed on Sphinx 9.1.0 (`-q -w`, cwd = the
+/// source directory) for this very project.
+#[test]
+fn included_file_logger_warnings_spell_sphinx_paths() {
+    let src = temp_source(
+        "sb-included-logger",
+        &[
+            ("conf.py", "project = 'p'\n"),
+            ("index.rst", "Index\n=====\n\n.. include:: part.inc\n"),
+            (
+                "part.inc",
+                "Part para.\n\n.. literalinclude:: example.py\n   :lines: 1,99\n\n\
+                 .. option:: =bad\n",
+            ),
+            ("example.py", "a = 1\nb = 2\n"),
+        ],
+    );
+    let out = out_dir("sb-included-logger");
+    let warnings = out_dir("sb-included-logger-log").join("warnings.txt");
+    let result = sphinx_build(&[
+        src.to_str().unwrap(),
+        out.to_str().unwrap(),
+        "-q",
+        "-w",
+        warnings.to_str().unwrap(),
+    ]);
+
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    let written = String::from_utf8(std::fs::read(&warnings).unwrap()).unwrap();
+    let source = sphinx_ultra::utils::canonicalize_simplified(&src).unwrap();
+    assert_eq!(
+        written,
+        format!(
+            "{}:3: WARNING: line number spec is out of range(1-2): '1,99'\n\
+             {}:6: WARNING: Malformed option description '=bad', should look like \"opt\", \
+             \"-opt args\", \"--opt args\", \"/opt args\" or \"+opt args\"\n",
+            source.join("part.inc.rst").display(),
+            source.join("part.inc").display()
+        )
+    );
+}
+
 /// `suppress_warnings` drops a record before it is printed or counted,
 /// and `show_warning_types = False` drops the ` [type.subtype]` suffix
 /// (`sphinx/util/logging.py:415-450`, `:531-551`).

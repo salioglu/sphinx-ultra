@@ -14,11 +14,13 @@
 use std::collections::{HashMap, HashSet};
 use std::num::NonZeroU32;
 
+use crate::diagnostics::OrderKey;
 use crate::doctree::ids::{fully_normalize_name, make_id};
-use crate::doctree::messages::{INFO, WARNING};
+use crate::doctree::messages::{self, INFO, WARNING};
 use crate::doctree::pending::PendingTransform;
 use crate::doctree::{kinds, AttrValue, Node, Uid};
 use crate::rst::ParseOnlyState;
+use crate::transforms::reporter::LogRecord;
 
 /// The phase of the events the parse records ([`IdEvent::phase`]).
 const PARSE_PHASE: &str = "parse";
@@ -106,11 +108,13 @@ impl IdAllocator {
     /// `false` is docutils' `Duplicate ID` case, `ids[id] is not node`:
     /// another node holds the id. Re-registering an id the same node
     /// already holds is fine, as in docutils, when that node has an
-    /// identity; every node docutils calls `set_id` on twice has one,
-    /// since it is registered (a `[#name]_` reference, a footnote). A
-    /// node without identity cannot be told from another, so an id held
-    /// without identity, or registered without one, answers `false` once
-    /// taken. Never traced: the fixture's wrapper records only nodes
+    /// identity. A node without identity cannot be told from another, so
+    /// an id held without identity, or registered without one, answers
+    /// `false` once taken. The precondition that keeps a re-registration
+    /// right is therefore on the caller: a node docutils `set_id`s more
+    /// than once (a registered node: a `[#name]_` reference, a footnote,
+    /// an indirect target) has its identity minted before its first
+    /// `set_id`. Never traced: the fixture's wrapper records only nodes
     /// without ids.
     pub fn register(&mut self, id: &str, holder: Option<Uid>) -> bool {
         match self.taken.get(id) {
@@ -414,6 +418,36 @@ impl<T> OrderedMulti<T> {
     }
 }
 
+/// A source a docutils location names: an entry of the document's source
+/// table (`Doctree::sources`). Included files are entries of their own,
+/// and so is the padding line docutils inserts after each inclusion
+/// (`internal padding after <path>`), the source of a document that ends
+/// inside an include ([DS §6.2]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceRef {
+    Table(u16),
+}
+
+/// A docutils location, `(source, line)`, either half of which can be
+/// missing: a message docutils could not place has neither, and a node
+/// the parser appended right after a nested state machine ended has a
+/// source and no line ([DS §6.1, §8.2]). Lines are 1-based.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DocLoc {
+    pub source: Option<SourceRef>,
+    pub line: Option<u32>,
+}
+
+impl DocLoc {
+    /// Line `line` of source-table entry `source`.
+    pub fn at(source: u16, line: u32) -> DocLoc {
+        DocLoc {
+            source: Some(SourceRef::Table(source)),
+            line: Some(line),
+        }
+    }
+}
+
 /// The docutils `document` object state a parse leaves behind, which the
 /// read transforms read beside the tree ([DS §8.1]). One per document: the
 /// parser threads it through every nested and detached sub-parse and hands
@@ -424,9 +458,24 @@ pub struct DocumentState {
     pub ids: IdAllocator,
     /// `document.nameids` and `nametypes`, in registration order.
     pub names: NameTable,
-    /// The document's record sequence counter: parse-time records are
-    /// ordered by the numbers they draw from it ([DS §6.4]).
+    /// The document's record sequence counter ([`Self::draw_seq`]): one
+    /// count across reporter records, `ParseLogWarning`s, toctree warnings
+    /// and the parse-time registration records, so the parse's records
+    /// are ordered by the numbers they draw ([DS §6.4]).
     pub next_seq: u32,
+    /// The reporter log: one record per message, at creation, in creation
+    /// order ([`Self::report`]).
+    pub log: Vec<LogRecord>,
+    /// docutils' `reporter.get_source_and_line(None)` once the parse has
+    /// ended: the top-level state machine's final position, which a
+    /// message with neither a node nor a line is located at ([DS §6.2]).
+    pub final_position: DocLoc,
+    /// The docutils locations of the nodes whose location the default rule
+    /// ([DS §8.2]) does not give, by identity. So far the `reference` an
+    /// `image`'s `:target:` wraps at document or section level: docutils
+    /// appends it with the source and no line, since the option block's
+    /// nested state machine has cleared the line ([DS §6.1]).
+    pub loc_overrides: HashMap<Uid, DocLoc>,
     /// docutils' node registries ([`Registries`]), by node identity.
     pub registries: Registries,
     /// The transforms `document.note_pending` queued, in parse order.
@@ -533,6 +582,49 @@ impl DocumentState {
     pub fn mint_uid(&mut self) -> Uid {
         self.next_uid += 1;
         Uid::new(NonZeroU32::new(self.next_uid).expect("a Uid counter past zero"))
+    }
+
+    /// The next record sequence number, from 0 ([`Self::next_seq`]).
+    pub fn draw_seq(&mut self) -> u32 {
+        let seq = self.next_seq;
+        self.next_seq += 1;
+        seq
+    }
+
+    /// docutils `Reporter.system_message(level, text, *children, line=…)`
+    /// during the parse (`SP/docutils/utils/__init__.py:171-221`): builds
+    /// the `system_message` node at `loc` — its `level`, `line` (when there
+    /// is one), `source` (the source table's path; the document's own
+    /// when `loc` names none, docutils' `reporter.source`) and `type`, a
+    /// paragraph holding `text`, then `children` — and logs it. The record
+    /// ([`LogRecord::Reporter`], keyed `(0, 0, seq)` as every parse record
+    /// is) holds the node's `Element.astext()` as it is now: docutils
+    /// writes the message to its stream right here, so children a caller
+    /// appends later are not in the text it prints ([TW §5.3.2]).
+    pub fn report(&mut self, level: u8, text: &str, loc: DocLoc, children: Vec<Node>) -> Node {
+        let source = match loc.source {
+            Some(SourceRef::Table(source)) => source,
+            None => 0,
+        };
+        let node = messages::system_message(
+            level,
+            text,
+            self.parse.source_path(source),
+            loc.line,
+            children,
+        );
+        let seq = self.draw_seq();
+        self.log.push(LogRecord::Reporter {
+            key: OrderKey {
+                priority: 0,
+                serial: 0,
+                seq,
+            },
+            level,
+            loc,
+            text: node.element_astext(),
+        });
+        node
     }
 
     /// Subtrees the parser discards: each one holding a node with an

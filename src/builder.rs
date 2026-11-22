@@ -1385,7 +1385,7 @@ impl SphinxBuilder {
 
             // The document's toctree diagnostics, produced when its entries
             // were resolved, and the parse's other logger warnings.
-            self.report_parse_warnings(&result.document, &result.doctree, &mut sink);
+            self.report_parse_warnings(docname, &result.document, &result.doctree, &mut sink);
 
             // The domains' read-phase hooks, dispatched in the order
             // `_DomainsContainer._process_doc` walks them — `c, changeset,
@@ -1472,9 +1472,14 @@ impl SphinxBuilder {
     ///
     /// `doctree` supplies the source table: a warning raised inside an
     /// included file — a toctree's `location=toctree` or a log warning's
-    /// `location=node` — renders that file's path, not the document's.
+    /// `location=node` — renders that file's path, not the document's. A
+    /// log warning renders its location the way Sphinx's log translator
+    /// does ([`crate::rst::LogLocation::render`]): a node location is made
+    /// absolute against the source directory, a tuple location goes
+    /// through `doc2path`.
     fn report_parse_warnings(
         &self,
+        docname: &str,
         document: &Document,
         doctree: &Doctree,
         sink: &mut DiagnosticSink,
@@ -1506,24 +1511,16 @@ impl SphinxBuilder {
             }
         }
         for warning in &document.registry.log_warnings {
-            // `rendered_path` reproduces sphinx's tuple-location doc2path
-            // append (the doubled `.rst.rst` quirk) for the records that
-            // carry it — see `ParseLogWarning::rendered_path` for WHY.
-            let source_path = doctree
-                .sources
-                .get(warning.source as usize)
-                .map(|path| PathBuf::from(warning.rendered_path(path)))
-                .unwrap_or_else(|| document.source_path.clone());
             // Sphinx logs these with no `type`/`subtype`, so they render
             // with no `[category]` suffix.
-            push_in_order(
-                sink,
-                BuildWarning::new(
-                    source_path,
-                    Some(warning.line as usize),
-                    warning.message.clone(),
-                    WarningType::Other,
-                ),
+            let key = OrderKey {
+                priority: 0,
+                serial: 0,
+                seq: sink.next_seq(),
+            };
+            sink.push(
+                key,
+                warning.diagnostic(&doctree.sources, &self.source_dir, docname),
             );
         }
     }

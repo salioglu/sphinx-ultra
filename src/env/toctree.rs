@@ -130,6 +130,11 @@ pub struct ToctreeWarning {
     /// warning without a `type` (see [`crate::error::BuildWarning::category`]).
     pub category: Option<String>,
     pub kind: ToctreeWarningKind,
+    /// The parse's record sequence number: [`resolve_entries`] leaves it 0
+    /// and the parser stamps it as the directive logs the warning
+    /// ([`crate::transforms::state::DocumentState::draw_seq`]). Not
+    /// `#[serde(default)]` (cache-shape rule).
+    pub seq: u32,
 }
 
 /// `toctree['entries']` (title, ref) pairs plus `toctree['includefiles']`.
@@ -219,6 +224,7 @@ pub fn resolve_entries(input: &ToctreeContent<'_>) -> ResolvedEntries {
             message,
             category: category.map(str::to_string),
             kind,
+            seq: 0,
         });
     };
 
@@ -1885,6 +1891,7 @@ mod tests {
                 message: "toctree glob pattern 'missing*' didn't match any documents".to_string(),
                 category: None,
                 kind: ToctreeWarningKind::EmptyGlob,
+                seq: 0,
             }]
         );
     }

@@ -180,6 +180,11 @@ pub struct ProgramOptionRecord {
     /// `signode['ids'][0]` — the *first* id of the signature, which is what
     /// Sphinx registers for every spelling in it.
     pub node_id: String,
+    /// The parse's record sequence number, drawn at the registration
+    /// ([`crate::transforms::state::DocumentState::draw_seq`]): a warning
+    /// the replay raises is ordered by it among the parse's records. Not
+    /// `#[serde(default)]` (cache-shape rule).
+    pub seq: u32,
 }
 
 /// One `PythonDomain.note_object` call the parse layer made
@@ -205,6 +210,9 @@ pub struct PyObjectRecord {
     pub source: u16,
     /// 1-based line of the signature node (`location=signode`).
     pub lineno: u32,
+    /// The parse's record sequence number, drawn at the registration (see
+    /// [`ProgramOptionRecord::seq`]).
+    pub seq: u32,
 }
 
 /// One `PythonDomain.note_module` call (`PyModule.run`,
@@ -229,6 +237,9 @@ pub struct PyModuleRecord {
     pub source: u16,
     /// 1-based line of the directive marker.
     pub lineno: u32,
+    /// The parse's record sequence number, drawn at the registration (see
+    /// [`ProgramOptionRecord::seq`]).
+    pub seq: u32,
 }
 
 /// One `StandardDomain.note_object` call the parse layer made
@@ -250,6 +261,23 @@ pub struct ObjectRegistration {
     /// 1-based line of the signature node (`location=signode`), for the
     /// duplicate-description warning.
     pub line: u32,
+    /// The parse's record sequence number, drawn at the registration (see
+    /// [`ProgramOptionRecord::seq`]).
+    pub seq: u32,
+}
+
+/// One glossary term `make_glossary_term` registered
+/// (`SP/sphinx/domains/std/__init__.py:375-407`: `std._note_term(termtext,
+/// node_id, location=term)`), for the environment to replay in parse order.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GlossaryTermRecord {
+    /// `termtext`: the parsed term's `astext()`.
+    pub term: String,
+    /// The term node's id (`make_id(env, document, 'term', termtext)`).
+    pub id: String,
+    /// The parse's record sequence number, drawn at the registration (see
+    /// [`ProgramOptionRecord::seq`]).
+    pub seq: u32,
 }
 
 /// What the parse layer hands the environment besides the doctree itself:
@@ -302,6 +330,10 @@ pub struct RegistryExport {
     /// document order. Not `#[serde(default)]` — see
     /// [`Self::program_options`].
     pub py_modules: Vec<PyModuleRecord>,
+    /// The glossary terms the parse registered (`StandardDomain._note_term`),
+    /// in parse order. Not `#[serde(default)]` — see
+    /// [`Self::program_options`].
+    pub glossary_terms: Vec<GlossaryTermRecord>,
     /// Diagnostics the parse raised through Sphinx's *logger* rather than
     /// into the tree, which have nowhere else to go: docutils turns a
     /// directive error into a `system_message` node, but a Sphinx directive
@@ -329,52 +361,115 @@ pub struct RegistryExport {
     pub included: Vec<String>,
 }
 
+/// Where a Sphinx `logger.warning(..., location=...)` points, in the forms
+/// the parse produces, each rendered the way `SphinxLogRecordTranslator`
+/// renders it (`SP/sphinx/util/logging.py:500-525`; [`Self::render`]).
+/// Source ids index the document's source table (`Doctree::sources`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum LogLocation {
+    /// No `location`: the record prints bare.
+    None,
+    /// `location=docname`: the document's path, with no line.
+    Doc,
+    /// `location=(docname, lineno)`.
+    DocLine(u32),
+    /// `location=node`: the node's source, made absolute, and its line
+    /// (`get_node_location`).
+    Node { source: u16, line: u32 },
+    /// `location=(source, line)` whose first element is a source path,
+    /// which the translator takes for a docname.
+    Tuple { source: u16, line: u32 },
+}
+
+impl LogLocation {
+    /// The printed location, rendered against the document's source table,
+    /// the project's source directory and the document's name:
+    ///
+    /// - `Doc` and `DocLine` are `doc2path(docname)`, Sphinx's
+    ///   `srcdir / (docname + source_suffix[0])` (`.rst` until T17c),
+    ///   with `:lineno` when the line is non-zero;
+    /// - `Tuple` passes the source path as the docname: `doc2path` finds
+    ///   no such document and appends the suffix again
+    ///   (`SP/sphinx/project.py:114-128`), so the document itself, whose
+    ///   table path is absolute, prints `<srcdir>/index.rst.rst:N`, and an
+    ///   included file, whose table path is srcdir-relative, prints
+    ///   `<srcdir>/part.rst.rst:N` ([INC §3.4]);
+    /// - `Node` is `get_node_location`'s `abspath(source)`: Sphinx resolves
+    ///   the included file's cwd-relative spelling against the cwd, which
+    ///   the oracle runs in the source directory, so `<srcdir>/part.rst:N`
+    ///   (`SP/sphinx/util/logging.py:554-562`); a node without a line
+    ///   prints `path:`;
+    /// - `None` prints nothing.
+    pub fn render(
+        self,
+        sources: &[String],
+        srcdir: &std::path::Path,
+        docname: &str,
+    ) -> crate::diagnostics::Location {
+        use crate::diagnostics::Location;
+        let table_path = |source: u16| {
+            sources
+                .get(usize::from(source))
+                .or_else(|| sources.first())
+                .map(String::as_str)
+                .unwrap_or_default()
+        };
+        let doc2path = |name: &str| srcdir.join(format!("{name}.rst")).display().to_string();
+        let path_line = |path: String, line: u32| Location::Path {
+            path,
+            line: (line != 0).then_some(line),
+        };
+        match self {
+            LogLocation::None => Location::None,
+            LogLocation::Doc => path_line(doc2path(docname), 0),
+            LogLocation::DocLine(line) => path_line(doc2path(docname), line),
+            LogLocation::Tuple { source, line } => path_line(doc2path(table_path(source)), line),
+            LogLocation::Node { source, line } => {
+                let path = srcdir.join(table_path(source)).display().to_string();
+                match line {
+                    0 => Location::Verbatim(format!("{path}:")),
+                    line => path_line(path, line),
+                }
+            }
+        }
+    }
+}
+
 /// One `logger.warning` a directive raised during the parse.
 ///
 /// Producers: `Cmdoption.handle_signature`'s malformed option description
 /// (`domains/std/__init__.py:237-245`) and — since wave 4.5 — the three
 /// `literalinclude` reader warnings ([INC §3.4]). All are logged with no
 /// `type`/`subtype` and so render with no `[category]` suffix.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ParseLogWarning {
-    /// Source-table index of the `location=` node's line: the replay
-    /// renders this source's path, not the document's. Deliberately not
-    /// `#[serde(default)]` (cache-shape rule, see
-    /// [`RegistryExport::program_options`]).
-    pub source: u16,
     /// The warning text, already formatted exactly as Sphinx renders it.
     pub message: String,
-    /// 1-based line of the `location=` node Sphinx passes.
-    pub line: u32,
-    /// When true, the rendered location appends the first source suffix to
-    /// the source path (see [`Self::rendered_path`]). Not
+    /// The `location=` Sphinx passes ([`LogLocation::render`]). Not
     /// `#[serde(default)]` (cache-shape rule, see
-    /// [`RegistryExport::program_options`]): a pre-wave-4.5 cache entry
-    /// must MISS, not decode with the flag silently off.
-    pub doc2path_location: bool,
+    /// [`RegistryExport::program_options`]): a cache entry written before
+    /// it must MISS, not decode with no location.
+    pub location: LogLocation,
+    /// The parse's record sequence number, drawn when the warning was
+    /// logged ([`crate::transforms::state::DocumentState::draw_seq`]). Not
+    /// `#[serde(default)]` (cache-shape rule).
+    pub seq: u32,
 }
 
 impl ParseLogWarning {
-    /// The path the rendered warning line spells for this record's source
-    /// table path.
-    ///
-    /// WHY the doubled suffix: a Sphinx `logger.warning(...,
-    /// location=(source, line))` tuple is treated by the log translator as
-    /// `(docname, lineno)` and rendered `f'{env.doc2path(docname)}:{lineno}'`
-    /// (`SP/util/logging.py:507-512`); `doc2path` on a string that is not a
-    /// known docname appends the project's first source suffix
-    /// (`SP/project.py:114-128`). The three literalinclude reader warnings
-    /// pass a full path like `<srcdir>/a.rst` as the tuple's `source`, so
-    /// Sphinx renders the doubled `<srcdir>/a.rst.rst` — byte-exact oracle
-    /// behavior (probed, [INC §3.4]), reproduced here on replay. The
-    /// appended suffix is the crate's first source suffix (`.rst`, matching
-    /// sphinx's default `source_suffix[0]` and this crate's discovery
-    /// order).
-    pub fn rendered_path(&self, source_path: &str) -> String {
-        if self.doc2path_location {
-            format!("{source_path}.rst")
-        } else {
-            source_path.to_string()
+    /// The record Sphinx logs: a `WARNING` with no category, located by
+    /// [`LogLocation::render`].
+    pub fn diagnostic(
+        &self,
+        sources: &[String],
+        srcdir: &std::path::Path,
+        docname: &str,
+    ) -> crate::diagnostics::Diagnostic {
+        crate::diagnostics::Diagnostic {
+            location: self.location.render(sources, srcdir, docname),
+            severity: crate::diagnostics::Severity::Warning,
+            message: self.message.clone(),
+            category: crate::diagnostics::Category::None,
         }
     }
 }
@@ -382,13 +477,16 @@ impl ParseLogWarning {
 /// What the parser threads through every nested and detached sub-parse
 /// beside the docutils object state ([`DocumentState`], whose `parse`
 /// field holds it), so that a sub-parse continues the document rather than
-/// starting a new one: the record streams [`ParseOutput`] carries, the
-/// dupnames still owed to nodes the parser has placed, Sphinx's
-/// per-document serial counters, docutils' `include_log`, the substitution
-/// names defined twice, and the `note_pending` counter. The parse drains
-/// it when it ends.
+/// starting a new one: the source table's paths, the record streams
+/// [`ParseOutput`] carries, the dupnames still owed to nodes the parser has
+/// placed, Sphinx's per-document serial counters, docutils' `include_log`
+/// and the `note_pending` counter. The parse drains it when it ends.
 #[derive(Debug, Default, Clone)]
 pub(crate) struct ParseOnlyState {
+    /// The paths of the parser's source table, by source id (what
+    /// `Doctree::sources` publishes): the reporter stamps them on the
+    /// messages it builds ([`DocumentState::report`]).
+    pub(crate) sources: Vec<std::sync::Arc<str>>,
     /// docutils `dupname(old_node, name)` on nodes already placed in the
     /// tree, applied when the tree is complete
     /// ([`crate::doctree::ids::apply_dupname_fixups`]).
@@ -408,10 +506,6 @@ pub(crate) struct ParseOnlyState {
     /// popped when the comment path reaches the matching
     /// `.. end of inclusion from "..."` marker.
     pub(crate) include_log: Vec<(String, block::IncludeClip)>,
-    /// Substitution names defined more than once: when the tree is
-    /// complete, every definition but the last loses its name (docutils
-    /// `dupname`s the old node in place).
-    pub(crate) substitution_dupnames: Vec<String>,
     /// The next `document.note_pending` order
     /// ([`crate::doctree::pending::Pending::order`]).
     pub(crate) next_pending_order: u32,
@@ -427,12 +521,25 @@ pub(crate) struct ParseOnlyState {
     pub(crate) std_object_records: Vec<ObjectRegistration>,
     pub(crate) py_object_records: Vec<PyObjectRecord>,
     pub(crate) py_module_records: Vec<PyModuleRecord>,
+    pub(crate) glossary_term_records: Vec<GlossaryTermRecord>,
     /// `logger.warning` diagnostics raised while running directives.
     pub(crate) log_warnings: Vec<ParseLogWarning>,
     /// Parse-recorded dependency paths and included docnames (see
     /// [`RegistryExport::dependencies`]); sphinx mode only.
     pub(crate) dependency_records: Vec<String>,
     pub(crate) included_records: Vec<String>,
+}
+
+impl ParseOnlyState {
+    /// The path of source-table entry `source`; the document's own path
+    /// for an id the table does not hold, and docutils' `'<string>'` for a
+    /// state with no table (a standalone inline parse).
+    pub(crate) fn source_path(&self, source: u16) -> &str {
+        self.sources
+            .get(usize::from(source))
+            .or_else(|| self.sources.first())
+            .map_or("<string>", |path| path)
+    }
 }
 
 /// Everything a parse produces: the doctree plus the flat records the
@@ -448,8 +555,10 @@ pub struct ParseOutput {
     pub state: DocumentState,
 }
 
-/// Parse RST source into a doctree. Total: never panics, never errors —
-/// problems become `system_message` nodes, exactly like docutils.
+/// Parse RST source into a doctree. Never errors — problems become
+/// `system_message` nodes, exactly like docutils — and never panics in
+/// release builds; debug builds assert the registration invariant at the
+/// end of the parse ([`DocumentState::misplaced_registrations`]).
 pub fn parse_rst(source: &str, opts: &ParseOptions) -> Doctree {
     parse_rst_full(source, opts).doctree
 }
@@ -479,13 +588,15 @@ mod tests {
     /// every kind, so that a guard below can remove exactly ONE field and
     /// know the decode failed for no other reason.
     const COMPLETE_REGISTRY: &str = r#"{"nameids":[],"index_serial":0,
-        "program_options":[{"source":0,"program":null,"name":"-f","node_id":"a"}],
-        "std_objects":[{"source":0,"objtype":"envvar","name":"P","node_id":"b","line":1}],
+        "program_options":[{"source":0,"program":null,"name":"-f","node_id":"a","seq":0}],
+        "std_objects":[{"source":0,"objtype":"envvar","name":"P","node_id":"b","line":1,
+            "seq":1}],
         "py_objects":[{"fullname":"m.f","objtype":"function","node_id":"m.f",
-            "aliased":false,"source":0,"lineno":1}],
+            "aliased":false,"source":0,"lineno":1,"seq":2}],
         "py_modules":[{"name":"m","node_id":"module-m","synopsis":"","platform":"",
-            "deprecated":false,"source":0,"lineno":1}],
-        "log_warnings":[{"source":0,"message":"m","line":2,"doc2path_location":false}],
+            "deprecated":false,"source":0,"lineno":1,"seq":3}],
+        "glossary_terms":[{"term":"T","id":"term-T","seq":4}],
+        "log_warnings":[{"message":"m","location":{"Node":{"source":0,"line":2}},"seq":5}],
         "dependencies":["part.rst"],"included":["part"]}"#;
 
     /// Decode [`COMPLETE_REGISTRY`] with the field `name` removed at
@@ -537,6 +648,8 @@ mod tests {
             "std_objects",
             "py_objects",
             "py_modules",
+            // A pre-wave-5a registry (no glossary-term stream) must MISS.
+            "glossary_terms",
             "log_warnings",
             // A wave-4.5 pre-include registry (no dependencies/included
             // stream) must MISS: a defaulted empty list would never
@@ -560,12 +673,40 @@ mod tests {
         must_miss(&["std_objects", "0"], "source");
         must_miss(&["py_objects", "0"], "source");
         must_miss(&["py_modules", "0"], "source");
-        must_miss(&["log_warnings", "0"], "source");
-        // A wave-4.5 pre-literalinclude log record (no doc2path_location)
-        // must MISS: decoding it with the flag silently off would render
-        // the three literalinclude reader warnings at the un-doubled path
-        // on a warm rebuild.
-        must_miss(&["log_warnings", "0"], "doc2path_location");
+        // A pre-wave-5a log record (its `source`/`line`/`doc2path_location`
+        // triple, no `location`) must MISS: decoding it with a default
+        // location would render the warning at the wrong path.
+        must_miss(&["log_warnings", "0"], "location");
+    }
+
+    /// The parse's record sequence numbers (wave 5a, [DS §6.4]) order the
+    /// replayed registrations among the parse's records; a cache entry
+    /// written before them must MISS rather than decode every record at
+    /// seq 0. Each case removes exactly one `seq` from the complete shape.
+    #[test]
+    fn records_written_before_their_seq_existed_fail_to_decode() {
+        for registry in [
+            "program_options",
+            "std_objects",
+            "py_objects",
+            "py_modules",
+            "glossary_terms",
+            "log_warnings",
+        ] {
+            must_miss(&[registry, "0"], "seq");
+        }
+        // A toctree warning rides its `ToctreeRecord` in the document
+        // cache, under the same rule.
+        let complete = r#"{"source":1,"line":3,"message":"m","category":null,
+            "kind":"MissingDocument","seq":0}"#;
+        serde_json::from_str::<crate::env::toctree::ToctreeWarning>(complete)
+            .expect("the current shape decodes");
+        let error = serde_json::from_str::<crate::env::toctree::ToctreeWarning>(
+            r#"{"source":1,"line":3,"message":"m","category":null,"kind":"MissingDocument"}"#,
+        )
+        .expect_err("a warning without its seq must not decode")
+        .to_string();
+        assert!(error.contains("missing field `seq`"), "{error}");
     }
 
     /// The provenance fields panel fix round B added to the DOCUMENT-side
@@ -604,8 +745,9 @@ mod tests {
             r#"{"name":"ref","full_name":"ref","target":"t","display":null,"line":3}"#,
         );
         must_miss::<crate::env::toctree::ToctreeWarning>(
-            r#"{"source":1,"line":3,"message":"m","category":null,"kind":"MissingDocument"}"#,
-            r#"{"line":3,"message":"m","category":null,"kind":"MissingDocument"}"#,
+            r#"{"source":1,"line":3,"message":"m","category":null,"kind":"MissingDocument",
+                "seq":0}"#,
+            r#"{"line":3,"message":"m","category":null,"kind":"MissingDocument","seq":0}"#,
         );
         must_miss::<ToctreeRecord>(
             r#"{"glob":false,"entries":[],"source":1,"line":3,"warnings":[]}"#,
@@ -958,6 +1100,623 @@ mod tests {
         }
     }
 
+    // ------------------------------------------------------------------
+    // the reporter log, locations and the final position ([DS §6, §8.2])
+    // ------------------------------------------------------------------
+
+    use crate::transforms::reporter::{render_records, LogRecord};
+    use crate::transforms::state::{DocLoc, SourceRef};
+
+    /// The reporter records of a parse: `(seq, level, loc, text)`.
+    fn reporter_records(out: &ParseOutput) -> Vec<(u32, u8, DocLoc, String)> {
+        out.state
+            .log
+            .iter()
+            .filter_map(|record| match record {
+                LogRecord::Reporter {
+                    key,
+                    level,
+                    loc,
+                    text,
+                } => Some((key.seq, *level, *loc, text.clone())),
+                LogRecord::Logger { .. } => None,
+            })
+            .collect()
+    }
+
+    /// Every `system_message` of the tree, in document order.
+    fn tree_messages(out: &ParseOutput) -> Vec<&Node> {
+        let mut found = Vec::new();
+        all(&out.doctree.root, kinds::SYSTEM_MESSAGE, &mut found);
+        found
+    }
+
+    /// The eleven corpus cases whose `Anonymous hyperlink mismatch` (a
+    /// transform message with neither a node nor a line) prints the final
+    /// state-machine position ([DS §6.2], [TW §5.3.4]), by their html
+    /// oracle id: `docutils-NNNN` is the NNNNth case of
+    /// `doctree_differential.json`. `None` prints `index.rst::`.
+    const FINAL_POSITION_CASES: [(usize, &str, Option<u32>); 11] = [
+        (
+            120,
+            ".. __: https://example.com/1\n\n__ https://example.com/2\n",
+            None,
+        ),
+        (167, "__ https://x/\npara after\n", Some(3)),
+        (218, "See word__ here.\n", Some(2)),
+        (219, "See `some phrase`__ here.\n", Some(2)),
+        (220, "Anon word__.\n", Some(2)),
+        (242, "A |sub| B |sub2|_ C |sub3|__ D.\n", Some(2)),
+        (
+            603,
+            ".. |s2| replace:: text\n\n|s2|_ and |s2|__ refs.\n",
+            Some(4),
+        ),
+        (638, "__\n\npara\n", Some(4)),
+        (639, "__ https://example.com/\n   path\n", None),
+        (683, "__ http://x\u{1f}y\n", None),
+        (700, ".. __ :\n", None),
+    ];
+
+    /// The position as a `DocLoc` of the document itself.
+    fn in_document(line: Option<u32>) -> DocLoc {
+        match line {
+            Some(line) => DocLoc::at(0, line),
+            None => DocLoc::default(),
+        }
+    }
+
+    /// [DS §6.2]'s rows whose inputs are on record: the parser's final
+    /// position for the eleven corpus cases, as docutils 0.22.4 reports it
+    /// (`probe_final_line.py`, [TW §5.3.4]; re-probed in this task).
+    #[test]
+    fn final_position_matches_docutils_probe_table() {
+        let corpus = fixture("doctree_differential.json");
+        for (case, source, line) in FINAL_POSITION_CASES {
+            assert_eq!(
+                corpus["cases"][case - 1]["rst"].as_str(),
+                Some(source),
+                "docutils-{case:04} is the corpus input"
+            );
+            assert_eq!(
+                sphinx_parse(source).state.final_position,
+                in_document(line),
+                "docutils-{case:04}: {source:?}"
+            );
+        }
+    }
+
+    /// CRLF line endings are line boundaries like LF (`string2lines`'
+    /// `splitlines`), so the final position is the same.
+    #[test]
+    fn final_position_ignores_line_endings() {
+        for (case, source, line) in FINAL_POSITION_CASES {
+            let crlf = source.replace('\n', "\r\n");
+            assert_eq!(
+                sphinx_parse(&crlf).state.final_position,
+                in_document(line),
+                "docutils-{case:04} with CRLF: {crlf:?}"
+            );
+        }
+    }
+
+    /// The rule behind [DS §6.2]'s table, construct by construct: where
+    /// docutils' top-level state machine is once the last construct is
+    /// parsed. A construct it reads itself ends past the end (`(source, N +
+    /// 1)`); a list, or an explicit construct whose block took the trailing
+    /// blank lines, ends off it (`(None, None)`); a target, an anonymous
+    /// target, an empty comment, a line block of two or more lines and a
+    /// quoted literal block end at a blank line, so trailing blank lines
+    /// put them past the end; a `::` paragraph with no literal block on the
+    /// last line stays on it; a document ending inside an include ends on
+    /// the include's padding line, `n + 4` for `n` included lines.
+    /// Every row probed on docutils 0.22.4 (`reporter.get_source_and_line(None)`
+    /// after the parse).
+    #[test]
+    fn final_position_follows_the_state_machine() {
+        let rows: [(&str, Option<u32>); 36] = [
+            ("", None),
+            ("\n\n", Some(3)),
+            ("Para\n\n\n", Some(4)),
+            ("Para::\n", Some(1)),
+            ("Para::\n\n", Some(3)),
+            ("Para::\n\n  code\n", Some(4)),
+            ("Para::\n\n> a\n", None),
+            ("Para::\n\n> a\n\n", Some(5)),
+            ("Title\n=====\n", Some(3)),
+            ("=====\nTitle\n=====\n", Some(4)),
+            ("Para.\n\n----\n", Some(4)),
+            ("  quote\n", Some(2)),
+            (">>> x\n", Some(2)),
+            ("+---+\n| a |\n+---+\n", Some(4)),
+            ("=  =\na  b\n=  =\n", Some(4)),
+            ("| a\n", Some(2)),
+            ("| a\n| b\n", None),
+            ("| a\n| b\n\n", Some(4)),
+            ("- a\n\n\n", None),
+            ("1. a\n", None),
+            ("term\n  def\n\n", None),
+            (":f: v\n\n", None),
+            ("-a  opt\n", None),
+            ("Title\n=====\n\n- a\n- b\n", None),
+            (".. note:: x\n\n\n", None),
+            (".. comment\n\n", None),
+            (".. [1] fn\n\n", None),
+            (".. |s| replace:: x\n\n", None),
+            ("..\n", None),
+            ("..\n\n", Some(3)),
+            ("Para.\n\n.. _x:\n", None),
+            ("Para.\n\n.. _x:\n\n\n", Some(6)),
+            (".. _x: http://x\n   cont\n\n", Some(4)),
+            ("__ http://x\n\n", Some(3)),
+            (".. note:: x\n.. _a:\n\n", Some(4)),
+            ("Para.\n\n.. _x:\n\nPara2\n", Some(6)),
+        ];
+        for (source, line) in rows {
+            assert_eq!(
+                sphinx_parse(source).state.final_position,
+                in_document(line),
+                "{source:?}"
+            );
+        }
+
+        // A document ending inside an include ends on the padding docutils
+        // inserts after the included lines, whatever they end with; one
+        // ending after it ends in itself.
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        for (name, text) in [
+            ("para.rst", "Inc para.\n"),
+            ("list.rst", "- a\n- b\n"),
+            ("target.rst", ".. _t:\n"),
+        ] {
+            std::fs::write(tmp.path().join(name), text).expect("write");
+        }
+        let parse_in = |source: &str| {
+            parse_rst_full(
+                source,
+                &ParseOptions {
+                    source_path: tmp.path().join("index.rst").display().to_string(),
+                    sphinx: true,
+                    srcdir: Some(tmp.path().to_path_buf()),
+                    ..Default::default()
+                },
+            )
+        };
+        for (source, padding, line) in [
+            ("Para.\n\n.. include:: para.rst\n", "para.rst", 5),
+            ("Para.\n\n.. include:: list.rst\n", "list.rst", 6),
+            ("Para.\n\n.. include:: target.rst\n", "target.rst", 5),
+        ] {
+            let out = parse_in(source);
+            let position = out.state.final_position;
+            let Some(SourceRef::Table(id)) = position.source else {
+                panic!("{source:?}: no source in {position:?}");
+            };
+            assert_eq!(
+                out.doctree.sources[usize::from(id)],
+                format!("internal padding after {padding}"),
+                "{source:?}"
+            );
+            assert_eq!(position.line, Some(line), "{source:?}");
+        }
+        let out = parse_in("Para.\n\n.. include:: para.rst\n\nAfter.\n");
+        assert_eq!(out.state.final_position, DocLoc::at(0, 6));
+    }
+
+    /// The reporter logs a message's text as docutils writes it, at
+    /// creation: `run_directive` appends a `DirectiveError`'s block to the
+    /// message after the reporter created it (`states.py:2287-2291`), so
+    /// the record holds the message alone while the node in the tree also
+    /// holds the block (`docutils-0392`).
+    #[test]
+    fn reporter_records_creation_time_text() {
+        let out = sphinx_parse(".. note::\n");
+        let text = "Content block expected for the \"note\" directive; none found.";
+        assert_eq!(
+            reporter_records(&out),
+            [(0, 3, DocLoc::at(0, 1), text.to_string())]
+        );
+        let [message] = tree_messages(&out)[..] else {
+            panic!("one message in the tree");
+        };
+        assert_eq!(message.element_astext(), format!("{text}\n\n.. note::"));
+    }
+
+    /// An option error is a `MarkupError`, whose message docutils builds
+    /// with the block as its child from the start (`states.py:2274-2281`),
+    /// so the record holds the block too (`docutils-0391`; [TW §5.3.2]).
+    #[test]
+    fn option_errors_record_their_block() {
+        let out = sphinx_parse(".. note::\n   :bogus: x\n\n   Body.\n");
+        let text = "Error in \"note\" directive:\nunknown option: \"bogus\".\n\n\
+                    .. note::\n   :bogus: x\n\n   Body.";
+        assert_eq!(
+            reporter_records(&out),
+            [(0, 3, DocLoc::at(0, 1), text.to_string())]
+        );
+        let [message] = tree_messages(&out)[..] else {
+            panic!("one message in the tree");
+        };
+        assert_eq!(message.element_astext(), text);
+    }
+
+    /// One counter numbers the parse's records in creation order, whatever
+    /// their channel: a reporter message, a toctree warning, a logger
+    /// warning. Swapping the inputs swaps the numbers.
+    #[test]
+    fn parse_records_share_the_seq_counter() {
+        let found_docs = Some(std::sync::Arc::new(
+            ["index".to_string()]
+                .into_iter()
+                .collect::<std::collections::BTreeSet<_>>(),
+        ));
+        let parse_with_docs = |source: &str| {
+            parse_rst_full(
+                source,
+                &ParseOptions {
+                    found_docs: found_docs.clone(),
+                    ..sphinx_options()
+                },
+            )
+        };
+        let toctree_seqs = |out: &ParseOutput| -> Vec<u32> {
+            out.toctrees
+                .iter()
+                .flat_map(|toctree| toctree.warnings.iter().map(|warning| warning.seq))
+                .collect()
+        };
+        let reporter_seqs = |out: &ParseOutput| -> Vec<u32> {
+            reporter_records(out)
+                .into_iter()
+                .map(|(seq, ..)| seq)
+                .collect()
+        };
+
+        let out = parse_with_docs("Title text\n====\n\n.. toctree::\n\n   missing\n");
+        assert_eq!(
+            reporter_records(&out)[0].3.lines().next(),
+            Some("Title underline too short.")
+        );
+        assert_eq!(
+            (reporter_seqs(&out), toctree_seqs(&out)),
+            (vec![0], vec![1])
+        );
+        let out = parse_with_docs(".. toctree::\n\n   missing\n\nTitle text\n====\n");
+        assert_eq!(
+            (reporter_seqs(&out), toctree_seqs(&out)),
+            (vec![1], vec![0])
+        );
+
+        // `Para` then `   indented.` is a definition list; a two-line
+        // paragraph before the indented line is what raises `Unexpected
+        // indentation.`.
+        let out = sphinx_parse(".. option:: =bad\n\nPara\nmore\n   indented.\n");
+        let logged: Vec<(u32, &str)> = out
+            .registry
+            .log_warnings
+            .iter()
+            .map(|warning| (warning.seq, warning.message.as_str()))
+            .collect();
+        assert_eq!(logged.len(), 1);
+        assert!(logged[0]
+            .1
+            .starts_with("Malformed option description '=bad'"));
+        assert_eq!(
+            reporter_records(&out),
+            [(
+                1,
+                3,
+                DocLoc::at(0, 5),
+                "Unexpected indentation.".to_string()
+            )]
+        );
+        assert_eq!(logged[0].0, 0);
+    }
+
+    /// A registration record draws its seq where Sphinx registers, before
+    /// the description's content is parsed: a `py:function` between two
+    /// reporter messages numbers between them, and so does a glossary
+    /// term (`GlossaryTermRecord`).
+    #[test]
+    fn registration_records_carry_parse_seq() {
+        let out = sphinx_parse("*a\n\n.. py:function:: f()\n\n   *in content\n\n*b\n");
+        let seqs: Vec<u32> = reporter_records(&out)
+            .into_iter()
+            .map(|(seq, ..)| seq)
+            .collect();
+        assert_eq!(seqs, [0, 2, 3]);
+        let [record] = out.registry.py_objects.as_slice() else {
+            panic!("one py object: {:?}", out.registry.py_objects);
+        };
+        assert_eq!((record.fullname.as_str(), record.seq), ("f", 1));
+
+        let out = sphinx_parse("*a\n\n.. glossary::\n\n   term\n      def\n\n*b\n");
+        assert_eq!(
+            out.registry.glossary_terms,
+            [GlossaryTermRecord {
+                term: "term".to_string(),
+                id: "term-term".to_string(),
+                seq: 1,
+            }]
+        );
+        let seqs: Vec<u32> = reporter_records(&out)
+            .into_iter()
+            .map(|(seq, ..)| seq)
+            .collect();
+        assert_eq!(seqs, [0, 2]);
+    }
+
+    /// The `reference` an image's `:target:` wraps is appended right after
+    /// the option block's nested state machine cleared the line, so at
+    /// document or section level it has the source and no line
+    /// (`docutils-0439`, [DS §6.1]); one a nested parse appends to a
+    /// container not yet in the document has neither, the default rule,
+    /// and gets no override. Probed on docutils 0.22.4 (`reference.source`
+    /// and `.line` after the parse).
+    #[test]
+    fn loc_overrides_for_image_target_refs() {
+        for source in [
+            ".. image:: pic.png\n   :target: sometarget_\n",
+            ".. image:: pic.png\n   :target: https://x/\n",
+            "Title\n=====\n\n.. image:: pic.png\n   :target: sometarget_\n",
+        ] {
+            let out = sphinx_parse(source);
+            let reference = first(&out.doctree.root, kinds::REFERENCE).expect("a reference");
+            let uid = reference
+                .uid()
+                .expect("an override gives the node an identity");
+            let expected = DocLoc {
+                source: Some(SourceRef::Table(0)),
+                line: None,
+            };
+            assert_eq!(
+                out.state.loc_overrides,
+                std::collections::HashMap::from([(uid, expected)]),
+                "{source:?}"
+            );
+        }
+        for source in [
+            ".. note::\n\n   .. image:: pic.png\n      :target: sometarget_\n",
+            ".. figure:: pic.png\n   :target: sometarget_\n",
+            ".. |x| image:: pic.png\n   :target: sometarget_\n",
+            "- item\n\n  .. image:: pic.png\n     :target: sometarget_\n",
+        ] {
+            assert!(
+                sphinx_parse(source).state.loc_overrides.is_empty(),
+                "{source:?}"
+            );
+        }
+    }
+
+    /// Every duplicate name `NameTable::bind` reports is logged at
+    /// creation: two explicit targets give one WARNING, two sections an
+    /// INFO that never prints. The index directive notes its target with
+    /// no `msgnode`, so its message is in no tree, and is still printed,
+    /// at the state machine's line. All three probed on Sphinx 9.1.0: the
+    /// WARNING at line 5, the INFO at line 7, and `index.rst:6: WARNING:
+    /// Duplicate explicit target name: "a". [docutils]` with both targets
+    /// `dupnames="a"` and the index target `ids="id1"`.
+    #[test]
+    fn duplicate_name_messages_are_logged() {
+        let out = sphinx_parse(".. _a:\n\nPara.\n\n.. _a:\n\nPara2.\n");
+        assert_eq!(
+            reporter_records(&out),
+            [(
+                0,
+                2,
+                DocLoc::at(0, 5),
+                "Duplicate explicit target name: \"a\".".to_string()
+            )]
+        );
+
+        let out = sphinx_parse("Title\n=====\n\nText.\n\nTitle\n=====\n\nMore.\n");
+        let records = reporter_records(&out);
+        assert_eq!(
+            records,
+            [(
+                0,
+                1,
+                DocLoc::at(0, 7),
+                "Duplicate implicit target name: \"title\".".to_string()
+            )]
+        );
+        assert!(render_records(out.state.log, &out.doctree.sources, "<snippet>").is_empty());
+
+        let out = parse_rst_full(
+            ".. _a:\n\nText.\n\n.. index:: x\n   :name: a\n",
+            &ParseOptions {
+                source_path: "/src/index.rst".into(),
+                ..sphinx_options()
+            },
+        );
+        let printed: Vec<String> = render_records(
+            out.state.log.clone(),
+            &out.doctree.sources,
+            "/src/index.rst",
+        )
+        .into_iter()
+        .map(|(_, diagnostic)| diagnostic.render(true))
+        .collect();
+        assert_eq!(
+            printed,
+            ["/src/index.rst:6: WARNING: Duplicate explicit target name: \"a\". [docutils]"]
+        );
+        assert!(tree_messages(&out).is_empty());
+        let mut targets = Vec::new();
+        all(&out.doctree.root, kinds::TARGET, &mut targets);
+        let shapes: Vec<(&[String], &[String])> = targets
+            .iter()
+            .map(|target| {
+                (
+                    target.attrs.ids.as_slice(),
+                    target.attrs.dupnames.as_slice(),
+                )
+            })
+            .collect();
+        let (a, id1, dup) = ("a".to_string(), "id1".to_string(), "a".to_string());
+        assert_eq!(
+            shapes,
+            [
+                (std::slice::from_ref(&a), std::slice::from_ref(&dup)),
+                (std::slice::from_ref(&id1), std::slice::from_ref(&dup)),
+            ]
+        );
+    }
+
+    /// docutils appends a duplicate name's message to the named node and
+    /// detaches it again when the node's content model rejects it; Sphinx
+    /// never places it again, so it is printed and absent from the tree
+    /// ([TW A10]). An image rejects it; a `note` keeps it (probed on
+    /// Sphinx 9.1.0: the note's first child), so it stays in the tree.
+    #[test]
+    fn detached_duplicate_name_message_is_logged_not_inserted() {
+        let text = "Duplicate explicit target name: \"x\".".to_string();
+        let out = sphinx_parse(".. note:: b\n   :name: x\n\n.. image:: a.png\n   :name: x\n");
+        assert_eq!(
+            reporter_records(&out),
+            [(0, 2, DocLoc::at(0, 4), text.clone())]
+        );
+        assert!(
+            tree_messages(&out).is_empty(),
+            "{}",
+            out.doctree.root.pformat()
+        );
+        let image = first(&out.doctree.root, kinds::IMAGE).expect("the image");
+        assert_eq!(image.attrs.dupnames, ["x"]);
+
+        let out = sphinx_parse(".. image:: a.png\n   :name: x\n\n.. note:: b\n   :name: x\n");
+        assert_eq!(reporter_records(&out).len(), 1);
+        assert_eq!(tree_messages(&out).len(), 1);
+    }
+
+    /// docutils `dupname`s the earlier node object wherever it lives
+    /// (T5b review): a target or a substitution definition in a subtree
+    /// the parse discarded loses the name a later node duplicates. Probed
+    /// on Sphinx 9.1.0 (parse-only, the noted nodes' attributes): the
+    /// rejected definition's embedded-alias target `x` (an indirect
+    /// target, so its subtree is kept) gives its name up to the later
+    /// explicit `.. _x:`, which keeps it as `id1`, and the rejected table
+    /// content's `|s|` gives it up to the later definition.
+    #[test]
+    fn detached_nodes_lose_duplicated_names() {
+        let out = sphinx_parse(".. |f| replace:: `x <a_>`_\n\n.. _x:\n\nText.\n");
+        let mut detached_targets = Vec::new();
+        for node in &out.state.detached {
+            all(node, kinds::TARGET, &mut detached_targets);
+        }
+        let [target] = detached_targets.as_slice() else {
+            panic!("one detached target: {:?}", out.state.detached);
+        };
+        assert_eq!(
+            (
+                target.attrs.names.as_slice(),
+                target.attrs.dupnames.as_slice()
+            ),
+            (&[][..], &["x".to_string()][..])
+        );
+        let new = first(&out.doctree.root, kinds::TARGET).expect("in the tree");
+        assert_eq!(
+            (new.attrs.ids.as_slice(), new.attrs.names.as_slice()),
+            (&["id1".to_string()][..], &["x".to_string()][..])
+        );
+
+        let out = sphinx_parse(
+            ".. table:: T\n\n   .. |s| replace:: a\n\n   not a table\n\n\
+             .. |s| replace:: b\n\nUse |s|.\n",
+        );
+        let mut detached_definitions = Vec::new();
+        for node in &out.state.detached {
+            all(node, "substitution_definition", &mut detached_definitions);
+        }
+        let [old] = detached_definitions.as_slice() else {
+            panic!("one detached definition: {:?}", out.state.detached);
+        };
+        assert_eq!(
+            (old.attrs.names.as_slice(), old.attrs.dupnames.as_slice()),
+            (&[][..], &["s".to_string()][..])
+        );
+        let new = first(&out.doctree.root, "substitution_definition").expect("in the tree");
+        assert_eq!(new.attrs.names, ["s"]);
+        assert!(new.attrs.dupnames.is_empty());
+    }
+
+    /// An indirect target is registered, so its identity comes before its
+    /// first `set_id`: the id is held by that identity, and the same node
+    /// registering it again is not a duplicate (`IdAllocator::register`).
+    #[test]
+    fn indirect_targets_hold_their_ids_by_identity() {
+        for (source, id) in [(".. _a: x_\n", "a"), ("__ x_\n", "id1")] {
+            let mut out = sphinx_parse(source);
+            let target = first(&out.doctree.root, kinds::TARGET).expect("a target");
+            let uid = target.uid().expect("registered");
+            assert_eq!(target.attrs.ids, [id], "{source:?}");
+            assert!(out.state.ids.register(id, Some(uid)), "{source:?}");
+        }
+    }
+
+    /// One row per `LogLocation` rule ([TW §5.4]): Sphinx's
+    /// `doc2path(docname)` is `<srcdir>/<docname>.rst`; a tuple whose first
+    /// element is a source path goes through `doc2path` too, doubling the
+    /// suffix and putting a relative path under the source directory; a
+    /// node location is the source made absolute, `path:` without a line.
+    #[test]
+    fn log_locations_render_like_sphinx() {
+        use crate::diagnostics::Location;
+        let srcdir = std::path::Path::new("/src");
+        let sources = ["/src/index.rst".to_string(), "part.rst".to_string()];
+        let path = |path: &str, line: Option<u32>| Location::Path {
+            path: path.to_string(),
+            line,
+        };
+        let rows = [
+            (LogLocation::None, Location::None),
+            (LogLocation::Doc, path("/src/index.rst", None)),
+            (LogLocation::DocLine(7), path("/src/index.rst", Some(7))),
+            (LogLocation::DocLine(0), path("/src/index.rst", None)),
+            (
+                LogLocation::Node { source: 0, line: 3 },
+                path("/src/index.rst", Some(3)),
+            ),
+            (
+                LogLocation::Node { source: 1, line: 6 },
+                path("/src/part.rst", Some(6)),
+            ),
+            (
+                LogLocation::Node { source: 1, line: 0 },
+                Location::Verbatim("/src/part.rst:".to_string()),
+            ),
+            (
+                LogLocation::Tuple { source: 0, line: 1 },
+                path("/src/index.rst.rst", Some(1)),
+            ),
+            (
+                LogLocation::Tuple { source: 1, line: 6 },
+                path("/src/part.rst.rst", Some(6)),
+            ),
+        ];
+        for (location, expected) in rows {
+            assert_eq!(
+                location.render(&sources, srcdir, "index"),
+                expected,
+                "{location:?}"
+            );
+        }
+        // The record a `ParseLogWarning` becomes: a `WARNING` with no
+        // category, so no suffix.
+        let warning = ParseLogWarning {
+            message: "non-whitespace stripped by dedent".to_string(),
+            location: LogLocation::Tuple {
+                source: 1,
+                line: 12,
+            },
+            seq: 0,
+        };
+        assert_eq!(
+            warning.diagnostic(&sources, srcdir, "index").render(true),
+            "/src/part.rst.rst:12: WARNING: non-whitespace stripped by dedent"
+        );
+    }
+
     /// The `PySigConfig` keys a fixture's `conf` sets; the other keys the
     /// fixtures carry steer no parse.
     fn py_config_of(conf: &serde_json::Map<String, Value>) -> crate::py::PySigConfig {
@@ -1025,9 +1784,10 @@ mod tests {
     /// Only the docutils corpus registers nodes: the other two hold no
     /// reference, footnote, citation or substitution definition (their
     /// targets are labels and `refuri` targets, which no registry keeps).
-    /// It registers 93 nodes per mode and keeps one detached subtree per
-    /// mode (`substitutions.replace_auto_footnote_error`), the floors
-    /// below.
+    /// It registers 186 nodes over the two modes and keeps one detached
+    /// subtree per mode (`substitutions.replace_auto_footnote_error`), the
+    /// floors below; its parses mint 190 identities, the four more being
+    /// the image `:target:` references that hold only a location override.
     #[test]
     fn every_registered_uid_is_reachable_once() {
         /// Per corpus: parses checked, distinct nodes registered, detached
@@ -1045,7 +1805,8 @@ mod tests {
             assert!(misplaced.is_empty(), "{label}: {misplaced:?}");
             let tally = &mut tallies[corpus];
             tally.parses += 1;
-            // Every registered node holds one identity.
+            // Every registered node holds one identity, and so does a node
+            // with a location override.
             tally.registered += state.next_uid as usize;
             tally.detached += state.detached.len();
         };

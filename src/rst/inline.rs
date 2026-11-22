@@ -15,7 +15,7 @@
 //! memory.
 
 use crate::doctree::{kinds, messages, AttrValue, Node, Span};
-use crate::transforms::state::DocumentState;
+use crate::transforms::state::{DocLoc, DocumentState};
 
 use super::punctuation;
 
@@ -300,8 +300,9 @@ struct Inliner<'a> {
     failed_end_search: std::collections::HashMap<(char, usize), usize>,
     span: Span,
     lineno: u32,
-    source_path: &'a str,
-    /// The document state: ids, names and serials are document-level.
+    /// The document state: ids, names and serials are document-level, and
+    /// its reporter builds and logs the messages, located at `lineno` of
+    /// the span's source.
     state: &'a mut DocumentState,
     /// Sphinx mode: unknown-in-docutils roles become pending_xref nodes
     /// (no messages) and every role occurrence is recorded.
@@ -320,6 +321,19 @@ struct Inliner<'a> {
 }
 
 impl<'a> Inliner<'a> {
+    /// Where the inliner's messages are located: `lineno` of the text
+    /// block's source.
+    fn loc(&self) -> DocLoc {
+        DocLoc::at(self.span.source, self.lineno)
+    }
+
+    /// `self.reporter.<level>(text, line=lineno)`: reported through the
+    /// document state, which logs it ([`DocumentState::report`]).
+    fn report(&mut self, level: u8, text: &str) -> Node {
+        let loc = self.loc();
+        self.state.report(level, text, loc, Vec::new())
+    }
+
     /// docutils `quoted_start`: the start-string is suppressed silently
     /// when enclosed in a matching delimiter pair, or when it sits at the
     /// very end of the text.
@@ -474,11 +488,9 @@ impl<'a> Inliner<'a> {
         prob.children
             .push(Node::text_node(start_str.to_string(), self.span));
         self.nodes.push(prob);
-        let mut msg = messages::system_message(
+        let mut msg = self.report(
             messages::WARNING,
             &format!("Inline {construct} start-string without end-string."),
-            self.lineno,
-            self.source_path,
         );
         msg.attrs.ids.push(msg_id);
         msg.attrs.backrefs.push(prob_id);
@@ -655,9 +667,7 @@ impl<'a> Inliner<'a> {
                     .push(crate::doctree::ids::fully_normalize_name(&unescape(
                         &raw, false,
                     )));
-                let msgs = self
-                    .state
-                    .note_explicit_target(&mut t, self.lineno, self.source_path);
+                let msgs = self.state.note_explicit_target(&mut t, self.loc());
                 t.children.push(Node::text_node_escaped(&raw, self.span));
                 self.nodes.push(t);
                 self.messages.extend(msgs);
@@ -808,12 +818,8 @@ impl<'a> Inliner<'a> {
     fn role_problematic(&mut self, rawsource: &str, info: Option<String>, level: u8, text: &str) {
         self.flush_text();
         if let Some(info_text) = info {
-            self.messages.push(messages::system_message(
-                messages::INFO,
-                &info_text,
-                self.lineno,
-                self.source_path,
-            ));
+            let info = self.report(messages::INFO, &info_text);
+            self.messages.push(info);
         }
         // `Inliner.problematic`: `set_id(msg)`, then `set_id(prb)`.
         let msg_id = self.state.ids.allocate(kinds::SYSTEM_MESSAGE, &[], None);
@@ -824,7 +830,7 @@ impl<'a> Inliner<'a> {
         prob.children
             .push(Node::text_node(unescape(rawsource, true), self.span));
         self.nodes.push(prob);
-        let mut msg = messages::system_message(level, text, self.lineno, self.source_path);
+        let mut msg = self.report(level, text);
         msg.attrs.ids.push(msg_id);
         msg.attrs.backrefs.push(prob_id);
         self.messages.push(msg);
@@ -1640,9 +1646,7 @@ impl<'a> Inliner<'a> {
                         t.set("refname", AttrValue::Str(alias));
                         self.state.note_indirect_target(&mut t);
                         self.state.note_refname(&mut r);
-                        let msgs =
-                            self.state
-                                .note_implicit_target(&mut t, self.lineno, self.source_path);
+                        let msgs = self.state.note_implicit_target(&mut t, self.loc());
                         self.nodes.push(r);
                         self.nodes.push(t);
                         self.messages.extend(msgs);
@@ -1689,9 +1693,7 @@ impl<'a> Inliner<'a> {
                         let mut t = Node::elem(kinds::TARGET, self.span);
                         t.attrs.names.push(ids(&display_text));
                         t.set("refuri", AttrValue::Str(uri));
-                        let msgs =
-                            self.state
-                                .note_implicit_target(&mut t, self.lineno, self.source_path);
+                        let msgs = self.state.note_implicit_target(&mut t, self.loc());
                         self.nodes.push(t);
                         self.messages.extend(msgs);
                     }
@@ -2017,7 +2019,9 @@ fn match_standalone_uri(chars: &[char], at: usize) -> Option<(usize, String, Str
 }
 
 /// Inline-parse one logical text block (a paragraph's joined lines, a
-/// title, a term…). `lineno` anchors any generated messages.
+/// title, a term…) on its own, in docutils mode. `lineno` anchors any
+/// generated messages, which stamp `source_path` when the state has no
+/// source table yet (a state the block parser threads already has one).
 pub fn parse_inline(
     text: &str,
     span: Span,
@@ -2025,6 +2029,9 @@ pub fn parse_inline(
     state: &mut DocumentState,
     source_path: &str,
 ) -> InlineResult {
+    if state.parse.sources.is_empty() {
+        state.parse.sources.push(std::sync::Arc::from(source_path));
+    }
     // Docutils mode: no sphinx role reads the py configuration, so the
     // defaults are as good as any.
     let py = crate::py::PySigConfig::default();
@@ -2033,7 +2040,6 @@ pub fn parse_inline(
         span,
         lineno,
         state,
-        source_path,
         false,
         "index",
         RefContext::default(),
@@ -2041,13 +2047,15 @@ pub fn parse_inline(
     )
 }
 
+/// [`parse_inline`] with the mode and context the block parser passes;
+/// messages stamp the path of `span`'s source from the state's source
+/// table.
 #[allow(clippy::too_many_arguments)]
 pub fn parse_inline_ext(
     text: &str,
     span: Span,
     lineno: u32,
     state: &mut DocumentState,
-    source_path: &str,
     sphinx: bool,
     docname: &str,
     ctx: RefContext<'_>,
@@ -2058,7 +2066,6 @@ pub fn parse_inline_ext(
         chars: escaped.chars().collect(),
         span,
         lineno,
-        source_path,
         state,
         sphinx,
         docname,
@@ -2196,18 +2203,7 @@ mod tests {
     /// The same, under a chosen ref_context.
     fn sphinx_nodes_in(text: &str, ctx: RefContext<'_>, py: &crate::py::PySigConfig) -> Vec<Node> {
         let mut state = DocumentState::default();
-        parse_inline_ext(
-            text,
-            Span::ZERO,
-            1,
-            &mut state,
-            "<snippet>",
-            true,
-            "index",
-            ctx,
-            py,
-        )
-        .nodes
+        parse_inline_ext(text, Span::ZERO, 1, &mut state, true, "index", ctx, py).nodes
     }
 
     fn attr<'a>(node: &'a Node, key: &'static str) -> Option<&'a AttrValue> {
