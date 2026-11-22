@@ -560,9 +560,10 @@ impl DocumentState {
     ///   `substitution_names`: `[normalized name, name]` pairs, both in
     ///   docutils' dict order (a redefined name keeps its first position
     ///   and takes its last value);
-    /// - `names`: `[name, id or null, explicit]`, in `nametypes` order;
-    /// - `pending`: `[transform, order, entry]` per pending transform, in
-    ///   parse order, the transform as its dotted Python path.
+    /// - `names`: `[name, id or null, explicit]`, in `nametypes` order.
+    ///
+    /// The pending transforms ([`Self::pending`]) are not a registry and
+    /// are not dumped.
     pub fn registries_dump(&self, root: &Node) -> serde_json::Value {
         use serde_json::{json, Value};
         let reached = Reached::of(root, &self.detached);
@@ -614,13 +615,6 @@ impl DocumentState {
                 .names
                 .iter()
                 .map(|(name, bound)| json!([name, bound.id, bound.explicit]))
-                .collect::<Vec<_>>(),
-            "pending": self
-                .pending
-                .iter()
-                .map(|record| {
-                    json!([record.transform.python_path(), record.order, entry(&record.node)])
-                })
                 .collect::<Vec<_>>(),
         })
     }
@@ -1172,10 +1166,10 @@ mod tests {
     /// entries in registration order, a dict-of-lists registry as
     /// `[key, entries]` pairs in key order, `substitution_defs` and
     /// `substitution_names` in docutils' dict order (a redefined name keeps
-    /// its first position and names its last node), `names` as
-    /// `[name, id, explicit]` in `nametypes` order, and each pending
-    /// transform as `[transform, order, entry]`. A node reachable from the
-    /// root is attached; one only `detached` holds is not.
+    /// its first position and names its last node), and `names` as
+    /// `[name, id, explicit]` in `nametypes` order; the pending transforms
+    /// are not part of it. A node reachable from the root is attached; one
+    /// only `detached` holds is not.
     #[test]
     fn registries_dump_shape() {
         let mut state = DocumentState::default();
@@ -1213,6 +1207,7 @@ mod tests {
                 .substitution_names
                 .insert(name.to_lowercase(), name.to_string());
         }
+        // Left out of the dump; the reachability check below still covers it.
         state.pending.push(PendingRecord {
             transform: PendingTransform::ClassAttribute,
             order: 0,
@@ -1247,9 +1242,6 @@ mod tests {
                 "substitution_defs": [["s", subdef(true)], ["T", subdef(true)]],
                 "substitution_names": [["s", "s"], ["t", "T"]],
                 "names": [["t", "t", true]],
-                "pending": [
-                    ["docutils.transforms.misc.ClassAttribute", 0, ["pending", [], true]]
-                ],
             })
         );
         assert!(state.misplaced_registrations(&root).is_empty());

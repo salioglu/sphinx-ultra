@@ -1223,21 +1223,6 @@ mod tests {
         );
         assert_eq!(pending[0].rawsource(), Some(".. class:: a\n"));
         assert_eq!(pending[1].rawsource(), Some(".. class:: b\n"));
-        assert_eq!(
-            out.state.registries_dump(&out.doctree.root)["pending"],
-            json!([
-                [
-                    "docutils.transforms.misc.ClassAttribute",
-                    0,
-                    ["pending", [], true]
-                ],
-                [
-                    "docutils.transforms.misc.ClassAttribute",
-                    1,
-                    ["pending", [], true]
-                ],
-            ])
-        );
     }
 
     /// The first node of `kind` in document order.
