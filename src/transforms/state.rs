@@ -472,9 +472,10 @@ pub struct DocumentState {
     pub final_position: DocLoc,
     /// The docutils locations of the nodes whose location the default rule
     /// ([DS §8.2]) does not give, by identity. So far the `reference` an
-    /// `image`'s `:target:` wraps at document or section level: docutils
-    /// appends it with the source and no line, since the option block's
-    /// nested state machine has cleared the line ([DS §6.1]).
+    /// `image`'s `:target:` wraps: docutils appends it after the option
+    /// block's nested state machine has cleared the line, so it has the
+    /// source and no line when its container has `document` set, and
+    /// neither when it has not ([DS §6.1]).
     pub loc_overrides: HashMap<Uid, DocLoc>,
     /// docutils' node registries ([`Registries`]), by node identity.
     pub registries: Registries,

@@ -1340,6 +1340,54 @@ mod tests {
         assert_eq!(message.element_astext(), text);
     }
 
+    /// docutils checks a simple table row by row (its margins, then its
+    /// column spans: `check_columns`, `init_row`) before `build_table`
+    /// parses a cell (`tableparser.py:393-490`, `states.py:1799-1815`), so
+    /// a malformed table parses none of its cells. The log holds the
+    /// Malformed-table record alone, at `startline + offset` (the failing
+    /// row's start plus one); a footnote reference in an earlier row's cell
+    /// is never created, let alone registered; and a column span problem
+    /// in one row is found before text in a later row's margin. Probed on
+    /// docutils 0.22.4: each input prints its Malformed-table message at
+    /// line 5 (`table line` 5, 5 and 3) and nothing else.
+    #[test]
+    fn malformed_simple_table_parses_no_cell() {
+        let emphasis = "=====  =====\n*a     b\n=====  =====\nc      d\n--  --------\n=====  =====";
+        let footnote = "=====  =====\n[#]_   b\n=====  =====\nc      d\n--  --------\n=====  =====";
+        let margin_after = "=====  =====\n*a     b\n--  --------\nc     xd\n=====  =====";
+        for sphinx in [false, true] {
+            let options = ParseOptions {
+                source_path: "<snippet>".into(),
+                sphinx,
+                ..Default::default()
+            };
+            for (before, block, after, table_line) in [
+                ("", emphasis, "", 5),
+                ("", footnote, "\n.. [#] Note.\n", 5),
+                ("Para.\n\n", margin_after, "", 3),
+            ] {
+                // In a debug build, the end-of-parse assertion fails the
+                // parse when a parsed cell's registration is dropped.
+                let out = parse_rst_full(&format!("{before}{block}\n{after}"), &options);
+                let text = format!(
+                    "Malformed table.\nColumn span alignment problem in table line \
+                     {table_line}.\n\n{block}"
+                );
+                assert_eq!(
+                    reporter_records(&out),
+                    [(0, 3, DocLoc::at(0, 5), text)],
+                    "{block:?} (sphinx: {sphinx})"
+                );
+                assert_eq!(tree_messages(&out).len(), 1);
+                assert!(out.state.registries.autofootnote_refs.is_empty());
+                assert!(out
+                    .state
+                    .misplaced_registrations(&out.doctree.root)
+                    .is_empty());
+            }
+        }
+    }
+
     /// One counter numbers the parse's records in creation order, whatever
     /// their channel: a reporter message, a toctree warning, a logger
     /// warning. Swapping the inputs swaps the numbers.
@@ -1446,43 +1494,83 @@ mod tests {
         assert_eq!(seqs, [0, 2]);
     }
 
-    /// The `reference` an image's `:target:` wraps is appended right after
-    /// the option block's nested state machine cleared the line, so at
-    /// document or section level it has the source and no line
-    /// (`docutils-0439`, [DS §6.1]); one a nested parse appends to a
-    /// container not yet in the document has neither, the default rule,
-    /// and gets no override. Probed on docutils 0.22.4 (`reference.source`
-    /// and `.line` after the parse).
+    /// The `reference` an image's `:target:` wraps is appended to its
+    /// container right after the option block's nested state machine
+    /// cleared the line, so docutils' `setup_child` gives it the source and
+    /// no line when that container has `document` set, and neither when it
+    /// has not ([DS §6.1]; `docutils-0439`). The attached containers are
+    /// the document, a section, and those Sphinx attaches before it fills
+    /// them: object description content, `py:module` content, `only`
+    /// (inside a `note` too) and glossary definitions. A `note` (inside
+    /// `only` too), a list item and a substitution definition are not, nor
+    /// is a figure, which takes the reference before anything appends the
+    /// figure. The default rule gives a node outside a TextElement its
+    /// span's location ([DS §8.2] rule 4), which is neither, so both are
+    /// recorded. Probed after the parse on docutils 0.22.4 (the rows of
+    /// both modes) and by a priority-1 transform on Sphinx 9.1.0 (every
+    /// row).
     #[test]
     fn loc_overrides_for_image_target_refs() {
-        for source in [
-            ".. image:: pic.png\n   :target: sometarget_\n",
-            ".. image:: pic.png\n   :target: https://x/\n",
-            "Title\n=====\n\n.. image:: pic.png\n   :target: sometarget_\n",
-        ] {
-            let out = sphinx_parse(source);
+        let source_only = DocLoc {
+            source: Some(SourceRef::Table(0)),
+            line: None,
+        };
+        let neither = DocLoc::default();
+        // `directive` with a `:target:` after `prefix`, indented by `indent`.
+        let target = |prefix: &str, indent: &str, directive: &str| {
+            format!("{prefix}{indent}.. {directive} pic.png\n{indent}   :target: sometarget_\n")
+        };
+        let image = |prefix: &str, indent: &str| target(prefix, indent, "image::");
+        let both_modes = [
+            (image("", ""), source_only),
+            (image("Title\n=====\n\n", ""), source_only),
+            (image(".. note::\n\n", "   "), neither),
+            (image("- item\n\n", "  "), neither),
+            (target("", "", "figure::"), neither),
+            (target("", "", "|x| image::"), neither),
+        ];
+        let sphinx_only = [
+            (
+                ".. image:: pic.png\n   :target: https://x/\n".to_string(),
+                source_only,
+            ),
+            (image(".. py:function:: f()\n\n", "   "), source_only),
+            (image(".. describe:: thing\n\n", "   "), source_only),
+            (image(".. py:module:: m\n\n", "   "), source_only),
+            (image(".. only:: html\n\n", "   "), source_only),
+            (
+                image(".. note::\n\n   .. only:: html\n\n", "      "),
+                source_only,
+            ),
+            (image(".. glossary::\n\n   term\n", "      "), source_only),
+            (
+                image(".. only:: html\n\n   .. note::\n\n", "      "),
+                neither,
+            ),
+            (
+                target(".. py:function:: f()\n\n", "   ", "figure::"),
+                neither,
+            ),
+        ];
+        let docutils = ParseOptions {
+            source_path: "<snippet>".into(),
+            ..Default::default()
+        };
+        let mut parses = Vec::new();
+        for (source, expected) in both_modes.iter().chain(&sphinx_only) {
+            parses.push((sphinx_parse(source), source, expected));
+        }
+        for (source, expected) in &both_modes {
+            parses.push((parse_rst_full(source, &docutils), source, expected));
+        }
+        for (out, source, expected) in parses {
             let reference = first(&out.doctree.root, kinds::REFERENCE).expect("a reference");
             let uid = reference
                 .uid()
                 .expect("an override gives the node an identity");
-            let expected = DocLoc {
-                source: Some(SourceRef::Table(0)),
-                line: None,
-            };
             assert_eq!(
                 out.state.loc_overrides,
-                std::collections::HashMap::from([(uid, expected)]),
-                "{source:?}"
-            );
-        }
-        for source in [
-            ".. note::\n\n   .. image:: pic.png\n      :target: sometarget_\n",
-            ".. figure:: pic.png\n   :target: sometarget_\n",
-            ".. |x| image:: pic.png\n   :target: sometarget_\n",
-            "- item\n\n  .. image:: pic.png\n     :target: sometarget_\n",
-        ] {
-            assert!(
-                sphinx_parse(source).state.loc_overrides.is_empty(),
+                std::collections::HashMap::from([(uid, *expected)]),
                 "{source:?}"
             );
         }

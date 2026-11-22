@@ -230,6 +230,15 @@ pub(crate) struct BlockParser {
     /// `state_machine.node`); None at document/section level. Directives
     /// like topic/sidebar validate their direct parent against this.
     nested_node_kind: Option<&'static str>,
+    /// Whether the container the parse is filling has `document` set, so
+    /// that docutils' `setup_child` gives a child appended without a
+    /// location `document.current_source` and `current_line`
+    /// (`nodes.py:150-157`): at document and section level, and in the
+    /// containers Sphinx attaches before it fills them
+    /// ([`Self::parse_nested_attached`]). A container docutils builds and
+    /// fills before appending it (a list item, a `note`, a table entry, a
+    /// substitution definition) is not.
+    attached: bool,
     /// Sphinx mode (see [`super::ParseOptions::sphinx`]).
     pub(crate) sphinx: bool,
     /// The docname stamped on pending_xref nodes (sphinx `refdoc`).
@@ -384,6 +393,7 @@ impl BlockParser {
             depth: 0,
             line_bias: 0,
             nested_node_kind: None,
+            attached: true,
             sphinx: false,
             docname: "index".to_string(),
             found_docs: None,
@@ -557,11 +567,37 @@ impl BlockParser {
     }
 
     /// parse_elements with the containing node kind recorded (docutils
-    /// nested_parse: `state_machine.node` = the container element).
+    /// nested_parse: `state_machine.node` = the container element), into a
+    /// container not yet attached ([`Self::attached`]).
     fn parse_nested(&mut self, lines: &[LineRec], kind: &'static str) -> Vec<Node> {
-        let saved = self.nested_node_kind.replace(kind);
+        self.parse_nested_into(lines, kind, false)
+    }
+
+    /// [`Self::parse_nested`] into a container that has `document` set
+    /// while it is filled. Sphinx's `nested_parse_to_nodes` parses into an
+    /// anonymous `Element` it attaches first (`SP/sphinx/util/parsing.py:62-63`):
+    /// object description content (`directives/__init__.py:288`),
+    /// `py:module` content (`domains/python/__init__.py:505`), glossary
+    /// definitions (`domains/std/__init__.py:541`) and `hlist`
+    /// (`directives/other.py:289`). `only` sets `node.document` itself
+    /// (`directives/other.py:322`). The changeset directives do both
+    /// (`domains/changeset.py:67,82`), but their content is not
+    /// nested-parsed here.
+    fn parse_nested_attached(&mut self, lines: &[LineRec], kind: &'static str) -> Vec<Node> {
+        self.parse_nested_into(lines, kind, true)
+    }
+
+    fn parse_nested_into(
+        &mut self,
+        lines: &[LineRec],
+        kind: &'static str,
+        attached: bool,
+    ) -> Vec<Node> {
+        let saved_kind = self.nested_node_kind.replace(kind);
+        let saved_attached = std::mem::replace(&mut self.attached, attached);
         let nodes = self.parse_elements(lines);
-        self.nested_node_kind = saved;
+        self.nested_node_kind = saved_kind;
+        self.attached = saved_attached;
         nodes
     }
 
@@ -591,6 +627,11 @@ impl BlockParser {
         // `note_pending` order) and hands it back.
         sub.state = std::mem::take(&mut self.state);
         sub.nested_node_kind = Some(kind);
+        // A csv-table entry is filled before anything appends it. (Sphinx
+        // parses a code caption into an attached container, but over
+        // lines whose source is `<generated text>`, which no table entry
+        // names; that case is not modelled.)
+        sub.attached = false;
         sub.line_bias = self.line_bias;
         sub.depth = self.depth;
         // The mode must flow through the detached parse (review finding:
@@ -3165,9 +3206,16 @@ impl BlockParser {
             });
         }
 
-        // margin check + last-column extension, per ROW using the row's own
-        // colspec (span rows have merged columns — docutils check_columns).
+        // `parse_row` (`tableparser.py:466-490`), row by row: the margin
+        // check and last-column extension (`check_columns`, with the row's
+        // own colspec: span rows have merged columns), then each cell's
+        // column span (`init_row`). docutils checks every row before
+        // `build_table` parses a cell (`states.py:1799-1815`), so a
+        // malformed table parses none.
+        let col_starts: Vec<usize> = columns.iter().map(|(s, _)| *s).collect();
+        let col_ends: Vec<usize> = columns.iter().map(|(_, e)| *e).collect();
         let mut last_col_end = border_end;
+        let mut rows_morecols: Vec<Vec<usize>> = Vec::with_capacity(rows.len());
         for row in &rows {
             for bi in row.start..row.end.min(bottom) {
                 let line = &work[bi];
@@ -3199,50 +3247,43 @@ impl BlockParser {
                     last_col_end = last_col_end.max(extent);
                 }
             }
-        }
-
-        // map span cols -> column indices for morecols; validate alignment
-        let col_starts: Vec<usize> = columns.iter().map(|(s, _)| *s).collect();
-        let col_ends: Vec<usize> = columns.iter().map(|(_, e)| *e).collect();
-        let mut built_rows: Vec<(usize, Node)> = Vec::new(); // (start_line, row)
-        for row in &rows {
-            let mut r = Node::elem(kinds::ROW, self.span_of(lines, start, end));
+            // Each cell starts on a column and ends on one (the last cell
+            // on the last); the `TableMarkupError` carries
+            // `offset=offset+1`, which `malformed_table` adds to the
+            // table's first line.
+            let mut morecols = Vec::with_capacity(row.cols.len());
             for (ci, (cs, ce)) in row.cols.iter().enumerate() {
-                let ce_eff = if ci == row.cols.len() - 1 {
-                    last_col_end.max(*ce)
+                let first_col = col_starts.iter().position(|s| s == cs);
+                let last_col = if ci == row.cols.len() - 1 {
+                    Some(columns.len() - 1)
                 } else {
-                    *ce
+                    col_ends.iter().position(|e| e == ce)
                 };
-                let Some(ci_start) = col_starts.iter().position(|s| s == cs) else {
+                let (Some(first_col), Some(last_col)) = (first_col, last_col) else {
                     out.push(malformed(
                         self,
                         &format!(
                             "Column span alignment problem in table line {}.",
                             row.start + 2
                         ),
-                        block[0].lineno,
+                        block[0].lineno + row.start as u32 + 1,
                     ));
                     return;
                 };
-                let span_end_col = if ci == row.cols.len() - 1 {
-                    columns.len() - 1
+                morecols.push(last_col - first_col);
+            }
+            rows_morecols.push(morecols);
+        }
+
+        let mut built_rows: Vec<(usize, Node)> = Vec::new(); // (start_line, row)
+        for (row, row_morecols) in rows.iter().zip(rows_morecols) {
+            let mut r = Node::elem(kinds::ROW, self.span_of(lines, start, end));
+            for (ci, ((cs, ce), morecols)) in row.cols.iter().zip(row_morecols).enumerate() {
+                let ce_eff = if ci == row.cols.len() - 1 {
+                    last_col_end.max(*ce)
                 } else {
-                    match col_ends.iter().position(|e| e == ce) {
-                        Some(p) => p,
-                        None => {
-                            out.push(malformed(
-                                self,
-                                &format!(
-                                    "Column span alignment problem in table line {}.",
-                                    row.start + 2
-                                ),
-                                block[0].lineno,
-                            ));
-                            return;
-                        }
-                    }
+                    *ce
                 };
-                let morecols = span_end_col - ci_start;
                 let mut entry = Node::elem(kinds::ENTRY, self.span_of(lines, start, end));
                 if morecols > 0 {
                     entry.set("morecols", AttrValue::Int(morecols as i64));
@@ -4631,7 +4672,7 @@ impl BlockParser {
             Some(OptVal::Int(n)) if *n > 0 => *n as usize,
             _ => 2,
         };
-        let children = self.parse_nested(&input.content, "element");
+        let children = self.parse_nested_attached(&input.content, "element");
         let one_list = children.len() == 1 && children[0].kind == kinds::BULLET_LIST;
         if !one_list {
             // logger.warning('.. hlist content is not a list') goes to the
@@ -4860,7 +4901,7 @@ impl BlockParser {
             }
             item.children.extend(term_messages);
             let mut definition = Node::elem(kinds::DEFINITION, input.span);
-            definition.children = self.parse_nested(&def_lines, "definition");
+            definition.children = self.parse_nested_attached(&def_lines, "definition");
             item.children.push(definition);
             dl.children.push(item);
         }
@@ -5033,7 +5074,7 @@ impl BlockParser {
             self.py_before_content(py, &names, &input);
         }
         let mut content = Node::elem("desc_content", span);
-        content.children = self.parse_nested(&input.content, "desc_content");
+        content.children = self.parse_nested_attached(&input.content, "desc_content");
         if kind == DescDispatch::Std(ObjectDescKind::Confval) {
             self.confval_transform_content(&input, &mut content);
         }
@@ -5835,7 +5876,7 @@ impl BlockParser {
         // inside nested content are not representable in this parser (a
         // pre-existing wave-4 limitation shared by every nested parse),
         // and the T8 corpus excludes section-bearing module content.
-        let content = self.parse_nested(&input.content, "py_module");
+        let content = self.parse_nested_attached(&input.content, "py_module");
         if !no_index {
             let node_id = self.state.sphinx_make_id("module", &modname);
             self.state.ids.register(&node_id, None);
@@ -6139,7 +6180,7 @@ impl BlockParser {
     fn run_only(&mut self, input: DirectiveInput<'_>, out: &mut Vec<Node>) {
         let mut node = Node::elem("only", input.span);
         node.set("expr", AttrValue::Str(input.arguments[0].clone()));
-        let content = self.parse_nested(&input.content, "only");
+        let content = self.parse_nested_attached(&input.content, "only");
         node.children.extend(content);
         out.push(node);
     }
@@ -7354,28 +7395,34 @@ impl BlockParser {
     fn run_image(&mut self, input: DirectiveInput<'_>, out: &mut Vec<Node>) {
         match self.build_image(&input, out) {
             Ok(mut node) => {
-                // The `:target:` reference is appended to the parent right
-                // after the option block's nested state machine cleared
-                // `document.current_line`, so `setup_child` gives it the
-                // source and no line — when the parent is attached, as the
-                // document and a section are; a container a nested parse
-                // fills (a list item, a `note`, a substitution definition)
-                // is not yet, and gives it neither ([DS §6.1, §8.2];
-                // `docutils-0439`).
-                if node.kind == kinds::REFERENCE && self.nested_node_kind.is_none() {
-                    let uid = self.state.identify(&mut node);
-                    self.state.loc_overrides.insert(
-                        uid,
-                        DocLoc {
-                            source: Some(SourceRef::Table(input.span.source)),
-                            line: None,
-                        },
-                    );
+                if node.kind == kinds::REFERENCE {
+                    self.note_image_target_location(&mut node, input.span.source, self.attached);
                 }
                 out.push(node);
             }
             Err(msg) => out.push(*msg),
         }
+    }
+
+    /// Records the docutils location of the `reference` an image's
+    /// `:target:` wraps ([DS §6.1, §8.2]; `docutils-0439`). It is appended
+    /// to its container right after the option block's nested state
+    /// machine cleared `document.current_line`, so `setup_child` gives it
+    /// the source and no line when the container is `attached`
+    /// ([`Self::attached`]), and neither when it is not. The default rule
+    /// gives a node outside a TextElement its span's location, which is
+    /// neither of these, so the override is always recorded.
+    fn note_image_target_location(&mut self, reference: &mut Node, source: u16, attached: bool) {
+        let uid = self.state.identify(reference);
+        let loc = if attached {
+            DocLoc {
+                source: Some(SourceRef::Table(source)),
+                line: None,
+            }
+        } else {
+            DocLoc::default()
+        };
+        self.state.loc_overrides.insert(uid, loc);
     }
 
     /// images.py Image.run(): builds the image node (possibly wrapped in a
@@ -7497,7 +7544,7 @@ impl BlockParser {
             lineno: input.lineno,
             rawsource: input.rawsource,
         };
-        let image_node = match self.build_image(&image_input, out) {
+        let mut image_node = match self.build_image(&image_input, out) {
             Ok(n) => n,
             Err(msg) => {
                 // Inner image error short-circuits: no <figure> at all.
@@ -7505,6 +7552,11 @@ impl BlockParser {
                 return;
             }
         };
+        if image_node.kind == kinds::REFERENCE {
+            // `nodes.figure('', image_node)` (`images.py:137`) appends it
+            // to a figure nothing has appended yet.
+            self.note_image_target_location(&mut image_node, input.span.source, false);
+        }
         let mut figure = Node::elem("figure", input.span);
         match opt_get(&input.options, "figwidth") {
             // ':figwidth: image' needs PIL, which the oracle environment
@@ -8091,6 +8143,7 @@ impl BlockParser {
             };
             self.substitution_ctx = Some(SubstCtx::default());
             let saved_kind = self.nested_node_kind.replace("substitution_definition");
+            let saved_attached = std::mem::replace(&mut self.attached, false);
             self.run_directive_core(
                 &dname,
                 dfirst,
@@ -8102,6 +8155,7 @@ impl BlockParser {
                 &mut produced,
             );
             self.nested_node_kind = saved_kind;
+            self.attached = saved_attached;
             let ctx = self.substitution_ctx.take().unwrap_or_default();
             if ctx.ltrim {
                 subst.set("ltrim", AttrValue::Int(1));
