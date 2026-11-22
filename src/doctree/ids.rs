@@ -3,19 +3,23 @@
 //!
 //! Algorithms ported from docutils 0.22.4 `nodes.py` (`make_id`,
 //! `fully_normalize_name`, `whitespace_normalize_name`, and the
-//! `document` registration methods `set_id`, `note_implicit_target` and
-//! `note_explicit_target`) and Sphinx's `make_id`. The id and name
-//! bookkeeping they drive, with the Sphinx settings `id_prefix=''`,
-//! `auto_id_prefix='id'` (sphinx/environment overrides docutils' `'%'`
-//! default — auto ids are `id1`, `id2`, …), is the document state's
+//! `document` registration methods: `set_id`, `note_implicit_target`,
+//! `note_explicit_target` and the `note_*` calls that fill the node
+//! registries) and Sphinx's `make_id`. The id and name bookkeeping they
+//! drive, with the Sphinx settings `id_prefix=''`, `auto_id_prefix='id'`
+//! (sphinx/environment overrides docutils' `'%'` default — auto ids are
+//! `id1`, `id2`, …), is the document state's
 //! [`IdAllocator`](crate::transforms::state::IdAllocator) and
-//! [`NameTable`](crate::transforms::state::NameTable).
+//! [`NameTable`](crate::transforms::state::NameTable); the registries,
+//! which hold nodes by identity ([`Uid`]), are its
+//! [`Registries`](crate::transforms::state::Registries).
 
 use unicode_normalization::UnicodeNormalization;
 
 use super::messages;
-use super::Node;
-use crate::transforms::state::{DocumentState, NodeView};
+use super::pending::PendingTransform;
+use super::{AttrValue, Node, Uid};
+use crate::transforms::state::{DocumentState, NodeView, PendingRecord};
 use crate::utils::py_isspace;
 
 /// docutils `_non_id_translate_digraphs` (applied after lowercasing).
@@ -209,17 +213,159 @@ impl DocumentState {
     /// docutils `document.set_id(node)` (`nodes.py:1827-1875`) on a node
     /// the parser holds. A node that already carries ids registers them
     /// and keeps the last one (`set_id` returns its loop variable); a node
-    /// without ids takes a new one from the allocator.
+    /// without ids takes a new one from the allocator. Either way the ids
+    /// are held by the node's identity, when it has one.
     pub(crate) fn set_id(&mut self, node: &mut Node) -> String {
+        let holder = node.uid();
         if let Some(last) = node.attrs.ids.last().cloned() {
             for id in &node.attrs.ids {
-                self.ids.register(id);
+                self.ids.register(id, holder);
             }
             return last;
         }
-        let id = self.ids.allocate(node.kind, &node.attrs.names);
+        let id = self.ids.allocate(node.kind, &node.attrs.names, holder);
         node.attrs.ids.push(id.clone());
         id
+    }
+
+    /// The node's identity: the [`Uid`] it carries, or a newly minted one
+    /// it is stamped with. Every node a registry or a pending record
+    /// holds has one.
+    pub(crate) fn identify(&mut self, node: &mut Node) -> Uid {
+        match node.uid() {
+            Some(uid) => uid,
+            None => {
+                let uid = self.mint_uid();
+                node.set_uid(uid);
+                uid
+            }
+        }
+    }
+
+    /// docutils `note_refname(node)` (`nodes.py:2009-2010`):
+    /// `refnames[node['refname']].append(node)`. A node without a
+    /// `refname` is a caller error (docutils raises `KeyError`) and is
+    /// not noted.
+    pub(crate) fn note_refname(&mut self, node: &mut Node) {
+        let Some(AttrValue::Str(refname)) = node.get("refname") else {
+            debug_assert!(false, "note_refname on a {} without a refname", node.kind);
+            return;
+        };
+        let refname = refname.clone();
+        let uid = self.identify(node);
+        self.registries.refnames.push(&refname, uid);
+    }
+
+    /// docutils `note_indirect_target(target)` (`nodes.py:2015-2018`): the
+    /// target joins `indirect_targets` and, when it has a name, `refnames`
+    /// under the name it refers to.
+    pub(crate) fn note_indirect_target(&mut self, target: &mut Node) {
+        let uid = self.identify(target);
+        self.registries.indirect_targets.push(uid);
+        if !target.attrs.names.is_empty() {
+            self.note_refname(target);
+        }
+    }
+
+    /// docutils `note_autofootnote(footnote)`: `set_id`, then
+    /// `autofootnotes.append` (`nodes.py:2023-2025`).
+    pub(crate) fn note_autofootnote(&mut self, footnote: &mut Node) {
+        let uid = self.identify(footnote);
+        self.set_id(footnote);
+        self.registries.autofootnotes.push(uid);
+    }
+
+    /// docutils `note_autofootnote_ref(ref)` (`nodes.py:2027-2029`).
+    pub(crate) fn note_autofootnote_ref(&mut self, reference: &mut Node) {
+        let uid = self.identify(reference);
+        self.set_id(reference);
+        self.registries.autofootnote_refs.push(uid);
+    }
+
+    /// docutils `note_symbol_footnote(footnote)` (`nodes.py:2031-2033`).
+    pub(crate) fn note_symbol_footnote(&mut self, footnote: &mut Node) {
+        let uid = self.identify(footnote);
+        self.set_id(footnote);
+        self.registries.symbol_footnotes.push(uid);
+    }
+
+    /// docutils `note_symbol_footnote_ref(ref)` (`nodes.py:2035-2037`).
+    pub(crate) fn note_symbol_footnote_ref(&mut self, reference: &mut Node) {
+        let uid = self.identify(reference);
+        self.set_id(reference);
+        self.registries.symbol_footnote_refs.push(uid);
+    }
+
+    /// docutils `note_footnote(footnote)` (`nodes.py:2039-2041`): a
+    /// manually numbered footnote.
+    pub(crate) fn note_footnote(&mut self, footnote: &mut Node) {
+        let uid = self.identify(footnote);
+        self.set_id(footnote);
+        self.registries.footnotes.push(uid);
+    }
+
+    /// docutils `note_footnote_ref(ref)` (`nodes.py:2043-2046`):
+    /// `set_id`, `footnote_refs[refname].append`, `note_refname`. A
+    /// `[#name]_` reference arrives here after `note_autofootnote_ref`,
+    /// so its `set_id` registers the id the node already holds.
+    pub(crate) fn note_footnote_ref(&mut self, reference: &mut Node) {
+        let uid = self.identify(reference);
+        self.set_id(reference);
+        if let Some(AttrValue::Str(refname)) = reference.get("refname") {
+            let refname = refname.clone();
+            self.registries.footnote_refs.push(&refname, uid);
+        }
+        self.note_refname(reference);
+    }
+
+    /// docutils `note_citation(citation)` (`nodes.py:2048-2049`): no
+    /// `set_id`; the caller's `note_explicit_target` gives the id.
+    pub(crate) fn note_citation(&mut self, citation: &mut Node) {
+        let uid = self.identify(citation);
+        self.registries.citations.push(uid);
+    }
+
+    /// docutils `note_citation_ref(ref)` (`nodes.py:2051-2054`).
+    pub(crate) fn note_citation_ref(&mut self, reference: &mut Node) {
+        let uid = self.identify(reference);
+        self.set_id(reference);
+        if let Some(AttrValue::Str(refname)) = reference.get("refname") {
+            let refname = refname.clone();
+            self.registries.citation_refs.push(&refname, uid);
+        }
+        self.note_refname(reference);
+    }
+
+    /// The registry half of docutils `note_substitution_def(subdef,
+    /// def_name, msgnode)` (`nodes.py:2056-2073`), for the whitespace-
+    /// normalized `name`: the definition is the name's latest, and its
+    /// fully normalized form maps to it. The duplicate-name error and the
+    /// old definition's `dupname` stay with the caller, which holds the
+    /// tree.
+    pub(crate) fn note_substitution_def(&mut self, subdef: &mut Node, name: &str) {
+        let uid = self.identify(subdef);
+        self.registries
+            .substitution_defs
+            .push((name.to_string(), uid));
+        self.registries
+            .substitution_names
+            .insert(fully_normalize_name(name), name.to_string());
+    }
+
+    /// docutils `note_pending(pending)` (`nodes.py:2081-2083`): queues the
+    /// node's transform, in parse order, by the node's identity.
+    pub(crate) fn note_pending(
+        &mut self,
+        node: &mut Node,
+        transform: PendingTransform,
+        order: u32,
+    ) {
+        let node = self.identify(node);
+        self.pending.push(PendingRecord {
+            transform,
+            order,
+            node,
+        });
     }
 
     /// docutils `note_implicit_target(node, msgnode)` (`nodes.py:1996-2000`):
@@ -433,9 +579,9 @@ mod tests {
         // Not registered until `IdAllocator::register`, so the same call
         // repeats.
         assert_eq!(state.sphinx_make_id("envvar", "HOME"), "envvar-HOME");
-        state.ids.register("envvar-HOME");
+        state.ids.register("envvar-HOME", None);
         assert_eq!(state.sphinx_make_id("envvar", "HOME"), "envvar-0");
-        state.ids.register("envvar-0");
+        state.ids.register("envvar-0", None);
         assert_eq!(state.sphinx_make_id("envvar", "HOME"), "envvar-1");
         // A term that collapses to the prefix itself is "not good to
         // generate a node_id" and goes straight to the serial; the counter
@@ -452,16 +598,16 @@ mod tests {
     fn state_sphinx_make_id_empty_prefix_keeps_fullname_and_serials_as_id_n() {
         let mut state = DocumentState::default();
         assert_eq!(state.sphinx_make_id("", "mymod.C.meth"), "mymod.C.meth");
-        state.ids.register("mymod.C.meth");
+        state.ids.register("mymod.C.meth", None);
         assert_eq!(state.sphinx_make_id("", "mymod.C.meth"), "id0");
-        state.ids.register("id0");
+        state.ids.register("id0", None);
         assert_eq!(state.sphinx_make_id("", "mymod.C.meth"), "id1");
         // A term whose hash is empty goes straight to the serial; the
         // counter is shared per prefix ('' here), not per term.
-        state.ids.register("id1");
+        state.ids.register("id1", None);
         assert_eq!(state.sphinx_make_id("", "!!!"), "id2");
         // Empty term likewise.
-        state.ids.register("id2");
+        state.ids.register("id2", None);
         assert_eq!(state.sphinx_make_id("", ""), "id3");
     }
 

@@ -15,6 +15,9 @@ pub mod inline;
 pub mod lines;
 mod punctuation;
 
+use std::collections::HashMap;
+
+use crate::doctree::ids::DupnameFixup;
 use crate::doctree::Doctree;
 use crate::transforms::state::DocumentState;
 
@@ -376,6 +379,62 @@ impl ParseLogWarning {
     }
 }
 
+/// What the parser threads through every nested and detached sub-parse
+/// beside the docutils object state ([`DocumentState`], whose `parse`
+/// field holds it), so that a sub-parse continues the document rather than
+/// starting a new one: the record streams [`ParseOutput`] carries, the
+/// dupnames still owed to nodes the parser has placed, Sphinx's
+/// per-document serial counters, docutils' `include_log`, the substitution
+/// names defined twice, and the `note_pending` counter. The parse drains
+/// it when it ends.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct ParseOnlyState {
+    /// docutils `dupname(old_node, name)` on nodes already placed in the
+    /// tree, applied when the tree is complete
+    /// ([`crate::doctree::ids::apply_dupname_fixups`]).
+    pub(crate) dupname_fixups: Vec<DupnameFixup>,
+    /// sphinx `env.new_serialno('index')`, shared by the index directive
+    /// and the roles that emit index entries.
+    pub(crate) index_serial: u32,
+    /// The other `env.new_serialno(category)` counters, keyed by the
+    /// `sphinx.util.nodes.make_id` prefix that asked for one
+    /// (`cmdoption-myprog`, `confval`, …): per document and category, from
+    /// 0, like [`Self::index_serial`].
+    pub(crate) serialnos: HashMap<String, u32>,
+    /// docutils `document.include_log` (`nodes.py:1802-1803`): the open
+    /// inclusions as `(source display path, clip options)` pairs. Seeded
+    /// with the root document (and an empty clip) on first use
+    /// (`misc.py:253-256`); an entry is pushed before each splice and
+    /// popped when the comment path reaches the matching
+    /// `.. end of inclusion from "..."` marker.
+    pub(crate) include_log: Vec<(String, block::IncludeClip)>,
+    /// Substitution names defined more than once: when the tree is
+    /// complete, every definition but the last loses its name (docutils
+    /// `dupname`s the old node in place).
+    pub(crate) substitution_dupnames: Vec<String>,
+    /// The next `document.note_pending` order
+    /// ([`crate::doctree::pending::Pending::order`]).
+    pub(crate) next_pending_order: u32,
+    /// Validation-feed records ([`DirectiveRecord`], [`RoleRecord`]) and
+    /// the toctree records.
+    pub(crate) directive_records: Vec<DirectiveRecord>,
+    pub(crate) role_records: Vec<RoleRecord>,
+    pub(crate) toctree_records: Vec<ToctreeRecord>,
+    /// The std- and py-domain registrations the parse made, in document
+    /// order (see [`RegistryExport::program_options`] for why the finished
+    /// doctree cannot carry them).
+    pub(crate) program_option_records: Vec<ProgramOptionRecord>,
+    pub(crate) std_object_records: Vec<ObjectRegistration>,
+    pub(crate) py_object_records: Vec<PyObjectRecord>,
+    pub(crate) py_module_records: Vec<PyModuleRecord>,
+    /// `logger.warning` diagnostics raised while running directives.
+    pub(crate) log_warnings: Vec<ParseLogWarning>,
+    /// Parse-recorded dependency paths and included docnames (see
+    /// [`RegistryExport::dependencies`]); sphinx mode only.
+    pub(crate) dependency_records: Vec<String>,
+    pub(crate) included_records: Vec<String>,
+}
+
 /// Everything a parse produces: the doctree plus the flat records the
 /// build pipeline consumes without re-walking raw source.
 pub struct ParseOutput {
@@ -413,6 +472,8 @@ pub fn parse_rst_full(source: &str, opts: &ParseOptions) -> ParseOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::doctree::{kinds, Node, Uid};
+    use serde_json::{json, Value};
 
     /// The complete current [`RegistryExport`] shape, with one record of
     /// every kind, so that a guard below can remove exactly ONE field and
@@ -550,5 +611,714 @@ mod tests {
             r#"{"glob":false,"entries":[],"source":1,"line":3,"warnings":[]}"#,
             r#"{"glob":false,"entries":[],"line":3,"warnings":[]}"#,
         );
+    }
+
+    // ------------------------------------------------------------------
+    // docutils registrations by node identity ([DS §4, §7.3, §8.2])
+    // ------------------------------------------------------------------
+
+    fn sphinx_options() -> ParseOptions {
+        ParseOptions {
+            source_path: "<snippet>".into(),
+            sphinx: true,
+            ..Default::default()
+        }
+    }
+
+    fn sphinx_parse(source: &str) -> ParseOutput {
+        parse_rst_full(source, &sphinx_options())
+    }
+
+    /// `registries_post_parse` of a sphinx-mode parse.
+    fn dump(source: &str) -> Value {
+        let out = sphinx_parse(source);
+        out.state.registries_dump(&out.doctree.root)
+    }
+
+    /// The ids of every `kind` node in document order.
+    fn tree_ids(node: &Node, kind: &str, out: &mut Vec<String>) {
+        if node.kind == kind {
+            out.extend(node.attrs.ids.iter().cloned());
+        }
+        for child in &node.children {
+            tree_ids(child, kind, out);
+        }
+    }
+
+    fn footnote_ref_tree_order(out: &ParseOutput) -> Vec<String> {
+        let mut ids = Vec::new();
+        tree_ids(&out.doctree.root, kinds::FOOTNOTE_REFERENCE, &mut ids);
+        ids
+    }
+
+    /// `[kind, ids, attached]` entries of `autofootnote_refs`.
+    fn auto_ref(id: &str, attached: bool) -> Value {
+        json!(["footnote_reference", [id], attached])
+    }
+
+    /// Only the facts [DS §4.2] (the corpus rows where registration order
+    /// or membership differs from the tree) and [DS §4.3 (a)-(h)] state,
+    /// checked on the post-parse dump. Every value below is also what a
+    /// parse-only Sphinx 9.1.0 run records for the input
+    /// (`apply_transforms` intercepted, registries walked by identity).
+    /// Every other `state.*` case is compared in T6 against the generated
+    /// fixture.
+    #[test]
+    fn registries_post_parse_literal_facts() {
+        // docutils-0575: the `[#]_` registers during the inline parse, then
+        // the substitution definition is rejected — the reference stays
+        // registered, detached.
+        let d = dump(".. |f| replace:: note [#]_\n");
+        assert_eq!(d["autofootnote_refs"], json!([auto_ref("id1", false)]));
+
+        // docutils-0224 / -0226: the embedded alias's target registers in
+        // `indirect_targets` and `refnames` BEFORE its reference
+        // (`states.py:977-978`), so registration order is not tree order.
+        for (source, alias) in [
+            ("See `text <alias_>`_ here.\n", "alias"),
+            ("See `text <two words_>`_ here.\n", "two words"),
+        ] {
+            let d = dump(source);
+            assert_eq!(d["indirect_targets"], json!([["target", ["text"], true]]));
+            assert_eq!(
+                d["refnames"],
+                json!([[alias, [["target", ["text"], true], ["reference", [], true]]]]),
+                "{source}"
+            );
+            assert_eq!(d["names"], json!([["text", "text", false]]));
+        }
+
+        // docutils-0240 / -0241: a citation reference lands in
+        // `citation_refs` and `refnames` (619 later detaches it).
+        for (source, label) in [
+            ("Cite [cite2020]_ end.\n", "cite2020"),
+            ("Cite [Cite.2020-X]_ end.\n", "cite.2020-x"),
+        ] {
+            let d = dump(source);
+            let registered = json!([[label, [["citation_reference", ["id1"], true]]]]);
+            assert_eq!(d["citation_refs"], registered, "{source}");
+            assert_eq!(d["refnames"], registered, "{source}");
+        }
+
+        // (a) DocFieldTransformer reorders the registered references: the
+        // registry is id1 id2 id3, the tree id1 id3 id2.
+        let source = ".. py:function:: f(a, b)\n\n   :param a: first [#]_\n   \
+                      :returns: result [#]_\n   :param b: second [#]_\n\n\
+                      .. [#] one\n.. [#] two\n.. [#] three\n";
+        let out = sphinx_parse(source);
+        let d = out.state.registries_dump(&out.doctree.root);
+        assert_eq!(
+            d["autofootnote_refs"],
+            json!([
+                auto_ref("id1", true),
+                auto_ref("id2", true),
+                auto_ref("id3", true)
+            ])
+        );
+        assert_eq!(footnote_ref_tree_order(&out), ["id1", "id3", "id2"]);
+
+        // (b) a `:sorted:` glossary: zeta's reference registers first
+        // (id1), alpha's second (id2), and the tree puts alpha first.
+        let source = ".. glossary::\n   :sorted:\n\n   zeta\n      Last letter [#]_.\n\n   \
+                      alpha\n      First letter [#]_.\n\n.. [#] z\n.. [#] a\n";
+        let out = sphinx_parse(source);
+        let d = out.state.registries_dump(&out.doctree.root);
+        assert_eq!(
+            d["autofootnote_refs"],
+            json!([auto_ref("id1", true), auto_ref("id2", true)])
+        );
+        assert_eq!(footnote_ref_tree_order(&out), ["id2", "id1"]);
+
+        // (c) the abstract's reference registers before the author's.
+        let d = dump(
+            ":Abstract: abstract text [#]_\n:Author: someone [#]_\n\n.. [#] one\n.. [#] two\n",
+        );
+        assert_eq!(
+            d["autofootnote_refs"],
+            json!([auto_ref("id1", true), auto_ref("id2", true)])
+        );
+
+        // (d) rejected `table` / `list-table` content keeps its
+        // registrations: the references in the title and the content are
+        // registered and detached (the footnotes' later backrefs).
+        let d = dump(
+            ".. table:: Cap [#]_\n\n   not a table [#]_\n\nText [#]_.\n\n.. [#] a\n.. [#] b\n",
+        );
+        assert_eq!(
+            d["autofootnote_refs"],
+            json!([
+                auto_ref("id1", false),
+                auto_ref("id2", false),
+                auto_ref("id3", true)
+            ])
+        );
+        assert_eq!(
+            d["autofootnotes"],
+            json!([["footnote", ["id4"], true], ["footnote", ["id5"], true]])
+        );
+        let d = dump(".. list-table::\n\n   not a list [#]_\n\nText [#]_.\n\n.. [#] a\n");
+        assert_eq!(
+            d["autofootnote_refs"],
+            json!([auto_ref("id1", false), auto_ref("id2", true)])
+        );
+        assert_eq!(d["autofootnotes"], json!([["footnote", ["id3"], true]]));
+
+        // (e) a rejected substitution definition's embedded alias: the
+        // target stays an indirect target and keeps its name, detached.
+        let d = dump(".. |f| replace:: `x <a_>`_\n\nText.\n");
+        assert_eq!(d["indirect_targets"], json!([["target", ["x"], false]]));
+        assert_eq!(
+            d["refnames"],
+            json!([["a", [["target", ["x"], false], ["reference", [], false]]]])
+        );
+        assert_eq!(d["names"], json!([["x", "x", false]]));
+        // ... and a plain inline target keeps its name (no registry holds
+        // the target itself).
+        let d = dump(".. |f| replace:: _`x`\n\nText x_.\n");
+        assert_eq!(d["names"], json!([["x", "x", true]]));
+        assert_eq!(d["refnames"], json!([["x", [["reference", [], true]]]]));
+
+        // (f) the reference inside the definition is the first `refnames`
+        // entry for its name (the 220 copies append to it later).
+        let d = dump("One |s| two |s|.\n\n.. _indirect: missing_\n\n.. |s| replace:: indirect_\n");
+        assert_eq!(
+            d["refnames"],
+            json!([
+                ["missing", [["target", ["indirect"], true]]],
+                ["indirect", [["reference", [], true]]]
+            ])
+        );
+        assert_eq!(
+            d["substitution_defs"],
+            json!([["s", ["substitution_definition", [], true]]])
+        );
+        assert_eq!(d["substitution_names"], json!([["s", "s"]]));
+
+        // (g) both citation references sit in `citation_refs` (which later
+        // decide the citation's backrefs).
+        let d = dump("Cite [CIT]_ and [CIT]_.\n\n.. [CIT] The citation.\n");
+        let refs = json!([[
+            "cit",
+            [
+                ["citation_reference", ["id1"], true],
+                ["citation_reference", ["id2"], true]
+            ]
+        ]]);
+        assert_eq!(d["citation_refs"], refs);
+        assert_eq!(d["refnames"], refs);
+        assert_eq!(d["citations"], json!([["citation", ["cit"], true]]));
+
+        // (h) one list per footnote kind, each in registration order.
+        let d = dump(".. [#] auto one\n.. [*] sym\n.. [1] manual\n.. [#b] auto labeled\n");
+        assert_eq!(
+            d["autofootnotes"],
+            json!([["footnote", ["id1"], true], ["footnote", ["b"], true]])
+        );
+        assert_eq!(d["symbol_footnotes"], json!([["footnote", ["id2"], true]]));
+        assert_eq!(d["footnotes"], json!([["footnote", ["id3"], true]]));
+        assert_eq!(d["names"], json!([["1", "id3", true], ["b", "b", true]]));
+    }
+
+    /// Every `Uid` stamped on a node in the subtree.
+    fn uids_in(node: &Node, out: &mut Vec<Uid>) {
+        out.extend(node.uid());
+        for child in &node.children {
+            uids_in(child, out);
+        }
+    }
+
+    /// A footnote reference inside a rejected substitution definition is
+    /// registered and lives on in `detached` (Review Focus 5;
+    /// `state.rejected_subst_autofootnote` and `docutils-0575`): the
+    /// definition the parser discarded is a detached root holding the
+    /// registered node, and the root never reaches it.
+    #[test]
+    fn detached_registrations_survive_the_parse() {
+        for (source, refs) in [
+            (
+                ".. |f| replace:: note [#]_\n\nText [#]_.\n\n.. [#] the footnote\n",
+                json!([auto_ref("id1", false), auto_ref("id2", true)]),
+            ),
+            (
+                ".. |f| replace:: note [#]_\n",
+                json!([auto_ref("id1", false)]),
+            ),
+        ] {
+            let out = sphinx_parse(source);
+            let state = &out.state;
+            assert_eq!(
+                state.registries_dump(&out.doctree.root)["autofootnote_refs"],
+                refs,
+                "{source}"
+            );
+            let detached_ref = state.registries.autofootnote_refs[0];
+            let [definition] = state.detached.as_slice() else {
+                panic!("one detached root, got {:?}", state.detached);
+            };
+            assert_eq!(definition.kind, "substitution_definition");
+            assert_eq!(definition.attrs.names, ["f"]);
+            assert_eq!(definition.rawsource(), Some(".. |f| replace:: note [#]_"));
+            let mut in_detached = Vec::new();
+            uids_in(definition, &mut in_detached);
+            assert_eq!(in_detached, [detached_ref], "{source}");
+            let mut in_tree = Vec::new();
+            uids_in(&out.doctree.root, &mut in_tree);
+            assert!(!in_tree.contains(&detached_ref), "{source}");
+            assert!(state.misplaced_registrations(&out.doctree.root).is_empty());
+        }
+    }
+
+    /// Every way a directive drops content it already parsed keeps that
+    /// content's registrations in `detached`: `replace` with more than a
+    /// paragraph, a `table` whose widths do not fit, a `csv-table` failing
+    /// after its title, `list-table`'s structure checks, a figure caption
+    /// that is no paragraph (with the legend after it), a non-list
+    /// `hlist`, a `:no-typesetting:` description, and the doc-field
+    /// transformer (an unclaimed `:type:`, a `:param:` whose content has
+    /// no text, a `:meta:` field, an unknown field name's first node).
+    /// Each registry below is what a parse-only Sphinx 9.1.0 run records.
+    #[test]
+    fn dropped_content_keeps_its_registrations() {
+        let detached_refs = |n: usize| {
+            Value::Array(
+                (1..=n)
+                    .map(|i| auto_ref(&format!("id{i}"), false))
+                    .collect(),
+            )
+        };
+        for (source, refs) in [
+            (".. |x| replace:: a [#]_\n\n   b\n", 1),
+            (
+                ".. table:: T [#]_\n   :widths: 1 2 3\n\n   ===  ===\n   a    b\n   ===  ===\n",
+                1,
+            ),
+            (".. csv-table:: T [#]_\n   :header-rows: 5\n\n   a, b\n", 1),
+            (".. list-table:: T [#]_\n\n   - a [#]_\n", 2),
+            (".. list-table::\n\n   - - a [#]_\n   - - b\n     - c\n", 1),
+            (".. figure:: a.png\n\n   - x [#]_\n\n   legend [#]_\n", 2),
+            (".. hlist::\n\n   para [#]_\n", 1),
+            (
+                ".. py:function:: f()\n   :no-typesetting:\n\n   Body [#]_.\n",
+                1,
+            ),
+            (
+                ".. py:function:: f(x)\n\n   :type y: [#]_\n   :param x: [#]_\n   \
+                 :meta m: [#]_\n   :notafield_: body\n",
+                3,
+            ),
+        ] {
+            let out = sphinx_parse(source);
+            let d = out.state.registries_dump(&out.doctree.root);
+            assert_eq!(d["autofootnote_refs"], detached_refs(refs), "{source}");
+            assert!(
+                out.state
+                    .misplaced_registrations(&out.doctree.root)
+                    .is_empty(),
+                "{source}"
+            );
+        }
+        let d = dump(
+            ".. py:function:: f(x)\n\n   :type y: [#]_\n   :param x: [#]_\n   \
+             :meta m: [#]_\n   :notafield_: body\n",
+        );
+        assert_eq!(
+            d["refnames"],
+            json!([["notafield", [["reference", [], false]]]])
+        );
+    }
+
+    /// The `PySigConfig` keys a fixture's `conf` sets; the other keys the
+    /// fixtures carry steer no parse.
+    fn py_config_of(conf: &serde_json::Map<String, Value>) -> crate::py::PySigConfig {
+        let mut py = crate::py::PySigConfig::default();
+        let flag = |key: &str, value: &Value| {
+            value
+                .as_bool()
+                .unwrap_or_else(|| panic!("conf key {key}: expected a bool, got {value}"))
+        };
+        for (key, value) in conf {
+            match key.as_str() {
+                "maximum_signature_line_length" => {
+                    py.maximum_signature_line_length = value.as_i64()
+                }
+                "python_maximum_signature_line_length" => {
+                    py.python_maximum_signature_line_length = value.as_i64();
+                }
+                "python_trailing_comma_in_multi_line_signatures" => {
+                    py.python_trailing_comma_in_multi_line_signatures = flag(key, value);
+                }
+                "python_display_short_literal_types" => {
+                    py.python_display_short_literal_types = flag(key, value);
+                }
+                "python_use_unqualified_type_names" => {
+                    py.python_use_unqualified_type_names = flag(key, value);
+                }
+                "toc_object_entries" => py.toc_object_entries = flag(key, value),
+                "toc_object_entries_show_parents" => {
+                    py.toc_object_entries_show_parents =
+                        value.as_str().expect("a string value").to_string();
+                }
+                "add_function_parentheses" => py.add_function_parentheses = flag(key, value),
+                "add_module_names" => py.add_module_names = flag(key, value),
+                "strip_signature_backslash" => py.strip_signature_backslash = flag(key, value),
+                "smartquotes"
+                | "keep_warnings"
+                | "nitpicky"
+                | "numfig"
+                | "numfig_format"
+                | "numfig_secnum_depth"
+                | "modindex_common_prefix" => {}
+                other => panic!("unmapped conf key {other:?}: map it onto the parse options"),
+            }
+        }
+        py
+    }
+
+    fn fixture(name: &str) -> Value {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(name);
+        let text = std::fs::read_to_string(&path).expect("fixture readable");
+        serde_json::from_str(&text).expect("fixture parses")
+    }
+
+    /// The end-of-parse assertion ([DS §8.2]: every registered `Uid` is
+    /// reachable exactly once from the root or from `detached`), checked
+    /// explicitly on every input of the three parse corpora: each
+    /// `doctree_differential.json` case in docutils mode and again in
+    /// sphinx mode, each `sphinx_doctree_differential.json` case in sphinx
+    /// mode with its `conf`, and every document of every
+    /// `env_differential.json` project, parsed the way the build parses it
+    /// (sphinx mode, its srcdir, docname and docname set).
+    ///
+    /// Only the docutils corpus registers nodes: the other two hold no
+    /// reference, footnote, citation or substitution definition (their
+    /// targets are labels and `refuri` targets, which no registry keeps).
+    /// It registers 93 nodes per mode and keeps one detached subtree per
+    /// mode (`substitutions.replace_auto_footnote_error`), the floors
+    /// below.
+    #[test]
+    fn every_registered_uid_is_reachable_once() {
+        /// Per corpus: parses checked, distinct nodes registered, detached
+        /// subtrees kept.
+        #[derive(Debug, Default)]
+        struct Tally {
+            parses: usize,
+            registered: usize,
+            detached: usize,
+        }
+        let mut tallies: [Tally; 3] = Default::default();
+        let mut check = |corpus: usize, label: &str, output: &ParseOutput| {
+            let state = &output.state;
+            let misplaced = state.misplaced_registrations(&output.doctree.root);
+            assert!(misplaced.is_empty(), "{label}: {misplaced:?}");
+            let tally = &mut tallies[corpus];
+            tally.parses += 1;
+            // Every registered node holds one identity.
+            tally.registered += state.next_uid as usize;
+            tally.detached += state.detached.len();
+        };
+
+        let docutils = fixture("doctree_differential.json");
+        for case in docutils["cases"].as_array().expect("cases") {
+            let name = case["name"].as_str().expect("name");
+            let source = case["rst"].as_str().expect("rst");
+            for sphinx in [false, true] {
+                let options = ParseOptions {
+                    source_path: "<snippet>".into(),
+                    sphinx,
+                    ..Default::default()
+                };
+                let label = format!("{name} (sphinx: {sphinx})");
+                check(0, &label, &parse_rst_full(source, &options));
+            }
+        }
+
+        let sphinx = fixture("sphinx_doctree_differential.json");
+        for case in sphinx["cases"].as_array().expect("cases") {
+            let name = case["name"].as_str().expect("name");
+            let source = case["rst"].as_str().expect("rst");
+            let options = ParseOptions {
+                py: case["conf"]
+                    .as_object()
+                    .map(py_config_of)
+                    .unwrap_or_default(),
+                ..sphinx_options()
+            };
+            check(1, name, &parse_rst_full(source, &options));
+        }
+
+        let env = fixture("env_differential.json");
+        for project in env["projects"].as_array().expect("projects") {
+            let name = project["name"].as_str().expect("name");
+            let tmp = tempfile::TempDir::new().expect("tempdir");
+            let srcdir = tmp.path();
+            let files = project["files"].as_object().expect("files");
+            let data_files = project["data_files"]
+                .as_object()
+                .cloned()
+                .unwrap_or_default();
+            let write = |relpath: &str, body: &Value| {
+                let path = srcdir.join(relpath);
+                std::fs::create_dir_all(path.parent().expect("a parent")).expect("mkdir");
+                std::fs::write(path, body.as_str().expect("text")).expect("write");
+            };
+            for (docname, body) in files {
+                write(&format!("{docname}.rst"), body);
+            }
+            for (relpath, body) in &data_files {
+                write(relpath, body);
+            }
+            let found_docs: std::collections::BTreeSet<String> = files.keys().cloned().collect();
+            let found_docs = std::sync::Arc::new(found_docs);
+            let py = py_config_of(project["conf"].as_object().expect("conf"));
+            for (docname, body) in files {
+                let path = srcdir.join(format!("{docname}.rst"));
+                let options = ParseOptions {
+                    source_path: path.display().to_string(),
+                    sphinx: true,
+                    docname: docname.clone(),
+                    found_docs: Some(std::sync::Arc::clone(&found_docs)),
+                    py: py.clone(),
+                    srcdir: Some(srcdir.to_path_buf()),
+                    ..Default::default()
+                };
+                let source = body.as_str().expect("text");
+                let label = format!("{name}/{docname}");
+                check(2, &label, &parse_rst_full(source, &options));
+            }
+        }
+
+        // 735 docutils cases twice, 489 sphinx cases, 84 env documents; the
+        // check is not vacuous.
+        let [docutils, sphinx, env] = &tallies;
+        assert!(
+            docutils.parses >= 2 * 735 && sphinx.parses >= 489 && env.parses >= 84,
+            "too few parses checked: {tallies:?}"
+        );
+        assert!(
+            docutils.registered >= 2 * 93 && docutils.detached >= 2,
+            "the docutils corpus stopped exercising the check: {tallies:?}"
+        );
+    }
+
+    /// IdEvents raised inside a detached sub-parse (a csv-table cell is
+    /// parsed over its own lifted text) reach the trace in document order
+    /// (T5a review, ruling 4). Probed with a docutils 0.22.4 `set_id`
+    /// wrapper: `title`, then the cell's message/problematic pair `id1`
+    /// `id2`, then the trailing paragraph's `id3` `id4`.
+    #[test]
+    fn detached_sub_parse_ids_reach_the_trace_in_document_order() {
+        let source = "Title\n=====\n\n.. csv-table::\n\n   *x, b\n\nTail *y\n";
+        for sphinx in [false, true] {
+            let out = parse_rst_full(
+                source,
+                &ParseOptions {
+                    source_path: "<snippet>".into(),
+                    sphinx,
+                    trace_ids: true,
+                    ..Default::default()
+                },
+            );
+            let trace: Vec<(&str, &str)> = out
+                .state
+                .ids
+                .trace()
+                .iter()
+                .map(|event| (event.kind, event.id.as_str()))
+                .collect();
+            assert_eq!(
+                trace,
+                [
+                    ("section", "title"),
+                    ("system_message", "id1"),
+                    ("problematic", "id2"),
+                    ("system_message", "id3"),
+                    ("problematic", "id4"),
+                ],
+                "sphinx mode: {sphinx}"
+            );
+        }
+    }
+
+    /// Sphinx's `IndexDirective.run` notes its target in both branches
+    /// (`SP/sphinx/domains/index.py:78-85`; T5a review, ruling 3). Without
+    /// `:name:` the target carries `index-N`, which `document.ids` then
+    /// holds, so a later label named `index-0` takes an auto id. With
+    /// `:name:` the target's names are the raw option value and
+    /// `note_explicit_target` allocates its id (`make_id` of the name, or
+    /// the counter once that is taken), which the entries name; no index
+    /// serial is drawn. Parse-layer trees probed on Sphinx 9.1.0 with
+    /// `apply_transforms` intercepted.
+    #[test]
+    fn index_directive_registers_its_target() {
+        let out = sphinx_parse(".. index:: single: foo\n\n.. _index-0:\n\nText.\n");
+        assert_eq!(
+            out.doctree.root.pformat(),
+            concat!(
+                "<document source=\"<snippet>\">\n",
+                "    <index entries=\"('single',\\ 'foo',\\ 'index-0',\\ '',\\ None)\" inline=\"0\">\n",
+                "    <target ids=\"index-0\">\n",
+                "    <target ids=\"id1\" names=\"index-0\">\n",
+                "    <paragraph>\n",
+                "        Text.\n",
+            )
+        );
+        assert!(out.state.ids.is_taken("index-0"));
+
+        let out = sphinx_parse(".. index:: single: foo\n   :name: Bar Baz\n\n.. index:: bar\n");
+        assert_eq!(
+            out.doctree.root.pformat(),
+            concat!(
+                "<document source=\"<snippet>\">\n",
+                "    <index entries=\"('single',\\ 'foo',\\ 'bar-baz',\\ '',\\ None)\" inline=\"0\">\n",
+                "    <target ids=\"bar-baz\" names=\"Bar\\ Baz\">\n",
+                "    <index entries=\"('single',\\ 'bar',\\ 'index-0',\\ '',\\ None)\" inline=\"0\">\n",
+                "    <target ids=\"index-0\">\n",
+            )
+        );
+        assert_eq!(
+            out.state.registries_dump(&out.doctree.root)["names"],
+            json!([["Bar Baz", "bar-baz", true]])
+        );
+
+        let out =
+            sphinx_parse(".. _bar-baz:\n\nText.\n\n.. index:: single: foo\n   :name: Bar Baz\n");
+        assert!(out.doctree.root.pformat().ends_with(concat!(
+            "    <index entries=\"('single',\\ 'foo',\\ 'id1',\\ '',\\ None)\" inline=\"0\">\n",
+            "    <target ids=\"id1\" names=\"Bar\\ Baz\">\n",
+        )));
+    }
+
+    /// Every `pending` node is recorded with its transform, its
+    /// `note_pending` order and its identity, and keeps docutils'
+    /// `rawsource`: the directive's `block_text` (`misc.py:463-466`), which
+    /// runs through the blank line after the marker (probed:
+    /// `'.. class:: a\n'`).
+    #[test]
+    fn pending_nodes_are_recorded() {
+        let source = ".. class:: a\n\n.. class:: b\n\nPara.\n";
+        let out = parse_rst_full(source, &ParseOptions::default());
+        let pending: Vec<&Node> = out
+            .doctree
+            .root
+            .children
+            .iter()
+            .filter(|node| node.kind == "pending")
+            .collect();
+        assert_eq!(pending.len(), 2);
+        let records: Vec<(crate::doctree::pending::PendingTransform, u32, Option<Uid>)> = out
+            .state
+            .pending
+            .iter()
+            .map(|record| (record.transform, record.order, Some(record.node)))
+            .collect();
+        let class_attribute = crate::doctree::pending::PendingTransform::ClassAttribute;
+        assert_eq!(
+            records,
+            [
+                (class_attribute, 0, pending[0].uid()),
+                (class_attribute, 1, pending[1].uid()),
+            ]
+        );
+        assert_eq!(pending[0].rawsource(), Some(".. class:: a\n"));
+        assert_eq!(pending[1].rawsource(), Some(".. class:: b\n"));
+        assert_eq!(
+            out.state.registries_dump(&out.doctree.root)["pending"],
+            json!([
+                [
+                    "docutils.transforms.misc.ClassAttribute",
+                    0,
+                    ["pending", [], true]
+                ],
+                [
+                    "docutils.transforms.misc.ClassAttribute",
+                    1,
+                    ["pending", [], true]
+                ],
+            ])
+        );
+    }
+
+    /// The first node of `kind` in document order.
+    fn first<'a>(node: &'a Node, kind: &str) -> Option<&'a Node> {
+        if node.kind == kind {
+            return Some(node);
+        }
+        node.children.iter().find_map(|child| first(child, kind))
+    }
+
+    /// Every node of `kind`, in document order.
+    fn all<'a>(node: &'a Node, kind: &str, out: &mut Vec<&'a Node>) {
+        if node.kind == kind {
+            out.push(node);
+        }
+        for child in &node.children {
+            all(child, kind, out);
+        }
+    }
+
+    /// docutils keeps `rawsource` on the inline Referential nodes — the
+    /// text a transform turns into a `problematic` when the reference
+    /// fails (`references.py:138,294,556,596,703,982`) — and on
+    /// `substitution_definition` (its block text). pformat never prints
+    /// it. Values from the docutils 0.22.4 constructors: `reference`'s
+    /// `referencename + refend` and the whole backquoted phrase,
+    /// `'[%s]_' % label`, the substitution reference's `|name|` with its
+    /// underscores, and a standalone URI's matched text.
+    #[test]
+    fn referential_nodes_keep_their_rawsource() {
+        let source = "A ref_ and anon__ and `a phrase`_ and `alias <target_>`_ and \
+                      [#]_ [#n]_ [*]_ [1]_ [cit]_ and |sub| |sub2|_ and \
+                      https://x.example/p and :pep:`8`.\n\n\
+                      .. |sub| replace:: text\n";
+        for sphinx in [false, true] {
+            let out = parse_rst_full(
+                source,
+                &ParseOptions {
+                    source_path: "<snippet>".into(),
+                    sphinx,
+                    ..Default::default()
+                },
+            );
+            let root = &out.doctree.root;
+            let rawsources = |kind: &str| {
+                let mut nodes = Vec::new();
+                all(root, kind, &mut nodes);
+                nodes
+                    .iter()
+                    .map(|node| node.rawsource().map(str::to_string))
+                    .collect::<Vec<_>>()
+            };
+            let some = |values: &[&str]| -> Vec<Option<String>> {
+                values.iter().map(|value| Some(value.to_string())).collect()
+            };
+            let mut references = some(&[
+                "ref_",
+                "anon__",
+                "`a phrase`_",
+                "`alias <target_>`_",
+                "|sub2|_",
+                "https://x.example/p",
+            ]);
+            // docutils' `:pep:` role builds `reference(rawtext, ...)`;
+            // Sphinx's PEP role builds `reference('', '', ...)`.
+            references.push((!sphinx).then(|| ":pep:`8`".to_string()));
+            assert_eq!(rawsources(kinds::REFERENCE), references, "sphinx: {sphinx}");
+            assert_eq!(
+                rawsources(kinds::FOOTNOTE_REFERENCE),
+                some(&["[#]_", "[#n]_", "[*]_", "[1]_"]),
+                "sphinx: {sphinx}"
+            );
+            assert_eq!(rawsources(kinds::CITATION_REFERENCE), some(&["[cit]_"]));
+            assert_eq!(
+                rawsources(kinds::SUBSTITUTION_REFERENCE),
+                some(&["|sub|", "|sub2|_"])
+            );
+            let definition = first(root, "substitution_definition").expect("defined");
+            assert_eq!(definition.rawsource(), Some(".. |sub| replace:: text"));
+            // The inline target an embedded alias builds is no Referential.
+            assert_eq!(first(root, kinds::TARGET).and_then(Node::rawsource), None);
+        }
     }
 }

@@ -353,6 +353,14 @@ impl BlockParser {
     /// parse_document plus the flat build-pipeline records.
     pub(crate) fn parse_document_full(mut self) -> super::ParseOutput {
         let root = self.parse_document_impl();
+        // Every registered node is reachable exactly once, from the tree
+        // or from the detached subtrees ([DS §8.2]).
+        debug_assert_eq!(
+            self.state.misplaced_registrations(&root),
+            Vec::new(),
+            "registered nodes the parse dropped (0) or copied (2+) in {}",
+            self.sources.path(0)
+        );
         // The parse-only half of the state ends with the parse: its record
         // streams become the output's own fields, and the name table is
         // also exported as the nameids snapshot wave 4's std-domain label
@@ -2101,6 +2109,11 @@ impl BlockParser {
                             &source_path,
                         ));
                     }
+                    // `make_target`'s refname branch notes the indirect
+                    // target after `add_target` (`states.py:2081-2087`).
+                    if target.get("refname").is_some() {
+                        self.state.note_indirect_target(&mut target);
+                    }
                     out.push(target);
                 }
                 None => {
@@ -2292,19 +2305,26 @@ impl BlockParser {
         let span = self.span_of(lines, start, start + consumed);
         let mut node = Node::elem(kind, span);
         let mut has_label_child = false;
+        // `Body.footnote` / `Body.citation` (`states.py:2003-2051`): the
+        // registry call (each but `note_citation` runs `set_id`), then
+        // `note_explicit_target` for a named one or `set_id` again.
         if is_citation {
             node.attrs.names.push(ids::fully_normalize_name(&label));
             has_label_child = true;
+            self.state.note_citation(&mut node);
         } else if label == "*" {
             node.set("auto", AttrValue::Str("*".to_string()));
+            self.state.note_symbol_footnote(&mut node);
         } else if let Some(rest_label) = label.strip_prefix('#') {
             node.set("auto", AttrValue::Int(1));
             if !rest_label.is_empty() {
                 node.attrs.names.push(ids::fully_normalize_name(rest_label));
             }
+            self.state.note_autofootnote(&mut node);
         } else {
             node.attrs.names.push(ids::fully_normalize_name(&label));
             has_label_child = true;
+            self.state.note_footnote(&mut node);
         }
         let msgs = if node.attrs.names.is_empty() {
             self.state.set_id(&mut node);
@@ -4204,25 +4224,32 @@ impl BlockParser {
         out: &mut Vec<Node>,
     ) -> Result<Node, String> {
         let parsed = self.parse_detached(caption, 1, input.span.source, "caption");
-        let first = parsed.into_iter().next();
-        if let Some(node) = &first {
+        if let Some(node) = parsed.first() {
             if node.kind == kinds::SYSTEM_MESSAGE {
                 // `'Invalid caption: %s' % node.astext()` — the message
                 // renders through system_message.astext()'s
-                // `source:line: (TYPE/level)` prefix (probed).
-                return Err(format!("Invalid caption: {}", system_message_astext(node)));
+                // `source:line: (TYPE/level)` prefix (probed). The parse
+                // is dropped, its registrations kept.
+                let error = format!("Invalid caption: {}", system_message_astext(node));
+                self.state.detach(parsed);
+                return Err(error);
             }
         }
+        // Only `parsed[0]`'s children reach the caption: its own shell and
+        // the rest of the parse are dropped, their registrations kept.
+        let mut parsed = parsed.into_iter();
+        let mut caption_node = Node::elem("caption", input.span);
+        if let Some(mut node) = parsed.next() {
+            caption_node.children = std::mem::take(&mut node.children);
+            self.state.detach([node]);
+        }
+        self.state.detach(parsed);
         let mut container = Node::elem("container", input.span);
         container
             .attrs
             .classes
             .push("literal-block-wrapper".to_string());
         container.set("literal_block", AttrValue::Int(1));
-        let mut caption_node = Node::elem("caption", input.span);
-        if let Some(node) = first {
-            caption_node.children = node.children;
-        }
         container.children.push(caption_node);
         container.children.push(literal_node);
         // `add_name` lands on the CONTAINER (`code.py:502`); without a
@@ -4414,9 +4441,29 @@ impl BlockParser {
         }
     }
 
-    /// sphinx index directive (sphinx/domains/index.py IndexDirective).
+    /// sphinx index directive (`IndexDirective.run`,
+    /// `SP/sphinx/domains/index.py:75-92`). The target is `index-N` from
+    /// the serial, or — with `:name:` — named by the option value as
+    /// written, drawing no serial; either way
+    /// `document.note_explicit_target(targetnode)` registers it, giving a
+    /// named target its id (which the entries then name). Called without
+    /// a `msgnode`, it puts a duplicate name's message in no tree.
     fn run_index(&mut self, input: DirectiveInput<'_>, out: &mut Vec<Node>) {
-        let target_id = format!("index-{}", self.state.new_index_serialno());
+        let mut target = Node::elem(kinds::TARGET, input.span);
+        match opt_get(&input.options, "name") {
+            Some(OptVal::Str(name)) => target.attrs.names.push(name.clone()),
+            _ => target
+                .attrs
+                .ids
+                .push(format!("index-{}", self.state.new_index_serialno())),
+        }
+        let source_path = self.sources.arc_path(input.span.source);
+        drop(
+            self.state
+                .note_explicit_target(&mut target, input.lineno, &source_path),
+        );
+        // `targetnode['ids'][0]`: `set_id` left the node one id.
+        let target_id = target.attrs.ids[0].clone();
         let mut entries: Vec<String> = Vec::new();
         for line in input.arguments[0].split('\n') {
             let line = line.trim();
@@ -4428,13 +4475,6 @@ impl BlockParser {
         let mut index = Node::elem("index", input.span);
         index.set("entries", AttrValue::List(entries));
         index.set("inline", AttrValue::Int(0));
-        let mut target = Node::elem(kinds::TARGET, input.span);
-        match opt_get(&input.options, "name") {
-            Some(OptVal::Str(n)) => {
-                target.attrs.names.push(ids::fully_normalize_name(n));
-            }
-            _ => target.attrs.ids.push(target_id),
-        }
         out.push(index);
         out.push(target);
     }
@@ -4450,7 +4490,9 @@ impl BlockParser {
         let one_list = children.len() == 1 && children[0].kind == kinds::BULLET_LIST;
         if !one_list {
             // logger.warning('.. hlist content is not a list') goes to the
-            // log stream, not the tree.
+            // log stream, not the tree; `return []` drops the parsed
+            // content, its registrations kept.
+            self.state.detach(children);
             return;
         }
         let list = children.into_iter().next().expect("length checked");
@@ -4645,7 +4687,7 @@ impl BlockParser {
                 // case-preserving `_make_id` fork, with a `term`-keyed
                 // serial fallback of its own, then `note_explicit_target`.
                 let node_id = self.state.sphinx_make_id("term", &term_text);
-                self.state.ids.register(&node_id);
+                self.state.ids.register(&node_id, None);
                 term.attrs.ids.push(node_id.clone());
                 let mut index = Node::elem("index", term_span);
                 index.set(
@@ -4852,7 +4894,8 @@ impl BlockParser {
         // ref_context the py field xrefs just read.
         match kind {
             DescDispatch::Py(py) => {
-                filter_meta_fields(&mut content);
+                let meta_fields = filter_meta_fields(&mut content);
+                self.state.detach(meta_fields);
                 self.transform_doc_fields(&mut content, py_field_type_map);
                 self.py_after_content(py, &input);
             }
@@ -4870,7 +4913,7 @@ impl BlockParser {
             // `:299-313`: the description is replaced by a bare target
             // carrying every id it and its children had — and dropped
             // entirely when there are none (docutils rejects an id-less
-            // target).
+            // target). The description's registrations are kept.
             let mut ids = Vec::new();
             collect_element_ids(&desc, &mut ids);
             if !ids.is_empty() {
@@ -4878,6 +4921,7 @@ impl BlockParser {
                 target.attrs.ids = ids;
                 out.push(target);
             }
+            self.state.detach([desc]);
             return;
         }
         out.push(desc);
@@ -5056,7 +5100,7 @@ impl BlockParser {
                 // chosen, so the ids of one signature never see each other
                 // in `document.ids`.
                 for node_id in signode.attrs.ids.clone() {
-                    self.state.ids.register(&node_id);
+                    self.state.ids.register(&node_id, None);
                 }
                 // Every spelling registers against `signode['ids'][0]`.
                 let first_id = signode.attrs.ids.first().cloned().unwrap_or_default();
@@ -5100,7 +5144,7 @@ impl BlockParser {
         // Both callers pass `self.objtype` as the make_id prefix.
         let node_id = self.state.sphinx_make_id(objtype, name);
         signode.attrs.ids.push(node_id.clone());
-        self.state.ids.register(&node_id);
+        self.state.ids.register(&node_id, None);
         self.state
             .parse
             .std_object_records
@@ -5445,7 +5489,7 @@ impl BlockParser {
         // ([PY §1.5], the empty-prefix branch of `sphinx_make_id`).
         let node_id = self.state.sphinx_make_id("", &fullname);
         signode.attrs.ids.push(node_id.clone());
-        self.state.ids.register(&node_id);
+        self.state.ids.register(&node_id, None);
         self.state
             .parse
             .py_object_records
@@ -5594,11 +5638,16 @@ impl BlockParser {
             class_: self.py_class.clone(),
             span: Span::ZERO,
         };
+        // What the transformer drops: the rebuilt fields' shells, content
+        // a field cannot show, unclaimed `:type:` content. Registered
+        // nodes among it stay registered, as in docutils.
+        let mut dropped = Vec::new();
         for child in &mut content.children {
             if child.kind == kinds::FIELD_LIST {
-                transform_doc_field_list(child, map, &ctx, &self.py);
+                transform_doc_field_list(child, map, &ctx, &self.py, &mut dropped);
             }
         }
+        self.state.detach(dropped);
     }
 
     /// `PyModule.run` (`domains/python/__init__.py:492-536`, [PY §1.5]):
@@ -5623,7 +5672,7 @@ impl BlockParser {
         let content = self.parse_nested(&input.content, "py_module");
         if !no_index {
             let node_id = self.state.sphinx_make_id("module", &modname);
-            self.state.ids.register(&node_id);
+            self.state.ids.register(&node_id, None);
             let mut target = Node::elem(kinds::TARGET, input.span);
             target.attrs.ids.push(node_id.clone());
             target.set("ismod", AttrValue::Int(1));
@@ -6068,25 +6117,29 @@ impl BlockParser {
         let saved_ctx = self.substitution_ctx.take();
         let children = self.parse_nested(&input.content, "substitution_definition");
         self.substitution_ctx = saved_ctx;
-        let mut msgs: Vec<Node> = Vec::new();
-        let mut paragraphs: Vec<Node> = Vec::new();
-        let mut others = false;
-        for c in children {
-            if c.kind == kinds::SYSTEM_MESSAGE {
-                let mut m = c;
-                m.attrs.backrefs.clear();
-                msgs.push(m);
-            } else if c.kind == kinds::PARAGRAPH {
-                paragraphs.push(c);
-            } else {
-                others = true;
+        let paragraphs = children
+            .iter()
+            .filter(|c| c.kind == kinds::PARAGRAPH)
+            .count();
+        let others = children
+            .iter()
+            .any(|c| !matches!(c.kind, kinds::PARAGRAPH | kinds::SYSTEM_MESSAGE));
+        if paragraphs == 1 && !others {
+            // The messages, then the paragraph's inline content.
+            let mut paragraph = Vec::new();
+            for c in children {
+                if c.kind == kinds::SYSTEM_MESSAGE {
+                    let mut m = c;
+                    m.attrs.backrefs.clear();
+                    out.push(m);
+                } else {
+                    paragraph = c.children;
+                }
             }
-        }
-        if paragraphs.len() == 1 && !others {
-            out.extend(msgs);
-            out.extend(paragraphs.remove(0).children);
+            out.extend(paragraph);
         } else {
-            // reporter.error without a literal child (misc.py:378-383).
+            // reporter.error without a literal child (misc.py:378-383);
+            // the parsed content is dropped, its registrations kept.
             out.push(self.msg(
                 messages::ERROR,
                 &format!(
@@ -6096,6 +6149,7 @@ impl BlockParser {
                 input.span.source,
                 input.lineno,
             ));
+            self.state.detach(children);
         }
     }
 
@@ -6218,6 +6272,10 @@ impl BlockParser {
                 input.span.source, input.lineno,
                 input.rawsource,
             ));
+            // `return [error]`: the title and the parsed content are
+            // dropped, their registrations kept ([DS §4.3 (d)]).
+            self.state
+                .detach(title.into_iter().chain(title_messages).chain(children));
             return;
         }
         let mut table = children.into_iter().next().expect("length checked");
@@ -6256,6 +6314,8 @@ impl BlockParser {
                         input.lineno,
                         input.rawsource,
                     ));
+                    self.state
+                        .detach(title.into_iter().chain(title_messages).chain([table]));
                     return;
                 }
                 if let Some(tg) = table.children.first_mut() {
@@ -6390,6 +6450,8 @@ impl BlockParser {
             .unwrap_or(0)
             .max(max_header_cols);
         let row_lens: Vec<usize> = rows.iter().map(Vec::len).collect();
+        // Each failure below returns the error alone: the parsed title is
+        // dropped, its registrations kept (the cells are not parsed yet).
         if let Err(msg) = Self::check_table_dimensions(
             input.name,
             rows.len(),
@@ -6403,6 +6465,7 @@ impl BlockParser {
                 input.lineno,
                 input.rawsource,
             ));
+            self.state.detach(title.into_iter().chain(title_messages));
             return;
         }
         // Column widths (tables.py:101-118).
@@ -6419,6 +6482,7 @@ impl BlockParser {
                         input.lineno,
                         input.rawsource,
                     ));
+                    self.state.detach(title.into_iter().chain(title_messages));
                     return;
                 }
                 list.clone()
@@ -6431,6 +6495,7 @@ impl BlockParser {
                         input.lineno,
                         input.rawsource,
                     ));
+                    self.state.detach(title.into_iter().chain(title_messages));
                     return;
                 }
                 vec![(100 / max_cols) as i64; max_cols]
@@ -6493,57 +6558,6 @@ impl BlockParser {
         }
         let (title, title_messages) = self.table_make_title(&input);
         let children = self.parse_nested(&input.content, "element");
-        let content_error = |me: &Self, detail: &str| -> Node {
-            me.directive_run_error(
-                &format!(
-                    "Error parsing content block for the \"{}\" directive: {detail}",
-                    input.name
-                ),
-                input.span.source,
-                input.lineno,
-                input.rawsource,
-            )
-        };
-        if children.len() != 1 || children[0].kind != kinds::BULLET_LIST {
-            out.push(content_error(self, "exactly one bullet list expected."));
-            return;
-        }
-        let outer = children.into_iter().next().expect("length checked");
-        let mut table_data: Vec<Vec<Vec<Node>>> = Vec::new();
-        let mut first_len: Option<usize> = None;
-        for (i, item) in outer.children.into_iter().enumerate() {
-            let one_inner_list =
-                item.children.len() == 1 && item.children[0].kind == kinds::BULLET_LIST;
-            if !one_inner_list {
-                out.push(content_error(
-                    self,
-                    &format!(
-                        "two-level bullet list expected, but row {} does not contain a second-level bullet list.",
-                        i + 1
-                    ),
-                ));
-                return;
-            }
-            let inner = item.children.into_iter().next().expect("length checked");
-            let row: Vec<Vec<Node>> = inner.children.into_iter().map(|it| it.children).collect();
-            if let Some(f) = first_len {
-                if row.len() != f {
-                    out.push(content_error(
-                        self,
-                        &format!(
-                            "uniform two-level bullet list expected, but row {} does not contain the same number of items as row 1 ({} vs {}).",
-                            i + 1,
-                            row.len(),
-                            f
-                        ),
-                    ));
-                    return;
-                }
-            } else {
-                first_len = Some(row.len());
-            }
-            table_data.push(row);
-        }
         let header_rows = match opt_get(&input.options, "header-rows") {
             Some(OptVal::Int(n)) => *n as usize,
             _ => 0,
@@ -6552,48 +6566,37 @@ impl BlockParser {
             Some(OptVal::Int(n)) => *n as usize,
             _ => 0,
         };
-        let row_lens: Vec<usize> = table_data.iter().map(Vec::len).collect();
-        if let Err(msg) = Self::check_table_dimensions(
-            input.name,
-            table_data.len(),
-            &row_lens,
-            header_rows,
-            stub_columns,
-        ) {
-            out.push(self.directive_run_error(
-                &msg,
-                input.span.source,
-                input.lineno,
-                input.rawsource,
-            ));
-            return;
-        }
-        let n_cols = first_len.unwrap_or(0);
         let widths_opt = opt_get(&input.options, "widths").cloned();
-        let col_widths: Vec<i64> = match &widths_opt {
-            Some(OptVal::IntList(list)) => {
-                if list.len() != n_cols {
-                    out.push(self.directive_run_error(
-                        &format!(
-                            "\"{}\" widths do not match the number of columns in table ({}).",
-                            input.name, n_cols
-                        ),
-                        input.span.source,
-                        input.lineno,
-                        input.rawsource,
-                    ));
-                    return;
-                }
-                list.clone()
-            }
-            _ => {
-                if n_cols == 0 {
-                    out.push(content_error(self, "exactly one bullet list expected."));
-                    return;
-                }
-                vec![(100 / n_cols) as i64; n_cols]
+        // `check_list_content` and the dimension and width checks only
+        // inspect the parsed content (`tables.py:446-467`). A failure
+        // returns the error alone: the title and the content are dropped
+        // as parsed, their registrations kept ([DS §4.3 (d)]).
+        let checked = self.list_table_widths(&input, &children, header_rows, stub_columns);
+        let col_widths = match checked {
+            Ok(col_widths) => col_widths,
+            Err(error) => {
+                out.push(*error);
+                self.state
+                    .detach(title.into_iter().chain(title_messages).chain(children));
+                return;
             }
         };
+        let outer = children
+            .into_iter()
+            .next()
+            .expect("checked: one bullet list");
+        let table_data = outer.children.into_iter().map(|item| {
+            let inner = item
+                .children
+                .into_iter()
+                .next()
+                .expect("checked: a second-level list");
+            inner
+                .children
+                .into_iter()
+                .map(|it| it.children)
+                .collect::<Vec<_>>()
+        });
         let mut all_rows: Vec<Vec<Node>> = Vec::new();
         for row in table_data {
             let entries: Vec<Node> = row
@@ -6620,6 +6623,95 @@ impl BlockParser {
             table.attrs.classes.extend(cls.iter().cloned());
         }
         self.finish_table(table, &input, title, title_messages, out);
+    }
+
+    /// list-table's checks over its parsed content, in this order: one
+    /// bullet list, a second-level list in every row with as many items as
+    /// row 1, the table dimensions, then the column widths, which it
+    /// returns. Err is the directive's error message.
+    fn list_table_widths(
+        &self,
+        input: &DirectiveInput<'_>,
+        children: &[Node],
+        header_rows: usize,
+        stub_columns: usize,
+    ) -> Result<Vec<i64>, Box<Node>> {
+        let content_error = |detail: &str| -> Box<Node> {
+            Box::new(self.directive_run_error(
+                &format!(
+                    "Error parsing content block for the \"{}\" directive: {detail}",
+                    input.name
+                ),
+                input.span.source,
+                input.lineno,
+                input.rawsource,
+            ))
+        };
+        let outer = match children {
+            [outer] if outer.kind == kinds::BULLET_LIST => outer,
+            _ => return Err(content_error("exactly one bullet list expected.")),
+        };
+        let mut row_lens: Vec<usize> = Vec::new();
+        for (i, item) in outer.children.iter().enumerate() {
+            let inner = match item.children.as_slice() {
+                [inner] if inner.kind == kinds::BULLET_LIST => inner,
+                _ => {
+                    return Err(content_error(&format!(
+                        "two-level bullet list expected, but row {} does not contain a second-level bullet list.",
+                        i + 1
+                    )))
+                }
+            };
+            let len = inner.children.len();
+            if let Some(&first) = row_lens.first() {
+                if len != first {
+                    return Err(content_error(&format!(
+                        "uniform two-level bullet list expected, but row {} does not contain the same number of items as row 1 ({} vs {}).",
+                        i + 1,
+                        len,
+                        first
+                    )));
+                }
+            }
+            row_lens.push(len);
+        }
+        if let Err(msg) = Self::check_table_dimensions(
+            input.name,
+            row_lens.len(),
+            &row_lens,
+            header_rows,
+            stub_columns,
+        ) {
+            return Err(Box::new(self.directive_run_error(
+                &msg,
+                input.span.source,
+                input.lineno,
+                input.rawsource,
+            )));
+        }
+        let n_cols = row_lens.first().copied().unwrap_or(0);
+        match opt_get(&input.options, "widths") {
+            Some(OptVal::IntList(list)) => {
+                if list.len() != n_cols {
+                    return Err(Box::new(self.directive_run_error(
+                        &format!(
+                            "\"{}\" widths do not match the number of columns in table ({}).",
+                            input.name, n_cols
+                        ),
+                        input.span.source,
+                        input.lineno,
+                        input.rawsource,
+                    )));
+                }
+                Ok(list.clone())
+            }
+            _ => {
+                if n_cols == 0 {
+                    return Err(content_error("exactly one bullet list expected."));
+                }
+                Ok(vec![(100 / n_cols) as i64; n_cols])
+            }
+        }
     }
 
     /// check_table_dimensions (tables.py:59-91). Err = the message text.
@@ -7139,6 +7231,9 @@ impl BlockParser {
                 ImageTarget::Refname { name, refname } => {
                     node.set("name", AttrValue::Str(name));
                     node.set("refname", AttrValue::Str(refname));
+                    // `self.state.document.note_refname(reference_node)`
+                    // (`images.py:94`), before the image's `add_name`.
+                    self.state.note_refname(&mut node);
                 }
                 ImageTarget::Refuri(refuri) => {
                     node.set("refuri", AttrValue::Str(refuri));
@@ -7245,7 +7340,8 @@ impl BlockParser {
             let children = self.parse_nested(&input.content, "figure");
             let mut caption_done = false;
             let mut legend_children: Vec<Node> = Vec::new();
-            for child in children {
+            let mut children = children.into_iter();
+            while let Some(child) = children.next() {
                 if caption_done {
                     legend_children.push(child);
                     continue;
@@ -7261,7 +7357,8 @@ impl BlockParser {
                     caption_done = true;
                 } else {
                     // Unlike other directives, the figure node is emitted
-                    // BEFORE the error (images.py:176-181).
+                    // BEFORE the error (images.py:176-181). The parsed
+                    // content is dropped, its registrations kept.
                     out.push(figure);
                     out.push(self.directive_run_error(
                         "Figure caption must be a paragraph or empty comment.",
@@ -7269,6 +7366,7 @@ impl BlockParser {
                         input.lineno,
                         input.rawsource,
                     ));
+                    self.state.detach(std::iter::once(child).chain(children));
                     return;
                 }
             }
@@ -7624,19 +7722,23 @@ impl BlockParser {
                     ),
                 ],
                 input.span,
+                input.rawsource,
             );
             out.push(pending);
         }
     }
 
-    /// `nodes.pending(transform, details)` + `document.note_pending`: a
-    /// childless `pending` node whose side-car carries the transform, its
-    /// details sorted by key, and the next `note_pending` order.
+    /// `nodes.pending(transform, details, rawsource)` +
+    /// `document.note_pending`: a childless `pending` node whose side-car
+    /// carries the transform, its details sorted by key, the next
+    /// `note_pending` order and the directive's block text as
+    /// `rawsource`; the document state records it by identity.
     fn note_pending(
         &mut self,
         transform: PendingTransform,
         mut details: Vec<(String, PyValue)>,
         span: Span,
+        rawsource: &str,
     ) -> Node {
         details.sort_by(|(a, _), (b, _)| a.cmp(b));
         let order = self.state.parse.next_pending_order;
@@ -7650,6 +7752,8 @@ impl BlockParser {
             })),
             ..NodeExt::default()
         }));
+        node.set_rawsource(rawsource);
+        self.state.note_pending(&mut node, transform, order);
         node
     }
 
@@ -7743,7 +7847,9 @@ impl BlockParser {
             return true;
         }
 
+        // `nodes.substitution_definition(blocktext)` (`states.py:2165`).
         let mut subst = Node::elem("substitution_definition", span);
+        subst.set_rawsource(&blocktext);
         subst.attrs.names.push(subname_ws.clone());
 
         // Locate the embedded-directive line: the marker remainder, else
@@ -7839,7 +7945,9 @@ impl BlockParser {
             self.warn_explicit_markup_end(lines, *pos, out);
             return true;
         }
-        // Disallowed content (states.py:2219-2227).
+        // Disallowed content (states.py:2219-2227). docutils drops the
+        // definition, but whatever its inline parse registered stays
+        // registered ([DS §4.3 (e)], `docutils-0575`).
         if let Some(phrase) = find_disallowed_in_substitution(&subst) {
             out.push(messages::with_literal(
                 self.msg(
@@ -7850,6 +7958,7 @@ impl BlockParser {
                 ),
                 &blocktext,
             ));
+            self.state.detach([subst]);
             self.warn_explicit_markup_end(lines, *pos, out);
             return true;
         }
@@ -7873,12 +7982,7 @@ impl BlockParser {
         // note_substitution_def (nodes.py:2056-2073): duplicate names are
         // case-sensitively compared; the error precedes the new node and
         // the OLD node loses its name (post-parse walk).
-        if self
-            .state
-            .parse
-            .substitution_names_seen
-            .contains(&subname_ws)
-        {
+        if self.state.registries.has_substitution_def(&subname_ws) {
             out.push(self.msg(
                 messages::ERROR,
                 &format!("Duplicate substitution definition name: \"{subname_ws}\"."),
@@ -7891,9 +7995,8 @@ impl BlockParser {
                     .substitution_dupnames
                     .push(subname_ws.clone());
             }
-        } else {
-            self.state.parse.substitution_names_seen.push(subname_ws);
         }
+        self.state.note_substitution_def(&mut subst, &subname_ws);
         out.push(subst);
         self.warn_explicit_markup_end(lines, *pos, out);
         true
@@ -7942,7 +8045,13 @@ impl BlockParser {
                 }
             }
         }
+        // `add_target`'s anonymous branch (`note_anonymous_target` is a
+        // bare `set_id`), then `make_target`'s `note_indirect_target` for
+        // a reference name; a nameless target joins no `refnames`.
         self.state.set_id(&mut target);
+        if target.get("refname").is_some() {
+            self.state.note_indirect_target(&mut target);
+        }
         out.push(target);
         self.warn_explicit_markup_end(lines, *pos, out);
     }
@@ -9347,20 +9456,28 @@ fn py_field_type_map(name: &str) -> Option<(usize, bool)> {
 /// so `:meta:` fields vanish from the raw list and the transformer then
 /// replaces the emptied list with an empty `<field_list>` that REMAINS
 /// [PY §1.6 meta probe]. py domain only (the event handler checks).
-fn filter_meta_fields(content: &mut Node) {
+/// Returns the removed fields, in document order.
+fn filter_meta_fields(content: &mut Node) -> Vec<Node> {
+    let is_meta = |field: &Node| {
+        if field.kind != kinds::FIELD {
+            return false;
+        }
+        let name = field.children.first().map(Node::astext).unwrap_or_default();
+        // `field[0].astext().strip()` — Python's set (round F pin).
+        let name = name.trim_matches(crate::utils::py_isspace);
+        name == "meta" || name.starts_with("meta ")
+    };
+    let mut removed = Vec::new();
     for child in &mut content.children {
         if child.kind == kinds::FIELD_LIST {
-            child.children.retain(|field| {
-                if field.kind != kinds::FIELD {
-                    return true;
-                }
-                let name = field.children.first().map(Node::astext).unwrap_or_default();
-                // `field[0].astext().strip()` — Python's set (round F pin).
-                let name = name.trim_matches(crate::utils::py_isspace);
-                !(name == "meta" || name.starts_with("meta "))
-            });
+            let (meta, kept): (Vec<Node>, Vec<Node>) = std::mem::take(&mut child.children)
+                .into_iter()
+                .partition(is_meta);
+            child.children = kept;
+            removed.extend(meta);
         }
     }
+    removed
 }
 
 /// `_is_single_paragraph` (`docfields.py:34-42`): exactly one paragraph,
@@ -9660,11 +9777,17 @@ enum DocFieldEntry {
 /// (probes `rst_class_before_field_list_in_py_desc`,
 /// `name_target_before_field_list_in_py_desc`). The task-7 review's
 /// original premise — that the attributes are dropped — was wrong.
+///
+/// Every node the transformer drops — a rebuilt field's shell (its name
+/// and emptied body), body content a field cannot show, a `:type:`
+/// nothing claims — lands in `dropped`, so the caller can keep the
+/// registered ones.
 fn transform_doc_field_list(
     node: &mut Node,
     map: DocFieldTypeMap,
     ctx: &crate::py::annotations::PyRefContext,
     cfg: &crate::py::PySigConfig,
+    dropped: &mut Vec<Node>,
 ) {
     use std::collections::HashMap;
     let env = DocFieldEnv {
@@ -9695,7 +9818,14 @@ fn transform_doc_field_list(
     let mut group_indices: HashMap<usize, usize> = HashMap::new();
     let mut types: HashMap<usize, HashMap<String, Vec<Node>>> = HashMap::new();
     for field in fields {
-        doc_field_step1(field, &mut entries, &mut types, &mut group_indices, &env);
+        doc_field_step1(
+            field,
+            &mut entries,
+            &mut types,
+            &mut group_indices,
+            &env,
+            dropped,
+        );
     }
 
     // Step 2: construct the new field list (`docfields.py:484-510`).
@@ -9710,10 +9840,22 @@ fn transform_doc_field_list(
                     items,
                     fieldtypes,
                     &env,
+                    dropped,
                 ));
             }
         }
     }
+    // The `:type:` contents no field claimed, in a fixed order.
+    let mut unclaimed: Vec<(usize, String, Vec<Node>)> = types
+        .into_iter()
+        .flat_map(|(ftype, by_arg)| {
+            by_arg
+                .into_iter()
+                .map(move |(arg, content)| (ftype, arg, content))
+        })
+        .collect();
+    unclaimed.sort_by(|a, b| (a.0, &a.1).cmp(&(b.0, &b.1)));
+    dropped.extend(unclaimed.into_iter().flat_map(|(_, _, content)| content));
 }
 
 /// `DocFieldTransformer._transform_step_1` (`docfields.py:374-482`),
@@ -9728,6 +9870,7 @@ fn doc_field_step1(
     types: &mut std::collections::HashMap<usize, std::collections::HashMap<String, Vec<Node>>>,
     group_indices: &mut std::collections::HashMap<usize, usize>,
     env: &DocFieldEnv<'_>,
+    dropped: &mut Vec<Node>,
 ) {
     // SANCTIONED DIVERGENCE. Sphinx has a bare `assert len(field) == 2`
     // here (`docfields.py:381`), so a `field_list` child that is not a
@@ -9763,19 +9906,9 @@ fn doc_field_step1(
     // except a lone typefield body, which still gets type-linked.
     let known = lookup.is_some_and(|(i, _)| PY_DOC_FIELDS[i].has_arg == !fieldarg.is_empty());
 
-    // Collect the content, trying not to keep unnecessary paragraphs.
-    // Only a known field, or the unknown branch's typefield sub-case,
-    // ever reads it — and under the std kinds' EMPTY type map `lookup` is
-    // always None, so cloning the body up front copied every std
-    // description's field bodies for nothing.
+    // The content, trying not to keep unnecessary paragraphs: the lone
+    // paragraph's children, else the body's.
     let single_para = is_single_field_paragraph(&field.children[1]);
-    let content: Vec<Node> = if !(known || matches!(lookup, Some((_, true)))) {
-        Vec::new()
-    } else if single_para {
-        field.children[1].children[0].children.clone()
-    } else {
-        field.children[1].children.clone()
-    };
 
     if !known {
         let mut new_fieldname = capitalize_first(&fieldtype_name);
@@ -9787,10 +9920,19 @@ fn doc_field_step1(
         // child is replaced.
         let name_span = field.children[0].span;
         if !field.children[0].children.is_empty() {
-            field.children[0].children[0] = Node::text_node(new_fieldname, name_span);
+            dropped.push(std::mem::replace(
+                &mut field.children[0].children[0],
+                Node::text_node(new_fieldname, name_span),
+            ));
         }
         if let Some((ftype, true)) = lookup {
             // "but if this has a type then we can at least link it"
+            let body = &mut field.children[1];
+            let content = if single_para {
+                &mut body.children[0].children
+            } else {
+                &mut body.children
+            };
             if content.len() == 1 && content[0].kind == kinds::TEXT {
                 let spec = &PY_DOC_FIELDS[ftype];
                 let target = content[0].astext();
@@ -9802,14 +9944,14 @@ fn doc_field_step1(
                     Some(&content[0]),
                     env,
                 );
-                let body = &mut field.children[1];
-                if single_para {
-                    body.children[0].children = xrefs;
+                let replacement = if single_para {
+                    xrefs
                 } else {
                     let mut para = Node::elem(kinds::PARAGRAPH, env.span);
                     para.children = xrefs;
-                    body.children = vec![para];
-                }
+                    vec![para]
+                };
+                dropped.extend(std::mem::replace(content, replacement));
             }
         }
         entries.push(DocFieldEntry::Pass(field));
@@ -9817,13 +9959,26 @@ fn doc_field_step1(
     }
     let (ftype, is_typefield) = lookup.expect("known implies present");
     let spec = &PY_DOC_FIELDS[ftype];
+    // A known field is rebuilt from its content: the content moves out,
+    // and the field's shell — its parsed name, the emptied body — drops.
+    let body = &mut field.children[1];
+    let content = if single_para {
+        std::mem::take(&mut body.children[0].children)
+    } else {
+        std::mem::take(&mut body.children)
+    };
+    dropped.push(field);
 
     // A typefield puts its content into the types collection and emits
-    // nothing itself; only inline nodes survive the trip.
+    // nothing itself; only inline nodes survive the trip, and a later
+    // `:type:` for the same argument replaces an earlier one.
     if is_typefield {
-        let filtered: Vec<Node> = content.into_iter().filter(is_inline_or_text).collect();
+        let (filtered, rest): (Vec<Node>, Vec<Node>) =
+            content.into_iter().partition(is_inline_or_text);
+        dropped.extend(rest);
         if !filtered.is_empty() {
-            types.entry(ftype).or_default().insert(fieldarg, filtered);
+            let earlier = types.entry(ftype).or_default().insert(fieldarg, filtered);
+            dropped.extend(earlier.into_iter().flatten());
         }
         return;
     }
@@ -9831,10 +9986,11 @@ fn doc_field_step1(
     // Also support the `:param type name:` syntax.
     if spec.is_typed {
         if let Some((argtype, argname)) = rsplit_field_arg(&fieldarg) {
-            types
+            let earlier = types
                 .entry(ftype)
                 .or_default()
                 .insert(argname.clone(), vec![Node::text_node(argtype, env.span)]);
+            dropped.extend(earlier.into_iter().flatten());
             fieldarg = argname;
         }
     }
@@ -9867,6 +10023,7 @@ fn make_doc_field(
     items: Vec<(String, Vec<Node>)>,
     fieldtypes: &mut std::collections::HashMap<String, Vec<Node>>,
     env: &DocFieldEnv<'_>,
+    dropped: &mut Vec<Node>,
 ) -> Node {
     let span = env.span;
     let mut fieldname = Node::elem(kinds::FIELD_NAME, span);
@@ -9878,7 +10035,8 @@ fn make_doc_field(
         // `:param x:` from inserting the same type nodes twice).
         let handle_item = |fieldarg: String,
                            content: Vec<Node>,
-                           fieldtypes: &mut std::collections::HashMap<String, Vec<Node>>|
+                           fieldtypes: &mut std::collections::HashMap<String, Vec<Node>>,
+                           dropped: &mut Vec<Node>|
          -> Node {
             let mut par = Node::elem(kinds::PARAGRAPH, span);
             par.children.extend(py_make_doc_xrefs(
@@ -9901,6 +10059,7 @@ fn make_doc_field(
                         None,
                         env,
                     ));
+                    dropped.extend(fieldtype);
                 } else {
                     par.children.extend(fieldtype);
                 }
@@ -9910,18 +10069,22 @@ fn make_doc_field(
             if has_content {
                 par.children.push(Node::text_node(" -- ", span));
                 par.children.extend(content);
+            } else {
+                // Text-less content (an `[#]_` alone) is not shown.
+                dropped.extend(content);
             }
             par
         };
 
         if items.len() == 1 && spec.can_collapse {
             let (fieldarg, content) = items.into_iter().next().expect("one item");
-            vec![handle_item(fieldarg, content, fieldtypes)]
+            vec![handle_item(fieldarg, content, fieldtypes, dropped)]
         } else {
             let mut listnode = Node::elem(kinds::BULLET_LIST, span);
             for (fieldarg, content) in items {
                 let mut li = Node::elem(kinds::LIST_ITEM, span);
-                li.children.push(handle_item(fieldarg, content, fieldtypes));
+                li.children
+                    .push(handle_item(fieldarg, content, fieldtypes, dropped));
                 listnode.children.push(li);
             }
             vec![listnode]
@@ -9966,15 +10129,15 @@ fn make_doc_field(
                     && content[0].children[0].kind == kinds::TEXT));
         if single_textish {
             let target = content[0].astext();
-            let contnode = content[0].clone();
-            content = py_make_doc_xrefs(
+            let xrefs = py_make_doc_xrefs(
                 spec,
                 spec.bodyrolename,
                 &target,
                 "emphasis",
-                Some(&contnode),
+                Some(&content[0]),
                 env,
             );
+            dropped.extend(std::mem::replace(&mut content, xrefs));
         }
         let mut par = Node::elem(kinds::PARAGRAPH, span);
         par.children = content;
@@ -10496,7 +10659,8 @@ const INCLUDE_OPTS: &[(&str, Conv)] = &[
 // include helpers (docutils misc.py Include)
 // ----------------------------------------------------------------------
 
-/// The comment-line prefix that pops [`BlockParser::include_log`]
+/// The comment-line prefix that pops
+/// [`ParseOnlyState::include_log`](super::ParseOnlyState::include_log)
 /// (`DU/parsers/rst/states.py:2425-2433`).
 const INCLUDE_MARKER_PREFIX: &str = "end of inclusion from \"";
 
@@ -14372,7 +14536,10 @@ mod tests {
         );
         assert!(out.state.ids.is_taken("id1"));
         assert!(out.state.ids.is_taken("title-1-here"));
-        assert_eq!(out.state.ids.allocate(kinds::SYSTEM_MESSAGE, &[]), "id2");
+        assert_eq!(
+            out.state.ids.allocate(kinds::SYSTEM_MESSAGE, &[], None),
+            "id2"
+        );
         let names: Vec<(&str, Option<&str>, bool)> = out
             .state
             .names
@@ -17051,7 +17218,13 @@ mod py_docfield_tests {
             class_: None,
             span: Span::ZERO,
         };
-        transform_doc_field_list(&mut list, py_field_type_map, &ctx, &PySigConfig::default());
+        transform_doc_field_list(
+            &mut list,
+            py_field_type_map,
+            &ctx,
+            &PySigConfig::default(),
+            &mut Vec::new(),
+        );
 
         assert_eq!(list.attrs.ids, vec!["fl-target".to_string()]);
         assert_eq!(list.attrs.names, vec!["fl-target".to_string()]);

@@ -427,8 +427,10 @@ impl<'a> Inliner<'a> {
                     let before: String = chars[emitted_upto..i].iter().collect();
                     self.push_plain_text(&before);
                     // `nodes.reference(unescape(text, True), text, ...)`
-                    // (`states.py:1110-1111`): the Text keeps the markers.
+                    // (`states.py:1110-1111`): the Text keeps the markers,
+                    // the rawsource has the backslashes back.
                     let mut r = Node::elem(kinds::REFERENCE, self.span);
+                    r.set_rawsource(&unescape(&display, true));
                     r.set("refuri", AttrValue::Str(unescape(&refuri, false)));
                     r.children
                         .push(Node::text_node_escaped(&display, self.span));
@@ -464,8 +466,8 @@ impl<'a> Inliner<'a> {
     fn emit_problematic(&mut self, start_str: &str, construct: &str) {
         self.flush_text();
         // `Inliner.problematic`: `set_id(msg)`, then `set_id(prb)`.
-        let msg_id = self.state.ids.allocate(kinds::SYSTEM_MESSAGE, &[]);
-        let prob_id = self.state.ids.allocate(kinds::PROBLEMATIC, &[]);
+        let msg_id = self.state.ids.allocate(kinds::SYSTEM_MESSAGE, &[], None);
+        let prob_id = self.state.ids.allocate(kinds::PROBLEMATIC, &[], None);
         let mut prob = Node::elem(kinds::PROBLEMATIC, self.span);
         prob.attrs.ids.push(prob_id.clone());
         prob.set("refid", AttrValue::Str(msg_id.clone()));
@@ -583,7 +585,9 @@ impl<'a> Inliner<'a> {
             return None;
         }
         self.flush_text();
+        // `nodes.reference(referencename + refend, ...)` (`states.py:1084`).
         let mut r = Node::elem(kinds::REFERENCE, self.span);
+        r.set_rawsource(&format!("{name}{}", "_".repeat(underscores)));
         if underscores == 2 {
             r.set("anonymous", AttrValue::Int(1));
             r.set(
@@ -599,6 +603,7 @@ impl<'a> Inliner<'a> {
                 "refname",
                 AttrValue::Str(crate::doctree::ids::fully_normalize_name(&name)),
             );
+            self.state.note_refname(&mut r);
         }
         r.children.push(Node::text_node(name, self.span));
         self.nodes.push(r);
@@ -684,7 +689,11 @@ impl<'a> Inliner<'a> {
         };
         let raw: String = self.chars[content_from..end].iter().collect();
         if underscores > 0 && prefix_role.is_none() {
-            self.phrase_reference(&raw, underscores);
+            // `rawsource = unescape(string[matchstart:textend], True)`
+            // (`states.py:890`): the whole construct, backquotes and
+            // underscores included.
+            let construct: String = self.chars[i..end + 1 + underscores].iter().collect();
+            self.phrase_reference(&raw, &unescape(&construct, true), underscores);
             return end + 1 + underscores;
         }
         // Suffix role `text`:name: (only when no trailing underscores).
@@ -807,8 +816,8 @@ impl<'a> Inliner<'a> {
             ));
         }
         // `Inliner.problematic`: `set_id(msg)`, then `set_id(prb)`.
-        let msg_id = self.state.ids.allocate(kinds::SYSTEM_MESSAGE, &[]);
-        let prob_id = self.state.ids.allocate(kinds::PROBLEMATIC, &[]);
+        let msg_id = self.state.ids.allocate(kinds::SYSTEM_MESSAGE, &[], None);
+        let prob_id = self.state.ids.allocate(kinds::PROBLEMATIC, &[], None);
         let mut prob = Node::elem(kinds::PROBLEMATIC, self.span);
         prob.attrs.ids.push(prob_id.clone());
         prob.set("refid", AttrValue::Str(msg_id.clone()));
@@ -959,7 +968,7 @@ impl<'a> Inliner<'a> {
         tnode.attrs.ids.push(target_id.clone());
         // `self.inliner.document.note_explicit_target(target)` (`roles.py`):
         // the id joins `document.ids`, so a later `make_id` cannot reuse it.
-        self.state.ids.register(&target_id);
+        self.state.ids.register(&target_id, None);
         self.nodes.push(tnode);
         let mut reference = Node::elem(kinds::REFERENCE, self.span);
         reference.attrs.classes.push(kind_key.to_string());
@@ -1387,7 +1396,7 @@ impl<'a> Inliner<'a> {
             self.nodes.push(index);
             let mut tnode = Node::elem(kinds::TARGET, self.span);
             tnode.attrs.ids.push(target_id.clone());
-            self.state.ids.register(&target_id);
+            self.state.ids.register(&target_id, None);
             self.nodes.push(tnode);
         }
         self.nodes.push(node);
@@ -1508,7 +1517,10 @@ impl<'a> Inliner<'a> {
                 match text.parse::<u32>().ok().filter(|n| *n <= 9999) {
                     Some(n) => {
                         self.flush_text();
+                        // `nodes.reference(rawtext, ...)` (`roles.py`
+                        // `pep_reference_role`): the whole role text.
                         let mut r = Node::elem(kinds::REFERENCE, self.span);
+                        r.set_rawsource(&unescape(rawsource, true));
                         r.set(
                             "refuri",
                             AttrValue::Str(format!("https://peps.python.org/pep-{n:04}")),
@@ -1540,7 +1552,9 @@ impl<'a> Inliner<'a> {
                 match numpart.parse::<u32>().ok().filter(|n| *n >= 1) {
                     Some(n) => {
                         self.flush_text();
+                        // `rfc_reference_role`: `reference(rawtext, ...)`.
                         let mut r = Node::elem(kinds::REFERENCE, self.span);
+                        r.set_rawsource(&unescape(rawsource, true));
                         let mut uri = format!("https://tools.ietf.org/html/rfc{n}.html");
                         if let Some(f) = fragment {
                             uri = format!("{uri}#{f}");
@@ -1575,8 +1589,10 @@ impl<'a> Inliner<'a> {
         }
     }
 
-    /// Phrase reference body handling incl. embedded `<uri>`/`<alias_>`.
-    fn phrase_reference(&mut self, raw: &str, underscores: usize) {
+    /// Phrase reference body handling incl. embedded `<uri>`/`<alias_>`
+    /// (`phrase_ref`, `states.py:913-986`). `rawsource` is the whole
+    /// construct, the reference's docutils `rawsource`.
+    fn phrase_reference(&mut self, raw: &str, rawsource: &str, underscores: usize) {
         self.flush_text();
         let ids = |s: &str| crate::doctree::ids::fully_normalize_name(s);
         let wsn = |s: &str| crate::doctree::ids::whitespace_normalize_name(s);
@@ -1585,6 +1601,7 @@ impl<'a> Inliner<'a> {
         // whitespace (or the whole content).
         let embedded = find_embedded_link(raw);
         let mut r = Node::elem(kinds::REFERENCE, self.span);
+        r.set_rawsource(rawsource);
         match embedded {
             Some((text_part, link)) => {
                 let is_alias = link.ends_with('_')
@@ -1612,18 +1629,28 @@ impl<'a> Inliner<'a> {
                     r.set("refname", AttrValue::Str(alias.clone()));
                     r.children
                         .push(Node::text_node_escaped(&display_data, self.span));
-                    self.nodes.push(r);
                     if underscores == 1 {
                         // `nodes.target(..., refname=alias)` is built with its
-                        // reference, which binding its name compares.
+                        // reference, which binding its name compares. The
+                        // target is noted as an indirect target BEFORE the
+                        // reference's `refname` (`states.py:975-980`), so
+                        // `refnames[alias]` lists the target first.
                         let mut t = Node::elem(kinds::TARGET, self.span);
                         t.attrs.names.push(ids(&display_text));
                         t.set("refname", AttrValue::Str(alias));
+                        self.state.note_indirect_target(&mut t);
+                        self.state.note_refname(&mut r);
                         let msgs =
                             self.state
                                 .note_implicit_target(&mut t, self.lineno, self.source_path);
+                        self.nodes.push(r);
                         self.nodes.push(t);
                         self.messages.extend(msgs);
+                    } else {
+                        // `__` with an alias: `reference['refname'] = alias`
+                        // and `note_refname(reference)` (`states.py:964-966`).
+                        self.state.note_refname(&mut r);
+                        self.nodes.push(r);
                     }
                 } else {
                     // URI: strip escaped trailing underscore marker, remove
@@ -1677,6 +1704,7 @@ impl<'a> Inliner<'a> {
                     r.set("anonymous", AttrValue::Int(1));
                 } else {
                     r.set("refname", AttrValue::Str(ids(&text)));
+                    self.state.note_refname(&mut r);
                 }
                 // `text = escaped` (`states.py:951`).
                 r.children.push(Node::text_node_escaped(raw, self.span));
@@ -1713,42 +1741,44 @@ impl<'a> Inliner<'a> {
         self.flush_text();
         let is_citation =
             !label.starts_with('#') && label != "*" && !label.chars().all(|c| c.is_ascii_digit());
-        let kind = if is_citation {
-            kinds::CITATION_REFERENCE
-        } else {
-            kinds::FOOTNOTE_REFERENCE
-        };
-        let id = self.state.ids.allocate(kind, &[]);
-        let mut node = if is_citation {
-            let mut c = Node::elem(kinds::CITATION_REFERENCE, self.span);
-            c.set(
+        // `footnote_reference` (`states.py:1050-1080`): both node kinds
+        // carry `'[%s]_' % label` as their rawsource, and each `note_*`
+        // call runs `set_id` — twice on one node for `[#name]_`, whose
+        // second call re-registers the id the first allocated.
+        let set_refname = |node: &mut Node, label: &str| {
+            node.set(
                 "refname",
-                AttrValue::Str(crate::doctree::ids::fully_normalize_name(&label)),
+                AttrValue::Str(crate::doctree::ids::fully_normalize_name(label)),
             );
+        };
+        let node = if is_citation {
+            let mut c = Node::elem(kinds::CITATION_REFERENCE, self.span);
+            c.set_rawsource(&format!("[{label}]_"));
+            set_refname(&mut c, &label);
             c.children.push(Node::text_node(label.clone(), self.span));
+            self.state.note_citation_ref(&mut c);
             c
         } else {
             let mut f = Node::elem(kinds::FOOTNOTE_REFERENCE, self.span);
-            if label == "*" {
+            f.set_rawsource(&format!("[{label}]_"));
+            let refname = if label == "*" {
                 f.set("auto", AttrValue::Str("*".to_string()));
+                self.state.note_symbol_footnote_ref(&mut f);
+                ""
             } else if let Some(rest) = label.strip_prefix('#') {
                 f.set("auto", AttrValue::Int(1));
-                if !rest.is_empty() {
-                    f.set(
-                        "refname",
-                        AttrValue::Str(crate::doctree::ids::fully_normalize_name(rest)),
-                    );
-                }
+                self.state.note_autofootnote_ref(&mut f);
+                rest
             } else {
-                f.set(
-                    "refname",
-                    AttrValue::Str(crate::doctree::ids::fully_normalize_name(&label)),
-                );
                 f.children.push(Node::text_node(label.clone(), self.span));
+                &label
+            };
+            if !refname.is_empty() {
+                set_refname(&mut f, refname);
+                self.state.note_footnote_ref(&mut f);
             }
             f
         };
-        node.attrs.ids.push(id);
         self.nodes.push(node);
         Some(after)
     }
@@ -1767,7 +1797,12 @@ impl<'a> Inliner<'a> {
         let raw: String = self.chars[content_from..end].iter().collect();
         let text = unescape(&raw, false);
         self.flush_text();
+        // `inline_obj`'s `rawsource = unescape(string[matchstart:textend],
+        // True)` (`states.py:834`): the end pattern `\|_{0,2}` puts the
+        // underscores inside it.
+        let construct: String = self.chars[i..after].iter().collect();
         let mut subref = Node::elem(kinds::SUBSTITUTION_REFERENCE, self.span);
+        subref.set_rawsource(&unescape(&construct, true));
         subref.set(
             "refname",
             AttrValue::Str(crate::doctree::ids::whitespace_normalize_name(&text)),
@@ -1778,7 +1813,11 @@ impl<'a> Inliner<'a> {
         if underscores == 0 {
             self.nodes.push(subref);
         } else {
+            // `nodes.reference('|%s%s' % (subref_text, endstring), '')`
+            // (`states.py:1035-1036`), noted under its `refname` unless
+            // anonymous.
             let mut outer = Node::elem(kinds::REFERENCE, self.span);
+            outer.set_rawsource(&format!("|{text}|{}", "_".repeat(underscores)));
             if underscores == 2 {
                 outer.set("anonymous", AttrValue::Int(1));
             } else {
@@ -1786,6 +1825,7 @@ impl<'a> Inliner<'a> {
                     "refname",
                     AttrValue::Str(crate::doctree::ids::fully_normalize_name(&text)),
                 );
+                self.state.note_refname(&mut outer);
             }
             outer.children.push(subref);
             self.nodes.push(outer);

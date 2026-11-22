@@ -103,9 +103,9 @@ pub struct Attrs {
 /// A node's identity within one document's read stage — what Python
 /// gets from object identity. The document state's registries key the
 /// nodes docutils registers by it. Minted through [`Uid::new`] from a
-/// per-document counter, so it never repeats within a document; never
-/// persisted ([`NodeExt::uid`]).
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize)]
+/// per-document counter, so it never repeats within a document and
+/// orders as minted; never persisted ([`NodeExt::uid`]).
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Serialize, Deserialize)]
 pub struct Uid(NonZeroU32);
 
 impl Uid {

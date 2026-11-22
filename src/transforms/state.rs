@@ -4,21 +4,21 @@
 //! Sphinx parses into one docutils `document` and then runs every read
 //! transform over that same object, so the transforms read more than the
 //! tree: every id the parse registered, those of loose messages and of
-//! dropped nodes included, the auto-id counter, and the name table in
-//! registration order. [`DocumentState`] is that object state. The parser
-//! threads one through every nested and detached sub-parse and hands it on
-//! as `ParseOutput.state`.
+//! dropped nodes included, the auto-id counter, the name table in
+//! registration order, and the node registries, which hold nodes by
+//! identity, including nodes the parse moved or discarded.
+//! [`DocumentState`] is that object state. The parser threads one through
+//! every nested and detached sub-parse and hands it on as
+//! `ParseOutput.state`.
 
 use std::collections::{HashMap, HashSet};
+use std::num::NonZeroU32;
 
-use crate::doctree::ids::{make_id, DupnameFixup};
+use crate::doctree::ids::{fully_normalize_name, make_id};
 use crate::doctree::messages::{INFO, WARNING};
-use crate::doctree::{kinds, AttrValue, Node};
-use crate::rst::block::IncludeClip;
-use crate::rst::{
-    DirectiveRecord, ObjectRegistration, ParseLogWarning, ProgramOptionRecord, PyModuleRecord,
-    PyObjectRecord, RoleRecord, ToctreeRecord,
-};
+use crate::doctree::pending::PendingTransform;
+use crate::doctree::{kinds, AttrValue, Node, Uid};
+use crate::rst::ParseOnlyState;
 
 /// The phase of the events the parse records ([`IdEvent::phase`]).
 const PARSE_PHASE: &str = "parse";
@@ -45,10 +45,11 @@ pub struct IdEvent {
 /// `id_counter['id']` ([DS §5.1, §5.7]).
 #[derive(Debug, Default, Clone)]
 pub struct IdAllocator {
-    /// `document.ids` keys: every id the document registered. Those of
-    /// loose messages and of nodes the parse dropped are kept, because they
-    /// still block reuse.
-    taken: HashSet<String>,
+    /// `document.ids`: every id the document registered, with the identity
+    /// of the node holding it when that node has one ([`Uid`]). Ids of
+    /// loose messages and of nodes the parse dropped are kept, because
+    /// they still block reuse.
+    taken: HashMap<String, Option<Uid>>,
     /// `document.id_counter['id']`, the one auto-id counter.
     counter: u32,
     /// One event per [`Self::allocate`] while enabled
@@ -64,24 +65,30 @@ impl IdAllocator {
     /// whose `make_id` is non-empty and free, else the next free `id<N>`
     /// from the shared counter. Under `auto_id_prefix = 'id'` the `'%'`
     /// branches are dead, so docutils' `suggested_prefix` never applies and
-    /// is not taken ([DS §5.6]). The id is registered; with the trace on,
-    /// one [`IdEvent`] records it with the node's `kind`.
-    pub fn allocate(&mut self, kind: &'static str, names: &[String]) -> String {
+    /// is not taken ([DS §5.6]). The id is registered as `holder`'s, the
+    /// node's identity when it has one; with the trace on, one [`IdEvent`]
+    /// records it with the node's `kind`.
+    pub fn allocate(
+        &mut self,
+        kind: &'static str,
+        names: &[String],
+        holder: Option<Uid>,
+    ) -> String {
         let from_name = names
             .iter()
             .map(|name| make_id(name))
-            .find(|base| !base.is_empty() && !self.taken.contains(base));
+            .find(|base| !base.is_empty() && !self.taken.contains_key(base));
         let id = match from_name {
             Some(id) => id,
             None => loop {
                 self.counter += 1;
                 let id = format!("id{}", self.counter);
-                if !self.taken.contains(&id) {
+                if !self.taken.contains_key(&id) {
                     break id;
                 }
             },
         };
-        self.taken.insert(id.clone());
+        self.taken.insert(id.clone(), holder);
         if let Some(trace) = &mut self.trace {
             trace.push(IdEvent {
                 phase: self.phase.as_deref().unwrap_or(PARSE_PHASE).to_string(),
@@ -94,17 +101,30 @@ impl IdAllocator {
     }
 
     /// docutils `document.set_id` for a node that already carries ids
-    /// (`nodes.py:1832-1843`), one id at a time: `ids.setdefault(id, node)`.
-    /// `false` means the id was registered before, docutils' `Duplicate ID`
-    /// case when another node holds it. Never traced: the fixture's wrapper
-    /// records only nodes without ids.
-    pub fn register(&mut self, id: &str) -> bool {
-        !self.taken.contains(id) && self.taken.insert(id.to_string())
+    /// (`nodes.py:1832-1843`), one id at a time: `ids.setdefault(id, node)`,
+    /// with `holder` the registering node's identity when it has one.
+    /// `false` is docutils' `Duplicate ID` case, `ids[id] is not node`:
+    /// another node holds the id. Re-registering an id the same node
+    /// already holds is fine, as in docutils, when that node has an
+    /// identity; every node docutils calls `set_id` on twice has one,
+    /// since it is registered (a `[#name]_` reference, a footnote). A
+    /// node without identity cannot be told from another, so an id held
+    /// without identity, or registered without one, answers `false` once
+    /// taken. Never traced: the fixture's wrapper records only nodes
+    /// without ids.
+    pub fn register(&mut self, id: &str, holder: Option<Uid>) -> bool {
+        match self.taken.get(id) {
+            None => {
+                self.taken.insert(id.to_string(), holder);
+                true
+            }
+            Some(held) => holder.is_some() && *held == holder,
+        }
     }
 
     /// `id in document.ids`.
     pub fn is_taken(&self, id: &str) -> bool {
-        self.taken.contains(id)
+        self.taken.contains_key(id)
     }
 
     /// Record one [`IdEvent`] per [`Self::allocate`] from now on (tests
@@ -407,67 +427,274 @@ pub struct DocumentState {
     /// The document's record sequence counter: parse-time records are
     /// ordered by the numbers they draw from it ([DS §6.4]).
     pub next_seq: u32,
+    /// docutils' node registries ([`Registries`]), by node identity.
+    pub registries: Registries,
+    /// The transforms `document.note_pending` queued, in parse order.
+    pub pending: Vec<PendingRecord>,
+    /// The subtrees the parser discarded that hold a registered node: in
+    /// docutils those nodes leave the tree but stay in the registries,
+    /// where the transforms still number them, resolve through them and
+    /// report against them ([DS §4.4]). Every registered [`Uid`] is
+    /// reachable exactly once from the root or from here
+    /// ([`Self::misplaced_registrations`]).
+    pub detached: Vec<Node>,
+    /// How many identities the document has minted ([`Self::mint_uid`]).
+    pub next_uid: u32,
     /// What only the parse reads ([`ParseOnlyState`]); empty once the
     /// parse has ended.
     pub(crate) parse: ParseOnlyState,
 }
 
-/// What the parser threads through every nested and detached sub-parse
-/// beside the docutils object state, so that a sub-parse continues the
-/// document rather than starting a new one: the record streams
-/// `ParseOutput` carries, the dupnames still owed to nodes the parser has
-/// placed, Sphinx's per-document serial counters, docutils' `include_log`
-/// and substitution names, and the `note_pending` counter. The parse
-/// drains it when it ends.
+/// docutils' node registries on `document` (`nodes.py:1996-2089`), each in
+/// registration order and holding node identities, so registered nodes
+/// that the parse later moved or discarded keep their place ([DS §4.4,
+/// §8.1]). The `note_*` calls that fill them are the parser's
+/// ([`crate::doctree::ids`]); the read transforms consume them.
 #[derive(Debug, Default, Clone)]
-pub(crate) struct ParseOnlyState {
-    /// docutils `dupname(old_node, name)` on nodes already placed in the
-    /// tree, applied when the tree is complete
-    /// ([`crate::doctree::ids::apply_dupname_fixups`]).
-    pub(crate) dupname_fixups: Vec<DupnameFixup>,
-    /// sphinx `env.new_serialno('index')`, shared by the index directive
-    /// and the roles that emit index entries.
-    pub(crate) index_serial: u32,
-    /// The other `env.new_serialno(category)` counters, keyed by the
-    /// `sphinx.util.nodes.make_id` prefix that asked for one
-    /// (`cmdoption-myprog`, `confval`, …): per document and category, from
-    /// 0, like [`Self::index_serial`].
-    pub(crate) serialnos: HashMap<String, u32>,
-    /// docutils `document.include_log` (`nodes.py:1802-1803`): the open
-    /// inclusions as `(source display path, clip options)` pairs. Seeded
-    /// with the root document (and an empty clip) on first use
-    /// (`misc.py:253-256`); an entry is pushed before each splice and
-    /// popped when the comment path reaches the matching
-    /// `.. end of inclusion from "..."` marker.
-    pub(crate) include_log: Vec<(String, IncludeClip)>,
-    /// The substitution names defined so far (whitespace-normalized,
-    /// case-preserving): docutils `document.substitution_defs`' keys.
-    pub(crate) substitution_names_seen: Vec<String>,
-    /// Names defined more than once: when the tree is complete, every
-    /// definition but the last loses its name (docutils `dupname`s the old
-    /// node in place).
-    pub(crate) substitution_dupnames: Vec<String>,
-    /// The next `document.note_pending` order
-    /// ([`crate::doctree::pending::Pending::order`]).
-    pub(crate) next_pending_order: u32,
-    /// Validation-feed records ([`DirectiveRecord`], [`RoleRecord`]) and
-    /// the toctree records.
-    pub(crate) directive_records: Vec<DirectiveRecord>,
-    pub(crate) role_records: Vec<RoleRecord>,
-    pub(crate) toctree_records: Vec<ToctreeRecord>,
-    /// The std- and py-domain registrations the parse made, in document
-    /// order (see [`crate::rst::RegistryExport::program_options`] for why
-    /// the finished doctree cannot carry them).
-    pub(crate) program_option_records: Vec<ProgramOptionRecord>,
-    pub(crate) std_object_records: Vec<ObjectRegistration>,
-    pub(crate) py_object_records: Vec<PyObjectRecord>,
-    pub(crate) py_module_records: Vec<PyModuleRecord>,
-    /// `logger.warning` diagnostics raised while running directives.
-    pub(crate) log_warnings: Vec<ParseLogWarning>,
-    /// Parse-recorded dependency paths and included docnames (see
-    /// [`crate::rst::RegistryExport::dependencies`]); sphinx mode only.
-    pub(crate) dependency_records: Vec<String>,
-    pub(crate) included_records: Vec<String>,
+pub struct Registries {
+    /// `note_autofootnote` / `note_autofootnote_ref`: `[#]` and `[#name]`.
+    pub autofootnotes: Vec<Uid>,
+    pub autofootnote_refs: Vec<Uid>,
+    /// `note_symbol_footnote` / `note_symbol_footnote_ref`: `[*]`.
+    pub symbol_footnotes: Vec<Uid>,
+    pub symbol_footnote_refs: Vec<Uid>,
+    /// `note_footnote`: manually numbered footnotes.
+    pub footnotes: Vec<Uid>,
+    /// `note_footnote_ref`: references with a `refname`, by it.
+    pub footnote_refs: OrderedMulti<Uid>,
+    /// `note_citation` / `note_citation_ref` (the references by
+    /// `refname`).
+    pub citations: Vec<Uid>,
+    pub citation_refs: OrderedMulti<Uid>,
+    /// `note_refname`: every node noted under its `refname`.
+    pub refnames: OrderedMulti<Uid>,
+    /// `note_indirect_target`: targets that refer to another name.
+    pub indirect_targets: Vec<Uid>,
+    /// `note_substitution_def`, one entry per call: docutils' dict keeps a
+    /// redefined name at its first position and maps it to the last
+    /// definition.
+    pub substitution_defs: Vec<(String, Uid)>,
+    /// `substitution_names`: the fully normalized name of each definition
+    /// to its name as defined (last definition wins).
+    pub substitution_names: HashMap<String, String>,
+}
+
+impl Registries {
+    /// `name in document.substitution_defs`.
+    pub fn has_substitution_def(&self, name: &str) -> bool {
+        self.substitution_defs
+            .iter()
+            .any(|(defined, _)| defined == name)
+    }
+
+    /// Every registry entry's identity, in the order
+    /// [`DocumentState::registries_dump`] lists the registries (a node
+    /// several registries hold appears once per registry).
+    fn uids(&self) -> Vec<Uid> {
+        let mut uids = Vec::new();
+        for list in [
+            &self.autofootnotes,
+            &self.autofootnote_refs,
+            &self.symbol_footnotes,
+            &self.symbol_footnote_refs,
+            &self.footnotes,
+        ] {
+            uids.extend(list);
+        }
+        let multi = |uids: &mut Vec<Uid>, registry: &OrderedMulti<Uid>| {
+            for (_, values) in registry.iter() {
+                uids.extend(values);
+            }
+        };
+        multi(&mut uids, &self.footnote_refs);
+        uids.extend(&self.citations);
+        multi(&mut uids, &self.citation_refs);
+        multi(&mut uids, &self.refnames);
+        uids.extend(&self.indirect_targets);
+        uids.extend(self.substitution_defs.iter().map(|(_, uid)| *uid));
+        uids
+    }
+}
+
+/// One `document.note_pending` call: the transform a `pending` node
+/// defers, its parse order among the pending transforms (which orders
+/// pending transforms of equal priority, [DS §2.2]) and the node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PendingRecord {
+    pub transform: PendingTransform,
+    /// 0-based `note_pending` order ([`crate::doctree::pending::Pending::order`]).
+    pub order: u32,
+    pub node: Uid,
+}
+
+impl DocumentState {
+    /// A new identity, never reused within the document: `next_uid` is
+    /// incremented first, so a default state mints 1 first.
+    pub fn mint_uid(&mut self) -> Uid {
+        self.next_uid += 1;
+        Uid::new(NonZeroU32::new(self.next_uid).expect("a Uid counter past zero"))
+    }
+
+    /// Subtrees the parser discards: each one holding a node with an
+    /// identity (a registered node) is kept in [`Self::detached`], the
+    /// way docutils' registries keep such nodes alive; the rest are
+    /// dropped.
+    pub(crate) fn detach(&mut self, nodes: impl IntoIterator<Item = Node>) {
+        self.detached
+            .extend(nodes.into_iter().filter(holds_identity));
+    }
+
+    /// The read-state fixture's `registries_post_parse` ([DS §11]) for the
+    /// tree under `root`. Each registered node is an entry
+    /// `[kind, ids, attached]`: its tagname, its ids as they are now, and
+    /// whether it is reachable from `root` (`false` when only
+    /// [`Self::detached`] holds it; `null` for a node neither holds). The
+    /// object has one key per registry, every key always present:
+    ///
+    /// - `autofootnotes`, `autofootnote_refs`, `symbol_footnotes`,
+    ///   `symbol_footnote_refs`, `footnotes`, `citations`,
+    ///   `indirect_targets`: lists of entries, in registration order;
+    /// - `footnote_refs`, `citation_refs`, `refnames`: `[key, entries]`
+    ///   pairs, keys in first-registration order;
+    /// - `substitution_defs`: `[name, entry]` pairs and
+    ///   `substitution_names`: `[normalized name, name]` pairs, both in
+    ///   docutils' dict order (a redefined name keeps its first position
+    ///   and takes its last value);
+    /// - `names`: `[name, id or null, explicit]`, in `nametypes` order;
+    /// - `pending`: `[transform, order, entry]` per pending transform, in
+    ///   parse order, the transform as its dotted Python path.
+    pub fn registries_dump(&self, root: &Node) -> serde_json::Value {
+        use serde_json::{json, Value};
+        let reached = Reached::of(root, &self.detached);
+        let entry = |uid: &Uid| reached.entry(*uid);
+        let list = |uids: &[Uid]| Value::Array(uids.iter().map(entry).collect());
+        let multi = |registry: &OrderedMulti<Uid>| {
+            Value::Array(
+                registry
+                    .iter()
+                    .map(|(key, uids)| json!([key, list(uids)]))
+                    .collect(),
+            )
+        };
+        let registries = &self.registries;
+        // docutils' dicts: first insertion fixes a key's position, the
+        // last assignment its value.
+        let mut defs: Vec<(&str, Uid)> = Vec::new();
+        let mut normalized: Vec<String> = Vec::new();
+        for (name, uid) in &registries.substitution_defs {
+            match defs.iter_mut().find(|(defined, _)| defined == name) {
+                Some(slot) => slot.1 = *uid,
+                None => defs.push((name, *uid)),
+            }
+            let key = fully_normalize_name(name);
+            if !normalized.contains(&key) {
+                normalized.push(key);
+            }
+        }
+        json!({
+            "autofootnotes": list(&registries.autofootnotes),
+            "autofootnote_refs": list(&registries.autofootnote_refs),
+            "symbol_footnotes": list(&registries.symbol_footnotes),
+            "symbol_footnote_refs": list(&registries.symbol_footnote_refs),
+            "footnotes": list(&registries.footnotes),
+            "footnote_refs": multi(&registries.footnote_refs),
+            "citations": list(&registries.citations),
+            "citation_refs": multi(&registries.citation_refs),
+            "refnames": multi(&registries.refnames),
+            "indirect_targets": list(&registries.indirect_targets),
+            "substitution_defs": defs
+                .iter()
+                .map(|(name, uid)| json!([name, entry(uid)]))
+                .collect::<Vec<_>>(),
+            "substitution_names": normalized
+                .iter()
+                .map(|key| json!([key, registries.substitution_names.get(key)]))
+                .collect::<Vec<_>>(),
+            "names": self
+                .names
+                .iter()
+                .map(|(name, bound)| json!([name, bound.id, bound.explicit]))
+                .collect::<Vec<_>>(),
+            "pending": self
+                .pending
+                .iter()
+                .map(|record| {
+                    json!([record.transform.python_path(), record.order, entry(&record.node)])
+                })
+                .collect::<Vec<_>>(),
+        })
+    }
+
+    /// The end-of-parse invariant ([DS §8.2]): every registered identity
+    /// (the registries' and the pending records') is reachable exactly
+    /// once from `root` or from [`Self::detached`]. Returns each one that
+    /// is not, with how many times it was reached (0: the parse dropped a
+    /// registered node; 2 or more: it copied one), in minting order.
+    pub fn misplaced_registrations(&self, root: &Node) -> Vec<(Uid, usize)> {
+        let reached = Reached::of(root, &self.detached);
+        let mut seen = HashSet::new();
+        let mut misplaced: Vec<(Uid, usize)> = self
+            .registries
+            .uids()
+            .into_iter()
+            .chain(self.pending.iter().map(|record| record.node))
+            .filter(|uid| seen.insert(*uid))
+            .map(|uid| (uid, reached.count(uid)))
+            .filter(|&(_, count)| count != 1)
+            .collect();
+        misplaced.sort_by_key(|&(uid, _)| uid);
+        misplaced
+    }
+}
+
+/// Whether the subtree holds a node with an identity.
+fn holds_identity(node: &Node) -> bool {
+    node.uid().is_some() || node.children.iter().any(holds_identity)
+}
+
+/// Where each identity sits in a tree and its detached forest: the node
+/// first found carrying it, whether that was under the root, and how many
+/// nodes carry it.
+struct Reached<'a> {
+    nodes: HashMap<Uid, (&'a Node, bool, usize)>,
+}
+
+impl<'a> Reached<'a> {
+    fn of(root: &'a Node, detached: &'a [Node]) -> Reached<'a> {
+        fn walk<'a>(
+            node: &'a Node,
+            attached: bool,
+            nodes: &mut HashMap<Uid, (&'a Node, bool, usize)>,
+        ) {
+            if let Some(uid) = node.uid() {
+                nodes
+                    .entry(uid)
+                    .and_modify(|(_, _, count)| *count += 1)
+                    .or_insert((node, attached, 1));
+            }
+            for child in &node.children {
+                walk(child, attached, nodes);
+            }
+        }
+        let mut nodes = HashMap::new();
+        walk(root, true, &mut nodes);
+        for node in detached {
+            walk(node, false, &mut nodes);
+        }
+        Reached { nodes }
+    }
+
+    fn count(&self, uid: Uid) -> usize {
+        self.nodes.get(&uid).map_or(0, |&(_, _, count)| count)
+    }
+
+    /// `[kind, ids, attached]`, or `null` for an identity nothing carries.
+    fn entry(&self, uid: Uid) -> serde_json::Value {
+        match self.nodes.get(&uid) {
+            Some((node, attached, _)) => serde_json::json!([node.kind, node.attrs.ids, attached]),
+            None => serde_json::Value::Null,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -494,30 +721,30 @@ mod tests {
         let mut ids = IdAllocator::default();
         // `!!!` makes an empty id; the next name's is free.
         assert_eq!(
-            ids.allocate(kinds::SECTION, &strings(&["!!!", "Hello World!"])),
+            ids.allocate(kinds::SECTION, &strings(&["!!!", "Hello World!"]), None),
             "hello-world"
         );
         // A taken name passes to the next one.
         assert_eq!(
-            ids.allocate(kinds::TARGET, &strings(&["hello world", "second"])),
+            ids.allocate(kinds::TARGET, &strings(&["hello world", "second"]), None),
             "second"
         );
         // Every candidate taken: the counter.
         assert_eq!(
-            ids.allocate(kinds::SECTION, &strings(&["Hello World!"])),
+            ids.allocate(kinds::SECTION, &strings(&["Hello World!"]), None),
             "id1"
         );
         // A registered id is taken, and registering it again is the
         // duplicate case.
         assert!(!ids.is_taken("id2"));
-        assert!(ids.register("id2"));
-        assert!(!ids.register("id2"));
+        assert!(ids.register("id2", None));
+        assert!(!ids.register("id2", None));
         assert!(ids.is_taken("id2"));
         // The counter steps over it, and over an auto-looking id a name
         // took first.
-        assert_eq!(ids.allocate(kinds::PROBLEMATIC, &[]), "id3");
-        assert_eq!(ids.allocate(kinds::TARGET, &strings(&["id4"])), "id4");
-        assert_eq!(ids.allocate(kinds::SYSTEM_MESSAGE, &[]), "id5");
+        assert_eq!(ids.allocate(kinds::PROBLEMATIC, &[], None), "id3");
+        assert_eq!(ids.allocate(kinds::TARGET, &strings(&["id4"]), None), "id4");
+        assert_eq!(ids.allocate(kinds::SYSTEM_MESSAGE, &[], None), "id5");
 
         let pending_case: [(&'static str, &[&str], &str); 13] = [
             (kinds::SECTION, &["doc"], "doc"),
@@ -539,7 +766,11 @@ mod tests {
         ];
         let mut ids = IdAllocator::default();
         for (kind, names, expected) in pending_case {
-            assert_eq!(ids.allocate(kind, &strings(names)), expected, "{kind}");
+            assert_eq!(
+                ids.allocate(kind, &strings(names), None),
+                expected,
+                "{kind}"
+            );
         }
     }
 
@@ -846,9 +1077,9 @@ mod tests {
         assert!(untraced.state.ids.trace().is_empty());
 
         let mut ids = traced.state.ids;
-        assert!(ids.register("explicit-id"));
+        assert!(ids.register("explicit-id", None));
         ids.set_phase("docutils.transforms.references.Substitutions".to_string());
-        assert_eq!(ids.allocate(kinds::PROBLEMATIC, &[]), "id1");
+        assert_eq!(ids.allocate(kinds::PROBLEMATIC, &[], None), "id1");
         let last = ids.trace().last().expect("recorded");
         assert_eq!(
             (last.phase.as_str(), last.kind, last.id.as_str()),
@@ -873,5 +1104,183 @@ mod tests {
         assert_eq!(refs.get("beta"), None);
         let order: Vec<(&str, &[u32])> = refs.iter().collect();
         assert_eq!(order, [("zeta", &[1, 3][..]), ("alpha", &[2][..])]);
+    }
+
+    fn uid(n: u32) -> Uid {
+        Uid::new(NonZeroU32::new(n).expect("a non-zero uid"))
+    }
+
+    /// docutils `set_id` registers an id with `ids.setdefault(id, node)`
+    /// and reports `Duplicate ID` only when `ids[id] is not node`
+    /// (`SP/docutils/nodes.py:1832-1843`): a node registering an id it
+    /// already holds is fine. `[#name]_` does exactly that (probed:
+    /// `set_id` allocates `id1` for the reference in
+    /// `note_autofootnote_ref`, then registers `id1` again in
+    /// `note_footnote_ref`), and so does every footnote definition.
+    #[test]
+    fn id_allocator_register_is_identity_aware() {
+        let mut ids = IdAllocator::default();
+        let (holder, other) = (uid(1), uid(2));
+        assert_eq!(
+            ids.allocate(kinds::FOOTNOTE_REFERENCE, &[], Some(holder)),
+            "id1"
+        );
+        assert!(
+            ids.register("id1", Some(holder)),
+            "the node holding id1 registers it again"
+        );
+        assert!(
+            !ids.register("id1", Some(other)),
+            "another node: docutils' Duplicate ID"
+        );
+        assert!(
+            !ids.register("id1", None),
+            "a node without identity is not the holder"
+        );
+        // Registering records the holder as allocating does.
+        assert!(ids.register("label", Some(other)));
+        assert!(ids.register("label", Some(other)));
+        assert!(!ids.register("label", Some(holder)));
+        // An id whose holder has no identity: no node is known to hold it,
+        // so every later registration is the duplicate case.
+        assert!(ids.register("plain", None));
+        assert!(!ids.register("plain", None));
+        assert!(!ids.register("plain", Some(holder)));
+        assert!(ids.is_taken("plain"));
+    }
+
+    /// `next_uid` counts the identities minted so far, so a default state
+    /// mints 1 first ([`Uid::new`] from the incremented counter).
+    #[test]
+    fn uids_mint_from_one() {
+        let mut state = DocumentState::default();
+        assert_eq!(state.mint_uid(), uid(1));
+        assert_eq!(state.mint_uid(), uid(2));
+        assert_eq!(state.next_uid, 2);
+    }
+
+    /// A node of `kind` with `ids`, stamped with `uid`.
+    fn stamped(kind: &'static str, ids: &[&str], n: u32) -> Node {
+        let mut node = Node::elem(kind, Span::ZERO);
+        node.attrs.ids = strings(ids);
+        node.set_uid(uid(n));
+        node
+    }
+
+    /// The read-state fixture's `registries_post_parse` shape
+    /// ([DS §11]): every registry as a list of `[kind, ids, attached]`
+    /// entries in registration order, a dict-of-lists registry as
+    /// `[key, entries]` pairs in key order, `substitution_defs` and
+    /// `substitution_names` in docutils' dict order (a redefined name keeps
+    /// its first position and names its last node), `names` as
+    /// `[name, id, explicit]` in `nametypes` order, and each pending
+    /// transform as `[transform, order, entry]`. A node reachable from the
+    /// root is attached; one only `detached` holds is not.
+    #[test]
+    fn registries_dump_shape() {
+        let mut state = DocumentState::default();
+        for _ in 0..8 {
+            state.mint_uid();
+        }
+        let mut para = Node::elem(kinds::PARAGRAPH, Span::ZERO);
+        para.children
+            .push(stamped(kinds::FOOTNOTE_REFERENCE, &["id1"], 1));
+        para.children.push(stamped(kinds::REFERENCE, &[], 2));
+        let mut root = Node::elem(kinds::DOCUMENT, Span::ZERO);
+        root.children.push(para);
+        root.children.push(stamped(kinds::TARGET, &["t"], 3));
+        root.children.push(stamped("pending", &[], 5));
+        root.children
+            .push(stamped("substitution_definition", &[], 7));
+        root.children
+            .push(stamped("substitution_definition", &[], 8));
+        let mut rejected = stamped("substitution_definition", &[], 4);
+        rejected
+            .children
+            .push(stamped(kinds::FOOTNOTE_REFERENCE, &["id2"], 6));
+        state.detached.push(rejected);
+
+        let registries = &mut state.registries;
+        registries.autofootnote_refs = vec![uid(1), uid(6)];
+        registries.refnames.push("a", uid(3));
+        registries.refnames.push("a", uid(2));
+        registries.indirect_targets.push(uid(3));
+        for (name, n) in [("s", 4), ("T", 7), ("s", 8)] {
+            registries
+                .substitution_defs
+                .push((name.to_string(), uid(n)));
+            registries
+                .substitution_names
+                .insert(name.to_lowercase(), name.to_string());
+        }
+        state.pending.push(PendingRecord {
+            transform: PendingTransform::ClassAttribute,
+            order: 0,
+            node: uid(5),
+        });
+        let names = strings(&["t"]);
+        let view = NodeView {
+            kind: kinds::TARGET,
+            names: &names,
+            refuri: None,
+            refname: Some("a"),
+        };
+        state.names.bind(view, "t", true);
+
+        let subdef = |attached: bool| serde_json::json!(["substitution_definition", [], attached]);
+        assert_eq!(
+            state.registries_dump(&root),
+            serde_json::json!({
+                "autofootnotes": [],
+                "autofootnote_refs": [
+                    ["footnote_reference", ["id1"], true],
+                    ["footnote_reference", ["id2"], false],
+                ],
+                "symbol_footnotes": [],
+                "symbol_footnote_refs": [],
+                "footnotes": [],
+                "footnote_refs": [],
+                "citations": [],
+                "citation_refs": [],
+                "refnames": [["a", [["target", ["t"], true], ["reference", [], true]]]],
+                "indirect_targets": [["target", ["t"], true]],
+                "substitution_defs": [["s", subdef(true)], ["T", subdef(true)]],
+                "substitution_names": [["s", "s"], ["t", "T"]],
+                "names": [["t", "t", true]],
+                "pending": [
+                    ["docutils.transforms.misc.ClassAttribute", 0, ["pending", [], true]]
+                ],
+            })
+        );
+        assert!(state.misplaced_registrations(&root).is_empty());
+    }
+
+    /// The end-of-parse invariant ([DS §8.2]): every registered `Uid` is
+    /// reachable exactly once from the root or from `detached`. A dropped
+    /// registered node is reported reached 0 times, a duplicated one by
+    /// its count; the dump names an unreachable node `null`.
+    #[test]
+    fn misplaced_registrations_counts_each_registered_uid() {
+        let mut state = DocumentState::default();
+        let mut root = Node::elem(kinds::DOCUMENT, Span::ZERO);
+        let once = stamped(kinds::CITATION, &["c"], 1);
+        let twice = stamped(kinds::FOOTNOTE, &["id1"], 2);
+        root.children.push(once);
+        root.children.push(twice.clone());
+        state.detached.push(twice);
+        state.registries.citations.push(uid(1));
+        state.registries.footnotes.push(uid(2));
+        state.registries.autofootnotes.push(uid(3));
+        // A uid registered twice (a `[#name]_` reference sits in three
+        // registries) is still one node.
+        state.registries.refnames.push("c", uid(1));
+        assert_eq!(
+            state.misplaced_registrations(&root),
+            vec![(uid(2), 2), (uid(3), 0)]
+        );
+        assert_eq!(
+            state.registries_dump(&root)["autofootnotes"],
+            serde_json::json!([null])
+        );
     }
 }
