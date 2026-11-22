@@ -61,10 +61,12 @@ pub struct InventoryRecord {
     pub priority: i32,
     pub uri: String,
     pub display_name: String,
-    /// `Some(line)`, verbatim, for a payload line kept unparsed: one Sphinx's
-    /// loader reads no record from, or one whose priority does not fit an
-    /// `i32`. Its other fields are then empty and its priority 0. `None` for
-    /// a parsed record.
+    /// `None` for a parsed record: a payload line Sphinx's loader reads a
+    /// record from (with a priority that fits an `i32`) whose canonical
+    /// re-join, `{name} {domain_role} {priority} {uri} {display_name}`, equals
+    /// the line. `Some(line)`, verbatim, for every other line, a raw record
+    /// compared byte for byte; its other fields are then empty and its
+    /// priority 0.
     pub raw: Option<String>,
 }
 
@@ -1023,9 +1025,12 @@ fn compare_inventory_file(logical_path: &str, expected: &[u8], actual: &[u8]) ->
 /// lines and the records, sorted.
 ///
 /// Only a bad header or an undecodable payload (zlib or UTF-8) makes an
-/// inventory invalid. Every payload line becomes a record: a line the loader
-/// reads no record from is kept verbatim as an opaque raw record that
-/// compares byte for byte (`parse_inventory_record`).
+/// inventory invalid. Every payload line becomes a record. The parsed records
+/// are exactly the lines the loader reads a record from whose canonical
+/// re-join, `{name} {domain_role} {priority} {uri} {display_name}`, equals the
+/// line; every other line is kept verbatim as an opaque raw record compared
+/// byte for byte (`parse_inventory_record`). Either way two records are equal
+/// exactly when their lines are.
 pub fn parse_inventory(bytes: &[u8]) -> Result<(Vec<u8>, Vec<InventoryRecord>), String> {
     const HEADER: &[u8] = b"# Sphinx inventory version 2\n# Project: ";
     if !bytes.starts_with(HEADER) {
@@ -1071,9 +1076,12 @@ pub fn parse_inventory(bytes: &[u8]) -> Result<(Vec<u8>, Vec<InventoryRecord>), 
 
 /// Reads one payload line as the loader does (`SP/sphinx/util/inventory.py:115-128`):
 /// the right-stripped line must match the record pattern with a `domain:type`
-/// role. A line failing either check, which the loader skips, stays raw, as
-/// does one whose priority, which the loader keeps as text, does not fit an
-/// `i32`.
+/// role, and the priority, which the loader keeps as text, must fit an `i32`.
+/// The record is kept only if its canonical re-join (`inventory_record_text`)
+/// is the unstripped line itself: the pattern absorbs whitespace at field
+/// boundaries and the strip drops trailing whitespace, so a record read from
+/// any other line would compare equal to lines with different bytes. Every
+/// other line, including every line the loader skips, stays raw.
 fn parse_inventory_record(line: &str) -> InventoryRecord {
     use regex::Regex;
     use std::sync::LazyLock;
@@ -1105,6 +1113,7 @@ fn parse_inventory_record(line: &str) -> InventoryRecord {
                 raw: None,
             })
         })
+        .filter(|record| inventory_record_text(record) == line)
         .unwrap_or_else(|| InventoryRecord {
             name: String::new(),
             domain_role: String::new(),

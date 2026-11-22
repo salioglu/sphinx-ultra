@@ -572,6 +572,47 @@ fn parse_inventory_accepts_every_sphinx_v2_record_shape() {
 }
 
 #[test]
+fn inventory_lines_that_do_not_rejoin_compare_byte_for_byte() {
+    // The sphinx_read-0351 reference holds `nbsp`. Sphinx's regex reads the name `term` from it,
+    // but its fields do not re-join to the line, so it stays a raw record and a writer that
+    // drops the no-break space is caught.
+    let nbsp = "term\u{a0} std:term -1 index.html#term-term -";
+    let canonical = "term std:term -1 index.html#term-term -";
+    let with = |line: &str| inventory_bytes(&format!("{line}\n"));
+    let diagnostics = compare_file("objects.inv", &with(nbsp), &with(canonical), None);
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].category, "objects-inventory-value");
+    let (_, records) =
+        parse_inventory(&with(nbsp)).expect("no record line makes an inventory invalid");
+    assert_eq!(records[0].raw.as_deref(), Some(nbsp));
+    // The exhaustive report localizes it: the raw line is missing, the parsed record extra.
+    let tree = |line: &str| BTreeMap::from([(String::from("objects.inv"), with(line))]);
+    let mut localized = compare_trees(&tree(nbsp), &tree(canonical), None, None, None)
+        .into_iter()
+        .map(|diagnostic| diagnostic.category)
+        .collect::<Vec<_>>();
+    localized.sort();
+    assert_eq!(
+        localized,
+        ["inventory-extra-record", "inventory-missing-record"]
+    );
+    // The other field-boundary and priority spellings the regex alone absorbs.
+    let index = "index std:doc -1 index.html T";
+    let function = "f py:function 1 api.html#$ -";
+    for (expected, actual) in [
+        ("term\u{1f} std:term -1 index.html#term-term -", canonical), // sphinx_read-0352
+        ("index std:doc -1 index.html \u{a0}T", index),               // docutils-0731
+        ("f\tpy:function 1 api.html#$ -", function),
+        ("f py:function 001 api.html#$ -", function),
+        ("f py:function 1 api.html#$ - ", function),
+    ] {
+        let diagnostics = compare_file("objects.inv", &with(expected), &with(actual), None);
+        assert_eq!(diagnostics.len(), 1, "{expected:?} vs {actual:?}");
+        assert_eq!(diagnostics[0].category, "objects-inventory-value");
+    }
+}
+
+#[test]
 fn comparator_reports_missing_and_unexpected_files() {
     let expected = BTreeMap::from([(String::from("index.html"), b"same".to_vec())]);
     let actual = BTreeMap::from([
