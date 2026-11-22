@@ -47,6 +47,16 @@ pub enum BuildError {
     ValidationError(String),
 }
 
+/// Sphinx's `sphinx.errors.ConfigError` raised once the build has started:
+/// the intersphinx inventories' invariants, which Sphinx checks when it
+/// loads them at `builder-inited` (`ext/intersphinx/_load.py:150-160`).
+/// sphinx-build mode reports it as it reports a configuration that fails to
+/// load: `Configuration error!` on stderr and in the `-w` file, exit 2.
+/// `Display` prints Sphinx's message alone.
+#[derive(Error, Debug)]
+#[error("{0}")]
+pub struct ConfigError(pub String);
+
 #[derive(Debug, Clone)]
 pub struct BuildWarning {
     pub file: PathBuf,

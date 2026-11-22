@@ -6,6 +6,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use sphinx_ultra::diagnostics::{Category, Diagnostic, Location, Severity, WarningFilter};
+use sphinx_ultra::error::ConfigError;
 use sphinx_ultra::{analyze_project, BuildConfig, SphinxBuilder};
 
 #[derive(Parser)]
@@ -389,6 +390,15 @@ fn resolved(path: &Path) -> PathBuf {
         .unwrap_or_else(|_| path.to_path_buf())
 }
 
+/// Sphinx's report of a `ConfigError` (`handle_exception`,
+/// `sphinx/_cli/util/errors.py:162-245`) as the HTML oracle records it: the
+/// traceback context reduced to the exception line, which is all this crate
+/// can say. sphinx-build mode writes it to both halves of the stream, as
+/// Sphinx writes it to its error stream, the tee of stderr and `-w`.
+fn config_error_report(error: &anyhow::Error) -> String {
+    format!("\nConfiguration error!\n\n    sphinx.errors.ConfigError: {error:#}\n")
+}
+
 /// Load the configuration and apply the command line to it. A failure here
 /// is a configuration error, which sphinx-build mode reports the way Sphinx
 /// reports its `ConfigError`: `Configuration error!`, exit 2.
@@ -506,12 +516,7 @@ async fn run_build(args: RunArgs) -> Result<i32> {
     } = match configure(&args) {
         Ok(configured) => configured,
         Err(error) if sphinx_mode => {
-            // `handle_exception` (`sphinx/_cli/util/errors.py:162-245`) as
-            // the HTML oracle records it: Sphinx's traceback context reduced
-            // to the exception line, which is all this crate can say.
-            stream.raw(&format!(
-                "\nConfiguration error!\n\n    sphinx.errors.ConfigError: {error:#}\n"
-            ))?;
+            stream.raw(&config_error_report(&error))?;
             return Ok(2);
         }
         Err(error) => return Err(error),
@@ -575,7 +580,18 @@ async fn run_build(args: RunArgs) -> Result<i32> {
         builder.enable_incremental();
     }
 
-    let stats = builder.build().await?;
+    let stats = match builder.build().await {
+        Ok(stats) => stats,
+        // A `ConfigError` raised once the build has started (the intersphinx
+        // inventories' invariants, checked as they load) gets the same
+        // report as one raised while the configuration loads, after the
+        // configuration records, as in Sphinx.
+        Err(error) if sphinx_mode && error.downcast_ref::<ConfigError>().is_some() => {
+            stream.raw(&config_error_report(&error))?;
+            return Ok(2);
+        }
+        Err(error) => return Err(error),
+    };
 
     if !sphinx_mode {
         stream.open(args.warning_file.as_deref())?;

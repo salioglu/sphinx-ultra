@@ -2310,6 +2310,52 @@ fn an_empty_inventory_location_tuple_exits_two_with_sphinxs_invariant_error() {
     );
 }
 
+/// The `ConfigError` raised while the inventories load gets the report a
+/// configuration that fails to load gets: Sphinx's `handle_exception` writes
+/// it to `args.error`, the tee of stderr and the `-w` file
+/// (`sphinx/cmd/build.py:333-361`, `:395-452`), so both halves carry the
+/// same bytes. Sphinx 9.1.0, probed with this project, exits 2 and writes
+/// the identical report to both; the expected bytes are that report as the
+/// HTML oracle's `reduce_sphinx_error_report` reduces it.
+#[test]
+fn a_load_time_config_error_writes_sphinxs_report_to_both_halves() {
+    let src = temp_source(
+        "intersphinx-load-config-error",
+        &[
+            ("index.rst", "Title\n=====\n\nText.\n"),
+            (
+                "conf.py",
+                "extensions = ['sphinx.ext.intersphinx']\n\
+                 intersphinx_mapping = {'x': ('https://x.invalid/', ())}\n",
+            ),
+        ],
+    );
+    let out = out_dir("intersphinx-load-config-error");
+    let warnings = out_dir("intersphinx-load-config-error-log").join("warnings.txt");
+    let result = sphinx_build(&[
+        src.to_str().unwrap(),
+        out.to_str().unwrap(),
+        "-q",
+        "-w",
+        warnings.to_str().unwrap(),
+    ]);
+
+    assert_eq!(
+        result.status.code(),
+        Some(2),
+        "stderr: {}",
+        stderr_of(&result)
+    );
+    // Strict UTF-8 on both sides, so the string comparison is byte-exact.
+    let written = String::from_utf8(std::fs::read(&warnings).unwrap()).unwrap();
+    assert_eq!(
+        written,
+        "\nConfiguration error!\n\n    sphinx.errors.ConfigError: An invalid \
+         intersphinx_mapping entry was added after normalisation.\n"
+    );
+    assert_eq!(String::from_utf8(result.stderr).unwrap(), written);
+}
+
 /// `source_encoding` is a real key (panel fix round B, [19]): `-D` reaches
 /// it, a non-UTF-8 value prints sphinx's deprecation warning byte-exactly
 /// (probed), and the warning counts toward `-W`.

@@ -610,8 +610,9 @@ impl SphinxBuilder {
     /// configuration change discards them along with everything else.
     /// Fails where Sphinx raises `ConfigError` from `load_mappings` — an
     /// entry that survived normalisation but violates
-    /// `_IntersphinxProject`'s invariants — which aborts the build with the
-    /// same config-error exit code an invalid mapping gets at config time.
+    /// `_IntersphinxProject`'s invariants — with a
+    /// [`ConfigError`](crate::error::ConfigError), which aborts the build
+    /// with the report and exit code an invalid mapping gets at config time.
     fn load_intersphinx_inventories(&mut self) -> Result<()> {
         if self.config.intersphinx_mapping.is_empty() {
             return Ok(());
