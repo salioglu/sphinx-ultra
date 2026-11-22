@@ -927,6 +927,37 @@ mod tests {
         );
     }
 
+    /// docutils' `CSVTable.run` makes the title before it reads the data
+    /// (`SP/docutils/parsers/rst/directives/tables.py:286-287`), so every
+    /// data error drops a title whose references are already registered:
+    /// the title's `[#]_` takes `id1`, detached, and the paragraph's
+    /// reference the next id. Probed on Sphinx 9.1.0 (parse-only) for each
+    /// early return: no content, content beside `:file:`, `:file:` beside
+    /// `:url:`, and an unreadable `:file:`.
+    #[test]
+    fn csv_table_makes_its_title_before_reading_its_data() {
+        for source in [
+            ".. csv-table:: T [#]_\n\nText [#]_.\n",
+            ".. csv-table:: T [#]_\n   :file: data.csv\n\n   a, b\n\nText [#]_.\n",
+            ".. csv-table:: T [#]_\n   :file: missing.csv\n   :url: http://x/\n\nText [#]_.\n",
+            ".. csv-table:: T [#]_\n   :file: missing.csv\n\nText [#]_.\n",
+        ] {
+            let out = sphinx_parse(source);
+            assert_eq!(footnote_ref_tree_order(&out), ["id2"], "{source}");
+            assert_eq!(
+                out.state.registries_dump(&out.doctree.root)["autofootnote_refs"],
+                json!([auto_ref("id1", false), auto_ref("id2", true)]),
+                "{source}"
+            );
+            assert!(
+                out.state
+                    .misplaced_registrations(&out.doctree.root)
+                    .is_empty(),
+                "{source}"
+            );
+        }
+    }
+
     /// The `PySigConfig` keys a fixture's `conf` sets; the other keys the
     /// fixtures carry steer no parse.
     fn py_config_of(conf: &serde_json::Map<String, Value>) -> crate::py::PySigConfig {

@@ -6336,75 +6336,18 @@ impl BlockParser {
 
     /// csv-table (tables.py CSVTable:175-403).
     fn run_csv_table(&mut self, input: DirectiveInput<'_>, out: &mut Vec<Node>) {
-        let has_file = opt_get(&input.options, "file").is_some();
-        let has_url = opt_get(&input.options, "url").is_some();
-        // get_csv_data (tables.py:321-388).
-        let csv_text: String;
-        if !input.content.is_empty() {
-            if has_file || has_url {
-                out.push(self.directive_run_error(
-                    &format!(
-                        "\"{}\" directive may not both specify an external file and have content.",
-                        input.name
-                    ),
-                    input.span.source,
-                    input.lineno,
-                    input.rawsource,
-                ));
-                return;
-            }
-            csv_text = self.join_lines(&input.content);
-        } else if has_file {
-            if has_url {
-                out.push(self.directive_run_error(
-                    &format!(
-                        "The \"file\" and \"url\" options may not be simultaneously specified for the \"{}\" directive.",
-                        input.name
-                    ),
-                    input.span.source, input.lineno,
-                    input.rawsource,
-                ));
-                return;
-            }
-            let Some(OptVal::Str(path)) = opt_get(&input.options, "file") else {
-                unreachable!("file option is Path-converted");
-            };
-            let base = std::path::Path::new(self.sources.path(0))
-                .parent()
-                .map(|p| p.to_path_buf())
-                .unwrap_or_default();
-            match std::fs::read_to_string(base.join(path)) {
-                Ok(t) => csv_text = t,
-                Err(_) => {
-                    // Unlike raw's io.error_string (InputError: prefix),
-                    // the csv path formats the bare OSError.
-                    out.push(self.directive_run_message(
-                        messages::SEVERE,
-                        &format!(
-                            "Problems with \"{}\" directive path:\n[Errno 2] No such file or directory: {}.",
-                            input.name,
-                            py_repr(Some(path))
-                        ),
-                        input.span.source, input.lineno,
-                        input.rawsource,
-                    ));
-                    return;
-                }
-            }
-        } else {
-            out.push(self.directive_run_message(
-                messages::WARNING,
-                &format!(
-                    "The \"{}\" directive requires content; none supplied.",
-                    input.name
-                ),
-                input.span.source,
-                input.lineno,
-                input.rawsource,
-            ));
-            return;
-        }
+        // `title, messages = self.make_title()` runs before
+        // `get_csv_data()` (tables.py:286-287): a data error drops a title
+        // that is already parsed, its registrations kept.
         let (title, title_messages) = self.table_make_title(&input);
+        let csv_text = match self.get_csv_data(&input) {
+            Ok(text) => text,
+            Err(error) => {
+                out.push(*error);
+                self.state.detach(title.into_iter().chain(title_messages));
+                return;
+            }
+        };
         // Dialect (tables.py DocutilsDialect:198-220).
         let delim = match opt_get(&input.options, "delim") {
             Some(OptVal::Str(s)) => s.chars().next().unwrap_or(','),
@@ -6540,6 +6483,73 @@ impl BlockParser {
             table.attrs.classes.extend(cls.iter().cloned());
         }
         self.finish_table(table, &input, title, title_messages, out);
+    }
+
+    /// `CSVTable.get_csv_data` (tables.py:321-388): the CSV text from the
+    /// content or from `:file:`, or the message its
+    /// `SystemMessagePropagation` carries.
+    fn get_csv_data(&mut self, input: &DirectiveInput<'_>) -> Result<String, Box<Node>> {
+        let has_file = opt_get(&input.options, "file").is_some();
+        let has_url = opt_get(&input.options, "url").is_some();
+        if !input.content.is_empty() {
+            if has_file || has_url {
+                return Err(Box::new(self.directive_run_error(
+                    &format!(
+                        "\"{}\" directive may not both specify an external file and have content.",
+                        input.name
+                    ),
+                    input.span.source,
+                    input.lineno,
+                    input.rawsource,
+                )));
+            }
+            return Ok(self.join_lines(&input.content));
+        }
+        if !has_file {
+            return Err(Box::new(self.directive_run_message(
+                messages::WARNING,
+                &format!(
+                    "The \"{}\" directive requires content; none supplied.",
+                    input.name
+                ),
+                input.span.source,
+                input.lineno,
+                input.rawsource,
+            )));
+        }
+        if has_url {
+            return Err(Box::new(self.directive_run_error(
+                &format!(
+                    "The \"file\" and \"url\" options may not be simultaneously specified for the \"{}\" directive.",
+                    input.name
+                ),
+                input.span.source,
+                input.lineno,
+                input.rawsource,
+            )));
+        }
+        let Some(OptVal::Str(path)) = opt_get(&input.options, "file") else {
+            unreachable!("file option is Path-converted");
+        };
+        let base = std::path::Path::new(self.sources.path(0))
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_default();
+        std::fs::read_to_string(base.join(path)).map_err(|_| {
+            // Unlike raw's io.error_string (InputError: prefix), the csv
+            // path formats the bare OSError.
+            Box::new(self.directive_run_message(
+                messages::SEVERE,
+                &format!(
+                    "Problems with \"{}\" directive path:\n[Errno 2] No such file or directory: {}.",
+                    input.name,
+                    py_repr(Some(path))
+                ),
+                input.span.source,
+                input.lineno,
+                input.rawsource,
+            ))
+        })
     }
 
     /// list-table (tables.py ListTable:406-523).
