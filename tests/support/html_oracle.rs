@@ -2125,6 +2125,41 @@ fn common_mismatches(results: &[CaseResult]) -> (Vec<CommonMismatch>, BTreeSet<M
     (common, common_keys)
 }
 
+/// The parts of a build `html_oracle_aux_gate` holds to the oracle, none of
+/// them written by the HTML writer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum AuxComponent {
+    /// The `-w` warning stream.
+    Warnings,
+    /// The build-status class (built or build error), and any failure to run
+    /// the build at all.
+    ExitClass,
+    /// `objects.inv`.
+    ObjectsInv,
+    /// `searchindex.js`.
+    SearchIndex,
+}
+
+/// The auxiliary component a harness diagnostic belongs to, or `None` for
+/// any other output (pages, `genindex.html`, `search.html`, `_static`,
+/// `_sources`, `_images`, `.buildinfo`).
+///
+/// A status-class difference and the process failures (`timeout`, `spawn`,
+/// `io`, `process`), which carry no logical path, are `ExitClass`, so a case
+/// that hangs or fails to spawn can never pass silently.
+pub fn aux_component_of(diagnostic: &Diagnostic) -> Option<AuxComponent> {
+    match (
+        diagnostic.category.as_str(),
+        diagnostic.logical_path.as_str(),
+    ) {
+        ("status" | "timeout" | "spawn" | "io" | "process", "") => Some(AuxComponent::ExitClass),
+        (_, "warnings") => Some(AuxComponent::Warnings),
+        (_, "objects.inv") => Some(AuxComponent::ObjectsInv),
+        (_, "searchindex.js") => Some(AuxComponent::SearchIndex),
+        _ => None,
+    }
+}
+
 fn file_kind(diagnostic: &Diagnostic) -> Option<&'static str> {
     let path = diagnostic.logical_path.as_str();
     if diagnostic.category.starts_with("warning") || path == "warnings" {

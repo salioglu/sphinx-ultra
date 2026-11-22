@@ -6,22 +6,24 @@ mod support {
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
 use serde_json::json;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::io::Write;
 use std::path::Path;
 use std::process::Command;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 use support::diagnostics::{run_bounded, run_bounded_with_timeout, ExitStatusKind, ProcessOutput};
 use support::html_oracle::{
-    apply_retention, bounded_assertion_message, build_report, case_key, compare_file,
-    compare_trees, compare_warnings, compare_warnings_with_roots, diagnose_html,
+    apply_retention, aux_component_of, bounded_assertion_message, build_report, case_key,
+    compare_file, compare_trees, compare_warnings, compare_warnings_with_roots, diagnose_html,
     diagnose_inventory, diagnose_needs_json, diagnose_searchindex, diagnose_warnings,
     group_first_divergences, load_fixture_suite, materialize_case_expected,
     materialize_case_inputs, parse_inventory, parse_keep, read_record, resolve_ultra_binary,
-    status_name, walk_tree, warning_diagnostics_with_roots, write_logical_file, CaseRecord,
-    CaseResult, CaseStatus, IndexDocument, InventoryRecord, Keep, Policy, ReportInputs,
+    status_name, walk_tree, warning_diagnostics_with_roots, write_logical_file, AuxComponent,
+    CaseRecord, CaseResult, CaseStatus, Diagnostic, IndexDocument, InventoryRecord, Keep, Policy,
+    ReportInputs,
 };
 
 fn minimal_case() -> serde_json::Value {
@@ -1754,3 +1756,1548 @@ fn process_diagnostic(process: &ProcessOutput) -> support::html_oracle::Diagnost
         detail,
     }
 }
+
+/// The output files `html_oracle_aux_gate` compares besides the warning
+/// stream; the pages and the rest of the output tree are the HTML writer's
+/// and builder's (5b, 5c).
+const AUX_OUTPUT_FILES: [&str; 2] = ["objects.inv", "searchindex.js"];
+
+/// Runs one case for the aux gate under `run_root` and returns every
+/// diagnostic of its warning stream, exit class, `objects.inv` and
+/// `searchindex.js`.
+///
+/// Leaner than `run_html_case`: only the case's inputs are materialized, the
+/// expected files are read straight from the ledger's storage, nothing else
+/// of either output tree is read, no `result.json` is written, and the case
+/// directory is deleted whatever the outcome. It always runs the binary
+/// Cargo built for this test, never `HTML_ORACLE_ULTRA_BIN`.
+fn run_aux_case(
+    case: &CaseRecord,
+    profile_root: &Path,
+    run_root: &Path,
+) -> Result<Vec<Diagnostic>, String> {
+    let run_dir = run_root
+        .join(&case.profile)
+        .join(&case.source_set)
+        .join(&case.case_id);
+    if run_dir.exists() {
+        fs::remove_dir_all(&run_dir)
+            .map_err(|error| format!("remove stale run {}: {error}", run_dir.display()))?;
+    }
+    let outcome = compare_aux_outputs(case, profile_root, &run_dir);
+    let removed = fs::remove_dir_all(&run_dir)
+        .map_err(|error| format!("remove {}: {error}", run_dir.display()));
+    let diagnostics = outcome?;
+    removed?;
+    Ok(diagnostics)
+}
+
+fn compare_aux_outputs(
+    case: &CaseRecord,
+    profile_root: &Path,
+    run_dir: &Path,
+) -> Result<Vec<Diagnostic>, String> {
+    let input_dir = run_dir.join("input");
+    let output_dir = run_dir.join("output");
+    let cache_dir = run_dir.join("cache");
+    let warnings_path = run_dir.join("warnings.txt");
+    fs::create_dir_all(&input_dir)
+        .map_err(|error| format!("create {}: {error}", input_dir.display()))?;
+    materialize_case_inputs(case, profile_root, &input_dir)?;
+
+    // Invoked exactly as `run_html_case` invokes it, from the source
+    // directory, so the two harnesses normalize the same output.
+    let mut command = Command::new(env!("CARGO_BIN_EXE_sphinx-ultra"));
+    command
+        .current_dir(&input_dir)
+        .arg(&input_dir)
+        .arg(&output_dir)
+        .args(["-b", "html", "-d"])
+        .arg(&cache_dir)
+        .arg("-q")
+        .arg("-w")
+        .arg(&warnings_path);
+    let process = run_bounded(command);
+    let mut diagnostics = match process_status(&process) {
+        Some(actual_status) => {
+            let expected = case
+                .files
+                .iter()
+                .filter(|record| AUX_OUTPUT_FILES.contains(&record.logical_path.as_str()))
+                .map(|record| {
+                    Ok((
+                        record.logical_path.clone(),
+                        read_record(record, profile_root)?,
+                    ))
+                })
+                .collect::<Result<BTreeMap<_, _>, String>>()?;
+            let mut actual = BTreeMap::new();
+            for logical_path in AUX_OUTPUT_FILES {
+                if let Some(bytes) = read_if_present(&output_dir.join(logical_path))? {
+                    actual.insert(logical_path.to_string(), bytes);
+                }
+            }
+            // A file on one side only is that component's missing-file or
+            // unexpected-file; the status class follows `compare_trees`' rule.
+            compare_trees(
+                &expected,
+                &actual,
+                Some(case.status),
+                Some(actual_status),
+                Some(&input_dir),
+            )
+        }
+        None => vec![process_diagnostic(&process)],
+    };
+    // An absent warning file is an empty stream, as in `run_html_case`.
+    let actual_warnings = read_if_present(&warnings_path)?.unwrap_or_default();
+    let roots = Some(support::html_oracle::WarningRoots {
+        source_root: Some(&input_dir),
+        output_root: Some(&output_dir),
+        doctree_root: Some(&cache_dir),
+        case_root: Some(run_dir),
+    });
+    let expected_warnings = case.warnings.as_bytes();
+    let mut warning_diagnostics =
+        warning_diagnostics_with_roots(expected_warnings, &actual_warnings, None, roots);
+    if warning_diagnostics.is_empty() {
+        // The line diagnostics cannot see a stream that differs only in its
+        // final line break; the whole-stream comparison can.
+        warning_diagnostics =
+            compare_warnings_with_roots(expected_warnings, &actual_warnings, None, roots);
+    }
+    diagnostics.extend(warning_diagnostics);
+    Ok(diagnostics)
+}
+
+fn read_if_present(path: &Path) -> Result<Option<Vec<u8>>, String> {
+    match fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!("read {}: {error}", path.display())),
+    }
+}
+
+/// Runs every runnable core case through `run_aux_case` on scoped worker
+/// threads and returns each case with its aux-component diagnostics, in
+/// ledger order. `run_dir_name` names the run root under
+/// `target/html-oracle`; the gate and the census each pass their own, so a
+/// test binary that runs both never has one delete the other's case
+/// directories.
+fn run_aux_cases(run_dir_name: &str) -> Vec<(CaseRecord, Vec<Diagnostic>)> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let profile_root = manifest_dir.join("tests/fixtures/html_oracle/core");
+    let ledger = IndexDocument::load(&profile_root.join("index.json"))
+        .unwrap_or_else(|error| panic!("cannot load the core HTML oracle ledger: {error}"));
+    let cases = ledger
+        .cases
+        .into_iter()
+        .filter(|case| case.status.is_runnable())
+        .collect::<Vec<_>>();
+    let run_root = manifest_dir.join("target/html-oracle").join(run_dir_name);
+    fs::create_dir_all(&run_root)
+        .unwrap_or_else(|error| panic!("create {}: {error}", run_root.display()));
+    // The binary prints its canonicalized source directory, so the roots the
+    // warnings and `searchindex.js` are normalized with must be canonical too.
+    let run_root = run_root
+        .canonicalize()
+        .unwrap_or_else(|error| panic!("canonicalize {}: {error}", run_root.display()));
+    let workers = std::thread::available_parallelism()
+        .map(std::num::NonZeroUsize::get)
+        .unwrap_or(1)
+        .min(cases.len().max(1));
+    let next_case = AtomicUsize::new(0);
+    let mut finished = std::thread::scope(|scope| {
+        let handles = (0..workers)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut finished = Vec::new();
+                    while let Some(case) = cases.get(next_case.fetch_add(1, Ordering::Relaxed)) {
+                        let diagnostics = run_aux_case(case, &profile_root, &run_root)
+                            .unwrap_or_else(|error| panic!("{}: {error}", case_key(case)));
+                        finished.push((
+                            case_key(case),
+                            diagnostics
+                                .into_iter()
+                                .filter(|diagnostic| aux_component_of(diagnostic).is_some())
+                                .collect::<Vec<_>>(),
+                        ));
+                    }
+                    finished
+                })
+            })
+            .collect::<Vec<_>>();
+        handles
+            .into_iter()
+            .flat_map(|handle| handle.join().expect("aux worker should not panic"))
+            .collect::<BTreeMap<_, _>>()
+    });
+    cases
+        .into_iter()
+        .map(|case| {
+            let diagnostics = finished
+                .remove(&case_key(&case))
+                .expect("every case was run");
+            (case, diagnostics)
+        })
+        .collect()
+}
+
+/// Holds the warning stream, exit class, `objects.inv` and `searchindex.js`
+/// of every runnable core case to the oracle, strictly: the set of
+/// mismatching `(case_key, component)` pairs must equal `KNOWN_AUX_GAPS`.
+/// A task that fixes a row deletes it; a new mismatch fails the gate.
+#[test]
+#[cfg_attr(
+    windows,
+    ignore = "oracle references are POSIX-spelled; Windows paths use backslashes"
+)]
+fn html_oracle_aux_gate() {
+    let mut observed = BTreeMap::new();
+    for (case, diagnostics) in run_aux_cases("aux-gate-runs") {
+        for diagnostic in diagnostics {
+            let component = aux_component_of(&diagnostic).expect("only aux diagnostics are kept");
+            observed
+                .entry((case_key(&case), component))
+                .or_insert(diagnostic);
+        }
+    }
+    let diff = aux_gate_diff(&observed.keys().cloned().collect(), KNOWN_AUX_GAPS);
+    assert!(
+        diff.is_clean(),
+        "{}",
+        aux_gate_failure(&diff, &observed, KNOWN_AUX_GAPS)
+    );
+}
+
+/// The gate's failure message: three bounded lists, each regression with its
+/// first diagnostic, each fixed or duplicate pair with its rows.
+fn aux_gate_failure(
+    diff: &AuxGateDiff,
+    first_diagnostics: &BTreeMap<(String, AuxComponent), Diagnostic>,
+    table: &[(&str, AuxComponent, &str)],
+) -> String {
+    let table_rows = |(case, component): &(String, AuxComponent)| {
+        table
+            .iter()
+            .filter(|(row_case, row_component, _)| row_case == case && row_component == component)
+            .map(|(case, component, reason)| {
+                format!("    ({case:?}, AuxComponent::{component:?}, {reason:?}),")
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let mut message = format!(
+        "the aux mismatch set differs from KNOWN_AUX_GAPS: {} regressions, {} fixed rows, \
+         {} duplicate rows",
+        diff.regressions.len(),
+        diff.fixed.len(),
+        diff.duplicate_rows.len()
+    );
+    push_bounded_list(
+        &mut message,
+        "duplicate rows (list each case and component once)",
+        diff.duplicate_rows.iter().map(table_rows),
+    );
+    push_bounded_list(
+        &mut message,
+        "regressions (not in KNOWN_AUX_GAPS)",
+        diff.regressions.iter().map(|key| {
+            let (case, component) = key;
+            let diagnostic = &first_diagnostics[key];
+            let (line, expected, actual) =
+                first_differing_line(&diagnostic.expected, &diagnostic.actual);
+            format!(
+                "    {case} {component:?}: {} ({})\n        expected line {line}: {}\n        \
+                 actual line {line}:   {}",
+                diagnostic.category,
+                diagnostic.detail,
+                cap_line(expected),
+                cap_line(actual)
+            )
+        }),
+    );
+    push_bounded_list(
+        &mut message,
+        "fixed (delete these rows)",
+        diff.fixed.iter().map(table_rows),
+    );
+    message
+}
+
+fn push_bounded_list(
+    message: &mut String,
+    title: &str,
+    items: impl ExactSizeIterator<Item = String>,
+) {
+    const MAX_ITEMS: usize = 60;
+    let count = items.len();
+    if count == 0 {
+        return;
+    }
+    message.push_str(&format!("\n{title}: {count}"));
+    for item in items.take(MAX_ITEMS) {
+        message.push('\n');
+        message.push_str(&item);
+    }
+    if count > MAX_ITEMS {
+        message.push_str(&format!("\n    ... and {} more", count - MAX_ITEMS));
+    }
+}
+
+/// The first line, numbered from 1, where two texts differ, and that line of
+/// each (empty past a text's end).
+fn first_differing_line<'a>(expected: &'a str, actual: &'a str) -> (usize, &'a str, &'a str) {
+    let mut expected_lines = expected.lines();
+    let mut actual_lines = actual.lines();
+    let mut number = 1;
+    loop {
+        match (expected_lines.next(), actual_lines.next()) {
+            (Some(left), Some(right)) if left == right => number += 1,
+            (None, None) => return (number, "", ""),
+            (left, right) => return (number, left.unwrap_or_default(), right.unwrap_or_default()),
+        }
+    }
+}
+
+fn cap_line(line: &str) -> String {
+    const MAX_CHARS: usize = 240;
+    if line.chars().count() <= MAX_CHARS {
+        format!("{line:?}")
+    } else {
+        format!("{:?}...", line.chars().take(MAX_CHARS).collect::<String>())
+    }
+}
+
+/// Prints the current aux mismatch set as `KNOWN_AUX_GAPS` rows, in table
+/// order. A row's reason lists the fix families its diagnostics show and the
+/// latest task that fixes one of them. A mismatch no family explains gets a
+/// `?` family and a comment above its row, and fails the census once every
+/// row is printed:
+///
+/// `cargo test --locked --test html_differential html_oracle_aux_census -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn html_oracle_aux_census() {
+    let profile_root =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/html_oracle/core");
+    let mut counts = BTreeMap::<AuxComponent, usize>::new();
+    let mut unexplained_rows = 0;
+    let mut table = String::new();
+    for (case, diagnostics) in run_aux_cases("aux-census-runs") {
+        let mut by_component = BTreeMap::<AuxComponent, Vec<Diagnostic>>::new();
+        for diagnostic in diagnostics {
+            let component = aux_component_of(&diagnostic).expect("only aux diagnostics are kept");
+            by_component.entry(component).or_default().push(diagnostic);
+        }
+        if by_component.is_empty() {
+            continue;
+        }
+        let sources = CaseSources::read(&case, &profile_root);
+        for (component, diagnostics) in by_component {
+            let census = match component {
+                AuxComponent::Warnings => warning_census(&case, &sources, &diagnostics),
+                AuxComponent::ExitClass => {
+                    GapCensus::unattributed(diagnostics.iter().map(|diagnostic| {
+                        format!("{}: {}", diagnostic.category, diagnostic.detail)
+                    }))
+                }
+                AuxComponent::ObjectsInv => inventory_census(&sources, &diagnostics),
+                AuxComponent::SearchIndex => searchindex_census(&case, &sources, &diagnostics),
+            };
+            *counts.entry(component).or_default() += 1;
+            if !census.unexplained.is_empty() {
+                unexplained_rows += 1;
+            }
+            for note in &census.unexplained {
+                for line in note.lines() {
+                    table.push_str(&format!("    // ? {line}\n"));
+                }
+            }
+            table.push_str(&format!(
+                "    ({:?}, AuxComponent::{component:?}, {:?}),\n",
+                case_key(&case),
+                census.reason()
+            ));
+        }
+    }
+    println!("    // Rows per component: {counts:?}\n{table}");
+    assert_eq!(
+        unexplained_rows, 0,
+        "rows with a `?` family need a family the census does not know"
+    );
+}
+
+/// The owners of gap rows in the order their tasks land: a row is owned by
+/// the latest task that fixes one of its families.
+const GAP_OWNERS: &[&str] = &[
+    "5a-T3",
+    "5a-T4",
+    "5a-T5a",
+    "5a-T5b",
+    "5a-T5c",
+    "5a-T6",
+    "5a-T7",
+    "5a-T8",
+    "5a-T9a",
+    "5a-T9b",
+    "5a-T9c",
+    "5a-T10",
+    "5a-T11",
+    "5a-T12",
+    "5a-T13a",
+    "5a-T13b",
+    "5a-T14",
+    "5a-T15",
+    "5a-T16a",
+    "5a-T16b",
+    "5a-T17a",
+    "5a-T17b",
+    "5a-T17c",
+    "5a-T18a",
+    "5a-T18b",
+    "5a-T18c",
+    "5b (oracle regen)",
+    "5b",
+    "5c",
+];
+
+/// One fix family of a gap row and the task that fixes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct GapFix {
+    family: &'static str,
+    owner: &'static str,
+}
+
+const fn gap_fix(family: &'static str, owner: &'static str) -> GapFix {
+    GapFix { family, owner }
+}
+
+/// What the census learned about one `(case, component)` mismatch.
+#[derive(Debug, Default)]
+struct GapCensus {
+    fixes: BTreeSet<GapFix>,
+    /// Differences no family explains, printed above the row.
+    unexplained: Vec<String>,
+}
+
+impl GapCensus {
+    /// A census that attributes these differences to no family.
+    fn unattributed(notes: impl IntoIterator<Item = String>) -> Self {
+        Self {
+            fixes: BTreeSet::new(),
+            unexplained: notes.into_iter().collect(),
+        }
+    }
+
+    /// `"<families>: <owner>"`, the families in `F1`…`F12`, `INV:`, `SI:`
+    /// order, a `?` family for anything unexplained.
+    fn reason(&self) -> String {
+        let mut families = self.fixes.iter().map(|fix| fix.family).collect::<Vec<_>>();
+        if !self.unexplained.is_empty() {
+            families.push("?");
+        }
+        families.sort_by_key(|family| family_sort_key(family));
+        families.dedup();
+        let owner = self
+            .fixes
+            .iter()
+            .map(|fix| fix.owner)
+            .max_by_key(|owner| {
+                GAP_OWNERS
+                    .iter()
+                    .position(|known| known == owner)
+                    .unwrap_or_else(|| panic!("unknown gap owner {owner:?}"))
+            })
+            .unwrap_or("?");
+        format!("{}: {owner}", families.join("+"))
+    }
+}
+
+/// Sorts `F2` before `F10` and `F8` before `F8b`, and the `F` families
+/// before `INV:` and `SI:` causes.
+fn family_sort_key(family: &str) -> (bool, u32, &str) {
+    let numbered = family
+        .strip_prefix('F')
+        .map(|rest| {
+            rest.split_at(
+                rest.find(|c: char| !c.is_ascii_digit())
+                    .unwrap_or(rest.len()),
+            )
+        })
+        .and_then(|(number, suffix)| Some((number.parse().ok()?, suffix)));
+    match numbered {
+        Some((number, suffix)) => (false, number, suffix),
+        None => (true, 0, family),
+    }
+}
+
+/// `[docutils]` records that only a transform, Sphinx's role and directive
+/// dispatch or the HTML writer creates, by message, with that family. Every
+/// other `[docutils]` record is one Ultra's parser already holds in the tree,
+/// which the reporter channel (F1) prints [TW §6.3, §7.4]; these need F1 too.
+const REPORTER_MESSAGE_FIXES: &[(&str, GapFix)] = &[
+    ("Unknown target name: ", gap_fix("F4", "5a-T10")),
+    ("Anonymous hyperlink mismatch: ", gap_fix("F4", "5a-T10")),
+    ("Indirect hyperlink target ", gap_fix("F4", "5a-T10")),
+    (
+        "Undefined substitution referenced: ",
+        gap_fix("F4", "5a-T11"),
+    ),
+    (" footnote references: only ", gap_fix("F4", "5a-T11")),
+    (" must separate transitions;", gap_fix("F7", "5a-T9c")),
+    (" may not begin with a transition.", gap_fix("F7", "5a-T9c")),
+    (" may not end with a transition.", gap_fix("F7", "5a-T9c")),
+    ("Cannot scale image!", gap_fix("F8", "5b")),
+    ("Unknown interpreted text role ", gap_fix("F5", "5a-T7")),
+    ("Error in \"code\" directive:", gap_fix("F5", "5a-T7")),
+];
+
+/// Logger records Ultra does not print, by message [TW §6.3, §7.3].
+const MISSING_LOGGER_FIXES: &[(&str, GapFix)] = &[
+    ("Configuration error!", gap_fix("F9", "5a-T3")),
+    ("image file not readable: ", gap_fix("F3", "5a-T13a")),
+    ("is not referenced. [ref.footnote]", gap_fix("F6", "5a-T11")),
+    (
+        "is not referenced. [ref.citation]",
+        gap_fix("F6", "5a-T13b"),
+    ),
+    ("citation not found: ", gap_fix("F6", "5a-T13b")),
+    ("Could not obtain image size. ", gap_fix("F8", "5b")),
+    ("unknown role name: ", gap_fix("F5", "5a-T7")),
+    ("line number spec is out of range", gap_fix("F11", "5a-T7")),
+    ("equation not found: ", gap_fix("F10", "5a-T13b")),
+];
+
+/// The messages of the M1 directive and role validators
+/// (`src/directives/validation/`), which Sphinx never prints (F2).
+const M1_VALIDATION_MESSAGES: &[&str] = &[
+    r"Unknown option '.*'( for \S+ directive)?",
+    r"\S+ option should not have a value",
+    r"\S+ is not a valid length: '.*'",
+    r"Invalid alignment: .*",
+    r"Unusual image extension: .*",
+    r"Scale must be a number",
+    r"(Image|Include file|Literalinclude file) path cannot be empty",
+    r"Unmatched braces in math (content|expression)",
+    r"\S+ directive (requires .*|has no content|is empty)",
+    r"\S+( \S+)? role (requires .*|should .*)",
+    r"Abbreviations typically contain uppercase letters",
+    r"Command contains potentially dangerous characters",
+    r"Document reference should not include file extension",
+    r"Download target has no file extension",
+    r"File path contains invalid characters",
+    r"Unusual file type for download: .*",
+    r"Use &amp; for literal ampersand in GUI labels",
+];
+
+/// The families of a `Warnings` mismatch, record by record: each record only
+/// one side prints is matched against the message families of [TW §6.3,
+/// §7.3]. An expected record whose only difference is a relative location
+/// (`part.rst:6` for `<SRCDIR>/part.rst:6`) is F8b.
+fn warning_census(
+    case: &CaseRecord,
+    sources: &CaseSources,
+    diagnostics: &[Diagnostic],
+) -> GapCensus {
+    use regex::Regex;
+    use std::sync::LazyLock;
+    static M1: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(&format!("^({})$", M1_VALIDATION_MESSAGES.join("|"))).expect("valid pattern")
+    });
+
+    let (mut expected_only, mut actual_only) = match warning_record_diff(case, diagnostics) {
+        Ok(records) => records,
+        Err(note) => return GapCensus::unattributed([note]),
+    };
+    let mut census = GapCensus::default();
+    expected_only.retain(|record| {
+        let relative = record.strip_prefix("<SRCDIR>/");
+        match relative.and_then(|relative| actual_only.iter().position(|other| other == relative)) {
+            Some(index) => {
+                actual_only.remove(index);
+                census.fixes.insert(gap_fix("F8b", "5a-T14"));
+                false
+            }
+            None => true,
+        }
+    });
+    let intersphinx_without_extension = sources.intersphinx_without_extension();
+    for record in &expected_only {
+        let message = warning_record_message(record).unwrap_or(record);
+        let fixes = if record.ends_with(" [docutils]") {
+            let mut fixes = vec![gap_fix("F1", "5a-T8")];
+            fixes.extend(
+                REPORTER_MESSAGE_FIXES
+                    .iter()
+                    .find(|(pattern, _)| record.contains(pattern))
+                    .map(|(_, fix)| *fix),
+            );
+            fixes
+        } else if let Some((_, fix)) = MISSING_LOGGER_FIXES
+            .iter()
+            .find(|(pattern, _)| record.contains(pattern))
+        {
+            vec![*fix]
+        } else if intersphinx_without_extension && record.contains(" [ref.") {
+            // Ultra resolves the reference through the inventory that
+            // Sphinx never loads without the extension.
+            vec![gap_fix("F12", "5a-T7")]
+        } else {
+            census.unexplained.push(format!("expected only: {message}"));
+            continue;
+        };
+        census.fixes.extend(fixes);
+    }
+    for record in &actual_only {
+        let message = warning_record_message(record).unwrap_or(record);
+        if M1.is_match(message) {
+            census.fixes.insert(gap_fix("F2", "5a-T3"));
+        } else if intersphinx_without_extension && message.starts_with("external ") {
+            census.fixes.insert(gap_fix("F12", "5a-T7"));
+        } else {
+            census.unexplained.push(format!("actual only: {record}"));
+        }
+    }
+    census
+}
+
+/// The warning records only one side prints, `(expected_only, actual_only)`.
+///
+/// The actual stream is rebuilt from the case's expected stream and its
+/// positional `warning-*-line` diagnostics; it splits into records at every
+/// line that opens one (`[<location>: ]WARNING|ERROR|CRITICAL: …`), and the
+/// lines before the first such line (a fatal report) form one record.
+fn warning_record_diff(
+    case: &CaseRecord,
+    diagnostics: &[Diagnostic],
+) -> Result<(Vec<String>, Vec<String>), String> {
+    let normalized = case.warnings.replace("\r\n", "\n").replace('\r', "\n");
+    let expected = normalized.lines().collect::<Vec<_>>();
+    let mut at_line = BTreeMap::new();
+    for diagnostic in diagnostics {
+        let line = diagnostic
+            .first_expected_line
+            .filter(|_| diagnostic.category.starts_with("warning-"))
+            .ok_or_else(|| format!("{} is not a line diagnostic", diagnostic.category))?;
+        if diagnostic.category != "warning-extra-line"
+            && expected.get(line - 1) != Some(&diagnostic.expected.as_str())
+        {
+            return Err(format!("expected line {line} is not the ledger's"));
+        }
+        at_line.insert(line, diagnostic);
+    }
+    let lines_of = |category: &str| {
+        diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.category == category)
+            .count()
+    };
+    let actual_len =
+        expected.len() + lines_of("warning-extra-line") - lines_of("warning-missing-line");
+    let actual = (1..=actual_len)
+        .map(|line| match at_line.get(&line) {
+            Some(diagnostic) => Ok(diagnostic.actual.as_str()),
+            None => expected
+                .get(line - 1)
+                .copied()
+                .ok_or_else(|| format!("actual line {line} cannot be rebuilt")),
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let mut balance = BTreeMap::<String, isize>::new();
+    for record in warning_records(&expected) {
+        *balance.entry(record).or_default() += 1;
+    }
+    for record in warning_records(&actual) {
+        *balance.entry(record).or_default() -= 1;
+    }
+    let mut expected_only = Vec::new();
+    let mut actual_only = Vec::new();
+    for (record, count) in balance {
+        let side = if count > 0 {
+            &mut expected_only
+        } else {
+            &mut actual_only
+        };
+        side.extend(std::iter::repeat_n(record, count.unsigned_abs()));
+    }
+    if expected_only.is_empty() && actual_only.is_empty() {
+        return Err("both streams hold the same records in another order".to_string());
+    }
+    Ok((expected_only, actual_only))
+}
+
+/// Splits a warning stream into records, each a line that opens one and its
+/// continuation lines; lines before the first record (a fatal report) form
+/// one record.
+fn warning_records(lines: &[&str]) -> Vec<String> {
+    let mut records = Vec::<Vec<&str>>::new();
+    for &line in lines {
+        match records.last_mut() {
+            Some(record) if warning_record_message(line).is_none() => record.push(line),
+            _ => records.push(vec![line]),
+        }
+    }
+    records
+        .into_iter()
+        .map(|record| record.join("\n"))
+        .collect()
+}
+
+/// The message of a line that opens a warning record,
+/// `[<location>: ]WARNING|ERROR|CRITICAL: <message>`.
+fn warning_record_message(line: &str) -> Option<&str> {
+    use regex::Regex;
+    use std::sync::LazyLock;
+    static RECORD: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"^(?:\S+?(?::\d*)?: )?(?:WARNING|ERROR|CRITICAL): (.*)").expect("valid pattern")
+    });
+    RECORD
+        .captures(line)
+        .and_then(|captures| captures.get(1))
+        .map(|message| message.as_str())
+}
+
+/// The text of a case's inputs: its `conf.py`, and every other input that
+/// is UTF-8 text (the reStructuredText sources and the files they include).
+struct CaseSources {
+    conf: String,
+    documents: String,
+}
+
+impl CaseSources {
+    fn read(case: &CaseRecord, profile_root: &Path) -> Self {
+        let mut sources = Self {
+            conf: String::new(),
+            documents: String::new(),
+        };
+        for record in &case.input_files {
+            let bytes = read_record(record, profile_root)
+                .unwrap_or_else(|error| panic!("{}: {error}", case_key(case)));
+            let Ok(text) = String::from_utf8(bytes) else {
+                continue;
+            };
+            if record.logical_path == "conf.py" {
+                sources.conf = text;
+            } else {
+                sources.documents.push_str(&text);
+                sources.documents.push('\n');
+            }
+        }
+        sources
+    }
+
+    /// Whether `conf.py` configures intersphinx without loading the
+    /// extension, which Sphinx then never runs (F12).
+    fn intersphinx_without_extension(&self) -> bool {
+        self.conf.contains("intersphinx_mapping") && !self.conf.contains("sphinx.ext.intersphinx")
+    }
+
+    /// Whether the documents use an object directive without a domain
+    /// prefix, which Sphinx resolves through the default domain, `py` (T7).
+    fn use_unprefixed_py_directive(&self) -> bool {
+        use regex::Regex;
+        use std::sync::LazyLock;
+        static DIRECTIVE: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new(r"(?m)^\s*\.\. (class|function|module)::").expect("valid pattern")
+        });
+        DIRECTIVE.is_match(&self.documents)
+    }
+}
+
+/// The causes of an `objects.inv` mismatch [BASE §2.8], told by each record
+/// only one side holds or holds differently.
+fn inventory_census(sources: &CaseSources, diagnostics: &[Diagnostic]) -> GapCensus {
+    let mut census = GapCensus::default();
+    for diagnostic in diagnostics {
+        let expected = InventoryFields::parse(&diagnostic.expected);
+        let actual = InventoryFields::parse(&diagnostic.actual);
+        let fix = match (diagnostic.category.as_str(), &expected, &actual) {
+            // Sphinx gives an unprefixed `.. class::` its `py` object.
+            ("inventory-missing-record", Some(record), None)
+                if record.role.starts_with("py:") && sources.use_unprefixed_py_directive() =>
+            {
+                Some(gap_fix("INV:default-domain", "5a-T7"))
+            }
+            // `.. math::` registers its `:name:` as a label.
+            ("inventory-missing-record", Some(record), None)
+                if record.role == "std:label"
+                    && sources.documents.contains(".. math::")
+                    && sources.documents.contains(":name:") =>
+            {
+                Some(gap_fix("INV:math-name", "5a-T7"))
+            }
+            // A title's dangling reference stays as its problematic text, the
+            // reference's raw source (`[1]_`).
+            ("inventory-changed-record", Some(expected), Some(actual))
+                if expected.display.split_whitespace().any(|word| {
+                    word.ends_with('_') && !actual.display.split_whitespace().any(|w| w == word)
+                }) =>
+            {
+                Some(gap_fix("INV:word_", "5a-T10"))
+            }
+            // PropagateTargets gives a label its section's title, and
+            // IndirectHyperlinks makes a label external, which Sphinx skips.
+            ("inventory-extra-record" | "inventory-changed-record", _, Some(record))
+                if record.role == "std:label" =>
+            {
+                Some(gap_fix("INV:target-transforms", "5a-T10"))
+            }
+            _ => None,
+        };
+        match fix {
+            Some(fix) => {
+                census.fixes.insert(fix);
+            }
+            None => census.unexplained.push(format!(
+                "{}: expected {:?}, actual {:?}",
+                diagnostic.category, diagnostic.expected, diagnostic.actual
+            )),
+        }
+    }
+    census
+}
+
+/// The role and display name of an inventory record's text,
+/// `{name} {domain:role} {priority} {uri} {display name}`.
+struct InventoryFields {
+    role: String,
+    display: String,
+}
+
+impl InventoryFields {
+    fn parse(record: &str) -> Option<Self> {
+        use regex::Regex;
+        use std::sync::LazyLock;
+        static RECORD: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r"^.+? (\S+:\S+) -?\d+ \S* (.*)$").expect("valid pattern"));
+        let fields = RECORD.captures(record)?;
+        Some(Self {
+            role: fields[1].to_string(),
+            display: fields[2].to_string(),
+        })
+    }
+}
+
+/// The causes of a `searchindex.js` mismatch [TW A18, BASE §2.9], told by
+/// the terms, index entries and titles that differ, the case's expected
+/// warnings and the constructs its sources use.
+fn searchindex_census(
+    case: &CaseRecord,
+    sources: &CaseSources,
+    diagnostics: &[Diagnostic],
+) -> GapCensus {
+    let mut expected_only_terms = BTreeSet::new();
+    let mut actual_only_terms = BTreeSet::new();
+    let mut index_entries_differ = false;
+    let mut retargeted_titles = false;
+    for diagnostic in diagnostics {
+        let key = diagnostic.detail.split('"').nth(1).unwrap_or_default();
+        index_entries_differ |= key == "indexentries";
+        let (expected, actual) = match (
+            serde_json::from_str::<serde_json::Value>(&diagnostic.expected),
+            serde_json::from_str::<serde_json::Value>(&diagnostic.actual),
+        ) {
+            (Ok(serde_json::Value::Object(expected)), Ok(serde_json::Value::Object(actual))) => {
+                (expected, actual)
+            }
+            _ => continue,
+        };
+        let only = |left: &serde_json::Map<String, serde_json::Value>,
+                    right: &serde_json::Map<String, serde_json::Value>| {
+            left.keys()
+                .filter(|key| !right.contains_key(*key))
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        match key {
+            "terms" | "titleterms" => {
+                expected_only_terms.extend(only(&expected, &actual));
+                actual_only_terms.extend(only(&actual, &expected));
+            }
+            "alltitles" => {
+                retargeted_titles |= expected.iter().any(|(title, anchors)| {
+                    actual.get(title).is_some_and(|other| other != anchors)
+                });
+            }
+            _ => {}
+        }
+    }
+    let warnings = case.warnings.as_str();
+    let reference_text_terms = expected_only_terms.iter().any(|term| term.ends_with('_'));
+    let causes = [
+        // An index entry or glossary term holding a control character or a
+        // no-break space: Ultra writes `ax1fb` for Sphinx's `a\u001fb`.
+        (
+            index_entries_differ
+                && sources
+                    .documents
+                    .chars()
+                    .any(|c| (c.is_control() && !matches!(c, '\t' | '\n' | '\r')) || c == '\u{a0}'),
+            gap_fix("SI:entry-control-chars", "5a-T7"),
+        ),
+        // `keep_warnings = True` keeps the system messages, whose words Sphinx
+        // indexes.
+        (
+            sources
+                .conf
+                .lines()
+                .any(|line| line.replace(' ', "") == "keep_warnings=True"),
+            gap_fix("SI:keep-warnings", "5a-T9b"),
+        ),
+        // A section's anchor is the label PropagateTargets moves onto it,
+        // ordered by SortIds.
+        (retargeted_titles, gap_fix("SI:propagate-targets", "5a-T10")),
+        // A reference the 440, 460 or 850 transforms turn into a problematic
+        // node keeps its raw source (`word_`) as text.
+        (
+            reference_text_terms
+                && [
+                    "Unknown target name: ",
+                    "Anonymous hyperlink mismatch: ",
+                    "Indirect hyperlink target ",
+                ]
+                .iter()
+                .any(|message| warnings.contains(message)),
+            gap_fix("SI:word_", "5a-T10"),
+        ),
+        // So does a footnote reference the Footnotes transform (620) cannot
+        // number (`[#]_`).
+        (
+            reference_text_terms && warnings.contains(" footnote references: only "),
+            gap_fix("SI:footnote-refs", "5a-T11"),
+        ),
+        // An unknown role's problematic text (`:bogus:`x``) is indexed.
+        (
+            warnings.contains("Unknown interpreted text role "),
+            gap_fix("SI:unknown-role", "5a-T7"),
+        ),
+        // Ultra indexes a substitution reference's name, Sphinx its
+        // replacement.
+        (
+            actual_only_terms
+                .iter()
+                .any(|term| sources.documents.contains(&format!("|{term}|"))),
+            gap_fix("SI:substitutions", "5a-T11"),
+        ),
+        // Sphinx-mode dispatch: an unprefixed `.. class::` is a `py:class`,
+        // `:index:` and `.. code::` are Sphinx's, and the long PEP and RFC
+        // role names are docutils' plain references.
+        (
+            sources.use_unprefixed_py_directive(),
+            gap_fix("SI:default-domain", "5a-T7"),
+        ),
+        (
+            sources.documents.contains(":index:`"),
+            gap_fix("SI:index-role", "5a-T7"),
+        ),
+        (
+            sources.documents.contains(".. code::"),
+            gap_fix("SI:code-directive", "5a-T7"),
+        ),
+        (
+            sources.documents.contains(":pep-reference:`")
+                || sources.documents.contains(":rfc-reference:`"),
+            gap_fix("SI:pep-rfc-roles", "5a-T7"),
+        ),
+    ];
+    let mut census = GapCensus::default();
+    census.fixes.extend(
+        causes
+            .into_iter()
+            .filter_map(|(holds, fix)| holds.then_some(fix)),
+    );
+    let explains_reference_text = census
+        .fixes
+        .iter()
+        .any(|fix| matches!(fix.family, "SI:word_" | "SI:footnote-refs"));
+    if census.fixes.is_empty() || (reference_text_terms && !explains_reference_text) {
+        census
+            .unexplained
+            .extend(diagnostics.iter().map(|diagnostic| {
+                format!(
+                    "{}: {}: expected {:?}, actual {:?}",
+                    diagnostic.category, diagnostic.detail, diagnostic.expected, diagnostic.actual
+                )
+            }));
+    }
+    census
+}
+
+/// The verdict of `html_oracle_aux_gate`: the observed `(case_key, component)`
+/// mismatches against the rows of `KNOWN_AUX_GAPS`.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct AuxGateDiff {
+    /// Observed mismatches that no row lists.
+    regressions: Vec<(String, AuxComponent)>,
+    /// Rows whose mismatch is gone; the task that fixed them deletes them.
+    fixed: Vec<(String, AuxComponent)>,
+    /// `(case_key, component)` pairs that more than one row lists.
+    duplicate_rows: Vec<(String, AuxComponent)>,
+}
+
+impl AuxGateDiff {
+    fn is_clean(&self) -> bool {
+        self.regressions.is_empty() && self.fixed.is_empty() && self.duplicate_rows.is_empty()
+    }
+}
+
+/// Compares the observed mismatch set with a gap table, each list sorted.
+fn aux_gate_diff(
+    observed: &BTreeSet<(String, AuxComponent)>,
+    table: &[(&str, AuxComponent, &str)],
+) -> AuxGateDiff {
+    let mut listed = BTreeSet::new();
+    let mut duplicate_rows = BTreeSet::new();
+    for (case, component, _reason) in table {
+        let key = (case.to_string(), *component);
+        if !listed.insert(key.clone()) {
+            duplicate_rows.insert(key);
+        }
+    }
+    AuxGateDiff {
+        regressions: observed.difference(&listed).cloned().collect(),
+        fixed: listed.difference(observed).cloned().collect(),
+        duplicate_rows: duplicate_rows.into_iter().collect(),
+    }
+}
+
+fn aux_diagnostic(category: &str, logical_path: &str) -> Diagnostic {
+    Diagnostic {
+        category: category.to_string(),
+        logical_path: logical_path.to_string(),
+        first_expected_line: None,
+        expected: String::new(),
+        actual: String::new(),
+        detail: "synthetic".to_string(),
+    }
+}
+
+#[test]
+fn aux_component_of_maps_harness_categories() {
+    // A case that hangs, fails to spawn or loses its pipes has no exit class
+    // to compare, so it must never pass silently.
+    for category in ["timeout", "status", "spawn", "io", "process"] {
+        assert_eq!(
+            aux_component_of(&aux_diagnostic(category, "")),
+            Some(AuxComponent::ExitClass),
+            "{category}"
+        );
+    }
+    for (category, logical_path, component) in [
+        (
+            "warning-missing-line",
+            "warnings",
+            Some(AuxComponent::Warnings),
+        ),
+        (
+            "warning-changed-line",
+            "warnings",
+            Some(AuxComponent::Warnings),
+        ),
+        (
+            "objects-inventory-value",
+            "objects.inv",
+            Some(AuxComponent::ObjectsInv),
+        ),
+        (
+            "inventory-missing-record",
+            "objects.inv",
+            Some(AuxComponent::ObjectsInv),
+        ),
+        (
+            "missing-file",
+            "objects.inv",
+            Some(AuxComponent::ObjectsInv),
+        ),
+        (
+            "searchindex-changed-key",
+            "searchindex.js",
+            Some(AuxComponent::SearchIndex),
+        ),
+        (
+            "unexpected-file",
+            "searchindex.js",
+            Some(AuxComponent::SearchIndex),
+        ),
+        ("html-body", "index.html", None),
+        ("missing-file", "genindex.html", None),
+        ("missing-file", "search.html", None),
+        ("text-value", "_static/doctools.js", None),
+        ("missing-file", "_sources/index.rst.txt", None),
+    ] {
+        assert_eq!(
+            aux_component_of(&aux_diagnostic(category, logical_path)),
+            component,
+            "{category} {logical_path}"
+        );
+    }
+}
+
+#[test]
+fn aux_gate_diff_reports_regressions_and_fixed_rows() {
+    use AuxComponent::{ObjectsInv, SearchIndex, Warnings};
+    let key = |case: &str, component| (case.to_string(), component);
+    let table: &[(&str, AuxComponent, &str)] = &[
+        ("core/s/still-failing", Warnings, "F1: 5a-T8"),
+        ("core/s/fixed", SearchIndex, "SI:word_: 5a-T10"),
+        ("core/s/still-failing", SearchIndex, "SI:word_: 5a-T10"),
+    ];
+    let observed = BTreeSet::from([
+        key("core/s/still-failing", Warnings),
+        key("core/s/still-failing", SearchIndex),
+        key("core/s/new", ObjectsInv),
+    ]);
+    let diff = aux_gate_diff(&observed, table);
+    assert_eq!(diff.regressions, [key("core/s/new", ObjectsInv)]);
+    assert_eq!(diff.fixed, [key("core/s/fixed", SearchIndex)]);
+    assert!(diff.duplicate_rows.is_empty());
+    assert!(!diff.is_clean());
+
+    // A table listing exactly the observed set, each pair once, is clean.
+    let exact: &[(&str, AuxComponent, &str)] = &[
+        ("core/s/new", ObjectsInv, "INV:x: 5a-T10"),
+        ("core/s/still-failing", Warnings, "F1: 5a-T8"),
+        ("core/s/still-failing", SearchIndex, "SI:word_: 5a-T10"),
+    ];
+    assert!(aux_gate_diff(&observed, exact).is_clean());
+
+    // A case and component listed twice is an error, whatever the reasons say,
+    // even when the set comparison alone would pass.
+    let duplicated: &[(&str, AuxComponent, &str)] = &[
+        ("core/s/new", ObjectsInv, "INV:x: 5a-T10"),
+        ("core/s/still-failing", Warnings, "F1: 5a-T8"),
+        ("core/s/still-failing", SearchIndex, "SI:word_: 5a-T10"),
+        ("core/s/still-failing", Warnings, "F1+F3: 5a-T13a"),
+    ];
+    let diff = aux_gate_diff(&observed, duplicated);
+    assert!(diff.regressions.is_empty());
+    assert!(diff.fixed.is_empty());
+    assert_eq!(diff.duplicate_rows, [key("core/s/still-failing", Warnings)]);
+    assert!(!diff.is_clean());
+}
+
+/// Every `(case_key, component)` pair whose output differs from the oracle
+/// today, checked strictly by `html_oracle_aux_gate`; `html_oracle_aux_census`
+/// prints the current set as rows. A row's reason is `"<families>: <owner>"`:
+/// every fix family its mismatch holds (`F1`…`F12` for the warning stream,
+/// `SI:<cause>` for `searchindex.js`, `INV:<cause>` for `objects.inv`) and
+/// the latest task that fixes one of them. Rows stay one per line, as the
+/// census prints them, so a task deletes or re-attributes a row by editing
+/// one line and a grep for an owner shows whole rows.
+#[rustfmt::skip]
+const KNOWN_AUX_GAPS: &[(&str, AuxComponent, &str)] = &[
+    ("core/docutils_snippets/docutils-0030", AuxComponent::Warnings, "F1+F7: 5a-T9c"),
+    ("core/docutils_snippets/docutils-0031", AuxComponent::Warnings, "F1+F7: 5a-T9c"),
+    ("core/docutils_snippets/docutils-0032", AuxComponent::Warnings, "F1+F7: 5a-T9c"),
+    ("core/docutils_snippets/docutils-0033", AuxComponent::Warnings, "F1+F7: 5a-T9c"),
+    ("core/docutils_snippets/docutils-0042", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0043", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0045", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0064", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0073", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0083", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0093", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0094", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0095", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0115", AuxComponent::ObjectsInv, "INV:target-transforms: 5a-T10"),
+    ("core/docutils_snippets/docutils-0120", AuxComponent::Warnings, "F1+F4: 5a-T10"),
+    ("core/docutils_snippets/docutils-0121", AuxComponent::ObjectsInv, "INV:target-transforms: 5a-T10"),
+    ("core/docutils_snippets/docutils-0122", AuxComponent::Warnings, "F1+F4: 5a-T10"),
+    ("core/docutils_snippets/docutils-0123", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0124", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0126", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0128", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0129", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0131", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0132", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0136", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0137", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0138", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0139", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0153", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0155", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0156", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0157", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0158", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0167", AuxComponent::Warnings, "F1+F4: 5a-T10"),
+    ("core/docutils_snippets/docutils-0171", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0183", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0184", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0185", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0186", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0187", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0192", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0201", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0204", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0207", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0210", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0212", AuxComponent::Warnings, "F1+F4: 5a-T10"),
+    ("core/docutils_snippets/docutils-0212", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
+    ("core/docutils_snippets/docutils-0213", AuxComponent::Warnings, "F1+F4: 5a-T10"),
+    ("core/docutils_snippets/docutils-0213", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
+    ("core/docutils_snippets/docutils-0215", AuxComponent::Warnings, "F1+F4: 5a-T10"),
+    ("core/docutils_snippets/docutils-0215", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
+    ("core/docutils_snippets/docutils-0216", AuxComponent::Warnings, "F1+F4: 5a-T10"),
+    ("core/docutils_snippets/docutils-0216", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
+    ("core/docutils_snippets/docutils-0217", AuxComponent::Warnings, "F1+F4: 5a-T10"),
+    ("core/docutils_snippets/docutils-0217", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
+    ("core/docutils_snippets/docutils-0218", AuxComponent::Warnings, "F1+F4: 5a-T10"),
+    ("core/docutils_snippets/docutils-0218", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
+    ("core/docutils_snippets/docutils-0219", AuxComponent::Warnings, "F1+F4: 5a-T10"),
+    ("core/docutils_snippets/docutils-0219", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
+    ("core/docutils_snippets/docutils-0220", AuxComponent::Warnings, "F1+F4: 5a-T10"),
+    ("core/docutils_snippets/docutils-0220", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
+    ("core/docutils_snippets/docutils-0224", AuxComponent::Warnings, "F1+F4: 5a-T10"),
+    ("core/docutils_snippets/docutils-0224", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
+    ("core/docutils_snippets/docutils-0225", AuxComponent::Warnings, "F1+F4: 5a-T10"),
+    ("core/docutils_snippets/docutils-0225", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
+    ("core/docutils_snippets/docutils-0226", AuxComponent::Warnings, "F1+F4: 5a-T10"),
+    ("core/docutils_snippets/docutils-0226", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
+    ("core/docutils_snippets/docutils-0236", AuxComponent::Warnings, "F1+F4: 5a-T11"),
+    ("core/docutils_snippets/docutils-0236", AuxComponent::SearchIndex, "SI:footnote-refs+SI:word_: 5a-T11"),
+    ("core/docutils_snippets/docutils-0237", AuxComponent::Warnings, "F1+F4: 5a-T11"),
+    ("core/docutils_snippets/docutils-0237", AuxComponent::SearchIndex, "SI:footnote-refs+SI:word_: 5a-T11"),
+    ("core/docutils_snippets/docutils-0238", AuxComponent::Warnings, "F1+F4: 5a-T10"),
+    ("core/docutils_snippets/docutils-0238", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
+    ("core/docutils_snippets/docutils-0239", AuxComponent::Warnings, "F1+F4: 5a-T10"),
+    ("core/docutils_snippets/docutils-0240", AuxComponent::Warnings, "F6: 5a-T13b"),
+    ("core/docutils_snippets/docutils-0241", AuxComponent::Warnings, "F6: 5a-T13b"),
+    ("core/docutils_snippets/docutils-0242", AuxComponent::Warnings, "F1+F4: 5a-T11"),
+    ("core/docutils_snippets/docutils-0242", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
+    ("core/docutils_snippets/docutils-0243", AuxComponent::Warnings, "F1+F4: 5a-T11"),
+    ("core/docutils_snippets/docutils-0243", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
+    ("core/docutils_snippets/docutils-0244", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0253", AuxComponent::Warnings, "F1+F4: 5a-T10"),
+    ("core/docutils_snippets/docutils-0253", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
+    ("core/docutils_snippets/docutils-0255", AuxComponent::Warnings, "F1+F4: 5a-T10"),
+    ("core/docutils_snippets/docutils-0255", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
+    ("core/docutils_snippets/docutils-0263", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0264", AuxComponent::Warnings, "F1+F5: 5a-T8"),
+    ("core/docutils_snippets/docutils-0264", AuxComponent::SearchIndex, "SI:unknown-role: 5a-T7"),
+    ("core/docutils_snippets/docutils-0265", AuxComponent::Warnings, "F1+F5: 5a-T8"),
+    ("core/docutils_snippets/docutils-0265", AuxComponent::SearchIndex, "SI:unknown-role: 5a-T7"),
+    ("core/docutils_snippets/docutils-0266", AuxComponent::Warnings, "F1+F5: 5a-T8"),
+    ("core/docutils_snippets/docutils-0266", AuxComponent::SearchIndex, "SI:unknown-role: 5a-T7"),
+    ("core/docutils_snippets/docutils-0267", AuxComponent::Warnings, "F1+F5: 5a-T8"),
+    ("core/docutils_snippets/docutils-0267", AuxComponent::SearchIndex, "SI:unknown-role: 5a-T7"),
+    ("core/docutils_snippets/docutils-0268", AuxComponent::SearchIndex, "SI:pep-rfc-roles: 5a-T7"),
+    ("core/docutils_snippets/docutils-0270", AuxComponent::SearchIndex, "SI:pep-rfc-roles: 5a-T7"),
+    ("core/docutils_snippets/docutils-0275", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0276", AuxComponent::SearchIndex, "SI:index-role: 5a-T7"),
+    ("core/docutils_snippets/docutils-0278", AuxComponent::Warnings, "F1+F5: 5a-T8"),
+    ("core/docutils_snippets/docutils-0278", AuxComponent::SearchIndex, "SI:unknown-role: 5a-T7"),
+    ("core/docutils_snippets/docutils-0280", AuxComponent::Warnings, "F6: 5a-T11"),
+    ("core/docutils_snippets/docutils-0281", AuxComponent::Warnings, "F6: 5a-T11"),
+    ("core/docutils_snippets/docutils-0282", AuxComponent::Warnings, "F6: 5a-T11"),
+    ("core/docutils_snippets/docutils-0283", AuxComponent::Warnings, "F6: 5a-T11"),
+    ("core/docutils_snippets/docutils-0284", AuxComponent::Warnings, "F6: 5a-T13b"),
+    ("core/docutils_snippets/docutils-0285", AuxComponent::Warnings, "F1+F6: 5a-T11"),
+    ("core/docutils_snippets/docutils-0286", AuxComponent::Warnings, "F1+F6: 5a-T13b"),
+    ("core/docutils_snippets/docutils-0287", AuxComponent::Warnings, "F6: 5a-T11"),
+    ("core/docutils_snippets/docutils-0288", AuxComponent::Warnings, "F1+F6: 5a-T13b"),
+    ("core/docutils_snippets/docutils-0289", AuxComponent::Warnings, "F6: 5a-T11"),
+    ("core/docutils_snippets/docutils-0290", AuxComponent::Warnings, "F6: 5a-T11"),
+    ("core/docutils_snippets/docutils-0291", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0292", AuxComponent::Warnings, "F1+F6: 5a-T13b"),
+    ("core/docutils_snippets/docutils-0293", AuxComponent::Warnings, "F6: 5a-T11"),
+    ("core/docutils_snippets/docutils-0294", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0304", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0308", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0310", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0338", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0339", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0340", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0341", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0342", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0352", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0353", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0354", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0355", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0359", AuxComponent::Warnings, "F6: 5a-T11"),
+    ("core/docutils_snippets/docutils-0360", AuxComponent::Warnings, "F6: 5a-T11"),
+    ("core/docutils_snippets/docutils-0361", AuxComponent::Warnings, "F1+F4: 5a-T10"),
+    ("core/docutils_snippets/docutils-0361", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
+    ("core/docutils_snippets/docutils-0364", AuxComponent::Warnings, "F1+F4: 5a-T10"),
+    ("core/docutils_snippets/docutils-0364", AuxComponent::ObjectsInv, "INV:word_: 5a-T10"),
+    ("core/docutils_snippets/docutils-0364", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
+    ("core/docutils_snippets/docutils-0367", AuxComponent::Warnings, "F1+F4: 5a-T11"),
+    ("core/docutils_snippets/docutils-0368", AuxComponent::Warnings, "F6: 5a-T11"),
+    ("core/docutils_snippets/docutils-0372", AuxComponent::Warnings, "F1+F6: 5a-T11"),
+    ("core/docutils_snippets/docutils-0373", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0375", AuxComponent::Warnings, "F6: 5a-T11"),
+    ("core/docutils_snippets/docutils-0376", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0377", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0385", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0390", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0391", AuxComponent::Warnings, "F1+F2: 5a-T8"),
+    ("core/docutils_snippets/docutils-0392", AuxComponent::Warnings, "F1+F2: 5a-T8"),
+    ("core/docutils_snippets/docutils-0396", AuxComponent::Warnings, "F1+F2: 5a-T8"),
+    ("core/docutils_snippets/docutils-0400", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0401", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0402", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0403", AuxComponent::Warnings, "F1+F2: 5a-T8"),
+    ("core/docutils_snippets/docutils-0404", AuxComponent::Warnings, "F1+F2: 5a-T8"),
+    ("core/docutils_snippets/docutils-0405", AuxComponent::Warnings, "F1+F2: 5a-T8"),
+    ("core/docutils_snippets/docutils-0406", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0416", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0420", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0421", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0422", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0423", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0425", AuxComponent::Warnings, "F3: 5a-T13a"),
+    ("core/docutils_snippets/docutils-0426", AuxComponent::Warnings, "F2+F3: 5a-T13a"),
+    ("core/docutils_snippets/docutils-0427", AuxComponent::Warnings, "F2+F3: 5a-T13a"),
+    ("core/docutils_snippets/docutils-0428", AuxComponent::Warnings, "F2+F3: 5a-T13a"),
+    ("core/docutils_snippets/docutils-0429", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0430", AuxComponent::Warnings, "F1+F2: 5a-T8"),
+    ("core/docutils_snippets/docutils-0431", AuxComponent::Warnings, "F1+F2: 5a-T8"),
+    ("core/docutils_snippets/docutils-0432", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0433", AuxComponent::Warnings, "F1+F2: 5a-T8"),
+    ("core/docutils_snippets/docutils-0434", AuxComponent::Warnings, "F3: 5a-T13a"),
+    ("core/docutils_snippets/docutils-0435", AuxComponent::Warnings, "F3: 5a-T13a"),
+    ("core/docutils_snippets/docutils-0436", AuxComponent::Warnings, "F1+F2: 5a-T8"),
+    ("core/docutils_snippets/docutils-0437", AuxComponent::Warnings, "F3: 5a-T13a"),
+    ("core/docutils_snippets/docutils-0438", AuxComponent::Warnings, "F3: 5a-T13a"),
+    ("core/docutils_snippets/docutils-0439", AuxComponent::Warnings, "F1+F4: 5a-T10"),
+    ("core/docutils_snippets/docutils-0440", AuxComponent::Warnings, "F1+F4: 5a-T10"),
+    ("core/docutils_snippets/docutils-0441", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0442", AuxComponent::Warnings, "F3: 5a-T13a"),
+    ("core/docutils_snippets/docutils-0443", AuxComponent::Warnings, "F3: 5a-T13a"),
+    ("core/docutils_snippets/docutils-0444", AuxComponent::Warnings, "F1+F2: 5a-T8"),
+    ("core/docutils_snippets/docutils-0445", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0446", AuxComponent::Warnings, "F3: 5a-T13a"),
+    ("core/docutils_snippets/docutils-0447", AuxComponent::Warnings, "F1+F3+F8: 5b"),
+    ("core/docutils_snippets/docutils-0448", AuxComponent::Warnings, "F3: 5a-T13a"),
+    ("core/docutils_snippets/docutils-0449", AuxComponent::Warnings, "F1+F2+F3+F8: 5b"),
+    ("core/docutils_snippets/docutils-0450", AuxComponent::Warnings, "F1+F2+F3+F8: 5b"),
+    ("core/docutils_snippets/docutils-0451", AuxComponent::Warnings, "F3: 5a-T13a"),
+    ("core/docutils_snippets/docutils-0452", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0458", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0459", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0460", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0465", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0467", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0472", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0473", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0477", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0481", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0485", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0489", AuxComponent::Warnings, "F3: 5a-T13a"),
+    ("core/docutils_snippets/docutils-0490", AuxComponent::Warnings, "F3: 5a-T13a"),
+    ("core/docutils_snippets/docutils-0491", AuxComponent::Warnings, "F3: 5a-T13a"),
+    ("core/docutils_snippets/docutils-0492", AuxComponent::Warnings, "F3: 5a-T13a"),
+    ("core/docutils_snippets/docutils-0493", AuxComponent::Warnings, "F3: 5a-T13a"),
+    ("core/docutils_snippets/docutils-0494", AuxComponent::Warnings, "F3: 5a-T13a"),
+    ("core/docutils_snippets/docutils-0495", AuxComponent::Warnings, "F1+F2: 5a-T8"),
+    ("core/docutils_snippets/docutils-0496", AuxComponent::Warnings, "F1+F3: 5a-T13a"),
+    ("core/docutils_snippets/docutils-0497", AuxComponent::Warnings, "F3: 5a-T13a"),
+    ("core/docutils_snippets/docutils-0498", AuxComponent::Warnings, "F3: 5a-T13a"),
+    ("core/docutils_snippets/docutils-0499", AuxComponent::Warnings, "F3: 5a-T13a"),
+    ("core/docutils_snippets/docutils-0501", AuxComponent::Warnings, "F3: 5a-T13a"),
+    ("core/docutils_snippets/docutils-0502", AuxComponent::Warnings, "F3: 5a-T13a"),
+    ("core/docutils_snippets/docutils-0503", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0506", AuxComponent::SearchIndex, "SI:code-directive: 5a-T7"),
+    ("core/docutils_snippets/docutils-0509", AuxComponent::Warnings, "F1+F5: 5a-T8"),
+    ("core/docutils_snippets/docutils-0510", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0513", AuxComponent::Warnings, "F2: 5a-T3"),
+    ("core/docutils_snippets/docutils-0514", AuxComponent::ObjectsInv, "INV:math-name: 5a-T7"),
+    ("core/docutils_snippets/docutils-0516", AuxComponent::Warnings, "F2: 5a-T3"),
+    ("core/docutils_snippets/docutils-0519", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0520", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0521", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0522", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0523", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0527", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0528", AuxComponent::ObjectsInv, "INV:default-domain: 5a-T7"),
+    ("core/docutils_snippets/docutils-0528", AuxComponent::SearchIndex, "SI:default-domain: 5a-T7"),
+    ("core/docutils_snippets/docutils-0529", AuxComponent::ObjectsInv, "INV:default-domain: 5a-T7"),
+    ("core/docutils_snippets/docutils-0529", AuxComponent::SearchIndex, "SI:default-domain: 5a-T7"),
+    ("core/docutils_snippets/docutils-0530", AuxComponent::SearchIndex, "SI:default-domain: 5a-T7"),
+    ("core/docutils_snippets/docutils-0531", AuxComponent::SearchIndex, "SI:default-domain: 5a-T7"),
+    ("core/docutils_snippets/docutils-0533", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0538", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0540", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0541", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0550", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0551", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0552", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0553", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0554", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0561", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0562", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0563", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0564", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0566", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0568", AuxComponent::SearchIndex, "SI:substitutions: 5a-T11"),
+    ("core/docutils_snippets/docutils-0571", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0572", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0573", AuxComponent::Warnings, "F1+F4: 5a-T10"),
+    ("core/docutils_snippets/docutils-0573", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
+    ("core/docutils_snippets/docutils-0574", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0575", AuxComponent::Warnings, "F1+F4: 5a-T11"),
+    ("core/docutils_snippets/docutils-0576", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0577", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0584", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0587", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0588", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0589", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0590", AuxComponent::Warnings, "F3: 5a-T13a"),
+    ("core/docutils_snippets/docutils-0591", AuxComponent::Warnings, "F3: 5a-T13a"),
+    ("core/docutils_snippets/docutils-0592", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0593", AuxComponent::Warnings, "F3: 5a-T13a"),
+    ("core/docutils_snippets/docutils-0594", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0595", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0596", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0598", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0600", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0602", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0603", AuxComponent::Warnings, "F1+F4: 5a-T10"),
+    ("core/docutils_snippets/docutils-0603", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
+    ("core/docutils_snippets/docutils-0605", AuxComponent::Warnings, "F1+F5: 5a-T8"),
+    ("core/docutils_snippets/docutils-0605", AuxComponent::SearchIndex, "SI:unknown-role: 5a-T7"),
+    ("core/docutils_snippets/docutils-0606", AuxComponent::Warnings, "F1+F5: 5a-T8"),
+    ("core/docutils_snippets/docutils-0606", AuxComponent::SearchIndex, "SI:unknown-role: 5a-T7"),
+    ("core/docutils_snippets/docutils-0607", AuxComponent::Warnings, "F1+F4: 5a-T10"),
+    ("core/docutils_snippets/docutils-0607", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
+    ("core/docutils_snippets/docutils-0608", AuxComponent::Warnings, "F1+F4: 5a-T10"),
+    ("core/docutils_snippets/docutils-0608", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
+    ("core/docutils_snippets/docutils-0610", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0611", AuxComponent::Warnings, "F1+F4: 5a-T11"),
+    ("core/docutils_snippets/docutils-0612", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0615", AuxComponent::Warnings, "F6: 5a-T11"),
+    ("core/docutils_snippets/docutils-0616", AuxComponent::Warnings, "F6: 5a-T11"),
+    ("core/docutils_snippets/docutils-0617", AuxComponent::Warnings, "F6: 5a-T13b"),
+    ("core/docutils_snippets/docutils-0621", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0623", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0624", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0625", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0626", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0627", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0628", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0632", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0634", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0638", AuxComponent::Warnings, "F1+F4: 5a-T10"),
+    ("core/docutils_snippets/docutils-0639", AuxComponent::Warnings, "F1+F4: 5a-T10"),
+    ("core/docutils_snippets/docutils-0640", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0641", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0642", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0643", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0644", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0645", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0646", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0652", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0655", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0660", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0666", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0667", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0669", AuxComponent::Warnings, "F1+F4: 5a-T10"),
+    ("core/docutils_snippets/docutils-0669", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
+    ("core/docutils_snippets/docutils-0676", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0677", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0680", AuxComponent::Warnings, "F1+F4: 5a-T10"),
+    ("core/docutils_snippets/docutils-0680", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
+    ("core/docutils_snippets/docutils-0683", AuxComponent::Warnings, "F1+F4: 5a-T10"),
+    ("core/docutils_snippets/docutils-0685", AuxComponent::Warnings, "F3: 5a-T13a"),
+    ("core/docutils_snippets/docutils-0686", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0687", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0688", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0689", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0690", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0693", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0694", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0695", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0696", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0697", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0698", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0700", AuxComponent::Warnings, "F1+F4: 5a-T10"),
+    ("core/docutils_snippets/docutils-0707", AuxComponent::Warnings, "F2+F3: 5a-T13a"),
+    ("core/docutils_snippets/docutils-0708", AuxComponent::Warnings, "F2+F3: 5a-T13a"),
+    ("core/docutils_snippets/docutils-0712", AuxComponent::SearchIndex, "SI:substitutions: 5a-T11"),
+    ("core/docutils_snippets/docutils-0715", AuxComponent::SearchIndex, "SI:default-domain: 5a-T7"),
+    ("core/docutils_snippets/docutils-0716", AuxComponent::Warnings, "F2+F3: 5a-T13a"),
+    ("core/docutils_snippets/docutils-0719", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0720", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0732", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0733", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/environment_projects/inc_basic", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/environment_projects/inc_basic", AuxComponent::SearchIndex, "SI:keep-warnings: 5a-T9b"),
+    ("core/environment_projects/inc_warn", AuxComponent::Warnings, "F8b: 5a-T14"),
+    ("core/environment_projects/numfig_off_numref", AuxComponent::Warnings, "F3: 5a-T13a"),
+    ("core/environment_projects/py_locations", AuxComponent::Warnings, "F8b: 5a-T14"),
+    ("core/environment_projects/toctree_numbered_depth2", AuxComponent::Warnings, "F3: 5a-T13a"),
+    ("core/html_projects/intersphinx", AuxComponent::Warnings, "F1+F5+F12: 5a-T8"),
+    ("core/html_projects/intersphinx", AuxComponent::SearchIndex, "SI:unknown-role: 5a-T7"),
+    ("core/html_projects/literalinclude", AuxComponent::Warnings, "F9: 5a-T3"),
+    ("core/inventory_projects/dispname_and_header_escape", AuxComponent::SearchIndex, "SI:propagate-targets: 5a-T10"),
+    ("core/inventory_projects/std_objects_and_docs", AuxComponent::SearchIndex, "SI:propagate-targets: 5a-T10"),
+    ("core/inventory_projects/unicode_names", AuxComponent::SearchIndex, "SI:propagate-targets: 5a-T10"),
+    ("core/sphinx_read_snippets/sphinx_read-0024", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0026", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0044", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0058", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0059", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0076", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0089", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0090", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0091", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0092", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0121", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0122", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0123", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0124", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0134", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0135", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0138", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0139", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0140", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0141", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0145", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0158", AuxComponent::Warnings, "F1+F2: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0159", AuxComponent::Warnings, "F1+F2: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0163", AuxComponent::Warnings, "F1+F2: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0167", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0168", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0169", AuxComponent::Warnings, "F1+F2: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0170", AuxComponent::Warnings, "F1+F2: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0171", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0180", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0184", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0193", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0194", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0195", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0200", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0202", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0207", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0208", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0212", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0216", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0220", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0224", AuxComponent::Warnings, "F1+F2: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0225", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0226", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0227", AuxComponent::Warnings, "F1+F2: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0228", AuxComponent::Warnings, "F1+F2: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0229", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0230", AuxComponent::Warnings, "F1+F2: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0231", AuxComponent::Warnings, "F1+F2: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0232", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0261", AuxComponent::Warnings, "F2: 5a-T3"),
+    ("core/sphinx_read_snippets/sphinx_read-0279", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0280", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0281", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0282", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0284", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0295", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0297", AuxComponent::Warnings, "F11: 5a-T7"),
+    ("core/sphinx_read_snippets/sphinx_read-0335", AuxComponent::Warnings, "F10: 5a-T13b"),
+    ("core/sphinx_read_snippets/sphinx_read-0344", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/sphinx_read_snippets/sphinx_read-0347", AuxComponent::SearchIndex, "SI:entry-control-chars: 5a-T7"),
+    ("core/sphinx_read_snippets/sphinx_read-0348", AuxComponent::SearchIndex, "SI:entry-control-chars: 5a-T7"),
+    ("core/sphinx_read_snippets/sphinx_read-0349", AuxComponent::SearchIndex, "SI:entry-control-chars: 5a-T7"),
+    ("core/sphinx_read_snippets/sphinx_read-0350", AuxComponent::SearchIndex, "SI:entry-control-chars: 5a-T7"),
+    ("core/sphinx_read_snippets/sphinx_read-0351", AuxComponent::SearchIndex, "SI:entry-control-chars: 5a-T7"),
+    ("core/sphinx_read_snippets/sphinx_read-0352", AuxComponent::SearchIndex, "SI:entry-control-chars: 5a-T7"),
+    ("core/sphinx_read_snippets/sphinx_read-0358", AuxComponent::SearchIndex, "SI:entry-control-chars: 5a-T7"),
+    ("core/sphinx_read_snippets/sphinx_read-0387", AuxComponent::Warnings, "F1: 5a-T8"),
+];
