@@ -61,6 +61,11 @@ pub struct InventoryRecord {
     pub priority: i32,
     pub uri: String,
     pub display_name: String,
+    /// `Some(line)`, verbatim, for a payload line kept unparsed: one Sphinx's
+    /// loader reads no record from, or one whose priority does not fit an
+    /// `i32`. Its other fields are then empty and its priority 0. `None` for
+    /// a parsed record.
+    pub raw: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -1013,6 +1018,14 @@ fn compare_inventory_file(logical_path: &str, expected: &[u8], actual: &[u8]) ->
     }
 }
 
+/// Parses a version-2 `objects.inv` as Sphinx 9.1.0's own loader reads its
+/// records (`SP/sphinx/util/inventory.py:113-128`), returning the four header
+/// lines and the records, sorted.
+///
+/// Only a bad header or an undecodable payload (zlib or UTF-8) makes an
+/// inventory invalid. Every payload line becomes a record: a line the loader
+/// reads no record from is kept verbatim as an opaque raw record that
+/// compares byte for byte (`parse_inventory_record`).
 pub fn parse_inventory(bytes: &[u8]) -> Result<(Vec<u8>, Vec<InventoryRecord>), String> {
     const HEADER: &[u8] = b"# Sphinx inventory version 2\n# Project: ";
     if !bytes.starts_with(HEADER) {
@@ -1037,28 +1050,69 @@ pub fn parse_inventory(bytes: &[u8]) -> Result<(Vec<u8>, Vec<InventoryRecord>), 
     decoder
         .read_to_string(&mut records_text)
         .map_err(|error| format!("zlib decode failed: {error}"))?;
-    let mut records = Vec::new();
-    for (line_number, line) in records_text.lines().enumerate() {
-        if line.is_empty() {
-            continue;
-        }
-        let fields = line.splitn(5, ' ').collect::<Vec<_>>();
-        if fields.len() != 5 || fields.iter().any(|field| field.is_empty()) {
-            return Err(format!("invalid record on line {}", line_number + 1));
-        }
-        let priority = fields[2]
-            .parse::<i32>()
-            .map_err(|error| format!("invalid priority on line {}: {error}", line_number + 1))?;
-        records.push(InventoryRecord {
-            name: fields[0].to_string(),
-            domain_role: fields[1].to_string(),
-            priority,
-            uri: fields[3].to_string(),
-            display_name: fields[4].to_string(),
-        });
+    // The loader iterates `str.splitlines()`: a CRLF pair is one line break,
+    // and a final line break opens no empty line.
+    let records_text = records_text.replace("\r\n", "\n");
+    let mut lines = records_text
+        .split([
+            '\n', '\r', '\x0b', '\x0c', '\x1c', '\x1d', '\x1e', '\u{85}', '\u{2028}', '\u{2029}',
+        ])
+        .collect::<Vec<_>>();
+    if lines.last() == Some(&"") {
+        lines.pop();
     }
+    let mut records = lines
+        .into_iter()
+        .map(parse_inventory_record)
+        .collect::<Vec<_>>();
     records.sort();
     Ok((header, records))
+}
+
+/// Reads one payload line as the loader does (`SP/sphinx/util/inventory.py:115-128`):
+/// the right-stripped line must match the record pattern with a `domain:type`
+/// role. A line failing either check, which the loader skips, stays raw, as
+/// does one whose priority, which the loader keeps as text, does not fit an
+/// `i32`.
+fn parse_inventory_record(line: &str) -> InventoryRecord {
+    use regex::Regex;
+    use std::sync::LazyLock;
+
+    // Python's `\s` (`str.isspace`) is Unicode `White_Space`, which is Rust's
+    // `\s`, plus U+001C..=U+001F.
+    const SPACE: &str = r"[\s\x1C-\x1F]";
+    const NON_SPACE: &str = r"[^\s\x1C-\x1F]";
+    // `(.+?)\s+(\S+)\s+(-?\d+)\s+?(\S*)\s+(.*)`, anchored at the start as
+    // `re.match` anchors it.
+    static RECORD: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(&format!(
+            r"^(.+?){SPACE}+({NON_SPACE}+){SPACE}+(-?\d+){SPACE}+?({NON_SPACE}*){SPACE}+(.*)"
+        ))
+        .expect("valid inventory record pattern")
+    });
+    let stripped =
+        line.trim_end_matches(|c: char| c.is_whitespace() || ('\x1c'..='\x1f').contains(&c));
+    RECORD
+        .captures(stripped)
+        .filter(|fields| fields[2].contains(':'))
+        .and_then(|fields| {
+            Some(InventoryRecord {
+                name: fields[1].to_string(),
+                domain_role: fields[2].to_string(),
+                priority: fields[3].parse().ok()?,
+                uri: fields[4].to_string(),
+                display_name: fields[5].to_string(),
+                raw: None,
+            })
+        })
+        .unwrap_or_else(|| InventoryRecord {
+            name: String::new(),
+            domain_role: String::new(),
+            priority: 0,
+            uri: String::new(),
+            display_name: String::new(),
+            raw: Some(line.to_string()),
+        })
 }
 
 fn format_inventory(inventory: &(Vec<u8>, Vec<InventoryRecord>)) -> String {
@@ -1066,12 +1120,7 @@ fn format_inventory(inventory: &(Vec<u8>, Vec<InventoryRecord>)) -> String {
     let records = inventory
         .1
         .iter()
-        .map(|record| {
-            format!(
-                "{} {} {} {} {}",
-                record.name, record.domain_role, record.priority, record.uri, record.display_name
-            )
-        })
+        .map(inventory_record_text)
         .collect::<Vec<_>>()
         .join("\n");
     format!("{header}{records}")
@@ -2689,19 +2738,27 @@ fn json_compact(value: &Value) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "<unserializable>".to_string())
 }
 
+/// A parsed record's name, role and priority; a raw record is keyed by its
+/// line (no parsed record has an empty role).
 fn inventory_identity(record: &InventoryRecord) -> (String, String, i32) {
-    (
-        record.name.clone(),
-        record.domain_role.clone(),
-        record.priority,
-    )
+    match &record.raw {
+        Some(line) => (line.clone(), String::new(), 0),
+        None => (
+            record.name.clone(),
+            record.domain_role.clone(),
+            record.priority,
+        ),
+    }
 }
 
 fn inventory_record_text(record: &InventoryRecord) -> String {
-    format!(
-        "{} {} {} {} {}",
-        record.name, record.domain_role, record.priority, record.uri, record.display_name
-    )
+    match &record.raw {
+        Some(line) => line.clone(),
+        None => format!(
+            "{} {} {} {} {}",
+            record.name, record.domain_role, record.priority, record.uri, record.display_name
+        ),
+    }
 }
 
 fn unified_diff(expected: &str, actual: &str) -> String {

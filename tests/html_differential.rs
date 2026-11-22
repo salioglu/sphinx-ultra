@@ -19,9 +19,9 @@ use support::html_oracle::{
     compare_trees, compare_warnings, compare_warnings_with_roots, diagnose_html,
     diagnose_inventory, diagnose_needs_json, diagnose_searchindex, diagnose_warnings,
     group_first_divergences, load_fixture_suite, materialize_case_expected,
-    materialize_case_inputs, parse_keep, read_record, resolve_ultra_binary, status_name, walk_tree,
-    warning_diagnostics_with_roots, write_logical_file, CaseRecord, CaseResult, CaseStatus,
-    IndexDocument, InventoryRecord, Keep, Policy, ReportInputs,
+    materialize_case_inputs, parse_inventory, parse_keep, read_record, resolve_ultra_binary,
+    status_name, walk_tree, warning_diagnostics_with_roots, write_logical_file, CaseRecord,
+    CaseResult, CaseStatus, IndexDocument, InventoryRecord, Keep, Policy, ReportInputs,
 };
 
 fn minimal_case() -> serde_json::Value {
@@ -519,6 +519,59 @@ fn comparator_canonicalizes_inventory_records_and_keeps_opaque_bytes_exact() {
 }
 
 #[test]
+fn parse_inventory_accepts_every_sphinx_v2_record_shape() {
+    // The regex rejects this line, which the docutils-0407 and sphinx_read-0172 references hold;
+    // Sphinx's loader skips it.
+    let empty_name = " std:label -1 index.html#id1$ -";
+    let bytes = inventory_bytes(&format!(
+        "my label std:label -1 index.html#my-label My label\n\
+         index std:doc -1  Welcome\n\
+         f py:function 1 api.html#$ -\n\
+         {empty_name}\n",
+    ));
+    let (_, records) = parse_inventory(&bytes).expect("no record line makes an inventory invalid");
+    let got: Vec<_> = records
+        .iter()
+        .map(|r| {
+            (
+                r.name.as_str(),
+                r.domain_role.as_str(),
+                r.priority,
+                r.uri.as_str(),
+                r.display_name.as_str(),
+                r.raw.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            ("", "", 0, "", "", Some(empty_name)), // opaque raw record
+            ("f", "py:function", 1, "api.html#$", "-", None),
+            ("index", "std:doc", -1, "", "Welcome", None),
+            (
+                "my label",
+                "std:label",
+                -1,
+                "index.html#my-label",
+                "My label",
+                None
+            ),
+        ]
+    ); // parse_inventory sorts records
+    let with = |line: &str| inventory_bytes(&format!("f py:function 1 api.html#$ -\n{line}\n"));
+    assert!(compare_file("objects.inv", &with(empty_name), &with(empty_name), None).is_empty());
+    let changed = compare_file(
+        "objects.inv",
+        &with(empty_name),
+        &with(" std:label -1 index.html#id2$ -"),
+        None,
+    );
+    assert_eq!(changed.len(), 1);
+    assert_eq!(changed[0].category, "objects-inventory-value");
+}
+
+#[test]
 fn comparator_reports_missing_and_unexpected_files() {
     let expected = BTreeMap::from([(String::from("index.html"), b"same".to_vec())]);
     let actual = BTreeMap::from([
@@ -825,6 +878,7 @@ fn diagnostic_synthetic_structured_files_report_key_and_record_differences() {
         priority: 1,
         uri: uri.to_string(),
         display_name: display_name.to_string(),
+        raw: None,
     };
     let inventory = diagnose_inventory(
         &[

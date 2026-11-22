@@ -229,6 +229,32 @@ def _python_conf(overrides: dict[str, Any], *, project: str = "html-oracle") -> 
     return ("\n".join(lines)).encode("utf-8")
 
 
+def _repr_expresses(value: Any) -> bool:
+    """Return whether ``repr(value)`` is a Python literal that evaluates back to ``value``."""
+    try:
+        return ast.literal_eval(repr(value)) == value
+    except (ValueError, SyntaxError):
+        return False
+
+
+def _snippet_conf(overrides: dict[str, Any]) -> tuple[bytes, bool]:
+    """Return a snippet case's ``conf.py`` and whether a variant went uncaptured.
+
+    The fixture's ``conf`` overrides follow ``BASE_CONF_PY`` as
+    ``key = repr(value)`` lines in sorted key order.  A value ``repr`` cannot
+    express (a non-finite float) is left out, and the case records that its
+    variant was not captured.
+    """
+    lines = [BASE_CONF_PY]
+    variants_not_captured = False
+    for key in sorted(overrides):
+        if _repr_expresses(overrides[key]):
+            lines.append(f"{key} = {overrides[key]!r}\n")
+        else:
+            variants_not_captured = True
+    return "".join(lines).encode("utf-8"), variants_not_captured
+
+
 def _safe_case_base(identifier: str) -> str:
     safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", identifier).strip("-.")
     return safe or "case"
@@ -448,6 +474,19 @@ def _source_file_name(name: str) -> str:
     return name if Path(name).suffix else f"{name}.rst"
 
 
+def _pinned(items: list[Any], pin: int, source_set: str, noun: str) -> list[Any]:
+    """Return the first ``pin`` items of an append-only fixture corpus.
+
+    Fixture corpora only grow by appending, and the items past a pin wait for
+    the profile regeneration that raises it, so the discovered inputs and the
+    positional case IDs stay fixed while a corpus grows.  A source with fewer
+    items than its pin has lost some.
+    """
+    if len(items) < pin:
+        raise DiscoveryError(f"{source_set}: expected at least {pin} {noun}, found {len(items)}")
+    return items[:pin]
+
+
 def discover_cases(
     repo_root: Path,
     config_path: Path,
@@ -455,7 +494,11 @@ def discover_cases(
     profile: str,
     needs_root: Path | None = None,
 ) -> list[DiscoveredCase]:
-    """Discover and materialize-in-memory all cases for one profile."""
+    """Discover and materialize-in-memory all cases for one profile.
+
+    Snippet sets and environment projects contribute the first ``count``
+    cases and ``project_count`` projects of their fixtures (``_pinned``).
+    """
     repo_root = Path(repo_root).resolve()
     with Path(config_path).open("rb") as stream:
         config = tomllib.load(stream)
@@ -472,15 +515,14 @@ def discover_cases(
         source = repo_root / entry["source"]
         if kind == "docutils_snippets" or kind == "sphinx_read_snippets":
             fixture = json.loads(source.read_text(encoding="utf-8"))
-            fixture_cases = fixture["cases"]
-            if len(fixture_cases) != entry["count"]:
-                raise DiscoveryError(f"{source_set}: expected {entry['count']} cases, found {len(fixture_cases)}")
+            fixture_cases = _pinned(fixture["cases"], entry["count"], source_set, "cases")
             identifiers = [str(item["name"]) for item in fixture_cases]
             if len(set(identifiers)) != len(identifiers):
                 raise DiscoveryError(f"{source_set}: duplicate snippet names")
             for index, item in enumerate(fixture_cases):
+                conf_py, variants_not_captured = _snippet_conf(item.get("conf") or {})
                 files = {
-                    "conf.py": BASE_CONF_PY.encode("utf-8"),
+                    "conf.py": conf_py,
                     "index.rst": str(item["rst"]).encode("utf-8"),
                 }
                 cases.append(
@@ -490,13 +532,12 @@ def discover_cases(
                         case_id=f"{source_set.removesuffix('_snippets')}-{index + 1:04d}",
                         origin_path=f"{entry['source']}[{index}]",
                         files=files,
+                        variants_not_captured=variants_not_captured,
                     )
                 )
         elif kind == "environment_projects":
             fixture = json.loads(source.read_text(encoding="utf-8"))
-            projects = fixture["projects"]
-            if len(projects) != entry["project_count"]:
-                raise DiscoveryError(f"{source_set}: expected {entry['project_count']} projects, found {len(projects)}")
+            projects = _pinned(fixture["projects"], entry["project_count"], source_set, "projects")
             document_count = sum(len(project["files"]) for project in projects)
             if document_count < entry["document_floor"]:
                 raise DiscoveryError(f"{source_set}: expected at least {entry['document_floor']} documents, found {document_count}")
