@@ -34,7 +34,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::OnceLock;
 
-use sphinx_ultra::error::BuildWarning;
+use sphinx_ultra::diagnostics::Diagnostic;
 use sphinx_ultra::{BuildConfig, SphinxBuilder};
 
 /// `[parent, prev, next]` as recorded by `env.collect_relations()`.
@@ -316,11 +316,13 @@ fn canon_scope8(text: &str) -> String {
     text.replace(concat!("<project>", "/"), "")
 }
 
-/// [`normalize_source_paths`] over a build's rendered warnings.
-fn normalize_warnings(warnings: &[BuildWarning], root: &str) -> Vec<String> {
+/// [`normalize_source_paths`] over a build's records, rendered with
+/// Sphinx's default `show_warning_types = True`, which no oracle project
+/// overrides.
+fn normalize_warnings(warnings: &[Diagnostic], root: &str) -> Vec<String> {
     warnings
         .iter()
-        .map(|warning| normalize_source_paths(&warning.render(), root))
+        .map(|warning| normalize_source_paths(&warning.render(true), root))
         .collect()
 }
 
@@ -415,7 +417,13 @@ fn build_project(project: &Project) -> Built {
 /// fixture project that starts setting something the harness cannot apply
 /// fails loudly here.
 fn config_of(project: &Project) -> BuildConfig {
-    let mut config = BuildConfig::default();
+    // The oracle is Sphinx, which has no counterpart to M1's directive and
+    // role validators: sphinx-build mode turns them off, and so does every
+    // in-process oracle harness.
+    let mut config = BuildConfig {
+        validate_directives: false,
+        ..BuildConfig::default()
+    };
     let conf = project.conf.as_object().expect("conf is an object");
     for (key, value) in conf {
         if KNOWN_INERT_CONF.contains(&key.as_str()) {
@@ -2405,7 +2413,7 @@ fn an_orphan_marked_after_a_raw_block_is_still_exempt() {
     let warnings: Vec<String> = stats
         .warning_details
         .iter()
-        .map(|warning| warning.render())
+        .map(|warning| warning.render(true))
         .collect();
     assert!(
         warnings.is_empty(),
@@ -2432,7 +2440,7 @@ fn warnings_of(files: &[(&str, &str)], config: BuildConfig) -> Vec<String> {
     stats
         .warning_details
         .iter()
-        .map(|warning| warning.render())
+        .map(|warning| warning.render(true))
         .collect()
 }
 
@@ -2852,7 +2860,7 @@ fn a_warm_rebuild_reports_the_same_toctree_warnings() {
         stats
             .warning_details
             .iter()
-            .map(|warning| warning.render())
+            .map(|warning| warning.render(true))
             .collect()
     };
 

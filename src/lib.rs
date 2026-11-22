@@ -26,6 +26,7 @@
 pub mod builder;
 pub mod cache;
 pub mod config;
+pub mod diagnostics;
 pub mod directives;
 pub mod doctree;
 pub mod document;

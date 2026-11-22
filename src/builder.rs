@@ -9,6 +9,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::cache::BuildCache;
 use crate::config::BuildConfig;
+use crate::diagnostics::{Diagnostic, DiagnosticSink, OrderKey, WarningFilter};
 use crate::doctree::Doctree;
 use crate::document::Document;
 use crate::env;
@@ -101,9 +102,17 @@ pub struct BuildStats {
     pub build_time: Duration,
     pub output_size_mb: f64,
     pub cache_hits: usize,
+    /// Genuine per-file failures (an unreadable or undecodable source, a
+    /// page or doctree that could not be written) — never a record of the
+    /// warning stream.
     pub errors: usize,
+    /// Every record the build printed, which is what Sphinx's `_warncount`
+    /// counts: a record `suppress_warnings` drops is neither printed nor
+    /// counted (`WarningSuppressor`, `sphinx/util/logging.py:429-450`).
     pub warnings: usize,
-    pub warning_details: Vec<BuildWarning>,
+    /// The records themselves, in the order Sphinx emits them (see
+    /// [`SphinxBuilder::build`]).
+    pub warning_details: Vec<Diagnostic>,
     pub error_details: Vec<BuildErrorReport>,
 }
 
@@ -115,7 +124,12 @@ pub struct SphinxBuilder {
     parser: Parser,
     parallel_jobs: usize,
     incremental: bool,
-    warnings: Arc<Mutex<Vec<BuildWarning>>>,
+    /// The warning stream so far: every flushed sink's records, minus the
+    /// ones [`Self::filter`] suppresses.
+    records: Mutex<Vec<Diagnostic>>,
+    /// `suppress_warnings` and `show_warning_types`, applied where a sink
+    /// is flushed ([`Self::flush`]).
+    filter: WarningFilter,
     errors: Arc<Mutex<Vec<BuildErrorReport>>>,
     #[allow(dead_code)]
     sphinx_app: Option<SphinxApp>,
@@ -544,6 +558,8 @@ impl SphinxBuilder {
                 .unwrap_or(4)
         });
 
+        let filter = WarningFilter::from_config(&config);
+
         // Initialize Sphinx app with extensions
         let mut sphinx_app = SphinxApp::new(config.clone())?;
         let mut extension_loader = ExtensionLoader::new()?;
@@ -570,7 +586,8 @@ impl SphinxBuilder {
             parser,
             parallel_jobs,
             incremental: false,
-            warnings: Arc::new(Mutex::new(Vec::new())),
+            records: Mutex::new(Vec::new()),
+            filter,
             errors: Arc::new(Mutex::new(Vec::new())),
             sphinx_app: Some(sphinx_app),
             extension_loader,
@@ -623,17 +640,19 @@ impl SphinxBuilder {
         for message in outcome.infos {
             info!("{message}");
         }
+        // The stream's first records: Sphinx loads the inventories at
+        // `builder-inited`, before `build()` discovers a single document.
+        let mut sink = DiagnosticSink::default();
         for message in outcome.warnings {
             // Sphinx logs these without a location and without a type, so
             // they render as a bare `WARNING: ...` — but they still count
             // toward the build's warning total and toward `-W`.
-            self.add_warning(BuildWarning::new(
-                PathBuf::new(),
-                None,
-                message,
-                WarningType::Other,
-            ));
+            push_in_order(
+                &mut sink,
+                BuildWarning::new(PathBuf::new(), None, message, WarningType::Other),
+            );
         }
+        self.flush(sink);
         self.intersphinx = Intersphinx {
             data: outcome.data,
             disabled_reftypes: self
@@ -669,10 +688,25 @@ impl SphinxBuilder {
         Ok(())
     }
 
-    /// Add a warning to the collection
+    /// Append one warning to the stream, after every record flushed so
+    /// far — unless `suppress_warnings` drops it.
     #[allow(dead_code)]
     pub fn add_warning(&self, warning: BuildWarning) {
-        self.warnings.lock().unwrap().push(warning);
+        let mut sink = DiagnosticSink::default();
+        push_in_order(&mut sink, warning);
+        self.flush(sink);
+    }
+
+    /// Append a sink's records to the stream, in their [`OrderKey`] order,
+    /// dropping the ones `suppress_warnings` names: a suppressed record is
+    /// neither printed nor counted.
+    fn flush(&self, sink: DiagnosticSink) {
+        let mut records = self.records.lock().unwrap();
+        records.extend(
+            sink.into_ordered()
+                .into_iter()
+                .filter(|record| !self.filter.is_suppressed(&record.category)),
+        );
     }
 
     /// Add an error to the collection
@@ -717,6 +751,17 @@ impl SphinxBuilder {
     /// `&mut self` only so the environment can be moved out and back; the
     /// phase methods themselves take `&self` and the environment by
     /// reference.
+    ///
+    /// Each phase collects its warnings in a [`DiagnosticSink`] — one per
+    /// document for the read and resolve phases — and the build flushes
+    /// the sinks in the order Sphinx emits their records (`Builder.build`,
+    /// `builders/__init__.py:389-466`; `read`, `:469-590`; `write`,
+    /// `:705-778`): intersphinx's inventory loading at builder init,
+    /// discovery, the read sinks in sorted docname order, numbering
+    /// (`env-get-updated`, which `check_dependents` runs before
+    /// `check_consistency`), consistency, the resolve sinks in sorted
+    /// docname order, then the finishing steps (the general index). The
+    /// native subcommand's validation pass comes last.
     pub async fn build(&mut self) -> Result<BuildStats> {
         let start_time = Instant::now();
         info!("Starting build process...");
@@ -724,11 +769,13 @@ impl SphinxBuilder {
         // Ensure output directory exists
         tokio::fs::create_dir_all(&self.output_dir).await?;
 
-        // Discover all source files
-        let source_files = self.discover_source_files().await?;
-        info!("Discovered {} source files", source_files.len());
-
         self.load_intersphinx_inventories()?;
+
+        // Discover all source files
+        let mut discovery = DiagnosticSink::default();
+        let source_files = self.discover_source_files(&mut discovery).await?;
+        self.flush(discovery);
+        info!("Discovered {} source files", source_files.len());
 
         let mut env = std::mem::take(&mut self.env);
         let to_read = self.plan_read(&env, &source_files);
@@ -755,7 +802,10 @@ impl SphinxBuilder {
 
         self.write_phase(&processed_docs);
 
-        // Directive/role validation runs in every build unless disabled
+        // M1's directive/role validation, which Sphinx has no counterpart
+        // for: sphinx-build mode turns it off (the CLI forces
+        // `validate_directives` false there), so its records only ever
+        // reach the native subcommand's stream.
         if self.config.validate_directives {
             self.validate_directives_and_roles(&processed_docs, &doctrees);
         }
@@ -777,7 +827,7 @@ impl SphinxBuilder {
         let build_time = start_time.elapsed();
         let output_size = utils::calculate_directory_size(&self.output_dir).await?;
 
-        let warnings = self.warnings.lock().unwrap();
+        let records = self.records.lock().unwrap();
         let errors = self.errors.lock().unwrap();
 
         let stats = BuildStats {
@@ -787,8 +837,8 @@ impl SphinxBuilder {
             output_size_mb: output_size as f64 / 1024.0 / 1024.0,
             cache_hits: self.cache.hit_count(),
             errors: errors.len(),
-            warnings: warnings.len(),
-            warning_details: warnings.clone(),
+            warnings: records.len(),
+            warning_details: records.clone(),
             error_details: errors.clone(),
         };
 
@@ -796,7 +846,7 @@ impl SphinxBuilder {
         Ok(stats)
     }
 
-    async fn discover_source_files(&self) -> Result<Vec<PathBuf>> {
+    async fn discover_source_files(&self, sink: &mut DiagnosticSink) -> Result<Vec<PathBuf>> {
         // Use pattern-based file discovery like Sphinx
         let include_patterns = &self.config.include_patterns;
         let exclude_patterns = &self.config.exclude_patterns;
@@ -826,6 +876,7 @@ impl SphinxBuilder {
                     .into_iter()
                     .filter(|path| self.is_source_file(path))
                     .collect(),
+                sink,
             )),
             Err(e) => {
                 log::warn!(
@@ -835,7 +886,7 @@ impl SphinxBuilder {
                 // Fallback to old method if pattern matching fails
                 let mut files = Vec::new();
                 self.discover_files_sync(&self.source_dir, &mut files)?;
-                Ok(self.dedup_by_docname(files))
+                Ok(self.dedup_by_docname(files, sink))
             }
         }
     }
@@ -874,7 +925,7 @@ impl SphinxBuilder {
     /// non-source neighbours and comes out in filesystem order), and the
     /// kept path is rendered as a plain Python string repr (Sphinx's `%r`
     /// hits `_StrPath.__repr__` and prints `_StrPath('/path')`).
-    fn dedup_by_docname(&self, files: Vec<PathBuf>) -> Vec<PathBuf> {
+    fn dedup_by_docname(&self, files: Vec<PathBuf>, sink: &mut DiagnosticSink) -> Vec<PathBuf> {
         let mut by_docname: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
         for path in &files {
             by_docname
@@ -909,17 +960,20 @@ impl SphinxBuilder {
                             .to_string()
                     })
                     .collect();
-                self.add_warning(BuildWarning::new(
-                    // Logged with no `location`, so it prints bare.
-                    PathBuf::new(),
-                    None,
-                    format!(
-                        "multiple files found for the document \"{docname}\": {}\nUse {} for the build.",
-                        listed.join(", "),
-                        py_repr_str(&candidates[0].display().to_string()),
+                push_in_order(
+                    sink,
+                    BuildWarning::new(
+                        // Logged with no `location`, so it prints bare.
+                        PathBuf::new(),
+                        None,
+                        format!(
+                            "multiple files found for the document \"{docname}\": {}\nUse {} for the build.",
+                            listed.join(", "),
+                            py_repr_str(&candidates[0].display().to_string()),
+                        ),
+                        WarningType::Other,
                     ),
-                    WarningType::Other,
-                ));
+                );
             }
             dropped.extend(candidates.into_iter().skip(1));
         }
@@ -1319,10 +1373,14 @@ impl SphinxBuilder {
                 env.reread_always.insert(docname.to_string());
             }
 
+            // The document's read-phase records, flushed below once its
+            // domain hooks have run. Sphinx reads documents in this same
+            // sorted order, so the read sinks flush in it too.
+            let mut sink = DiagnosticSink::default();
+
             // The document's toctree diagnostics, produced when its entries
-            // were resolved. Sphinx logs them during the read phase, which
-            // walks documents in this same sorted order.
-            self.report_parse_warnings(&result.document, &result.doctree);
+            // were resolved, and the parse's other logger warnings.
+            self.report_parse_warnings(&result.document, &result.doctree, &mut sink);
 
             // The domains' read-phase hooks, dispatched in the order
             // `_DomainsContainer._process_doc` walks them — `c, changeset,
@@ -1345,7 +1403,7 @@ impl SphinxBuilder {
                 &mut index_warnings,
             );
             for warning in index_warnings {
-                self.add_warning(warning);
+                push_in_order(&mut sink, warning);
             }
 
             let mut std_warnings = Vec::new();
@@ -1361,8 +1419,9 @@ impl SphinxBuilder {
                 &mut std_warnings,
             );
             for warning in std_warnings {
-                self.add_warning(warning);
+                push_in_order(&mut sink, warning);
             }
+            self.flush(sink);
 
             // Persist the doctree *after* the hooks above have had it, the
             // way Sphinx writes its pickle after the read's transforms and
@@ -1390,11 +1449,12 @@ impl SphinxBuilder {
         }
     }
 
-    /// Surface one document's parse-time diagnostics: `TocTree.parse_content`'s
-    /// warnings and the `logger.warning` calls other directives make
-    /// (`RegistryExport::log_warnings`). Both are carried on the parse
-    /// records rather than raised as they happen, so that a cache hit — which
-    /// skips the parse entirely — still reproduces them.
+    /// Push one document's parse-time diagnostics into its read sink:
+    /// `TocTree.parse_content`'s warnings and the `logger.warning` calls
+    /// other directives make (`RegistryExport::log_warnings`). Both are
+    /// carried on the parse records rather than raised as they happen, so
+    /// that a cache hit — which skips the parse entirely — still reproduces
+    /// them.
     ///
     /// Each stream replays in its own record sequence — the order the parse
     /// produced. (The old stable sort by line only reproduced document
@@ -1408,8 +1468,12 @@ impl SphinxBuilder {
     /// `doctree` supplies the source table: a warning raised inside an
     /// included file — a toctree's `location=toctree` or a log warning's
     /// `location=node` — renders that file's path, not the document's.
-    fn report_parse_warnings(&self, document: &Document, doctree: &Doctree) {
-        let mut ordered: Vec<BuildWarning> = Vec::new();
+    fn report_parse_warnings(
+        &self,
+        document: &Document,
+        doctree: &Doctree,
+        sink: &mut DiagnosticSink,
+    ) {
         for toctree in &document.toctrees {
             for warning in &toctree.warnings {
                 let warning_type = match warning.kind {
@@ -1424,7 +1488,8 @@ impl SphinxBuilder {
                     .get(warning.source as usize)
                     .map(PathBuf::from)
                     .unwrap_or_else(|| document.source_path.clone());
-                ordered.push(
+                push_in_order(
+                    sink,
                     BuildWarning::new(
                         source_path,
                         Some(warning.line as usize),
@@ -1446,15 +1511,16 @@ impl SphinxBuilder {
                 .unwrap_or_else(|| document.source_path.clone());
             // Sphinx logs these with no `type`/`subtype`, so they render
             // with no `[category]` suffix.
-            ordered.push(BuildWarning::new(
-                source_path,
-                Some(warning.line as usize),
-                warning.message.clone(),
-                WarningType::Other,
-            ));
+            push_in_order(
+                sink,
+                BuildWarning::new(
+                    source_path,
+                    Some(warning.line as usize),
+                    warning.message.clone(),
+                    WarningType::Other,
+                ),
+            );
         }
-        let mut warnings = self.warnings.lock().unwrap();
-        warnings.extend(ordered);
     }
 
     /// Resolve phase: whole-project state that only exists once every
@@ -1500,6 +1566,7 @@ impl SphinxBuilder {
                 .get(docname)
                 .is_none_or(|path| is_default_source_suffix(path))
         };
+        let mut consistency = DiagnosticSink::default();
         for message in env_toctree::check_consistency(env, &orphan_candidate) {
             // Sphinx logs these with `location=docname`, which renders as
             // the document's source path with no line number.
@@ -1508,7 +1575,8 @@ impl SphinxBuilder {
                 .map(|path| path.to_path_buf())
                 .unwrap_or_else(|| PathBuf::from(&message.docname));
             match message.level {
-                ConsistencyLevel::Warning => self.warnings.lock().unwrap().push(
+                ConsistencyLevel::Warning => push_in_order(
+                    &mut consistency,
                     BuildWarning::new(source, None, message.message, WarningType::OrphanedDocument)
                         .with_category(message.category),
                 ),
@@ -1517,6 +1585,7 @@ impl SphinxBuilder {
                 ConsistencyLevel::Info => info!("{}: {}", source.display(), message.message),
             }
         }
+        self.flush(consistency);
 
         self.xref_phase(env, results);
         self.genindex_phase(env, &sources);
@@ -1546,14 +1615,18 @@ impl SphinxBuilder {
         let rel_uri = |_docname: &str| Some(String::new());
         let mut messages = Vec::new();
         let groups = env_genindex::create_index(env, &rel_uri, &mut messages);
+        // Sphinx assembles the index while finishing the build
+        // (`write_genindex`), after every page is written.
+        let mut finish = DiagnosticSink::default();
         for message in messages {
             // `location=docname`: the document's source path, no line.
             let source = sources
                 .get(message.docname.as_str())
                 .map(|path| path.to_path_buf())
                 .unwrap_or_else(|| PathBuf::from(&message.docname));
-            self.add_warning(message.into_warning(&source));
+            push_in_order(&mut finish, message.into_warning(&source));
         }
+        self.flush(finish);
         *self.genindex.lock().unwrap() = groups;
     }
 
@@ -1625,9 +1698,12 @@ impl SphinxBuilder {
                 &result.document.source_path,
             );
             unresolvable_domain_refs += resolution.unresolvable_domain_refs;
+            // One resolve sink per document, flushed in this sorted order.
+            let mut sink = DiagnosticSink::default();
             for warning in resolution.warnings {
-                self.add_warning(warning);
+                push_in_order(&mut sink, warning);
             }
+            self.flush(sink);
 
             // Sphinx feeds the search index from exactly this resolved
             // doctree (`write_doc_serialized` → `index_page`), with the
@@ -1696,9 +1772,11 @@ impl SphinxBuilder {
         };
 
         let sections = env_numbers::assign_section_numbers(env, &load_doctree);
+        let mut sink = DiagnosticSink::default();
         for warning in sections.warnings {
-            self.report_numbering_warning(&warning, results);
+            self.report_numbering_warning(&warning, results, &mut sink);
         }
+        self.flush(sink);
         let figures = env_numbers::assign_figure_numbers(
             env,
             self.config.numfig,
@@ -1721,6 +1799,7 @@ impl SphinxBuilder {
         &self,
         warning: &env_numbers::NumberingWarning,
         results: &[ReadResult],
+        sink: &mut DiagnosticSink,
     ) {
         let result = results
             .iter()
@@ -1739,7 +1818,8 @@ impl SphinxBuilder {
             .or_else(|| document.map(|document| document.source_path.clone()))
             .unwrap_or_else(|| PathBuf::from(&warning.docname));
         let line = toctree.map(|toctree| toctree.line as usize);
-        self.warnings.lock().unwrap().push(
+        push_in_order(
+            sink,
             BuildWarning::new(
                 source,
                 line,
@@ -1969,8 +2049,9 @@ impl SphinxBuilder {
 
     /// Run the directive/role validation system over every RST document.
     ///
-    /// Findings surface as build *warnings* (so `-W`/`-w` govern promotion);
-    /// `Unknown` results stay silent — the built-in validators cover a
+    /// Findings surface as build *warnings*, flushed after every other
+    /// record of the build (so `-W`/`-w` govern promotion); `Unknown`
+    /// results stay silent — the built-in validators cover a
     /// fraction of real Sphinx, and reporting the rest would drown every
     /// real project in noise.
     fn validate_directives_and_roles(&self, processed_docs: &[Document], doctrees: &[Doctree]) {
@@ -2072,12 +2153,14 @@ impl SphinxBuilder {
             .collect();
 
         let mut unknown_total = 0usize;
+        let mut sink = DiagnosticSink::default();
         for (warnings, unknown) in results {
             unknown_total += unknown;
             for warning in warnings {
-                self.add_warning(warning);
+                push_in_order(&mut sink, warning);
             }
         }
+        self.flush(sink);
         if unknown_total > 0 {
             debug!(
                 "{} directive/role occurrence(s) had no validator and were not checked",
@@ -2129,6 +2212,23 @@ impl SphinxBuilder {
         }
         snapshot
     }
+}
+
+/// Pushes a [`BuildWarning`] — an `src/env` producer's or the builder's own
+/// — into `sink` after everything pushed before it, converting it into its
+/// record at the sink boundary.
+///
+/// Every record keys as a parse record, `(0, 0, seq)`, which keeps a sink in
+/// push order — the order the producers emit their records today. Records
+/// that transforms and collectors log take their `(priority, serial)` key
+/// when those passes key them.
+fn push_in_order(sink: &mut DiagnosticSink, warning: BuildWarning) {
+    let key = OrderKey {
+        priority: 0,
+        serial: 0,
+        seq: sink.next_seq(),
+    };
+    sink.push(key, Diagnostic::from(warning));
 }
 
 /// The bincode blob inside a persisted doctree file, or `None` if the file
@@ -2268,6 +2368,24 @@ mod tests {
         let mut numfig = base.clone();
         numfig.numfig = true;
         assert_ne!(config_fingerprint(&numfig).unwrap(), baseline, "numfig");
+
+        // Both warning-stream keys are rebuild class `'env'`
+        // (`config.py:262-263`): a warm build replays no read-phase record,
+        // so a change must re-read for the stream to reflect it.
+        let mut suppressed = base.clone();
+        suppressed.suppress_warnings = vec!["docutils".to_string()];
+        assert_ne!(
+            config_fingerprint(&suppressed).unwrap(),
+            baseline,
+            "suppress_warnings"
+        );
+        let mut untyped = base.clone();
+        untyped.show_warning_types = false;
+        assert_ne!(
+            config_fingerprint(&untyped).unwrap(),
+            baseline,
+            "show_warning_types"
+        );
     }
 
     /// Serializing through `serde_json::Value` sorts every map, so a
@@ -2348,7 +2466,10 @@ mod tests {
             .warning_details
             .iter()
             .filter(|w| w.message.contains("isn't included in any toctree"))
-            .map(|w| w.file.display().to_string())
+            .map(|w| match &w.location {
+                crate::diagnostics::Location::Path { path, line: None } => path.clone(),
+                other => panic!("an orphan is located at its document: {other:?}"),
+            })
             .collect();
         assert_eq!(
             orphan_warnings.len(),

@@ -141,6 +141,13 @@ pub struct ConfPyConfig {
     pub tls_cacerts: Option<crate::intersphinx::TlsCacerts>,
     pub user_agent: Option<String>,
 
+    // The warning stream (`config.py:262-263`).
+    /// `suppress_warnings` as written (a list or a tuple); empty when
+    /// conf.py said nothing, which is also Sphinx's default.
+    pub suppress_warnings: Vec<String>,
+    /// `show_warning_types`, `None` when conf.py said nothing.
+    pub show_warning_types: Option<bool>,
+
     // Object-signature / py-domain family. `None` means "conf.py did not
     // mention it", which is what keeps sphinx's own default in place —
     // notably distinct from `Some(0)` for the two line-length keys, where
@@ -409,6 +416,8 @@ impl PythonConfigParser {
                 _ => None,
             });
         config.user_agent = extract_string("user_agent");
+        config.suppress_warnings = extract_string_list("suppress_warnings");
+        config.show_warning_types = extract_bool("show_warning_types");
 
         // Object-signature / py-domain family. The two line-length keys are
         // `int | None`, so they read through `as_i64` rather than
@@ -568,6 +577,8 @@ impl PythonConfigParser {
                 | "tls_verify"
                 | "tls_cacerts"
                 | "user_agent"
+                | "suppress_warnings"
+                | "show_warning_types"
                 | "intersphinx_mapping"
                 | "intersphinx_disabled_reftypes"
                 | "intersphinx_resolve_self"
@@ -1141,6 +1152,8 @@ impl Default for ConfPyConfig {
             tls_verify: Some(true),
             tls_cacerts: None,
             user_agent: None,
+            suppress_warnings: Vec::new(),
+            show_warning_types: None,
             // `None` = "conf.py said nothing", which leaves
             // `BuildConfig::default()`'s sphinx defaults untouched.
             maximum_signature_line_length: None,
@@ -1356,6 +1369,11 @@ impl ConfPyConfig {
         config.tls_cacerts = self.tls_cacerts.clone();
         config.user_agent = self.user_agent.clone();
 
+        config.suppress_warnings = self.suppress_warnings.clone();
+        if let Some(show_warning_types) = self.show_warning_types {
+            config.show_warning_types = show_warning_types;
+        }
+
         config.conf_values = self.raw_values.clone();
 
         Ok(config)
@@ -1490,6 +1508,34 @@ mod tests {
         assert_eq!(config.numfig_format["table"], "Table {number}");
         assert_eq!(config.numfig_format["section"], "Section %s");
         assert_eq!(config.numfig_format["code-block"], "Listing %s");
+    }
+
+    /// `suppress_warnings` is a list or a tuple of patterns and
+    /// `show_warning_types` a bool (`config.py:262-263`); a conf.py that
+    /// names neither keeps Sphinx's defaults, `[]` and `True`.
+    #[test]
+    fn warning_stream_keys_reach_the_build_config() {
+        let config_of = |source: &str| {
+            parse(source)
+                .extract_configuration()
+                .unwrap()
+                .to_build_config()
+                .unwrap()
+        };
+
+        let listed = config_of(
+            "suppress_warnings = ['toc.not_included', 'ref.*']\nshow_warning_types = False\n",
+        );
+        assert_eq!(listed.suppress_warnings, ["toc.not_included", "ref.*"]);
+        assert!(!listed.show_warning_types);
+
+        let tupled = config_of("suppress_warnings = ('docutils',)\n");
+        assert_eq!(tupled.suppress_warnings, ["docutils"]);
+        assert!(tupled.show_warning_types);
+
+        let unset = config_of("project = 'p'\n");
+        assert!(unset.suppress_warnings.is_empty());
+        assert!(unset.show_warning_types);
     }
 
     #[test]

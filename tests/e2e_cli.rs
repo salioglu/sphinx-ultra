@@ -1759,23 +1759,234 @@ fn directive_validation_silent_on_valid_sphinx() {
     }
 }
 
+/// Sphinx has no counterpart to M1's directive and role validators, so
+/// sphinx-build mode never runs them: an empty `note` gets no validator
+/// record, on stderr or in the `-w` file, without any `-D`.
 #[test]
-fn directive_validation_off_switch() {
-    let src = temp_source("dv-off", &[("index.rst", "Title\n=====\n\n.. note::\n")]);
-    let out = out_dir("dv-off");
+fn sphinx_build_mode_runs_no_validation() {
+    let src = temp_source(
+        "sb-no-validation",
+        &[("index.rst", "Title\n=====\n\n.. note::\n")],
+    );
+    let out = out_dir("sb-no-validation");
+    let warnings = out_dir("sb-no-validation-log").join("warnings.txt");
     let result = sphinx_build(&[
         src.to_str().unwrap(),
         out.to_str().unwrap(),
-        "-D",
-        "validate_directives=0",
+        "-w",
+        warnings.to_str().unwrap(),
     ]);
 
     assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    let written = std::fs::read_to_string(&warnings).unwrap();
+    for (sink, text) in [("stderr", stderr_of(&result)), ("-w file", written)] {
+        assert!(
+            !text.contains("Note directive requires content"),
+            "{sink} holds a validator record: {text}"
+        );
+    }
+}
+
+/// The native subcommand keeps the validators, and `validate_directives`
+/// in its configuration file still switches them off.
+#[test]
+fn native_validation_off_switch() {
+    let src = temp_source(
+        "native-dv-off",
+        &[("index.rst", "Title\n=====\n\n.. note::\n")],
+    );
+    let conf = out_dir("native-dv-off-conf").join("off.yaml");
+    std::fs::create_dir_all(conf.parent().unwrap()).unwrap();
+    std::fs::write(&conf, "validate_directives: false\n").unwrap();
+
+    let out = out_dir("native-dv-off");
+    let off = bin()
+        .arg("--config")
+        .arg(&conf)
+        .arg("build")
+        .arg("--source")
+        .arg(&src)
+        .arg("--output")
+        .arg(&out)
+        .output()
+        .expect("binary should run");
+    assert!(off.status.success(), "stderr: {}", stderr_of(&off));
     assert!(
-        !stderr_of(&result).contains("Note directive requires content"),
-        "-D validate_directives=0 must disable the pass, stderr: {}",
+        !stderr_of(&off).contains("Note directive requires content"),
+        "validate_directives: false must disable the pass, stderr: {}",
+        stderr_of(&off)
+    );
+
+    let out_on = out_dir("native-dv-on");
+    let on = build(&src, &out_on, &[]);
+    assert!(on.status.success(), "stderr: {}", stderr_of(&on));
+    assert!(
+        stderr_of(&on).contains("index.rst:4: WARNING: Note directive requires content"),
+        "the same project without the switch is validated, stderr: {}",
+        stderr_of(&on)
+    );
+}
+
+/// sphinx-build mode prints each record bare, the same bytes the `-w`
+/// file gets (Sphinx's `TeeStripANSI`); under `-q` nothing else reaches
+/// stderr — the closing summary is INFO.
+#[test]
+fn sphinx_build_mode_stderr_equals_warning_file() {
+    let src = temp_source(
+        "sb-stderr-is-w",
+        &[("index.rst", "Title\n=====\n\n.. toctree::\n\n   missing\n")],
+    );
+    let out = out_dir("sb-stderr-is-w");
+    let warnings = out_dir("sb-stderr-is-w-log").join("warnings.txt");
+    let result = sphinx_build(&[
+        src.to_str().unwrap(),
+        out.to_str().unwrap(),
+        "-q",
+        "-w",
+        warnings.to_str().unwrap(),
+    ]);
+
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    // Strict UTF-8 on both sides, so the string comparison is byte-exact.
+    let written = String::from_utf8(std::fs::read(&warnings).unwrap()).unwrap();
+    let source = sphinx_ultra::utils::canonicalize_simplified(&src).unwrap();
+    assert_eq!(
+        written,
+        format!(
+            "{}:4: WARNING: toctree contains reference to nonexisting document 'missing' \
+             [toc.not_readable]\n",
+            source.join("index.rst").display()
+        )
+    );
+    assert_eq!(String::from_utf8(result.stderr).unwrap(), written);
+}
+
+/// `suppress_warnings` drops a record before it is printed or counted,
+/// and `show_warning_types = False` drops the ` [type.subtype]` suffix
+/// (`sphinx/util/logging.py:415-450`, `:531-551`).
+#[test]
+fn suppressed_warnings_neither_print_nor_count() {
+    let project = |name: &str, conf: &str| {
+        temp_source(
+            name,
+            &[
+                ("conf.py", conf),
+                ("index.rst", "Index\n=====\n\nBody.\n"),
+                ("orphan.rst", "Orphan\n======\n\nBody.\n"),
+            ],
+        )
+    };
+    let run = |src: &Path, name: &str| {
+        let out = out_dir(name);
+        let warnings = out_dir(&format!("{name}-log")).join("warnings.txt");
+        let result = sphinx_build(&[
+            src.to_str().unwrap(),
+            out.to_str().unwrap(),
+            "-q",
+            "-W",
+            "-w",
+            warnings.to_str().unwrap(),
+        ]);
+        let written = std::fs::read_to_string(&warnings).unwrap();
+        (result, written)
+    };
+
+    // The control: the orphan is the project's one record, and fails -W.
+    let plain = project("suppress-control", "project = 'p'\n");
+    let (result, written) = run(&plain, "suppress-control");
+    let source = sphinx_ultra::utils::canonicalize_simplified(&plain).unwrap();
+    let orphan = source.join("orphan.rst");
+    assert_eq!(
+        written,
+        format!(
+            "{}: WARNING: document isn't included in any toctree [toc.not_included]\n",
+            orphan.display()
+        )
+    );
+    assert_eq!(
+        result.status.code(),
+        Some(1),
+        "stderr: {}",
         stderr_of(&result)
     );
+
+    let suppressed = project(
+        "suppress-on",
+        "project = 'p'\nsuppress_warnings = ['toc.not_included']\n",
+    );
+    let (result, written) = run(&suppressed, "suppress-on");
+    assert_eq!(
+        result.status.code(),
+        Some(0),
+        "a suppressed record does not count toward -W, stderr: {}",
+        stderr_of(&result)
+    );
+    assert_eq!(written, "", "a suppressed record is not written");
+    assert_eq!(stderr_of(&result), "", "a suppressed record is not printed");
+
+    let untyped = project(
+        "suppress-untyped",
+        "project = 'p'\nshow_warning_types = False\n",
+    );
+    let (result, written) = run(&untyped, "suppress-untyped");
+    let source = sphinx_ultra::utils::canonicalize_simplified(&untyped).unwrap();
+    let line = format!(
+        "{}: WARNING: document isn't included in any toctree\n",
+        source.join("orphan.rst").display()
+    );
+    assert_eq!(written, line);
+    assert_eq!(stderr_of(&result), line);
+    assert_eq!(result.status.code(), Some(1), "still a record under -W");
+}
+
+/// Sphinx reads `<confdir>/docutils.conf`; this crate does not, and says so
+/// once on stderr, outside the warning stream: the record-free build stays
+/// record-free, the `-w` file empty and `-W` passing.
+#[test]
+fn docutils_conf_prints_a_notice_outside_the_stream() {
+    let files = [("index.rst", "Title\n=====\n\nSection\n-------\n\nBody.\n")];
+    let plain = temp_source("docutils-conf-control", &files);
+    let configured = temp_source("docutils-conf", &files);
+    std::fs::write(
+        configured.join("docutils.conf"),
+        "[general]\ninitial_header_level: 3\n",
+    )
+    .unwrap();
+
+    let run = |src: &Path, name: &str| {
+        let out = out_dir(name);
+        let warnings = out_dir(&format!("{name}-log")).join("warnings.txt");
+        let result = sphinx_build(&[
+            src.to_str().unwrap(),
+            out.to_str().unwrap(),
+            "-q",
+            "-W",
+            "-w",
+            warnings.to_str().unwrap(),
+        ]);
+        let written = std::fs::read_to_string(&warnings).unwrap();
+        let page = std::fs::read(out.join("index.html")).unwrap();
+        (result, written, page)
+    };
+    let (control, _, control_page) = run(&plain, "docutils-conf-control");
+    assert!(control.status.success(), "stderr: {}", stderr_of(&control));
+
+    let (result, written, page) = run(&configured, "docutils-conf");
+    assert!(
+        result.status.success(),
+        "the notice is not counted by -W, stderr: {}",
+        stderr_of(&result)
+    );
+    assert_eq!(written, "", "the notice is not a record of the -w file");
+    assert_eq!(
+        stderr_of(&result),
+        format!(
+            "NOTICE: docutils.conf is not read by sphinx-ultra: {}\n",
+            configured.join("docutils.conf").display()
+        ),
+        "the notice prints once"
+    );
+    assert_eq!(page, control_page, "the build is otherwise unchanged");
 }
 
 #[test]

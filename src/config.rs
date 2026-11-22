@@ -159,6 +159,17 @@ pub struct BuildConfig {
     /// Run directive/role validation during the build
     pub validate_directives: bool,
 
+    /// `suppress_warnings`, default `[]` (`config.py:262`, a list or tuple):
+    /// `type`, `type.*` or `type.subtype` patterns whose records are dropped
+    /// before they are printed or counted
+    /// ([`crate::diagnostics::WarningFilter`]).
+    pub suppress_warnings: Vec<String>,
+
+    /// `show_warning_types`, default `True` (`config.py:263`): whether a
+    /// record carries its ` [type.subtype]` suffix
+    /// ([`crate::diagnostics::Diagnostic::render`]).
+    pub show_warning_types: bool,
+
     /// Number figures, tables and code blocks (`numfig`, `config.py:275`).
     /// Off by default, exactly like Sphinx; when off,
     /// `assign_figure_numbers` assigns nothing and `:numref:` degrades.
@@ -455,6 +466,8 @@ impl Default for BuildConfig {
             html_context: std::collections::BTreeMap::new(),
             conf_values: std::collections::BTreeMap::new(),
             validate_directives: true,
+            suppress_warnings: Vec::new(),
+            show_warning_types: true,
 
             numfig: false,
             numfig_format: default_numfig_format(),
@@ -1178,6 +1191,27 @@ output:
             .unwrap()
             .is_none());
         assert_eq!(config.intersphinx_timeout, Some(5.0));
+    }
+
+    /// `suppress_warnings` (default `[]`) and `show_warning_types` (default
+    /// `True`), `config.py:262-263`. `-D` splits a list on commas, as
+    /// Sphinx's `convert_overrides` does, and takes `0`/`1` for a bool.
+    #[test]
+    fn warning_stream_keys_default_like_sphinx_and_take_overrides() {
+        let mut config = BuildConfig::default();
+        assert!(config.suppress_warnings.is_empty());
+        assert!(config.show_warning_types);
+
+        assert!(config
+            .apply_override("suppress_warnings", "toc.not_included,ref.*")
+            .unwrap()
+            .is_none());
+        assert_eq!(config.suppress_warnings, ["toc.not_included", "ref.*"]);
+        assert!(config
+            .apply_override("show_warning_types", "0")
+            .unwrap()
+            .is_none());
+        assert!(!config.show_warning_types);
     }
 
     #[test]
