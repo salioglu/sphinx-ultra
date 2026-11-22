@@ -7,7 +7,10 @@
 //! marker + char before recognition (`escape2null`); at Text emission the
 //! markers strip (`\x00 ` and `\x00\n` remove BOTH chars, joining words;
 //! bare `\x00` drops, keeping the escaped char). Inline literals restore
-//! backslashes instead. Behavior sources: the wave-2 probe notes
+//! backslashes instead. Where docutils builds its Text from the
+//! null-escaped text, the node keeps that data in its side-car
+//! ([`Node::text_node_escaped`]; SmartQuotes reads it), while its `text` is
+//! the stripped form. Behavior sources: the wave-2 probe notes
 //! (2026-08-07-m2-wave2-probes.md) and the differential fixture — never
 //! memory.
 
@@ -36,29 +39,9 @@ pub fn escape2null(text: &str) -> String {
     out
 }
 
-/// docutils `nodes.unescape`: drop `\x00 ` and `\x00\n` (both chars),
-/// then bare `\x00` markers. With `restore_backslashes` every marker
-/// becomes a literal `\` instead (inline literals).
-pub fn unescape(text: &str, restore_backslashes: bool) -> String {
-    if restore_backslashes {
-        return text.replace(NULL, "\\");
-    }
-    let mut out = String::with_capacity(text.len());
-    let mut chars = text.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == NULL {
-            match chars.peek() {
-                Some(' ') | Some('\n') => {
-                    chars.next();
-                }
-                _ => {}
-            }
-        } else {
-            out.push(c);
-        }
-    }
-    out
-}
+/// docutils `nodes.unescape`, which lives with the doctree IR as it does
+/// in docutils (`nodes.py`): [`Node::text_node_escaped`] unescapes too.
+pub use crate::doctree::unescape;
 
 /// Result of inline-parsing one text block: the paragraph/title children,
 /// plus system_messages the caller attaches AFTER the enclosing element.
@@ -410,6 +393,17 @@ impl<'a> Inliner<'a> {
         }
     }
 
+    /// A plain-text run's `nodes.Text(text)` (`states.py:1160`), built from
+    /// the null-escaped run so it keeps docutils' data. A run that
+    /// unescapes to nothing (escaped whitespace only) adds no node; docutils
+    /// keeps that Text, which pformat and the writers print as nothing.
+    fn push_plain_text(&mut self, data: &str) {
+        let node = Node::text_node_escaped(data, self.span);
+        if node.text.as_deref().is_some_and(|text| !text.is_empty()) {
+            self.nodes.push(node);
+        }
+    }
+
     /// docutils `implicit_inline`: standalone URIs and emails inside plain
     /// text runs become reference nodes.
     fn implicit_inline(&mut self, text: &str) {
@@ -417,10 +411,7 @@ impl<'a> Inliner<'a> {
         // '@' no email can match (kills quadratic rescans over ordinary
         // hyphenated text).
         if !text.contains(':') && !text.contains('@') {
-            let out = unescape(text, false);
-            if !out.is_empty() {
-                self.nodes.push(Node::text_node(out, self.span));
-            }
+            self.push_plain_text(text);
             return;
         }
         let chars: Vec<char> = text.chars().collect();
@@ -433,14 +424,13 @@ impl<'a> Inliner<'a> {
             if at_start {
                 if let Some((len, refuri, display)) = match_standalone_uri(&chars, i) {
                     let before: String = chars[emitted_upto..i].iter().collect();
-                    let before = unescape(&before, false);
-                    if !before.is_empty() {
-                        self.nodes.push(Node::text_node(before, self.span));
-                    }
+                    self.push_plain_text(&before);
+                    // `nodes.reference(unescape(text, True), text, ...)`
+                    // (`states.py:1110-1111`): the Text keeps the markers.
                     let mut r = Node::elem(kinds::REFERENCE, self.span);
                     r.set("refuri", AttrValue::Str(unescape(&refuri, false)));
                     r.children
-                        .push(Node::text_node(unescape(&display, false), self.span));
+                        .push(Node::text_node_escaped(&display, self.span));
                     self.nodes.push(r);
                     i += len;
                     emitted_upto = i;
@@ -450,17 +440,21 @@ impl<'a> Inliner<'a> {
             i += 1;
         }
         let rest: String = chars[emitted_upto..].iter().collect();
-        let rest = unescape(&rest, false);
-        if !rest.is_empty() {
-            self.nodes.push(Node::text_node(rest, self.span));
-        }
+        self.push_plain_text(&rest);
     }
 
+    /// `inline_obj` (`states.py:821-844`) and docutils' generic roles: the
+    /// Text keeps the null-escaped data, except where `restore` puts the
+    /// backslashes back (inline literals, `:math:`).
     fn emit_inline(&mut self, kind: &'static str, content: &str, restore: bool) {
         self.flush_text();
         let mut node = Node::elem(kind, self.span);
-        node.children
-            .push(Node::text_node(unescape(content, restore), self.span));
+        let text = if restore {
+            Node::text_node(unescape(content, true), self.span)
+        } else {
+            Node::text_node_escaped(content, self.span)
+        };
+        node.children.push(text);
         self.nodes.push(node);
     }
 
@@ -661,8 +655,7 @@ impl<'a> Inliner<'a> {
                     true,
                     None,
                 );
-                t.children
-                    .push(Node::text_node(unescape(&raw, false), self.span));
+                t.children.push(Node::text_node_escaped(&raw, self.span));
                 self.nodes.push(t);
                 if let Some(m) = msg {
                     self.messages.push(m);
@@ -1606,18 +1599,22 @@ impl<'a> Inliner<'a> {
                         .map(|c| c == NULL)
                         .unwrap_or(false)
                     && !looks_like_uri(&link);
+                // The reference's Text is docutils' `text = escaped[:match
+                // .start(0)]` (`states.py:918`), markers kept; an empty text
+                // falls back to the alias or URI, already unescaped.
                 let display_text;
                 if is_alias {
                     let alias = ids(&unescape(&link[..link.len() - 1], false));
-                    display_text = if text_part.is_empty() {
+                    let display_data = if text_part.is_empty() {
                         unescape(&link[..link.len() - 1], false)
                     } else {
-                        unescape(&text_part, false)
+                        text_part.clone()
                     };
+                    display_text = unescape(&display_data, false);
                     r.set("name", AttrValue::Str(wsn(&display_text)));
                     r.set("refname", AttrValue::Str(alias.clone()));
                     r.children
-                        .push(Node::text_node(display_text.clone(), self.span));
+                        .push(Node::text_node_escaped(&display_data, self.span));
                     self.nodes.push(r);
                     if underscores == 1 {
                         let mut t = Node::elem(kinds::TARGET, self.span);
@@ -1652,15 +1649,16 @@ impl<'a> Inliner<'a> {
                     } else {
                         uri
                     };
-                    display_text = if text_part.is_empty() {
+                    let display_data = if text_part.is_empty() {
                         uri.clone()
                     } else {
-                        unescape(&text_part, false)
+                        text_part.clone()
                     };
+                    display_text = unescape(&display_data, false);
                     r.set("name", AttrValue::Str(wsn(&display_text)));
                     r.set("refuri", AttrValue::Str(uri.clone()));
                     r.children
-                        .push(Node::text_node(display_text.clone(), self.span));
+                        .push(Node::text_node_escaped(&display_data, self.span));
                     self.nodes.push(r);
                     if underscores == 1 {
                         let mut t = Node::elem(kinds::TARGET, self.span);
@@ -1684,7 +1682,8 @@ impl<'a> Inliner<'a> {
                 } else {
                     r.set("refname", AttrValue::Str(ids(&text)));
                 }
-                r.children.push(Node::text_node(text, self.span));
+                // `text = escaped` (`states.py:951`).
+                r.children.push(Node::text_node_escaped(raw, self.span));
                 self.nodes.push(r);
             }
         }
@@ -1774,7 +1773,7 @@ impl<'a> Inliner<'a> {
         );
         subref
             .children
-            .push(Node::text_node(text.clone(), self.span));
+            .push(Node::text_node_escaped(&raw, self.span));
         if underscores == 0 {
             self.nodes.push(subref);
         } else {

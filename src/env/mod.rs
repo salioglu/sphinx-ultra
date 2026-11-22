@@ -71,7 +71,10 @@ use crate::doctree::Node;
 /// to decode (the trailing bytes don't parse as a `PyDomainData`) and is
 /// rebuilt — only dev builds of this branch ever wrote one, so no second
 /// bump.
-pub const ENV_VERSION: u32 = 3;
+///
+/// Version 4: wave 5a's node side-car — `Node` gains `ext` (`NodeExt`),
+/// and `env.bin` stores `Node` trees in `titles`, `longtitles` and `tocs`.
+pub const ENV_VERSION: u32 = 4;
 
 /// The `env.bin` filename inside a build's cache directory.
 const ENV_FILENAME: &str = "env.bin";

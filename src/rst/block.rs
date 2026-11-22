@@ -15,7 +15,8 @@
 //! committed differential fixture — never memory.
 
 use crate::doctree::ids::{self, IdRegistry};
-use crate::doctree::{kinds, messages, AttrValue, Node, Span};
+use crate::doctree::pending::{Pending, PendingTransform, PyValue};
+use crate::doctree::{kinds, messages, AttrValue, Node, NodeExt, Span};
 use crate::utils::py_splitlines;
 use unicode_normalization::UnicodeNormalization;
 
@@ -281,6 +282,9 @@ pub(crate) struct BlockParser {
     /// Sphinx-mode class/rst-class pending classes (the ClassAttribute
     /// transform effect applied inline).
     pending_classes: Option<Vec<String>>,
+    /// The next `document.note_pending` order ([`Pending::order`]): pending
+    /// nodes count per document, nested and detached parses included.
+    next_pending_order: u32,
     /// Per-document equation counter (math domain numbering).
     equation_serial: u32,
     /// Validation-feed records collected during the parse.
@@ -374,6 +378,7 @@ impl BlockParser {
             py_module_key: false,
             py_modules_key: false,
             pending_classes: None,
+            next_pending_order: 0,
             equation_serial: 0,
             directive_records: Vec::new(),
             role_records: Vec::new(),
@@ -581,11 +586,14 @@ impl BlockParser {
         // state machine in docutils (`misc.py:251-262` reads it through
         // `self.state.document`), so it transfers in and back out.
         sub.include_log = std::mem::take(&mut self.include_log);
+        // `note_pending` order is document-level too.
+        sub.next_pending_order = self.next_pending_order;
         let top = std::mem::take(&mut sub.top);
         let nodes = sub.parse_elements(&top);
         self.sources = sub.sources;
         self.registry = sub.registry;
         self.include_log = std::mem::take(&mut sub.include_log);
+        self.next_pending_order = sub.next_pending_order;
         self.directive_records.append(&mut sub.directive_records);
         self.role_records.append(&mut sub.role_records);
         self.toctree_records.append(&mut sub.toctree_records);
@@ -1422,6 +1430,8 @@ impl BlockParser {
             let span = self.span_of(lines, p, p + consumed - 1);
             let mut lb = Node::elem(kinds::LITERAL_BLOCK, span);
             lb.set("xml:space", AttrValue::Str("preserve".to_string()));
+            // `nodes.literal_block(data, data)` (states.py:2953).
+            lb.set_rawsource(&text);
             lb.children.push(Node::text_node(text, span));
             out.push(lb);
             *pos = p + consumed;
@@ -1455,6 +1465,8 @@ impl BlockParser {
             let span = self.span_of(lines, p, endq - 1);
             let mut lb = Node::elem(kinds::LITERAL_BLOCK, span);
             lb.set("xml:space", AttrValue::Str("preserve".to_string()));
+            // `nodes.literal_block(text, text)` (states.py:3216).
+            lb.set_rawsource(&text);
             lb.children.push(Node::text_node(text, span));
             out.push(lb);
             if endq < lines.len() && !lines[endq].is_blank() {
@@ -1939,6 +1951,8 @@ impl BlockParser {
         let span = self.span_of(lines, start, end - 1);
         let mut dt = Node::elem(kinds::DOCTEST_BLOCK, span);
         dt.set("xml:space", AttrValue::Str("preserve".to_string()));
+        // `nodes.doctest_block(data, data)` (states.py:1703).
+        dt.set_rawsource(&text);
         dt.children.push(Node::text_node(text, span));
         out.push(dt);
         *pos = end;
@@ -3977,6 +3991,8 @@ impl BlockParser {
         } else {
             text.to_string()
         };
+        // `nodes.literal_block('', source=source, ...)` (`misc.py:168`):
+        // `rawsource` stays docutils' default `''`.
         let mut node = Node::elem(kinds::LITERAL_BLOCK, input.span);
         node.set("source", AttrValue::Str(display.to_string()));
         if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
@@ -4187,6 +4203,8 @@ impl BlockParser {
         // rst file + directive line (`set_source_info`).
         lb.set("source", AttrValue::Str(display_path.display().to_string()));
         lb.set("xml:space", AttrValue::Str("preserve".to_string()));
+        // `nodes.literal_block(text, text, source=filename)` (`code.py:469`).
+        lb.set_rawsource(&text);
         if !text.is_empty() {
             lb.children.push(Node::text_node(text, input.span));
         }
@@ -5875,6 +5893,8 @@ impl BlockParser {
             lb.attrs.classes.extend(classes.iter().cloned());
         }
         let code = self.join_lines(&input.content);
+        // `nodes.literal_block(code, code)` (`code.py:151`).
+        lb.set_rawsource(&code);
         lb.children.push(Node::text_node(code, input.span));
         match opt_get(&input.options, "caption") {
             Some(OptVal::Str(caption_text)) => {
@@ -6942,6 +6962,9 @@ impl BlockParser {
         let inline = self.inline(&text, input.span, input.lineno);
         let mut node = Node::elem(kinds::LITERAL_BLOCK, input.span);
         node.set("xml:space", AttrValue::Str("preserve".to_string()));
+        // `nodes.literal_block(text, '', *text_nodes)` (body.py:143): the
+        // markup-bearing source, which differs from `astext()`.
+        node.set_rawsource(&text);
         node.children = inline.nodes;
         if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
             node.attrs.classes.extend(classes.iter().cloned());
@@ -7392,13 +7415,16 @@ impl BlockParser {
             node.set("source", AttrValue::Str(source.to_string()));
         }
         node.set("xml:space", AttrValue::Str("preserve".to_string()));
+        // `nodes.literal_block('\n'.join(self.content), ...)` (body.py:198);
+        // the include `:code:` path's content is the one file-text element.
+        let code = code_lines.join("\n");
+        node.set_rawsource(&code);
         match number_lines {
             Some(start) => {
                 push_number_lines(&mut node, &code_lines, start, content_len, input.span)
             }
             None => {
-                node.children
-                    .push(Node::text_node(code_lines.join("\n"), input.span));
+                node.children.push(Node::text_node(code, input.span));
             }
         }
         self.directive_add_name(
@@ -7629,19 +7655,43 @@ impl BlockParser {
             // never survives into the doctree — stamp the next sibling.
             self.pending_classes = Some(class_values);
         } else {
-            let mut pending = Node::elem("pending", input.span);
-            let details = format!(
-                ".. internal attributes:\n     .transform: docutils.transforms.misc.ClassAttribute\n     .details:\n       class: [{}]\n       directive: {}",
-                class_values
-                    .iter()
-                    .map(|c| py_repr(Some(c)))
-                    .collect::<Vec<_>>()
-                    .join(", "),
-                py_repr(Some(input.name)),
+            let pending = self.note_pending(
+                PendingTransform::ClassAttribute,
+                vec![
+                    ("class".to_string(), PyValue::StrList(class_values)),
+                    (
+                        "directive".to_string(),
+                        PyValue::Str(input.name.to_string()),
+                    ),
+                ],
+                input.span,
             );
-            pending.children.push(Node::text_node(details, input.span));
             out.push(pending);
         }
+    }
+
+    /// `nodes.pending(transform, details)` + `document.note_pending`: a
+    /// childless `pending` node whose side-car carries the transform, its
+    /// details sorted by key, and the next `note_pending` order.
+    fn note_pending(
+        &mut self,
+        transform: PendingTransform,
+        mut details: Vec<(String, PyValue)>,
+        span: Span,
+    ) -> Node {
+        details.sort_by(|(a, _), (b, _)| a.cmp(b));
+        let order = self.next_pending_order;
+        self.next_pending_order += 1;
+        let mut node = Node::elem("pending", span);
+        node.ext = Some(Box::new(NodeExt {
+            pending: Some(Box::new(Pending {
+                transform,
+                order,
+                details,
+            })),
+            ..NodeExt::default()
+        }));
+        node
     }
 
     /// `.. |name| directive::` substitution definitions

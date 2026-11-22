@@ -63,7 +63,11 @@ const DOCTREE_MAGIC: &[u8; 4] = b"SUDT";
 /// Version 2: wave 4.5's provenance change — `Span` gained a `line` field
 /// (and its byte range now indexes the parser's processed source text),
 /// so version-1 blobs no longer decode as written.
-const DOCTREE_FORMAT_VERSION: u32 = 2;
+///
+/// Version 3: wave 5a's node side-car — `Node` gained `ext`
+/// (`NodeExt`, persisting a node's `rawsource` and a `pending` node's
+/// transform and details), so version-2 blobs no longer decode as written.
+const DOCTREE_FORMAT_VERSION: u32 = 3;
 
 /// Bytes of the [`DOCTREE_MAGIC`] + [`DOCTREE_FORMAT_VERSION`] header.
 const DOCTREE_HEADER_LEN: usize = DOCTREE_MAGIC.len() + std::mem::size_of::<u32>();

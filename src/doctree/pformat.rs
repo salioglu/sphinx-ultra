@@ -8,6 +8,8 @@
 //! - NO XML escaping anywhere. List-attribute items go through docutils
 //!   `serial_escape` (`\` -> `\\`, then ` ` -> `\ `) and join with a space.
 //! - Text nodes: each line of the text on its own line at child indent.
+//! - A `pending` node prints its `.. internal attributes:` block after its
+//!   children, at child indent (`pending.pformat`).
 //! - Every emitted line ends with `\n`.
 
 use super::{kinds, AttrValue, Node};
@@ -87,6 +89,17 @@ fn write_node(node: &Node, depth: usize, out: &mut String) {
 
     for child in &node.children {
         write_node(child, depth + 1, out);
+    }
+
+    // `pending.pformat` (nodes.py:2567-2589): `Element.pformat(...)` and
+    // then each internals line as `'    %s%s\n' % (indent * level, line)`.
+    if let Some(pending) = node.pending() {
+        for line in pending.internals() {
+            out.push_str("    ");
+            out.push_str(&indent);
+            out.push_str(&line);
+            out.push('\n');
+        }
     }
 }
 
