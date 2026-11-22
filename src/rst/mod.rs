@@ -16,6 +16,7 @@ pub mod lines;
 mod punctuation;
 
 use crate::doctree::Doctree;
+use crate::transforms::state::DocumentState;
 
 #[derive(Debug, Clone)]
 pub struct ParseOptions {
@@ -68,6 +69,10 @@ pub struct ParseOptions {
     /// an explicit `:encoding:` option still wins. Ignored outside sphinx
     /// mode, where bare docutils' `'utf-8'` default applies.
     pub source_encoding: String,
+    /// Record one [`IdEvent`](crate::transforms::state::IdEvent) per id
+    /// the parse allocates, in `ParseOutput.state.ids` — the read-state
+    /// differential's `id_trace`. Tests only; off by default.
+    pub trace_ids: bool,
 }
 
 /// Sphinx's default `source_encoding` (`config.py:244`).
@@ -84,6 +89,7 @@ impl Default for ParseOptions {
             py: crate::py::PySigConfig::default(),
             srcdir: None,
             source_encoding: DEFAULT_SOURCE_ENCODING.to_string(),
+            trace_ids: false,
         }
     }
 }
@@ -247,15 +253,15 @@ pub struct ObjectRegistration {
 /// state that lives in the parser (the docutils id/name registry, Sphinx's
 /// `env.ref_context`) and dies with it, but that env collectors need.
 ///
-/// Named for its original single job — the `document.nameids` snapshot
-/// harvested from [`crate::doctree::ids::IdRegistry`] right before it drops,
-/// which wave 4's std-domain label harvest reads. Intended to eventually
-/// ride the document cache, so it stays serde-serializable and cheap to
-/// clone.
+/// Named for its original single job — the `document.nameids` snapshot of
+/// the parse's name table ([`DocumentState::names`]), which wave 4's
+/// std-domain label harvest reads. Intended to eventually ride the document
+/// cache, so it stays serde-serializable and cheap to clone.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct RegistryExport {
-    /// `(name, id, explicit)`, one entry per registered name. `id` is
-    /// `None` once a name has been duplicated away.
+    /// `(name, id, explicit)`, one entry per registered name, in
+    /// registration order. `id` is `None` once a name has been duplicated
+    /// away.
     pub nameids: Vec<(String, Option<String>, bool)>,
     /// sphinx `env.new_serialno('index')` counter value at the end of the
     /// parse (shared by the index directive and index-entry-emitting roles).
@@ -378,6 +384,9 @@ pub struct ParseOutput {
     pub role_records: Vec<RoleRecord>,
     pub toctrees: Vec<ToctreeRecord>,
     pub registry: RegistryExport,
+    /// The docutils document state the parse leaves behind, which the read
+    /// transforms read beside the tree ([`DocumentState`]).
+    pub state: DocumentState,
 }
 
 /// Parse RST source into a doctree. Total: never panics, never errors —
@@ -395,6 +404,9 @@ pub fn parse_rst_full(source: &str, opts: &ParseOptions) -> ParseOutput {
     parser.py = opts.py.clone();
     parser.srcdir = opts.srcdir.clone();
     parser.source_encoding = opts.source_encoding.clone();
+    if opts.trace_ids {
+        parser.state.ids.enable_trace();
+    }
     parser.parse_document_full()
 }
 

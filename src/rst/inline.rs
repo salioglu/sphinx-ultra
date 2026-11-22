@@ -14,8 +14,8 @@
 //! (2026-08-07-m2-wave2-probes.md) and the differential fixture — never
 //! memory.
 
-use crate::doctree::ids::IdRegistry;
 use crate::doctree::{kinds, messages, AttrValue, Node, Span};
+use crate::transforms::state::DocumentState;
 
 use super::punctuation;
 
@@ -301,7 +301,8 @@ struct Inliner<'a> {
     span: Span,
     lineno: u32,
     source_path: &'a str,
-    registry: &'a mut IdRegistry,
+    /// The document state: ids, names and serials are document-level.
+    state: &'a mut DocumentState,
     /// Sphinx mode: unknown-in-docutils roles become pending_xref nodes
     /// (no messages) and every role occurrence is recorded.
     sphinx: bool,
@@ -462,8 +463,9 @@ impl<'a> Inliner<'a> {
     /// + a WARNING message; the rest of the text re-scans.
     fn emit_problematic(&mut self, start_str: &str, construct: &str) {
         self.flush_text();
-        let msg_id = self.registry.allocate_auto_id();
-        let prob_id = self.registry.allocate_auto_id();
+        // `Inliner.problematic`: `set_id(msg)`, then `set_id(prb)`.
+        let msg_id = self.state.ids.allocate(kinds::SYSTEM_MESSAGE, &[]);
+        let prob_id = self.state.ids.allocate(kinds::PROBLEMATIC, &[]);
         let mut prob = Node::elem(kinds::PROBLEMATIC, self.span);
         prob.attrs.ids.push(prob_id.clone());
         prob.set("refid", AttrValue::Str(msg_id.clone()));
@@ -648,18 +650,12 @@ impl<'a> Inliner<'a> {
                     .push(crate::doctree::ids::fully_normalize_name(&unescape(
                         &raw, false,
                     )));
-                let msg = self.registry.set_id_explicit(
-                    &mut t,
-                    self.lineno,
-                    self.source_path,
-                    true,
-                    None,
-                );
+                let msgs = self
+                    .state
+                    .note_explicit_target(&mut t, self.lineno, self.source_path);
                 t.children.push(Node::text_node_escaped(&raw, self.span));
                 self.nodes.push(t);
-                if let Some(m) = msg {
-                    self.messages.push(m);
-                }
+                self.messages.extend(msgs);
                 end + 1
             }
             None => {
@@ -810,8 +806,9 @@ impl<'a> Inliner<'a> {
                 self.source_path,
             ));
         }
-        let msg_id = self.registry.allocate_auto_id();
-        let prob_id = self.registry.allocate_auto_id();
+        // `Inliner.problematic`: `set_id(msg)`, then `set_id(prb)`.
+        let msg_id = self.state.ids.allocate(kinds::SYSTEM_MESSAGE, &[]);
+        let prob_id = self.state.ids.allocate(kinds::PROBLEMATIC, &[]);
         let mut prob = Node::elem(kinds::PROBLEMATIC, self.span);
         prob.attrs.ids.push(prob_id.clone());
         prob.set("refid", AttrValue::Str(msg_id.clone()));
@@ -943,7 +940,7 @@ impl<'a> Inliner<'a> {
                 )
             }
         };
-        let serial = self.registry.new_index_serialno();
+        let serial = self.state.new_index_serialno();
         let target_id = format!("index-{serial}");
         self.flush_text();
         let mut index = Node::elem("index", self.span);
@@ -962,7 +959,7 @@ impl<'a> Inliner<'a> {
         tnode.attrs.ids.push(target_id.clone());
         // `self.inliner.document.note_explicit_target(target)` (`roles.py`):
         // the id joins `document.ids`, so a later `make_id` cannot reuse it.
-        self.registry.note_explicit_id(&target_id);
+        self.state.ids.register(&target_id);
         self.nodes.push(tnode);
         let mut reference = Node::elem(kinds::REFERENCE, self.span);
         reference.attrs.classes.push(kind_key.to_string());
@@ -1372,7 +1369,7 @@ impl<'a> Inliner<'a> {
                 Some(AttrValue::Str(target)) => target.clone(),
                 _ => String::new(),
             };
-            let target_id = format!("index-{}", self.registry.new_index_serialno());
+            let target_id = format!("index-{}", self.state.new_index_serialno());
             let mut index = Node::elem("index", self.span);
             index.set(
                 "entries",
@@ -1390,7 +1387,7 @@ impl<'a> Inliner<'a> {
             self.nodes.push(index);
             let mut tnode = Node::elem(kinds::TARGET, self.span);
             tnode.attrs.ids.push(target_id.clone());
-            self.registry.note_explicit_id(&target_id);
+            self.state.ids.register(&target_id);
             self.nodes.push(tnode);
         }
         self.nodes.push(node);
@@ -1617,16 +1614,16 @@ impl<'a> Inliner<'a> {
                         .push(Node::text_node_escaped(&display_data, self.span));
                     self.nodes.push(r);
                     if underscores == 1 {
+                        // `nodes.target(..., refname=alias)` is built with its
+                        // reference, which binding its name compares.
                         let mut t = Node::elem(kinds::TARGET, self.span);
                         t.attrs.names.push(ids(&display_text));
-                        let msg =
-                            self.registry
-                                .set_id_implicit(&mut t, self.lineno, self.source_path);
                         t.set("refname", AttrValue::Str(alias));
+                        let msgs =
+                            self.state
+                                .note_implicit_target(&mut t, self.lineno, self.source_path);
                         self.nodes.push(t);
-                        if let Some(m) = msg {
-                            self.messages.push(m);
-                        }
+                        self.messages.extend(msgs);
                     }
                 } else {
                     // URI: strip escaped trailing underscore marker, remove
@@ -1661,16 +1658,15 @@ impl<'a> Inliner<'a> {
                         .push(Node::text_node_escaped(&display_data, self.span));
                     self.nodes.push(r);
                     if underscores == 1 {
+                        // `nodes.target(..., refuri=alias)`, as above.
                         let mut t = Node::elem(kinds::TARGET, self.span);
                         t.attrs.names.push(ids(&display_text));
-                        let msg =
-                            self.registry
-                                .set_id_implicit(&mut t, self.lineno, self.source_path);
                         t.set("refuri", AttrValue::Str(uri));
+                        let msgs =
+                            self.state
+                                .note_implicit_target(&mut t, self.lineno, self.source_path);
                         self.nodes.push(t);
-                        if let Some(m) = msg {
-                            self.messages.push(m);
-                        }
+                        self.messages.extend(msgs);
                     }
                 }
             }
@@ -1717,7 +1713,12 @@ impl<'a> Inliner<'a> {
         self.flush_text();
         let is_citation =
             !label.starts_with('#') && label != "*" && !label.chars().all(|c| c.is_ascii_digit());
-        let id = self.registry.allocate_auto_id();
+        let kind = if is_citation {
+            kinds::CITATION_REFERENCE
+        } else {
+            kinds::FOOTNOTE_REFERENCE
+        };
+        let id = self.state.ids.allocate(kind, &[]);
         let mut node = if is_citation {
             let mut c = Node::elem(kinds::CITATION_REFERENCE, self.span);
             c.set(
@@ -1981,7 +1982,7 @@ pub fn parse_inline(
     text: &str,
     span: Span,
     lineno: u32,
-    registry: &mut IdRegistry,
+    state: &mut DocumentState,
     source_path: &str,
 ) -> InlineResult {
     // Docutils mode: no sphinx role reads the py configuration, so the
@@ -1991,7 +1992,7 @@ pub fn parse_inline(
         text,
         span,
         lineno,
-        registry,
+        state,
         source_path,
         false,
         "index",
@@ -2005,7 +2006,7 @@ pub fn parse_inline_ext(
     text: &str,
     span: Span,
     lineno: u32,
-    registry: &mut IdRegistry,
+    state: &mut DocumentState,
     source_path: &str,
     sphinx: bool,
     docname: &str,
@@ -2018,7 +2019,7 @@ pub fn parse_inline_ext(
         span,
         lineno,
         source_path,
-        registry,
+        state,
         sphinx,
         docname,
         ctx,
@@ -2050,8 +2051,8 @@ mod tests {
     }
 
     fn pi(text: &str) -> (Vec<Node>, Vec<Node>) {
-        let mut reg = IdRegistry::new();
-        let r = parse_inline(text, Span::ZERO, 1, &mut reg, "<snippet>");
+        let mut state = DocumentState::default();
+        let r = parse_inline(text, Span::ZERO, 1, &mut state, "<snippet>");
         (r.nodes, r.messages)
     }
 
@@ -2154,12 +2155,12 @@ mod tests {
 
     /// The same, under a chosen ref_context.
     fn sphinx_nodes_in(text: &str, ctx: RefContext<'_>, py: &crate::py::PySigConfig) -> Vec<Node> {
-        let mut reg = IdRegistry::new();
+        let mut state = DocumentState::default();
         parse_inline_ext(
             text,
             Span::ZERO,
             1,
-            &mut reg,
+            &mut state,
             "<snippet>",
             true,
             "index",

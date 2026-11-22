@@ -142,6 +142,7 @@ impl Parser {
                 py: self.py.clone(),
                 srcdir: self.srcdir.clone(),
                 source_encoding: self.source_encoding.clone(),
+                trace_ids: false,
             },
         );
         {

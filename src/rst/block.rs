@@ -14,9 +14,10 @@
 //! Behavior sources: probe notes (2026-08-07-m2-wave1-probes.md) and the
 //! committed differential fixture — never memory.
 
-use crate::doctree::ids::{self, IdRegistry};
+use crate::doctree::ids;
 use crate::doctree::pending::{Pending, PendingTransform, PyValue};
 use crate::doctree::{kinds, messages, AttrValue, Node, NodeExt, Span};
+use crate::transforms::state::DocumentState;
 use crate::utils::py_splitlines;
 use unicode_normalization::UnicodeNormalization;
 
@@ -213,7 +214,12 @@ pub(crate) struct BlockParser {
     /// Source table (paths + processed texts). Entry 0 is the document;
     /// sub-parses over lifted text and spliced sources push.
     sources: SourceTable,
-    pub(crate) registry: IdRegistry,
+    /// The document state ([`DocumentState`]): docutils' `document` object
+    /// state (ids, names) plus what only the parse reads (record streams,
+    /// `include_log`, substitution names, …). Document-level, so a nested
+    /// or detached sub-parse continues it: [`Self::parse_detached`] moves
+    /// it into the sub-parser and back.
+    pub(crate) state: DocumentState,
     styles: Vec<(char, bool)>,
     depth: usize,
     /// +1 inside table-cell nested parses: docutils' state-machine-derived
@@ -282,55 +288,15 @@ pub(crate) struct BlockParser {
     /// Sphinx-mode class/rst-class pending classes (the ClassAttribute
     /// transform effect applied inline).
     pending_classes: Option<Vec<String>>,
-    /// The next `document.note_pending` order ([`Pending::order`]): pending
-    /// nodes count per document, nested and detached parses included.
-    next_pending_order: u32,
     /// Per-document equation counter (math domain numbering).
     equation_serial: u32,
-    /// Validation-feed records collected during the parse.
-    directive_records: Vec<super::DirectiveRecord>,
-    role_records: Vec<super::RoleRecord>,
-    toctree_records: Vec<super::ToctreeRecord>,
-    /// The std-domain registrations the object-description directives made
-    /// while running, in document order (see
-    /// [`super::RegistryExport::program_options`] for why the finished
-    /// doctree cannot carry them).
-    program_option_records: Vec<super::ProgramOptionRecord>,
-    std_object_records: Vec<super::ObjectRegistration>,
-    /// The py-domain registrations (`PythonDomain.note_object` /
-    /// `note_module` calls), in document order — see
-    /// [`super::RegistryExport::py_objects`].
-    py_object_records: Vec<super::PyObjectRecord>,
-    py_module_records: Vec<super::PyModuleRecord>,
-    /// `logger.warning` diagnostics raised while running directives (see
-    /// [`super::ParseLogWarning`]).
-    log_warnings: Vec<super::ParseLogWarning>,
     /// Set while running a substitution-embedded directive (docutils
     /// SubstitutionDef state): replace/unicode/date require it, image
     /// flips its align validation, unicode's trim flags land here.
     substitution_ctx: Option<SubstCtx>,
-    /// Substitution names seen (whitespace-normalized, case-preserving) —
-    /// docutils document.substitution_defs.
-    substitution_names_seen: Vec<String>,
-    /// Names defined more than once: earlier nodes get names -> dupnames
-    /// in a post-parse walk (docutils mutates the old node in place).
-    substitution_dupnames: Vec<String>,
     /// A [`SpliceRequest`] a directive just returned, waiting for the
     /// enclosing block-parse loop to insert it at its cursor.
     pending_splice: Option<SpliceRequest>,
-    /// docutils `document.include_log` (`nodes.py:1802-1803`): the open
-    /// inclusions as `(source display path, clip options)` pairs. Seeded
-    /// with the root document (and an empty clip) on first use
-    /// (`misc.py:253-256`); an entry is pushed before each splice and
-    /// popped when the comment path reaches the matching
-    /// `.. end of inclusion from "..."` marker.
-    include_log: Vec<(String, IncludeClip)>,
-    /// Parse-recorded dependency paths (see
-    /// [`super::RegistryExport::dependencies`]); sphinx mode only.
-    dependency_records: Vec<String>,
-    /// Parse-recorded included docnames (see
-    /// [`super::RegistryExport::included`]); sphinx mode only.
-    included_records: Vec<String>,
 }
 
 #[derive(Debug, Default)]
@@ -355,7 +321,7 @@ impl BlockParser {
         BlockParser {
             top,
             sources,
-            registry: IdRegistry::new(),
+            state: DocumentState::default(),
             styles: Vec::new(),
             depth: 0,
             line_bias: 0,
@@ -378,52 +344,46 @@ impl BlockParser {
             py_module_key: false,
             py_modules_key: false,
             pending_classes: None,
-            next_pending_order: 0,
             equation_serial: 0,
-            directive_records: Vec::new(),
-            role_records: Vec::new(),
-            toctree_records: Vec::new(),
-            program_option_records: Vec::new(),
-            std_object_records: Vec::new(),
-            py_object_records: Vec::new(),
-            py_module_records: Vec::new(),
-            log_warnings: Vec::new(),
             substitution_ctx: None,
-            substitution_names_seen: Vec::new(),
-            substitution_dupnames: Vec::new(),
             pending_splice: None,
-            include_log: Vec::new(),
-            dependency_records: Vec::new(),
-            included_records: Vec::new(),
         }
     }
 
     /// parse_document plus the flat build-pipeline records.
     pub(crate) fn parse_document_full(mut self) -> super::ParseOutput {
         let root = self.parse_document_impl();
-        // Harvest the id/name registry before it drops with `self`: wave 4's
-        // std-domain label harvest needs name -> (id, explicit) data that
-        // otherwise dies with the BlockParser.
+        // The parse-only half of the state ends with the parse: its record
+        // streams become the output's own fields, and the name table is
+        // also exported as the nameids snapshot wave 4's std-domain label
+        // harvest reads.
+        let parse = std::mem::take(&mut self.state.parse);
         let registry = super::RegistryExport {
-            nameids: self.registry.nameids_snapshot(),
-            index_serial: self.registry.index_serial(),
-            program_options: std::mem::take(&mut self.program_option_records),
-            std_objects: std::mem::take(&mut self.std_object_records),
-            py_objects: std::mem::take(&mut self.py_object_records),
-            py_modules: std::mem::take(&mut self.py_module_records),
-            log_warnings: std::mem::take(&mut self.log_warnings),
-            dependencies: std::mem::take(&mut self.dependency_records),
-            included: std::mem::take(&mut self.included_records),
+            nameids: self
+                .state
+                .names
+                .iter()
+                .map(|(name, entry)| (name.to_string(), entry.id.clone(), entry.explicit))
+                .collect(),
+            index_serial: parse.index_serial,
+            program_options: parse.program_option_records,
+            std_objects: parse.std_object_records,
+            py_objects: parse.py_object_records,
+            py_modules: parse.py_module_records,
+            log_warnings: parse.log_warnings,
+            dependencies: parse.dependency_records,
+            included: parse.included_records,
         };
         super::ParseOutput {
             doctree: crate::doctree::Doctree {
                 root,
                 sources: self.sources.into_paths(),
             },
-            directive_records: std::mem::take(&mut self.directive_records),
-            role_records: std::mem::take(&mut self.role_records),
-            toctrees: std::mem::take(&mut self.toctree_records),
+            directive_records: parse.directive_records,
+            role_records: parse.role_records,
+            toctrees: parse.toctree_records,
             registry,
+            state: self.state,
         }
     }
 
@@ -489,26 +449,29 @@ impl BlockParser {
                 .map(str::to_string)
                 .collect()
         };
-        self.directive_records.push(super::DirectiveRecord {
-            source: first_line.source,
-            name: name.to_string(),
-            arguments,
-            options,
-            content: content_lines.join("\n"),
-            line: lineno,
-        });
+        self.state
+            .parse
+            .directive_records
+            .push(super::DirectiveRecord {
+                source: first_line.source,
+                name: name.to_string(),
+                arguments,
+                options,
+                content: content_lines.join("\n"),
+                line: lineno,
+            });
     }
 
-    /// Inline parse through the parser's own registry/mode; collects role
-    /// records emitted by the inliner. Messages the inliner raises stamp
-    /// the span's own source path.
+    /// Inline parse through the parser's own document state and mode;
+    /// collects role records emitted by the inliner. Messages the inliner
+    /// raises stamp the span's own source path.
     fn inline(&mut self, text: &str, span: Span, lineno: u32) -> super::inline::InlineResult {
         let source_path = self.sources.arc_path(span.source);
         let mut result = super::inline::parse_inline_ext(
             text,
             span,
             lineno,
-            &mut self.registry,
+            &mut self.state,
             &source_path,
             self.sphinx,
             &self.docname,
@@ -523,7 +486,7 @@ impl BlockParser {
             },
             &self.py,
         );
-        self.role_records.append(&mut result.roles);
+        self.state.parse.role_records.append(&mut result.roles);
         result
     }
 
@@ -538,7 +501,7 @@ impl BlockParser {
 
     /// Nested parse over OWNED text (csv-table cells and, later,
     /// rst_prolog): a sub-parser over a new source-table entry, sharing
-    /// this parser's table and id registry, with linenos starting at
+    /// this parser's table and document state, with linenos starting at
     /// `first_lineno` so absolute line numbers keep working. The entry's
     /// path copies `attribute_to`'s — the source the text was lifted from
     /// — so messages and spans keep attributing to it.
@@ -556,13 +519,16 @@ impl BlockParser {
             return Vec::new();
         };
         let mut sub = BlockParser::from_parts(top, std::mem::take(&mut self.sources));
-        sub.registry = std::mem::replace(&mut self.registry, IdRegistry::new());
+        // The document state is document-level, as docutils' `document` is
+        // for every nested state machine: the sub-parse continues it (ids,
+        // names, record streams, the include log, substitution names, the
+        // `note_pending` order) and hands it back.
+        sub.state = std::mem::take(&mut self.state);
         sub.nested_node_kind = Some(kind);
         sub.line_bias = self.line_bias;
         sub.depth = self.depth;
-        // Mode + records must flow through the detached parse (review
-        // finding: csv cells previously parsed in docutils mode and their
-        // directive/role records were dropped).
+        // The mode must flow through the detached parse (review finding:
+        // csv cells previously parsed in docutils mode).
         sub.sphinx = self.sphinx;
         sub.docname = self.docname.clone();
         sub.found_docs = self.found_docs.clone();
@@ -573,7 +539,7 @@ impl BlockParser {
         sub.program = self.program.clone();
         // The py ref_context flows in like `program` (state changes made
         // inside a detached parse stay local, matching the wave-4
-        // convention); the record streams flow back out below.
+        // convention).
         sub.py_module = self.py_module.clone();
         sub.py_modules = self.py_modules.clone();
         sub.py_class = self.py_class.clone();
@@ -582,29 +548,10 @@ impl BlockParser {
         sub.py_classes_key = self.py_classes_key;
         sub.py_module_key = self.py_module_key;
         sub.py_modules_key = self.py_modules_key;
-        // The include log is document-level state shared with every nested
-        // state machine in docutils (`misc.py:251-262` reads it through
-        // `self.state.document`), so it transfers in and back out.
-        sub.include_log = std::mem::take(&mut self.include_log);
-        // `note_pending` order is document-level too.
-        sub.next_pending_order = self.next_pending_order;
         let top = std::mem::take(&mut sub.top);
         let nodes = sub.parse_elements(&top);
         self.sources = sub.sources;
-        self.registry = sub.registry;
-        self.include_log = std::mem::take(&mut sub.include_log);
-        self.next_pending_order = sub.next_pending_order;
-        self.directive_records.append(&mut sub.directive_records);
-        self.role_records.append(&mut sub.role_records);
-        self.toctree_records.append(&mut sub.toctree_records);
-        self.program_option_records
-            .append(&mut sub.program_option_records);
-        self.std_object_records.append(&mut sub.std_object_records);
-        self.py_object_records.append(&mut sub.py_object_records);
-        self.py_module_records.append(&mut sub.py_module_records);
-        self.log_warnings.append(&mut sub.log_warnings);
-        self.dependency_records.append(&mut sub.dependency_records);
-        self.included_records.append(&mut sub.included_records);
+        self.state = sub.state;
         nodes
     }
 
@@ -792,12 +739,12 @@ impl BlockParser {
             Self::close_section(&mut root, &mut stack);
         }
 
-        let fixups = self.registry.take_fixups();
+        let fixups = std::mem::take(&mut self.state.parse.dupname_fixups);
         ids::apply_dupname_fixups(&mut root, &fixups);
         // Duplicate substitution definitions: docutils dupname()s the OLD
         // node in place; we re-walk since the tree is owned (all but the
         // LAST same-name definition lose the name).
-        for name in std::mem::take(&mut self.substitution_dupnames) {
+        for name in std::mem::take(&mut self.state.parse.substitution_dupnames) {
             let total = count_subst_defs(&root, &name);
             if total > 1 {
                 let mut remaining = total - 1;
@@ -885,8 +832,8 @@ impl BlockParser {
             .push(ids::fully_normalize_name(&title.astext()));
         let source_path = self.sources.arc_path(start.span.source);
         let dup_info =
-            self.registry
-                .set_id_implicit(&mut section, start.underline_lineno, &source_path);
+            self.state
+                .note_implicit_target(&mut section, start.underline_lineno, &source_path);
         section.children.push(title);
         for m in start.messages {
             section.children.push(m);
@@ -894,9 +841,7 @@ impl BlockParser {
         for m in inline.messages {
             section.children.push(m);
         }
-        if let Some(info) = dup_info {
-            section.children.push(info);
-        }
+        section.children.extend(dup_info);
         stack.push(section);
     }
 
@@ -2125,8 +2070,6 @@ impl BlockParser {
                         link_block.push(l.clone());
                     }
                     let mut target = Node::elem(kinds::TARGET, span);
-                    let mut internal = false;
-                    let mut refuri_val: Option<String> = None;
                     let anonymous = name.is_none();
                     match &name {
                         // `add_target`: `normalize_name(unescape(targetname))`.
@@ -2136,31 +2079,27 @@ impl BlockParser {
                             .push(ids::fully_normalize_name(&unescape_nulls(n))),
                         None => target.set("anonymous", AttrValue::Int(1)),
                     }
+                    // The reference is set before the target is noted, as
+                    // `make_target` does: binding its name compares it.
                     match parse_target_block(&link_block) {
                         TargetRef::RefName(data) => {
                             target.set("refname", AttrValue::Str(ids::fully_normalize_name(&data)));
                         }
-                        TargetRef::RefUri(uri) if uri.is_empty() => internal = true,
+                        // An internal target: `add_target` sets no refuri.
+                        TargetRef::RefUri(uri) if uri.is_empty() => {}
                         TargetRef::RefUri(uri) => {
-                            refuri_val = Some(uri.clone());
                             target.set("refuri", AttrValue::Str(uri));
                         }
                     }
-                    let msg = if anonymous {
-                        self.registry.set_id_anonymous(&mut target);
-                        None
+                    if anonymous {
+                        self.state.set_id(&mut target);
                     } else {
                         let source_path = self.sources.arc_path(line.source);
-                        self.registry.set_id_explicit(
+                        out.extend(self.state.note_explicit_target(
                             &mut target,
                             lineno,
                             &source_path,
-                            internal,
-                            refuri_val.as_deref(),
-                        )
-                    };
-                    if let Some(m) = msg {
-                        out.push(m);
+                        ));
                     }
                     out.push(target);
                 }
@@ -2220,9 +2159,9 @@ impl BlockParser {
         if construct_error.is_none()
             && rest.starts_with(INCLUDE_MARKER_PREFIX)
             && lines.get(*pos + 1).map(|l| l.is_blank()).unwrap_or(true)
-            && !self.include_log.is_empty()
+            && !self.state.parse.include_log.is_empty()
         {
-            self.include_log.pop();
+            self.state.parse.include_log.pop();
             *pos += 1;
             return;
         }
@@ -2367,22 +2306,20 @@ impl BlockParser {
             node.attrs.names.push(ids::fully_normalize_name(&label));
             has_label_child = true;
         }
-        let msg = if node.attrs.names.is_empty() {
-            self.registry.set_id_anonymous(&mut node);
-            None
+        let msgs = if node.attrs.names.is_empty() {
+            self.state.set_id(&mut node);
+            Vec::new()
         } else {
             let source_path = self.sources.arc_path(lines[start].source);
-            self.registry
-                .set_id_explicit(&mut node, lineno, &source_path, true, None)
+            self.state
+                .note_explicit_target(&mut node, lineno, &source_path)
         };
         if has_label_child {
             let mut lab = Node::elem(kinds::LABEL, span);
             lab.children.push(Node::text_node(label.clone(), span));
             node.children.push(lab);
         }
-        if let Some(m) = msg {
-            node.children.push(m);
-        }
+        node.children.extend(msgs);
         let content = self.parse_nested(&body, if is_citation { "citation" } else { "footnote" });
         if content.is_empty() {
             let text = if is_citation {
@@ -3588,7 +3525,7 @@ impl BlockParser {
                 if let Some(srcdir) = &self.srcdir {
                     let resolved_srcdir = crate::utils::resolve_path(srcdir);
                     if let Some(docname) = crate::utils::path2doc(io_path, &resolved_srcdir) {
-                        self.included_records.push(docname);
+                        self.state.parse.included_records.push(docname);
                     }
                 }
             }
@@ -3834,7 +3771,7 @@ impl BlockParser {
     /// parse has no environment to replay into.
     fn record_include_dependency(&mut self, record: &str) {
         if self.sphinx && self.srcdir.is_some() {
-            self.dependency_records.push(record.to_string());
+            self.state.parse.dependency_records.push(record.to_string());
         }
     }
 
@@ -3896,18 +3833,29 @@ impl BlockParser {
         // (source, clip options): the same file with different clipping is
         // legal, and sequential re-includes are legal because the marker
         // comment pops the log entry.
-        if self.include_log.is_empty() {
+        if self.state.parse.include_log.is_empty() {
             let root = self.include_display_of(input.span.source);
-            self.include_log
+            self.state
+                .parse
+                .include_log
                 .push((root, (None, None, String::new(), String::new())));
         }
         if self
+            .state
+            .parse
             .include_log
             .iter()
             .any(|(source, opts)| *source == display && *opts == clip)
         {
             let chain: Vec<&str> = std::iter::once(display.as_str())
-                .chain(self.include_log.iter().rev().map(|(s, _)| s.as_str()))
+                .chain(
+                    self.state
+                        .parse
+                        .include_log
+                        .iter()
+                        .rev()
+                        .map(|(s, _)| s.as_str()),
+                )
                 .collect();
             out.push(self.directive_run_message(
                 messages::WARNING,
@@ -3922,7 +3870,7 @@ impl BlockParser {
             ));
             return DirectiveOutcome::Done;
         }
-        self.include_log.push((display.clone(), clip));
+        self.state.parse.include_log.push((display.clone(), clip));
         // Marker suffix for the comment-path pop (`misc.py:264`). The
         // blank line is load-bearing: without it an included file ending
         // in paragraph text would absorb the marker as a continuation
@@ -4111,7 +4059,7 @@ impl BlockParser {
         // and so does an option-conflict error (the reader is constructed
         // after). The `:diff:` file is deliberately NOT recorded.
         if self.sphinx && self.srcdir.is_some() {
-            self.dependency_records.push(rel);
+            self.state.parse.dependency_records.push(rel);
         }
         let options = self.literalinclude_options(&input);
         let mut reader = match LiteralIncludeReader::new(
@@ -4295,8 +4243,7 @@ impl BlockParser {
             out,
         );
         if container.attrs.ids.is_empty() {
-            let id = self.registry.allocate_auto_id();
-            container.attrs.ids.push(id);
+            self.state.set_id(&mut container);
         }
         Ok(container)
     }
@@ -4397,7 +4344,7 @@ impl BlockParser {
     /// location is the directive's `(source, line)` tuple — under an
     /// include, the included file's own provenance.
     fn push_literalinclude_log_warning(&mut self, message: String, input: &DirectiveInput<'_>) {
-        self.log_warnings.push(super::ParseLogWarning {
+        self.state.parse.log_warnings.push(super::ParseLogWarning {
             source: input.span.source,
             message,
             line: input.lineno,
@@ -4469,7 +4416,7 @@ impl BlockParser {
 
     /// sphinx index directive (sphinx/domains/index.py IndexDirective).
     fn run_index(&mut self, input: DirectiveInput<'_>, out: &mut Vec<Node>) {
-        let target_id = format!("index-{}", self.registry.new_index_serialno());
+        let target_id = format!("index-{}", self.state.new_index_serialno());
         let mut entries: Vec<String> = Vec::new();
         for line in input.arguments[0].split('\n') {
             let line = line.trim();
@@ -4697,8 +4644,8 @@ impl BlockParser {
                 // `make_id(env, document, 'term', termtext)` — sphinx's
                 // case-preserving `_make_id` fork, with a `term`-keyed
                 // serial fallback of its own, then `note_explicit_target`.
-                let node_id = self.registry.sphinx_make_id("term", &term_text);
-                self.registry.note_explicit_id(&node_id);
+                let node_id = self.state.sphinx_make_id("term", &term_text);
+                self.state.ids.register(&node_id);
                 term.attrs.ids.push(node_id.clone());
                 let mut index = Node::elem("index", term_span);
                 index.set(
@@ -4999,7 +4946,7 @@ impl BlockParser {
                 // (`domains/std/__init__.py:237-245`), located on the
                 // signature node — which carries the directive's own line.
                 // The spelling contributes nothing either way.
-                self.log_warnings.push(super::ParseLogWarning {
+                self.state.parse.log_warnings.push(super::ParseLogWarning {
                     source: span.source,
                     message: format!(
                         "Malformed option description {}, should look like \"opt\", \
@@ -5102,19 +5049,21 @@ impl BlockParser {
                     if !optname.starts_with(['-', '/']) {
                         prefix.push_str("-arg");
                     }
-                    let node_id = self.registry.sphinx_make_id(&prefix, optname);
+                    let node_id = self.state.sphinx_make_id(&prefix, optname);
                     signode.attrs.ids.push(node_id);
                 }
                 // `note_explicit_target` runs once, AFTER every id is
                 // chosen, so the ids of one signature never see each other
                 // in `document.ids`.
                 for node_id in signode.attrs.ids.clone() {
-                    self.registry.note_explicit_id(&node_id);
+                    self.state.ids.register(&node_id);
                 }
                 // Every spelling registers against `signode['ids'][0]`.
                 let first_id = signode.attrs.ids.first().cloned().unwrap_or_default();
                 for optname in &allnames {
-                    self.program_option_records
+                    self.state
+                        .parse
+                        .program_option_records
                         .push(super::ProgramOptionRecord {
                             source: signode.span.source,
                             program: program.clone(),
@@ -5149,16 +5098,19 @@ impl BlockParser {
         signode: &mut Node,
     ) -> String {
         // Both callers pass `self.objtype` as the make_id prefix.
-        let node_id = self.registry.sphinx_make_id(objtype, name);
+        let node_id = self.state.sphinx_make_id(objtype, name);
         signode.attrs.ids.push(node_id.clone());
-        self.registry.note_explicit_id(&node_id);
-        self.std_object_records.push(super::ObjectRegistration {
-            source: signode.span.source,
-            objtype: objtype.to_string(),
-            name: name.to_string(),
-            node_id: node_id.clone(),
-            line,
-        });
+        self.state.ids.register(&node_id);
+        self.state
+            .parse
+            .std_object_records
+            .push(super::ObjectRegistration {
+                source: signode.span.source,
+                objtype: objtype.to_string(),
+                name: name.to_string(),
+                node_id: node_id.clone(),
+                line,
+            });
         node_id
     }
 
@@ -5299,7 +5251,7 @@ impl BlockParser {
         if let Some(tp_list) = m.tp_list.as_deref().filter(|t| !t.is_empty()) {
             match crate::py::arglist::parse_type_list(tp_list, multi_line_tp, &ctx, &self.py) {
                 Ok(node) => signode.children.push(node),
-                Err(err) => self.log_warnings.push(super::ParseLogWarning {
+                Err(err) => self.state.parse.log_warnings.push(super::ParseLogWarning {
                     source: span.source,
                     message: format!(
                         "could not parse tp_list ({}): {err}",
@@ -5335,7 +5287,7 @@ impl BlockParser {
                         // Duplicate parameter names: WARNING + pseudo
                         // fallback (`_object.py:370-381`, probe
                         // arglist_dup_warning).
-                        self.log_warnings.push(super::ParseLogWarning {
+                        self.state.parse.log_warnings.push(super::ParseLogWarning {
                             source: span.source,
                             message: format!(
                                 "could not parse arglist ({}): {err}",
@@ -5491,29 +5443,35 @@ impl BlockParser {
         };
         // Empty prefix: the id IS the fullname, `id{n}` on collision
         // ([PY §1.5], the empty-prefix branch of `sphinx_make_id`).
-        let node_id = self.registry.sphinx_make_id("", &fullname);
+        let node_id = self.state.sphinx_make_id("", &fullname);
         signode.attrs.ids.push(node_id.clone());
-        self.registry.note_explicit_id(&node_id);
-        self.py_object_records.push(super::PyObjectRecord {
-            fullname: fullname.clone(),
-            objtype: objtype.to_string(),
-            node_id: node_id.clone(),
-            aliased: false,
-            source: signode.span.source,
-            lineno: input.lineno,
-        });
+        self.state.ids.register(&node_id);
+        self.state
+            .parse
+            .py_object_records
+            .push(super::PyObjectRecord {
+                fullname: fullname.clone(),
+                objtype: objtype.to_string(),
+                node_id: node_id.clone(),
+                aliased: false,
+                source: signode.span.source,
+                lineno: input.lineno,
+            });
         // `:canonical:` registers an alias — except on py:type, where the
         // option is display-only (`_object.py:427-437`, §6).
         if py.kind != PyObjectKind::TypeAlias {
             if let Some(canonical) = opt_str("canonical").filter(|c| !c.is_empty()) {
-                self.py_object_records.push(super::PyObjectRecord {
-                    fullname: canonical,
-                    objtype: objtype.to_string(),
-                    node_id: node_id.clone(),
-                    aliased: true,
-                    source: signode.span.source,
-                    lineno: input.lineno,
-                });
+                self.state
+                    .parse
+                    .py_object_records
+                    .push(super::PyObjectRecord {
+                        fullname: canonical,
+                        objtype: objtype.to_string(),
+                        node_id: node_id.clone(),
+                        aliased: true,
+                        source: signode.span.source,
+                        lineno: input.lineno,
+                    });
             }
         }
         let has = |n: &'static str| opt_get(&input.options, n).is_some();
@@ -5664,8 +5622,8 @@ impl BlockParser {
         // and the T8 corpus excludes section-bearing module content.
         let content = self.parse_nested(&input.content, "py_module");
         if !no_index {
-            let node_id = self.registry.sphinx_make_id("module", &modname);
-            self.registry.note_explicit_id(&node_id);
+            let node_id = self.state.sphinx_make_id("module", &modname);
+            self.state.ids.register(&node_id);
             let mut target = Node::elem(kinds::TARGET, input.span);
             target.attrs.ids.push(node_id.clone());
             target.set("ismod", AttrValue::Int(1));
@@ -5673,25 +5631,31 @@ impl BlockParser {
                 Some(OptVal::Str(s)) => s.clone(),
                 _ => String::new(),
             };
-            self.py_module_records.push(super::PyModuleRecord {
-                name: modname.clone(),
-                node_id: node_id.clone(),
-                synopsis: opt("synopsis"),
-                platform: opt("platform"),
-                deprecated: has("deprecated"),
-                source: input.span.source,
-                lineno: input.lineno,
-            });
+            self.state
+                .parse
+                .py_module_records
+                .push(super::PyModuleRecord {
+                    name: modname.clone(),
+                    node_id: node_id.clone(),
+                    synopsis: opt("synopsis"),
+                    platform: opt("platform"),
+                    deprecated: has("deprecated"),
+                    source: input.span.source,
+                    lineno: input.lineno,
+                });
             // `note_object(modname, 'module', node_id)` (`__init__.py:522`)
             // — modules also join the objects table.
-            self.py_object_records.push(super::PyObjectRecord {
-                fullname: modname.clone(),
-                objtype: "module".to_string(),
-                node_id: node_id.clone(),
-                aliased: false,
-                source: input.span.source,
-                lineno: input.lineno,
-            });
+            self.state
+                .parse
+                .py_object_records
+                .push(super::PyObjectRecord {
+                    fullname: modname.clone(),
+                    objtype: "module".to_string(),
+                    node_id: node_id.clone(),
+                    aliased: false,
+                    source: input.span.source,
+                    lineno: input.lineno,
+                });
             if !has("no-index-entry") {
                 let mut index = Node::elem("index", input.span);
                 index.set(
@@ -6017,7 +5981,7 @@ impl BlockParser {
             Some(OptVal::Str(c)) => Some(c.clone()),
             _ => None,
         };
-        self.toctree_records.push(super::ToctreeRecord {
+        self.state.parse.toctree_records.push(super::ToctreeRecord {
             glob,
             entries: entries.clone(),
             caption: caption.clone(),
@@ -7043,12 +7007,7 @@ impl BlockParser {
     ) {
         node.attrs.names.push(ids::fully_normalize_name(name));
         let source_path = self.sources.arc_path(source);
-        let msg = self
-            .registry
-            .set_id_explicit(node, lineno, &source_path, true, None);
-        if let Some(m) = msg {
-            out.push(m);
-        }
+        out.extend(self.state.note_explicit_target(node, lineno, &source_path));
     }
 
     fn run_admonition(
@@ -7680,8 +7639,8 @@ impl BlockParser {
         span: Span,
     ) -> Node {
         details.sort_by(|(a, _), (b, _)| a.cmp(b));
-        let order = self.next_pending_order;
-        self.next_pending_order += 1;
+        let order = self.state.parse.next_pending_order;
+        self.state.parse.next_pending_order += 1;
         let mut node = Node::elem("pending", span);
         node.ext = Some(Box::new(NodeExt {
             pending: Some(Box::new(Pending {
@@ -7914,18 +7873,26 @@ impl BlockParser {
         // note_substitution_def (nodes.py:2056-2073): duplicate names are
         // case-sensitively compared; the error precedes the new node and
         // the OLD node loses its name (post-parse walk).
-        if self.substitution_names_seen.contains(&subname_ws) {
+        if self
+            .state
+            .parse
+            .substitution_names_seen
+            .contains(&subname_ws)
+        {
             out.push(self.msg(
                 messages::ERROR,
                 &format!("Duplicate substitution definition name: \"{subname_ws}\"."),
                 msg_source,
                 lineno,
             ));
-            if !self.substitution_dupnames.contains(&subname_ws) {
-                self.substitution_dupnames.push(subname_ws.clone());
+            if !self.state.parse.substitution_dupnames.contains(&subname_ws) {
+                self.state
+                    .parse
+                    .substitution_dupnames
+                    .push(subname_ws.clone());
             }
         } else {
-            self.substitution_names_seen.push(subname_ws);
+            self.state.parse.substitution_names_seen.push(subname_ws);
         }
         out.push(subst);
         self.warn_explicit_markup_end(lines, *pos, out);
@@ -7975,7 +7942,7 @@ impl BlockParser {
                 }
             }
         }
-        self.registry.set_id_anonymous(&mut target);
+        self.state.set_id(&mut target);
         out.push(target);
         self.warn_explicit_markup_end(lines, *pos, out);
     }
@@ -10539,7 +10506,7 @@ const LINE_LENGTH_LIMIT: usize = 10_000;
 
 /// The circular-inclusion identity's clip half: `(start-line, end-line,
 /// start-after, end-before)` exactly as `misc.py:85-88` builds it.
-type IncludeClip = (Option<i64>, Option<i64>, String, String);
+pub(crate) type IncludeClip = (Option<i64>, Option<i64>, String, String);
 
 /// A resolved include argument.
 enum IncludeTarget {
@@ -14335,6 +14302,84 @@ mod tests {
             pf(".. _dup: https://1/\n\n.. _dup: https://2/\n"),
             "<document source=\"<snippet>\">\n    <target dupnames=\"dup\" ids=\"dup\" refuri=\"https://1/\">\n    <system_message level=\"2\" line=\"3\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Duplicate explicit target name: \"dup\".\n    <target dupnames=\"dup\" ids=\"id1\" refuri=\"https://2/\">\n"
         );
+    }
+
+    /// `set_duplicate_name_id`'s first branch (`SP/docutils/nodes.py:
+    /// 1943-1951`, [DS §7.5 (1)]): a duplicate target that refers to the
+    /// same `refname` or `refuri` as the bound one keeps that one bound, and
+    /// only the new one loses the name, with an INFO. Expected output:
+    /// docutils 0.22.4's parse layer.
+    #[test]
+    fn duplicate_targets_with_the_same_reference_keep_the_first() {
+        // `cases/dup_indirect`; the new id is the backref.
+        assert_eq!(
+            pf("Text a_.\n\n.. _a: x_\n.. _a: x_\n.. _x: https://x/\n"),
+            "<document source=\"<snippet>\">\n    <paragraph>\n        Text \n        <reference name=\"a\" refname=\"a\">\n            a\n        .\n    <target ids=\"a\" names=\"a\" refname=\"x\">\n    <system_message backrefs=\"id1\" level=\"1\" line=\"4\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            Duplicate name \"a\" for external target \"x\".\n    <target dupnames=\"a\" ids=\"id1\" refname=\"x\">\n    <target ids=\"x\" names=\"x\" refuri=\"https://x/\">\n"
+        );
+        // A target with a `refuri` takes no backref.
+        assert_eq!(
+            pf(".. _dup: https://1/\n\n.. _dup: https://1/\n"),
+            "<document source=\"<snippet>\">\n    <target ids=\"dup\" names=\"dup\" refuri=\"https://1/\">\n    <system_message level=\"1\" line=\"3\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            Duplicate name \"dup\" for external target \"https://1/\".\n    <target dupnames=\"dup\" ids=\"id1\" refuri=\"https://1/\">\n"
+        );
+    }
+
+    /// The rest of `set_duplicate_name_id` where it reads the node: the
+    /// backref is the new id except on a target with a `refuri` (so an
+    /// indirect target and an override get one), and an explicit target
+    /// takes a name only implicit duplicates had cleared without a report.
+    /// Expected output: docutils 0.22.4's parse layer.
+    #[test]
+    fn duplicate_name_reports_follow_docutils() {
+        assert_eq!(
+            pf(".. _a: x_\n\n.. _a: y_\n"),
+            "<document source=\"<snippet>\">\n    <target dupnames=\"a\" ids=\"a\" refname=\"x\">\n    <system_message backrefs=\"id1\" level=\"2\" line=\"3\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Duplicate explicit target name: \"a\".\n    <target dupnames=\"a\" ids=\"id1\" refname=\"y\">\n"
+        );
+        assert_eq!(
+            pf("Sec\n===\n\n.. _sec:\n\npara\n"),
+            "<document source=\"<snippet>\">\n    <section dupnames=\"sec\" ids=\"sec\">\n        <title>\n            Sec\n        <system_message backrefs=\"id1\" level=\"1\" line=\"4\" source=\"<snippet>\" type=\"INFO\">\n            <paragraph>\n                Target name overrides implicit target name \"sec\".\n        <target ids=\"id1\" names=\"sec\">\n        <paragraph>\n            para\n"
+        );
+        assert_eq!(
+            pf("S\n=\n\nS\n=\n\n.. _s:\n\npara\n"),
+            "<document source=\"<snippet>\">\n    <section dupnames=\"s\" ids=\"s\">\n        <title>\n            S\n    <section dupnames=\"s\" ids=\"id1\">\n        <title>\n            S\n        <system_message backrefs=\"id1\" level=\"1\" line=\"5\" source=\"<snippet>\" type=\"INFO\">\n            <paragraph>\n                Duplicate implicit target name: \"s\".\n        <target ids=\"id2\" names=\"s\">\n        <paragraph>\n            para\n"
+        );
+    }
+
+    /// docutils' `document` is one object for every nested state machine,
+    /// so a csv-table cell's substitution definition is in the document's
+    /// substitution names: a later definition of the name is a duplicate,
+    /// and the cell's loses the name. Expected output: docutils 0.22.4's
+    /// parse layer.
+    #[test]
+    fn detached_parses_continue_the_document_state() {
+        assert_eq!(
+            pf(".. csv-table::\n\n   \".. |a| replace:: x\"\n\n.. |a| replace:: y\n"),
+            "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"1\">\n            <colspec colwidth=\"100\">\n            <tbody>\n                <row>\n                    <entry>\n                        <substitution_definition dupnames=\"a\">\n                            x\n    <system_message level=\"3\" line=\"5\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Duplicate substitution definition name: \"a\".\n    <substitution_definition names=\"a\">\n        y\n"
+        );
+    }
+
+    /// `ParseOutput.state` carries the parse's id and name state on to the
+    /// read transforms ([DS §5.3], `docutils-0364`): with `id1` (the
+    /// footnote reference) and `title-1-here` taken and the counter at 1,
+    /// the next id — SphinxDanglingReferences' message — is `id2`.
+    #[test]
+    fn parse_output_state_continues_the_document_ids() {
+        let mut out = crate::rst::parse_rst_full(
+            "Title [1]_ Here\n===============\n\nbody\n",
+            &ParseOptions {
+                source_path: "<snippet>".into(),
+                ..Default::default()
+            },
+        );
+        assert!(out.state.ids.is_taken("id1"));
+        assert!(out.state.ids.is_taken("title-1-here"));
+        assert_eq!(out.state.ids.allocate(kinds::SYSTEM_MESSAGE, &[]), "id2");
+        let names: Vec<(&str, Option<&str>, bool)> = out
+            .state
+            .names
+            .iter()
+            .map(|(name, entry)| (name, entry.id.as_deref(), entry.explicit))
+            .collect();
+        assert_eq!(names, [("title 1 here", Some("title-1-here"), false)]);
     }
 
     // ----- nested-context errors -----
