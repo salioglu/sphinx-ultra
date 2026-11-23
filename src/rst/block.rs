@@ -184,12 +184,51 @@ fn column_width(text: &str) -> usize {
     unicode_width::UnicodeWidthStr::width(text)
 }
 
-/// Definition-list term split on the docutils classifier delimiter
-/// `' +: +'` (one-or-more spaces, colon, one-or-more spaces).
-fn split_classifiers(term: &str) -> Vec<String> {
+/// `text` split on the classifier delimiter `' +: +'` (one-or-more
+/// spaces, colon, one-or-more spaces), docutils' `classifier_delimiter`
+/// and Sphinx's `_term_classifiers_re` alike.
+fn split_classifiers(text: &str) -> Vec<String> {
     static CLASSIFIER_RE: std::sync::LazyLock<regex::Regex> =
         std::sync::LazyLock::new(|| regex::Regex::new(" +: +").unwrap());
-    CLASSIFIER_RE.split(term).map(str::to_string).collect()
+    CLASSIFIER_RE.split(text).map(str::to_string).collect()
+}
+
+/// docutils `Text.term` (`states.py:3001-3022`) over the inline nodes of
+/// a whole term line: `[term, *classifiers]`. Each node joins the latest
+/// of them, except a Text holding the delimiter, which splits: its first
+/// part, right-stripped (`parts[0].rstrip()`, Python's whitespace set),
+/// still joins it as a Text (an empty one included), and every further
+/// part opens a new `classifier` whose Text is that part as it stands,
+/// unstripped (none when it is empty). Inline markup is never split, so
+/// `*term : x*` stays one emphasis and the role in `term : :r:`a : b``
+/// is one role.
+fn split_term_nodes(nodes: Vec<Node>, span: Span) -> Vec<Node> {
+    let mut out = vec![Node::elem(kinds::TERM, span)];
+    for node in nodes {
+        if node.kind == kinds::TEXT {
+            let parts = split_classifiers(&node.text_data());
+            if let Some((head, rest)) = parts.split_first().filter(|(_, rest)| !rest.is_empty()) {
+                let head = head.trim_end_matches(crate::utils::py_isspace);
+                if let Some(last) = out.last_mut() {
+                    last.children.push(Node::text_node_escaped(head, node.span));
+                }
+                for part in rest {
+                    let mut classifier = Node::elem(kinds::CLASSIFIER, span);
+                    if !part.is_empty() {
+                        classifier
+                            .children
+                            .push(Node::text_node_escaped(part, node.span));
+                    }
+                    out.push(classifier);
+                }
+                continue;
+            }
+        }
+        if let Some(last) = out.last_mut() {
+            last.children.push(node);
+        }
+    }
+    out
 }
 
 struct SectionStart {
@@ -240,6 +279,25 @@ pub(crate) struct BlockParser {
     /// fills before appending it (a list item, a `note`, a table entry, a
     /// substitution definition) is not.
     attached: bool,
+    /// `Some(first)` while parsing Sphinx's `<generated text>`: a string
+    /// `nested_parse_to_nodes` turns into lines of its own (a code caption,
+    /// [`Self::container_wrapper`]), numbered here from `first`. The state
+    /// machine notes `document.current_line` from those lines' own
+    /// offsets, so a message located by it (the unknown-directive INFO)
+    /// lands on line `offset + 1` of the document.
+    generated_text: Option<u32>,
+    /// How many sections are open around the construct being parsed, in
+    /// a parse that matches titles at section level (the document's, and
+    /// [`Self::parse_nested_titled`]'s while `nested_node_kind` is `None`):
+    /// the depth `Only.run` raises a node from ([`Self::run_only`]).
+    open_sections: usize,
+    /// The `only` nodes `Only.run` appended to a section above the current
+    /// one, in the running section-level parse. Docutils attaches a
+    /// section to its parent when it opens one, here when it closes, so
+    /// each waits for the open section at index `.0` of the stack, the
+    /// child its target already held, and follows it into the target
+    /// ([`Self::close_section`]).
+    raised: Vec<(usize, Node)>,
     /// Sphinx mode (see [`super::ParseOptions::sphinx`]).
     pub(crate) sphinx: bool,
     /// The docname stamped on pending_xref nodes (sphinx `refdoc`).
@@ -403,6 +461,9 @@ impl BlockParser {
             line_bias: 0,
             nested_node_kind: None,
             attached: true,
+            generated_text: None,
+            open_sections: 0,
+            raised: Vec::new(),
             sphinx: false,
             docname: "index".to_string(),
             found_docs: None,
@@ -591,13 +652,14 @@ impl BlockParser {
     /// [`Self::parse_nested`] into a container that has `document` set
     /// while it is filled. Sphinx's `nested_parse_to_nodes` parses into an
     /// anonymous `Element` it attaches first (`SP/sphinx/util/parsing.py:62-63`):
-    /// object description content (`directives/__init__.py:288`),
-    /// `py:module` content (`domains/python/__init__.py:505`), glossary
-    /// definitions (`domains/std/__init__.py:541`) and `hlist`
-    /// (`directives/other.py:289`). `only` sets `node.document` itself
-    /// (`directives/other.py:322`). The changeset directives do both
-    /// (`domains/changeset.py:67,82`), but their content is not
-    /// nested-parsed here.
+    /// glossary definitions (`domains/std/__init__.py:541`) and `hlist`
+    /// (`directives/other.py:289`) here; object description content
+    /// (`directives/__init__.py:288`) and `py:module` content
+    /// (`domains/python/__init__.py:505`), which match titles, through
+    /// [`Self::parse_nested_titled`], as `only` (which sets
+    /// `node.document` itself, `directives/other.py:322`). The changeset
+    /// directives do both (`domains/changeset.py:67,82`), but their
+    /// content is not nested-parsed here.
     fn parse_nested_attached(&mut self, lines: &[LineRec], kind: &'static str) -> Vec<Node> {
         self.parse_nested_into(lines, kind, true)
     }
@@ -616,18 +678,97 @@ impl BlockParser {
         nodes
     }
 
+    /// docutils `nested_parse(content, offset, node, match_titles=True)`
+    /// into a container that has `document` set, in a fresh title-style
+    /// context (`memo.title_styles = []`, `memo.section_level = 0`): what
+    /// `only` runs (`SP/sphinx/directives/other.py:328-336`) and what
+    /// `nested_parse_to_nodes(..., allow_section_headings=True)` runs for
+    /// object description and `py:module` content
+    /// (`SP/sphinx/util/parsing.py:60-73`). The container has no parent,
+    /// so its section level is 0 (`section_level_offset` is 0): titles
+    /// open sections inside it at the levels the content's own styles
+    /// give, a skipped level is docutils' `Inconsistent title style`
+    /// ERROR, and transitions parse. Returns the container's children and
+    /// the title styles the content established; the surrounding styles
+    /// come back afterwards.
+    fn parse_nested_titled(
+        &mut self,
+        lines: &[LineRec],
+        kind: &'static str,
+    ) -> (Vec<Node>, Vec<(char, bool)>) {
+        if self.depth >= MAX_NEST_DEPTH {
+            // The totality guard's ERROR ([`Self::parse_elements`]).
+            return (self.parse_elements(lines), Vec::new());
+        }
+        self.depth += 1;
+        let saved_styles = std::mem::take(&mut self.styles);
+        let saved_kind = self.nested_node_kind;
+        let saved_attached = std::mem::replace(&mut self.attached, true);
+        let saved_open = self.open_sections;
+        let saved_raised = std::mem::take(&mut self.raised);
+        let mut root = Node::elem(kind, Span::ZERO);
+        // Open sections, deepest last, as at document level.
+        let mut stack: Vec<Node> = Vec::new();
+        let mut owned: Option<Vec<LineRec>> = None;
+        let mut pos = 0usize;
+        loop {
+            let cur: &[LineRec] = owned.as_deref().unwrap_or(lines);
+            if pos >= cur.len() {
+                break;
+            }
+            if cur[pos].is_blank() {
+                pos += 1;
+                continue;
+            }
+            // `state_machine.node`: the innermost open section, else the
+            // container.
+            self.nested_node_kind = if stack.is_empty() { Some(kind) } else { None };
+            self.open_sections = stack.len();
+            let mut out = Vec::new();
+            let section = self.parse_element(cur, &mut pos, true, &mut out);
+            self.apply_pending_classes(&mut out, 0);
+            for node in out {
+                Self::container(&mut root, &mut stack).children.push(node);
+            }
+            if let Some(start) = section {
+                self.open_section(start, &mut root, &mut stack);
+            }
+            if let Some(request) = self.pending_splice.take() {
+                let mut stream = owned.take().unwrap_or_else(|| lines.to_vec());
+                self.apply_splice(&mut stream, pos, request);
+                owned = Some(stream);
+            }
+        }
+        while !stack.is_empty() {
+            self.close_section(&mut root, &mut stack);
+        }
+        debug_assert!(
+            self.raised.is_empty(),
+            "a raised `only` outlived its section"
+        );
+        let styles = std::mem::replace(&mut self.styles, saved_styles);
+        self.nested_node_kind = saved_kind;
+        self.attached = saved_attached;
+        self.open_sections = saved_open;
+        self.raised = saved_raised;
+        self.depth -= 1;
+        (root.children, styles)
+    }
+
     /// Nested parse over OWNED text (csv-table cells and, later,
     /// rst_prolog): a sub-parser over a new source-table entry, sharing
     /// this parser's table and document state, with linenos starting at
     /// `first_lineno` so absolute line numbers keep working. The entry's
     /// path copies `attribute_to`'s — the source the text was lifted from
-    /// — so messages and spans keep attributing to it.
+    /// — so messages and spans keep attributing to it. `generated` marks
+    /// Sphinx's `<generated text>` ([`Self::generated_text`]).
     fn parse_detached(
         &mut self,
         text: &str,
         first_lineno: u32,
         attribute_to: u16,
         kind: &'static str,
+        generated: bool,
     ) -> Vec<Node> {
         let path = self.sources.arc_path(attribute_to);
         let Some((_id, top)) = self.push_source(path, text, first_lineno) else {
@@ -649,6 +790,7 @@ impl BlockParser {
         sub.attached = false;
         sub.line_bias = self.line_bias;
         sub.depth = self.depth;
+        sub.generated_text = generated.then_some(first_lineno);
         // The mode must flow through the detached parse (review finding:
         // csv cells previously parsed in docutils mode).
         sub.sphinx = self.sphinx;
@@ -864,6 +1006,7 @@ impl BlockParser {
                 continue;
             }
             let mut out = Vec::new();
+            self.open_sections = stack.len();
             let section = self.parse_element(&lines, &mut pos, true, &mut out);
             last_ending = Some(self.ending);
             self.apply_pending_classes(&mut out, 0);
@@ -880,8 +1023,12 @@ impl BlockParser {
             }
         }
         while !stack.is_empty() {
-            Self::close_section(&mut root, &mut stack);
+            self.close_section(&mut root, &mut stack);
         }
+        debug_assert!(
+            self.raised.is_empty(),
+            "a raised `only` outlived its section"
+        );
         self.state.final_position = final_position(&lines, last_ending);
 
         // docutils `dupname`s the earlier node object in place, wherever it
@@ -900,12 +1047,26 @@ impl BlockParser {
         }
     }
 
-    fn close_section(root: &mut Node, stack: &mut Vec<Node>) {
+    /// Close the innermost open section: it joins its parent, followed by
+    /// the `only` nodes raised into that parent while it was open
+    /// ([`Self::raised`]).
+    fn close_section(&mut self, root: &mut Node, stack: &mut Vec<Node>) {
         if let Some(mut done) = stack.pop() {
             if let Some(last) = done.children.last() {
                 done.span.end = done.span.end.max(last.span.end);
             }
-            Self::container(root, stack).children.push(done);
+            let depth = stack.len();
+            let parent = Self::container(root, stack);
+            parent.children.push(done);
+            if self.raised.iter().any(|(at, _)| *at == depth) {
+                let (now, later): (Vec<_>, Vec<_>) = std::mem::take(&mut self.raised)
+                    .into_iter()
+                    .partition(|(at, _)| *at == depth);
+                self.raised = later;
+                parent
+                    .children
+                    .extend(now.into_iter().map(|(_, node)| node));
+            }
         }
     }
 
@@ -953,7 +1114,7 @@ impl BlockParser {
             self.styles.push(start.style);
         }
         while stack.len() >= level {
-            Self::close_section(root, stack);
+            self.close_section(root, stack);
         }
 
         let inline = self.inline(&start.title, start.span, start.title_lineno);
@@ -1883,35 +2044,15 @@ impl BlockParser {
                 self.span_of(lines, *pos, item_last),
             );
             let term_span = self.span_of(lines, *pos, *pos);
-            let term_ends_in_colons = self.sources.line_text(term_line).ends_with("::");
-            let mut parts = split_classifiers(self.sources.line_text(term_line)).into_iter();
-            let has_classifiers = parts.len() > 1;
-            let term_text = parts.next().unwrap_or_default();
-            // `text = parts[0].rstrip()` (states.py:3015) — Python's
-            // whitespace set, applied only on the classifier branch: a term
-            // without one is a whole `string2lines` line, rstripped already.
-            // Sphinx's glossary term is the opposite (kept verbatim; see
-            // `run_glossary`). Probe-pinned, panel fix round F (`round_f`).
-            let term_text = if has_classifiers {
-                term_text
-                    .trim_end_matches(crate::utils::py_isspace)
-                    .to_string()
-            } else {
-                term_text
-            };
-            let mut term_msgs = Vec::new();
+            let term_text = self.sources.line_text(term_line).to_string();
+            let term_ends_in_colons = term_text.ends_with("::");
+            // `Text.term` (`states.py:3001-3022`): the whole line is parsed
+            // once, and only then are its Text nodes split into the term
+            // and its classifiers, so markup may span ` : `.
             let inline = self.inline(&term_text, term_span, term_line.lineno);
-            let mut term = Node::elem(kinds::TERM, term_span);
-            term.children = inline.nodes;
-            term_msgs.extend(inline.messages);
-            item.children.push(term);
-            for classifier in parts {
-                let inline = self.inline(&classifier, term_span, term_line.lineno);
-                let mut c = Node::elem(kinds::CLASSIFIER, term_span);
-                c.children = inline.nodes;
-                term_msgs.extend(inline.messages);
-                item.children.push(c);
-            }
+            let mut term_msgs = inline.messages;
+            item.children
+                .extend(split_term_nodes(inline.nodes, term_span));
             let mut definition =
                 Node::elem(kinds::DEFINITION, self.span_of(lines, *pos + 1, item_last));
             // Fixture-verified: term/classifier inline messages land INSIDE
@@ -3495,13 +3636,20 @@ impl BlockParser {
             // `sphinx_domains.directive` lowercased; the ERROR the name as
             // written (`states.py:2415-2423`).
             let looked_up = if self.sphinx { lower.as_str() } else { name };
+            // `line=document.current_line` (`directives/__init__.py:114-115`):
+            // the line the state machine last noted, which is the
+            // directive's own, except over `<generated text>`.
+            let (info_source, info_line) = match self.generated_text {
+                Some(first) => (0, lineno.saturating_sub(first) + 1),
+                None => (span.source, lineno),
+            };
             out.push(self.msg(
                 messages::INFO,
                 &format!(
                     "No directive entry for \"{looked_up}\" in module \"docutils.parsers.rst.languages.en\".\nTrying \"{looked_up}\" as canonical directive name."
                 ),
-                span.source,
-                lineno,
+                info_source,
+                info_line,
             ));
             // `unknown_directive` (states.py:2415-2423): the block is the
             // message's child from the start.
@@ -3534,9 +3682,13 @@ impl BlockParser {
         // following spaces, then the (already dedented) indented block.
         let mut indented: Vec<LineRec> = vec![first_line];
         indented.extend(block.iter().copied());
+        // `line_offset` and `content_offset` as the line numbers they
+        // stand for: the block's lines follow the marker line's.
+        let mut line_offset = first_line.lineno;
         // Exactly ONE leading blank line is trimmed, then all trailing.
         if indented.first().map(|l| l.is_blank()).unwrap_or(false) {
             indented.remove(0);
+            line_offset += 1;
         }
         while indented.last().map(|l| l.is_blank()).unwrap_or(false) {
             indented.pop();
@@ -3550,6 +3702,7 @@ impl BlockParser {
         let mut arg_block: Vec<LineRec>;
         let mut content: Vec<LineRec>;
         let blank_idx;
+        let mut content_lineno;
         if !indented.is_empty() && declares_specs {
             blank_idx = indented
                 .iter()
@@ -3560,10 +3713,12 @@ impl BlockParser {
                 .get(blank_idx + 1..)
                 .map(|s| s.to_vec())
                 .unwrap_or_default();
+            content_lineno = line_offset + blank_idx as u32 + 1;
         } else {
             blank_idx = 0;
             arg_block = Vec::new();
             content = indented.clone();
+            content_lineno = line_offset;
         }
 
         // Options before arguments (parse_directive_options,
@@ -3601,10 +3756,12 @@ impl BlockParser {
             let mut rejoined = arg_block.clone();
             rejoined.extend(indented[blank_idx.min(indented.len())..].iter().copied());
             content = rejoined;
+            content_lineno = line_offset;
             arg_block.clear();
         }
         while content.first().map(|l| l.is_blank()).unwrap_or(false) {
             content.remove(0);
+            content_lineno += 1;
         }
 
         // Arguments (parse_directive_arguments, states.py:2365-2380).
@@ -3631,6 +3788,7 @@ impl BlockParser {
             arguments,
             options,
             content,
+            content_lineno,
             span,
             lineno,
             rawsource,
@@ -4269,6 +4427,7 @@ impl BlockParser {
             arguments,
             options: input.options.clone(),
             content: Vec::new(),
+            content_lineno: input.content_lineno,
             span: input.span,
             lineno: input.lineno,
             rawsource: input.rawsource,
@@ -4428,19 +4587,60 @@ impl BlockParser {
         }
     }
 
-    /// `container_wrapper` (`code.py:78-96`) plus the read-phase
-    /// `AutoNumbering` id: the caption parses as RST — a leading
-    /// `system_message` raises the `Invalid caption` ValueError into the
-    /// reporter funnel; otherwise the first node's children become the
-    /// caption (everything after it is discarded, exactly as sphinx keeps
-    /// only `parsed[0]`).
+    /// [`Self::container_wrapper`] plus `add_name` and the read-phase
+    /// `AutoNumbering` id.
     fn literalinclude_container(
         &mut self,
         caption: &str,
         literal_node: Node,
         input: &DirectiveInput<'_>,
     ) -> Result<Node, String> {
-        let parsed = self.parse_detached(caption, 1, input.span.source, "caption");
+        let mut container = self.container_wrapper(caption, literal_node, input)?;
+        // `add_name` lands on the CONTAINER (`code.py:502`); without a
+        // name, Sphinx's `AutoNumbering` transform (priority 210) hands
+        // the captioned enumerable node an implicit id via
+        // `note_implicit_target` (`SP/transforms/__init__.py:200-214` —
+        // probed `ids="id1"`, no name). Stamped here at parse time: the
+        // transform pipeline has no AutoNumbering pass (the known
+        // labelled-figure gap — only the unlabelled case is handled), so
+        // the shared auto-id serial is allocated in document order rather
+        // than after the parse; the two orders only diverge in a document
+        // that also allocates auto ids elsewhere.
+        self.directive_add_name(
+            &mut container,
+            &input.options,
+            input.span.source,
+            input.lineno,
+        );
+        if container.attrs.ids.is_empty() {
+            self.state.set_id(&mut container);
+        }
+        Ok(container)
+    }
+
+    /// `container_wrapper` (`code.py:78-96`), shared by `code-block` and
+    /// `literalinclude`: the caption parses as RST through
+    /// `parse_text_to_nodes(caption, offset=self.content_offset)` — a
+    /// nested parse, without section titles, of `<generated text>`
+    /// ([`Self::generated_text`]) whose lines count from the directive's
+    /// content line. A leading `system_message` raises the `Invalid
+    /// caption` ValueError, which the caller turns into a reporter WARNING
+    /// at the directive's line; otherwise the first node's children
+    /// become the caption (everything after it is discarded, exactly as
+    /// sphinx keeps only `parsed[0]`).
+    fn container_wrapper(
+        &mut self,
+        caption: &str,
+        literal_node: Node,
+        input: &DirectiveInput<'_>,
+    ) -> Result<Node, String> {
+        let parsed = self.parse_detached(
+            caption,
+            input.content_lineno,
+            input.span.source,
+            "caption",
+            true,
+        );
         if let Some(node) = parsed.first() {
             if node.kind == kinds::SYSTEM_MESSAGE {
                 // `'Invalid caption: %s' % node.astext()` — the message
@@ -4469,25 +4669,6 @@ impl BlockParser {
         container.set("literal_block", AttrValue::Int(1));
         container.children.push(caption_node);
         container.children.push(literal_node);
-        // `add_name` lands on the CONTAINER (`code.py:502`); without a
-        // name, Sphinx's `AutoNumbering` transform (priority 210) hands
-        // the captioned enumerable node an implicit id via
-        // `note_implicit_target` (`SP/transforms/__init__.py:200-214` —
-        // probed `ids="id1"`, no name). Stamped here at parse time: the
-        // transform pipeline has no AutoNumbering pass (the known
-        // labelled-figure gap — only the unlabelled case is handled), so
-        // the shared auto-id serial is allocated in document order rather
-        // than after the parse; the two orders only diverge in a document
-        // that also allocates auto ids elsewhere.
-        self.directive_add_name(
-            &mut container,
-            &input.options,
-            input.span.source,
-            input.lineno,
-        );
-        if container.attrs.ids.is_empty() {
-            self.state.set_id(&mut container);
-        }
         Ok(container)
     }
 
@@ -5130,7 +5311,9 @@ impl BlockParser {
             self.py_before_content(py, &names, &input);
         }
         let mut content = Node::elem("desc_content", span);
-        content.children = self.parse_nested_attached(&input.content, "desc_content");
+        // `parse_content_to_nodes(allow_section_headings=True)`
+        // (`directives/__init__.py:288`).
+        (content.children, _) = self.parse_nested_titled(&input.content, "desc_content");
         if kind == DescDispatch::Std(ObjectDescKind::Confval) {
             self.confval_transform_content(&input, &mut content);
         }
@@ -5927,12 +6110,10 @@ impl BlockParser {
         self.py_module = Some(modname.clone());
         self.py_module_key = true;
         // Content parses BEFORE the module's own id is allocated
-        // (`__init__.py:505-510`), so ids taken by content come first.
-        // sphinx parses it with allow_section_headings=True; sections
-        // inside nested content are not representable in this parser (a
-        // pre-existing wave-4 limitation shared by every nested parse),
-        // and the T8 corpus excludes section-bearing module content.
-        let content = self.parse_nested_attached(&input.content, "py_module");
+        // (`__init__.py:505-510`), so ids taken by content come first. It
+        // parses with `allow_section_headings=True`, so its sections are
+        // the directive's own nodes, after the index and target.
+        let (content, _) = self.parse_nested_titled(&input.content, "py_module");
         if !no_index {
             let node_id = self.state.sphinx_make_id("module", &modname);
             self.state.ids.register(&node_id, None);
@@ -6193,25 +6374,27 @@ impl BlockParser {
         lb.children.push(Node::text_node(code, input.span));
         match opt_get(&input.options, "caption") {
             Some(OptVal::Str(caption_text)) => {
-                let mut container = Node::elem("container", input.span);
-                container
-                    .attrs
-                    .classes
-                    .push("literal-block-wrapper".to_string());
-                container.set("literal_block", AttrValue::Int(1));
-                self.directive_add_name(
-                    &mut container,
-                    &input.options,
-                    input.span.source,
-                    input.lineno,
-                );
-                let inline = self.inline(&caption_text.clone(), input.span, input.lineno);
-                let mut caption = Node::elem("caption", input.span);
-                caption.children = inline.nodes;
-                container.children.push(caption);
-                container.children.push(lb);
-                out.push(container);
-                out.extend(inline.messages);
+                // `container_wrapper` first, then `add_name` on what it
+                // returned (`code.py:172-183`); an invalid caption returns
+                // the reporter WARNING instead of the block.
+                let caption_text = caption_text.clone();
+                match self.container_wrapper(&caption_text, lb, &input) {
+                    Ok(mut container) => {
+                        self.directive_add_name(
+                            &mut container,
+                            &input.options,
+                            input.span.source,
+                            input.lineno,
+                        );
+                        out.push(container);
+                    }
+                    Err(text) => out.push(self.msg(
+                        messages::WARNING,
+                        &text,
+                        input.span.source,
+                        input.lineno,
+                    )),
+                }
             }
             _ => {
                 self.directive_add_name(&mut lb, &input.options, input.span.source, input.lineno);
@@ -6302,13 +6485,43 @@ impl BlockParser {
         out.push(node);
     }
 
-    /// sphinx only: expr stored verbatim; evaluation is a later build
-    /// phase.
+    /// sphinx `Only.run` (`SP/sphinx/directives/other.py:320-368`): the
+    /// expression stored verbatim (evaluation is a later build phase), the
+    /// content parsed with section titles in a fresh title-style context
+    /// ([`Self::parse_nested_titled`]). When the content's first title
+    /// style is one the surrounding document already uses, the node is not
+    /// returned but appended `n_sects_to_raise = current_depth -
+    /// nested_depth + 1` levels above the current node (stopping at the
+    /// root), so its sections land at their style's level: `current_depth`
+    /// is the current node's ancestor count minus 2 and `nested_depth` the
+    /// style's index. At section level the ancestors are the open sections
+    /// and the root ([`Self::open_sections`]). A body container docutils
+    /// fills before attaching it has no ancestors, so nothing leaves it;
+    /// one it first puts into a parent not yet attached (a definition, a
+    /// field body, a table entry) has one, which a section in the
+    /// document's first title style would go to: not modelled (in
+    /// Sphinx, `term` + `.. only::` with an `=====` section in the
+    /// definition puts the `only` after the `definition`).
     fn run_only(&mut self, input: DirectiveInput<'_>, out: &mut Vec<Node>) {
         let mut node = Node::elem("only", input.span);
         node.set("expr", AttrValue::Str(input.arguments[0].clone()));
-        let content = self.parse_nested_attached(&input.content, "only");
+        let (content, title_styles) = self.parse_nested_titled(&input.content, "only");
         node.children.extend(content);
+        // `title_styles[0] in surrounding_title_styles`.
+        let nested_depth = title_styles
+            .first()
+            .and_then(|first| self.styles.iter().position(|style| style == first));
+        if let (Some(nested_depth), None) = (nested_depth, self.nested_node_kind) {
+            let current_depth = self.open_sections as isize - 1;
+            let n_sects_to_raise = current_depth - nested_depth as isize + 1;
+            if n_sects_to_raise > 0 {
+                // Into the parent of the open section at index
+                // `nested_depth`, after it.
+                let keep = self.open_sections.saturating_sub(n_sects_to_raise as usize);
+                self.raised.push((keep, node));
+                return;
+            }
+        }
         out.push(node);
     }
 
@@ -6797,8 +7010,13 @@ impl BlockParser {
                 let mut entry = Node::elem(kinds::ENTRY, input.span);
                 if let Some(cell) = cells.get(i) {
                     if !cell.is_empty() {
-                        entry.children =
-                            self.parse_detached(cell, input.lineno, input.span.source, "entry");
+                        entry.children = self.parse_detached(
+                            cell,
+                            input.lineno,
+                            input.span.source,
+                            "entry",
+                            false,
+                        );
                     }
                 }
                 entries.push(entry);
@@ -7604,6 +7822,7 @@ impl BlockParser {
                 .cloned()
                 .collect(),
             content: Vec::new(),
+            content_lineno: input.content_lineno,
             span: input.span,
             lineno: input.lineno,
             rawsource: input.rawsource,
@@ -10950,6 +11169,10 @@ struct DirectiveInput<'r> {
     arguments: Vec<String>,
     options: Vec<(String, OptVal)>,
     content: Vec<LineRec>,
+    /// docutils' `content_offset` as the line number of `span.source` it
+    /// stands for (`states.py:2301-2345`): the first content line, or,
+    /// with no content, the line the content would start on.
+    content_lineno: u32,
     span: Span,
     lineno: u32,
     rawsource: &'r str,

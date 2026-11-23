@@ -2620,4 +2620,199 @@ mod tests {
             assert_eq!(tree_messages(&out).len(), 1, "{source}");
         }
     }
+
+    // ------------------------------------------------------------------
+    // T7 review round 1: term classifiers, code captions, nested titles
+    // ------------------------------------------------------------------
+
+    /// The records of a Sphinx-mode parse as Sphinx prints them (no
+    /// transform runs yet): the reporter's WARNING-and-up records and the
+    /// logger records, in the order they were created.
+    fn printed(out: &ParseOutput) -> Vec<String> {
+        let mut keyed: Vec<(u32, String)> = render_records(
+            out.state.log.clone(),
+            &out.doctree.sources,
+            "<SRC>/index.rst",
+        )
+        .into_iter()
+        .map(|(key, diagnostic)| (key.seq, diagnostic.render(true)))
+        .collect();
+        keyed.extend(out.registry.log_warnings.iter().map(|warning| {
+            let diagnostic =
+                warning.diagnostic(&out.doctree.sources, std::path::Path::new("<SRC>"), "index");
+            (warning.seq, diagnostic.render(true))
+        }));
+        keyed.sort_by_key(|(seq, _)| *seq);
+        keyed.into_iter().map(|(_, record)| record).collect()
+    }
+
+    /// Each case's tree ([`read_tree`]) and printed records ([`printed`]).
+    fn assert_reads(cases: &[(&str, &str, &[&str])]) {
+        for (source, tree, records) in cases {
+            let out = read_parse(source, ReadConfig::default());
+            assert_eq!(read_tree(source, ReadConfig::default()), *tree, "{source}");
+            assert_eq!(printed(&out), *records, "{source}");
+        }
+    }
+
+    /// docutils' `Text.term` (`states.py:3001-3022`): the term line parses
+    /// once, whole, and only then do its Text nodes split on ` +: +`, the
+    /// first part right-stripped into the term (or the latest classifier),
+    /// each further part a new classifier. So `*term : x*` is one emphasis
+    /// with no spurious WARNING (and the sentinel keeps `id1`/`id2`), a
+    /// classifier may hold `*x : y*`, and `:nod:bogus:`a : b`` is one
+    /// unknown role, logged with its ERROR. The glossary keeps Sphinx's
+    /// split of the raw line (`domains/std/__init__.py:518-521`): its
+    /// classifier, the index key, is never parsed, so `:nod:gcls:` logs
+    /// nothing. Lines that split the same either way are unchanged: the
+    /// classifier text unstripped, the term's NBSP stripped. Expected trees
+    /// and records probed on Sphinx 9.1.0 with `keep_warnings = True`.
+    #[test]
+    fn a_term_line_parses_whole_before_its_text_splits_into_classifiers() {
+        assert_reads(&[
+        (
+            "Title\n=====\n\n*term : x*\n   Definition.\n\nSentinel :nod:sentinel:`z`.\n",
+            "<document source=\"<SRC>/index.rst\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <definition_list>\n            <definition_list_item>\n                <term>\n                    <emphasis>\n                        term : x\n                <definition>\n                    <paragraph>\n                        Definition.\n        <paragraph>\n            Sentinel \n            <problematic ids=\"id2\" refid=\"id1\">\n                :nod:sentinel:`z`\n            .\n        <system_message backrefs=\"id2\" ids=\"id1\" level=\"3\" line=\"7\" source=\"<SRC>/index.rst\" type=\"ERROR\">\n            <paragraph>\n                Unknown interpreted text role \"nod:sentinel\".\n",
+            &["WARNING: unknown role name: nod:sentinel", "<SRC>/index.rst:7: ERROR: Unknown interpreted text role \"nod:sentinel\". [docutils]"],
+        ),
+        (
+            "Title\n=====\n\nterm : *x : y*\n   Definition.\n\nterm2 : :nod:bogus:`a : b`\n   Definition.\n\nSentinel :nod:sentinel:`z`.\n",
+            "<document source=\"<SRC>/index.rst\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <definition_list>\n            <definition_list_item>\n                <term>\n                    term\n                <classifier>\n                    <emphasis>\n                        x : y\n                <definition>\n                    <paragraph>\n                        Definition.\n            <definition_list_item>\n                <term>\n                    term2\n                <classifier>\n                    <problematic ids=\"id2\" refid=\"id1\">\n                        :nod:bogus:`a : b`\n                <definition>\n                    <system_message backrefs=\"id2\" ids=\"id1\" level=\"3\" line=\"7\" source=\"<SRC>/index.rst\" type=\"ERROR\">\n                        <paragraph>\n                            Unknown interpreted text role \"nod:bogus\".\n                    <paragraph>\n                        Definition.\n        <paragraph>\n            Sentinel \n            <problematic ids=\"id4\" refid=\"id3\">\n                :nod:sentinel:`z`\n            .\n        <system_message backrefs=\"id4\" ids=\"id3\" level=\"3\" line=\"10\" source=\"<SRC>/index.rst\" type=\"ERROR\">\n            <paragraph>\n                Unknown interpreted text role \"nod:sentinel\".\n",
+            &["WARNING: unknown role name: nod:bogus", "<SRC>/index.rst:7: ERROR: Unknown interpreted text role \"nod:bogus\". [docutils]", "WARNING: unknown role name: nod:sentinel", "<SRC>/index.rst:10: ERROR: Unknown interpreted text role \"nod:sentinel\". [docutils]"],
+        ),
+        (
+            "Title\n=====\n\nterm :nod:bogus:`a : b`\n   Definition.\n\nSentinel :nod:sentinel:`z`.\n",
+            "<document source=\"<SRC>/index.rst\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <definition_list>\n            <definition_list_item>\n                <term>\n                    term \n                    <problematic ids=\"id2\" refid=\"id1\">\n                        :nod:bogus:`a : b`\n                <definition>\n                    <system_message backrefs=\"id2\" ids=\"id1\" level=\"3\" line=\"4\" source=\"<SRC>/index.rst\" type=\"ERROR\">\n                        <paragraph>\n                            Unknown interpreted text role \"nod:bogus\".\n                    <paragraph>\n                        Definition.\n        <paragraph>\n            Sentinel \n            <problematic ids=\"id4\" refid=\"id3\">\n                :nod:sentinel:`z`\n            .\n        <system_message backrefs=\"id4\" ids=\"id3\" level=\"3\" line=\"7\" source=\"<SRC>/index.rst\" type=\"ERROR\">\n            <paragraph>\n                Unknown interpreted text role \"nod:sentinel\".\n",
+            &["WARNING: unknown role name: nod:bogus", "<SRC>/index.rst:4: ERROR: Unknown interpreted text role \"nod:bogus\". [docutils]", "WARNING: unknown role name: nod:sentinel", "<SRC>/index.rst:7: ERROR: Unknown interpreted text role \"nod:sentinel\". [docutils]"],
+        ),
+        (
+            "Title\n=====\n\n.. glossary::\n\n   Gterm : :nod:gcls:`x`\n      Def one.\n\n``lit : eral`` term\n   Def three.\n\nSentinel :nod:sentinel:`z`.\n",
+            "<document source=\"<SRC>/index.rst\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <glossary sorted=\"0\">\n            <definition_list classes=\"glossary\">\n                <definition_list_item>\n                    <term ids=\"term-Gterm\">\n                        Gterm\n                        <index entries=\"('single',\\ 'Gterm',\\ 'term-Gterm',\\ 'main',\\ ':nod:gcls:`x`')\">\n                    <definition>\n                        <paragraph>\n                            Def one.\n        <definition_list>\n            <definition_list_item>\n                <term>\n                    <literal>\n                        lit : eral\n                     term\n                <definition>\n                    <paragraph>\n                        Def three.\n        <paragraph>\n            Sentinel \n            <problematic ids=\"id2\" refid=\"id1\">\n                :nod:sentinel:`z`\n            .\n        <system_message backrefs=\"id2\" ids=\"id1\" level=\"3\" line=\"12\" source=\"<SRC>/index.rst\" type=\"ERROR\">\n            <paragraph>\n                Unknown interpreted text role \"nod:sentinel\".\n",
+            &["WARNING: unknown role name: nod:sentinel", "<SRC>/index.rst:12: ERROR: Unknown interpreted text role \"nod:sentinel\". [docutils]"],
+        ),
+        (
+            "plain *term* here\n   Def.\n\nterm : c1 : c2\n   Def.\n\na : b *em* c : d\n   Def.\n\n*em* : cls\n   Def.\n\nterm\u{a0} : cls\n   Def.\n\nterm : c\\*ls : d\\\\e\n   Def.\n\nterm : cls *open\n   Def.\n",
+            "<document source=\"<SRC>/index.rst\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                plain \n                <emphasis>\n                    term\n                 here\n            <definition>\n                <paragraph>\n                    Def.\n        <definition_list_item>\n            <term>\n                term\n            <classifier>\n                c1\n            <classifier>\n                c2\n            <definition>\n                <paragraph>\n                    Def.\n        <definition_list_item>\n            <term>\n                a\n            <classifier>\n                b \n                <emphasis>\n                    em\n                 c\n            <classifier>\n                d\n            <definition>\n                <paragraph>\n                    Def.\n        <definition_list_item>\n            <term>\n                <emphasis>\n                    em\n            <classifier>\n                cls\n            <definition>\n                <paragraph>\n                    Def.\n        <definition_list_item>\n            <term>\n                term\n            <classifier>\n                cls\n            <definition>\n                <paragraph>\n                    Def.\n        <definition_list_item>\n            <term>\n                term\n            <classifier>\n                c*ls\n            <classifier>\n                d\\e\n            <definition>\n                <paragraph>\n                    Def.\n        <definition_list_item>\n            <term>\n                term\n            <classifier>\n                cls \n                <problematic ids=\"id2\" refid=\"id1\">\n                    *\n                open\n            <definition>\n                <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"19\" source=\"<SRC>/index.rst\" type=\"WARNING\">\n                    <paragraph>\n                        Inline emphasis start-string without end-string.\n                <paragraph>\n                    Def.\n",
+            &["<SRC>/index.rst:19: WARNING: Inline emphasis start-string without end-string. [docutils]"],
+        ),
+        ]);
+    }
+
+    /// `CodeBlock.run`'s caption goes through `container_wrapper`
+    /// (`SP/sphinx/directives/code.py:78-96`, `:172-183`): a nested parse
+    /// of the caption numbered from the content line (`offset =
+    /// content_offset`), whose first node's children become the caption,
+    /// everything after it dropped, and the name lands after it. So a
+    /// caption starting `.. ` is a comment and `>>> ` a doctest block, with
+    /// nothing parsed inline, and a leading system_message is Sphinx's
+    /// `Invalid caption` WARNING at the directive's line in place of the
+    /// block, naming the message's own location: the content line for an
+    /// ERROR, line 1 for the unknown directive's INFO, which docutils
+    /// locates by `document.current_line`, the line's offset in the
+    /// caption's own `<generated text>` plus one. `literalinclude` shares
+    /// the wrapper; its caption counts from the line past its option
+    /// block. Expected trees are Sphinx 9.1.0's parse-time trees
+    /// (`keep_warnings = True`, INFO messages dropped), which
+    /// `AutoNumbering` (T12) numbers after the parse.
+    #[test]
+    fn a_code_caption_parses_through_container_wrapper() {
+        assert_reads(&[
+        (
+            "Title\n=====\n\n.. code-block:: python\n   :caption: .. :nod:bogus:`x`\n\n   pass\n\nSentinel :nod:sentinel:`z`.\n",
+            "<document source=\"<SRC>/index.rst\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <container classes=\"literal-block-wrapper\" literal_block=\"1\">\n            <caption>\n                :nod:bogus:`x`\n            <literal_block force=\"0\" highlight_args=\"{}\" language=\"python\" xml:space=\"preserve\">\n                pass\n        <paragraph>\n            Sentinel \n            <problematic ids=\"id2\" refid=\"id1\">\n                :nod:sentinel:`z`\n            .\n        <system_message backrefs=\"id2\" ids=\"id1\" level=\"3\" line=\"9\" source=\"<SRC>/index.rst\" type=\"ERROR\">\n            <paragraph>\n                Unknown interpreted text role \"nod:sentinel\".\n",
+            &["WARNING: unknown role name: nod:sentinel", "<SRC>/index.rst:9: ERROR: Unknown interpreted text role \"nod:sentinel\". [docutils]"],
+        ),
+        (
+            "Title\n=====\n\n.. code-block:: python\n   :caption: >>> a *open\n\n   pass\n\nSentinel :nod:sentinel:`z`.\n",
+            "<document source=\"<SRC>/index.rst\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <container classes=\"literal-block-wrapper\" literal_block=\"1\">\n            <caption>\n                >>> a *open\n            <literal_block force=\"0\" highlight_args=\"{}\" language=\"python\" xml:space=\"preserve\">\n                pass\n        <paragraph>\n            Sentinel \n            <problematic ids=\"id2\" refid=\"id1\">\n                :nod:sentinel:`z`\n            .\n        <system_message backrefs=\"id2\" ids=\"id1\" level=\"3\" line=\"9\" source=\"<SRC>/index.rst\" type=\"ERROR\">\n            <paragraph>\n                Unknown interpreted text role \"nod:sentinel\".\n",
+            &["WARNING: unknown role name: nod:sentinel", "<SRC>/index.rst:9: ERROR: Unknown interpreted text role \"nod:sentinel\". [docutils]"],
+        ),
+        (
+            "Para.\n\n.. code-block:: python\n   :caption: Cap *h\n\n\n   pass\n\n.. code-block:: python\n   :caption: Two *k\n   :name: blk\n\n.. code-block:: python\n   :caption: Three :nod:bogus:`x`\n      *m\n\n   pass\n",
+            "<document source=\"<SRC>/index.rst\">\n    <paragraph>\n        Para.\n    <container classes=\"literal-block-wrapper\" literal_block=\"1\">\n        <caption>\n            Cap \n            <problematic ids=\"id2\" refid=\"id1\">\n                *\n            h\n        <literal_block force=\"0\" highlight_args=\"{}\" language=\"python\" xml:space=\"preserve\">\n            pass\n    <container classes=\"literal-block-wrapper\" ids=\"blk\" literal_block=\"1\" names=\"blk\">\n        <caption>\n            Two \n            <problematic ids=\"id4\" refid=\"id3\">\n                *\n            k\n        <literal_block force=\"0\" highlight_args=\"{}\" language=\"python\" xml:space=\"preserve\">\n    <container classes=\"literal-block-wrapper\" literal_block=\"1\">\n        <caption>\n            Three \n            <problematic ids=\"id6\" refid=\"id5\">\n                :nod:bogus:`x`\n            \n            <problematic ids=\"id8\" refid=\"id7\">\n                *\n            m\n        <literal_block force=\"0\" highlight_args=\"{}\" language=\"python\" xml:space=\"preserve\">\n            pass\n",
+            &["<SRC>/index.rst:7: WARNING: Inline emphasis start-string without end-string. [docutils]", "<SRC>/index.rst:13: WARNING: Inline emphasis start-string without end-string. [docutils]", "WARNING: unknown role name: nod:bogus", "<SRC>/index.rst:17: ERROR: Unknown interpreted text role \"nod:bogus\". [docutils]", "<SRC>/index.rst:17: WARNING: Inline emphasis start-string without end-string. [docutils]"],
+        ),
+        (
+            ".. code-block:: python\n   :caption: ----------\n   :name: nm\n\n   pass\n\n.. code-block:: python\n   :caption: .. bogusdir:: x\n\n   pass\n",
+            "<document source=\"<SRC>/index.rst\">\n    <system_message level=\"2\" line=\"1\" source=\"<SRC>/index.rst\" type=\"WARNING\">\n        <paragraph>\n            Invalid caption: <SRC>/index.rst:5: (ERROR/3) Unexpected section title or transition.\n            \n            ----------\n    <system_message level=\"2\" line=\"7\" source=\"<SRC>/index.rst\" type=\"WARNING\">\n        <paragraph>\n            Invalid caption: <SRC>/index.rst:1: (INFO/1) No directive entry for \"bogusdir\" in module \"docutils.parsers.rst.languages.en\".\n            Trying \"bogusdir\" as canonical directive name.\n",
+            &["<SRC>/index.rst:5: ERROR: Unexpected section title or transition.\n\n---------- [docutils]", "<SRC>/index.rst:1: WARNING: Invalid caption: <SRC>/index.rst:5: (ERROR/3) Unexpected section title or transition.\n\n---------- [docutils]", "<SRC>/index.rst:10: ERROR: Unknown directive type \"bogusdir\".\n\n.. bogusdir:: x [docutils]", "<SRC>/index.rst:7: WARNING: Invalid caption: <SRC>/index.rst:1: (INFO/1) No directive entry for \"bogusdir\" in module \"docutils.parsers.rst.languages.en\".\nTrying \"bogusdir\" as canonical directive name. [docutils]"],
+        ),
+        ]);
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("code.py"), "pass\n").unwrap();
+        let path = dir.path().join("index.rst").display().to_string();
+        let out = parse_rst_full(
+            "Title\n=====\n\n.. literalinclude:: code.py\n   :caption: Cap :nod:bogus:`x` *open\n\n.. literalinclude:: code.py\n   :caption: ----------\n\nSentinel :nod:sentinel:`z`.\n",
+            &ParseOptions {
+                source_path: path.clone(),
+                sphinx: true,
+                srcdir: Some(dir.path().to_path_buf()),
+                ..ParseOptions::default()
+            },
+        );
+        let caption = first(&out.doctree.root, "caption").expect("the first caption");
+        assert_eq!(
+            caption.pformat(),
+            "<caption>\n    Cap \n    <problematic ids=\"id2\" refid=\"id1\">\n        :nod:bogus:`x`\n     \n    <problematic ids=\"id4\" refid=\"id3\">\n        *\n    open\n"
+        );
+        let records: Vec<String> = [
+            "WARNING: unknown role name: nod:bogus",
+            "<SRC>/index.rst:7: ERROR: Unknown interpreted text role \"nod:bogus\". [docutils]",
+            "<SRC>/index.rst:7: WARNING: Inline emphasis start-string without end-string. [docutils]",
+            "<SRC>/index.rst:10: ERROR: Unexpected section title or transition.\n\n---------- [docutils]",
+            "<SRC>/index.rst:7: WARNING: Invalid caption: <SRC>/index.rst:10: (ERROR/3) Unexpected section title or transition.\n\n---------- [docutils]",
+            "WARNING: unknown role name: nod:sentinel",
+            "<SRC>/index.rst:10: ERROR: Unknown interpreted text role \"nod:sentinel\". [docutils]",
+        ]
+        .iter()
+        .map(|record| record.replace("<SRC>/index.rst", &path))
+        .collect();
+        assert_eq!(printed(&out), records);
+    }
+
+    /// Section titles parse inside `only` (`SP/sphinx/directives/other.py:320-368`)
+    /// and inside object description and `py:module` content
+    /// (`nested_parse_to_nodes(..., allow_section_headings=True)`), each in
+    /// a fresh title-style context, and transitions parse there too. An
+    /// `only` whose first title style the document already uses goes up to
+    /// the section that style belongs under, after the section open there,
+    /// while the paragraphs after it stay where they were (`Upper` reaches
+    /// the root after `Title`, `Same` lands in `Title` after `Sub`, and
+    /// `C`'s in the outer `only` after `B`); otherwise, or inside a note,
+    /// it stays. The document's styles come back after it (`Next` is
+    /// `Title`'s subsection) and a level the content skips is docutils'
+    /// ERROR. Expected trees and records probed on Sphinx 9.1.0 with
+    /// `keep_warnings = True`; `py:module`'s is the parse-time tree, before
+    /// `MoveModuleTargets` (T10) moves the module target.
+    #[test]
+    fn section_titles_parse_in_only_and_object_content() {
+        assert_reads(&[
+        (
+            "Title\n=====\n\n.. only:: html\n\n   Inner :nod:inner:`x`\n   --------------------\n\n   Body.\n\nSentinel :nod:sentinel:`z`.\n",
+            "<document source=\"<SRC>/index.rst\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <only expr=\"html\">\n            <section ids=\"inner-nod-inner-x\" names=\"inner\\ :nod:inner:`x`\">\n                <title>\n                    Inner \n                    <problematic ids=\"id2\" refid=\"id1\">\n                        :nod:inner:`x`\n                <system_message backrefs=\"id2\" ids=\"id1\" level=\"3\" line=\"6\" source=\"<SRC>/index.rst\" type=\"ERROR\">\n                    <paragraph>\n                        Unknown interpreted text role \"nod:inner\".\n                <paragraph>\n                    Body.\n        <paragraph>\n            Sentinel \n            <problematic ids=\"id4\" refid=\"id3\">\n                :nod:sentinel:`z`\n            .\n        <system_message backrefs=\"id4\" ids=\"id3\" level=\"3\" line=\"11\" source=\"<SRC>/index.rst\" type=\"ERROR\">\n            <paragraph>\n                Unknown interpreted text role \"nod:sentinel\".\n",
+            &["WARNING: unknown role name: nod:inner", "<SRC>/index.rst:6: ERROR: Unknown interpreted text role \"nod:inner\". [docutils]", "WARNING: unknown role name: nod:sentinel", "<SRC>/index.rst:11: ERROR: Unknown interpreted text role \"nod:sentinel\". [docutils]"],
+        ),
+        (
+            "Title\n=====\n\nSub\n---\n\n.. only:: html\n\n   Upper\n   =====\n\n.. only:: latex\n\n   Same\n   ----\n\nAfter.\n\nSub2\n----\n\nTwo.\n",
+            "<document source=\"<SRC>/index.rst\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <section ids=\"sub\" names=\"sub\">\n            <title>\n                Sub\n            <paragraph>\n                After.\n        <only expr=\"latex\">\n            <section ids=\"same\" names=\"same\">\n                <title>\n                    Same\n        <section ids=\"sub2\" names=\"sub2\">\n            <title>\n                Sub2\n            <paragraph>\n                Two.\n    <only expr=\"html\">\n        <section ids=\"upper\" names=\"upper\">\n            <title>\n                Upper\n",
+            &[],
+        ),
+        (
+            ".. only:: html\n\n   Lone\n   ====\n\n   A\n   ~\n\nTitle\n=====\n\n.. note::\n\n   .. only:: html\n\n      Inner\n      =====\n\n.. only:: html\n\n   B\n   ^\n\n   .. only:: latex\n\n      C\n      ^\n\n      Body.\n\n   D\n   ~\n\n   E\n   ^\n\n   F\n   #\n\nNext\n~~~~\n\nText.\n",
+            "<document source=\"<SRC>/index.rst\">\n    <only expr=\"html\">\n        <section ids=\"lone\" names=\"lone\">\n            <title>\n                Lone\n            <section ids=\"a\" names=\"a\">\n                <title>\n                    A\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <note>\n            <only expr=\"html\">\n                <section ids=\"inner\" names=\"inner\">\n                    <title>\n                        Inner\n        <only expr=\"html\">\n            <section ids=\"b\" names=\"b\">\n                <title>\n                    B\n                <section ids=\"d\" names=\"d\">\n                    <title>\n                        D\n            <only expr=\"latex\">\n                <section ids=\"c\" names=\"c\">\n                    <title>\n                        C\n                    <paragraph>\n                        Body.\n            <section ids=\"e\" names=\"e\">\n                <title>\n                    E\n                <system_message level=\"3\" line=\"37\" source=\"<SRC>/index.rst\" type=\"ERROR\">\n                    <paragraph>\n                        Inconsistent title style: skip from level 1 to 3.\n                    <literal_block xml:space=\"preserve\">\n                        F\n                        #\n                    <paragraph>\n                        Established title styles: ^ ~\n        <section ids=\"next\" names=\"next\">\n            <title>\n                Next\n            <paragraph>\n                Text.\n",
+            &["<SRC>/index.rst:37: ERROR: Inconsistent title style: skip from level 1 to 3.\n\nF\n#\n\nEstablished title styles: ^ ~ [docutils]"],
+        ),
+        (
+            ".. py:class:: C\n\n   Sec :nod:x:`y`\n   --------------\n\n   Body.\n\n   ----------\n\n   .. py:method:: m()\n\n      Inner\n      ~~~~~\n\n      More.\n\nSentinel :nod:sentinel:`z`.\n",
+            "<document source=\"<SRC>/index.rst\">\n    <index entries=\"('single',\\ 'C\\ (built-in\\ class)',\\ 'C',\\ '',\\ None)\">\n    <desc classes=\"py class\" desctype=\"class\" domain=\"py\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"class\">\n        <desc_signature _toc_name=\"C\" _toc_parts=\"('C',)\" class=\"\" classes=\"sig sig-object\" fullname=\"C\" ids=\"C\" module=\"True\">\n            <desc_annotation xml:space=\"preserve\">\n                <desc_sig_keyword classes=\"k\">\n                    class\n                <desc_sig_space classes=\"w\">\n                     \n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                C\n        <desc_content>\n            <section ids=\"sec-nod-x-y\" names=\"sec\\ :nod:x:`y`\">\n                <title>\n                    Sec \n                    <problematic ids=\"id2\" refid=\"id1\">\n                        :nod:x:`y`\n                <system_message backrefs=\"id2\" ids=\"id1\" level=\"3\" line=\"3\" source=\"<SRC>/index.rst\" type=\"ERROR\">\n                    <paragraph>\n                        Unknown interpreted text role \"nod:x\".\n                <paragraph>\n                    Body.\n                <transition>\n                <index entries=\"('single',\\ 'm()\\ (C\\ method)',\\ 'C.m',\\ '',\\ None)\">\n                <desc classes=\"py method\" desctype=\"method\" domain=\"py\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"method\">\n                    <desc_signature _toc_name=\"C.m()\" _toc_parts=\"('C', 'm')\" class=\"C\" classes=\"sig sig-object\" fullname=\"C.m\" ids=\"C.m\" module=\"True\">\n                        <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                            m\n                        <desc_parameterlist xml:space=\"preserve\">\n                    <desc_content>\n                        <section ids=\"inner\" names=\"inner\">\n                            <title>\n                                Inner\n                            <paragraph>\n                                More.\n    <paragraph>\n        Sentinel \n        <problematic ids=\"id4\" refid=\"id3\">\n            :nod:sentinel:`z`\n        .\n    <system_message backrefs=\"id4\" ids=\"id3\" level=\"3\" line=\"17\" source=\"<SRC>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Unknown interpreted text role \"nod:sentinel\".\n",
+            &["WARNING: unknown role name: nod:x", "<SRC>/index.rst:3: ERROR: Unknown interpreted text role \"nod:x\". [docutils]", "WARNING: unknown role name: nod:sentinel", "<SRC>/index.rst:17: ERROR: Unknown interpreted text role \"nod:sentinel\". [docutils]"],
+        ),
+        (
+            "Title\n=====\n\n.. py:module:: m\n\n   Sec :nod:x:`y`\n   ==============\n\n   Body.\n\nAfter.\n",
+            "<document source=\"<SRC>/index.rst\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <index entries=\"('pair',\\ 'module;\\ m',\\ 'module-m',\\ '',\\ None)\">\n        <target ids=\"module-m\" ismod=\"1\">\n        <section ids=\"sec-nod-x-y\" names=\"sec\\ :nod:x:`y`\">\n            <title>\n                Sec \n                <problematic ids=\"id2\" refid=\"id1\">\n                    :nod:x:`y`\n            <system_message backrefs=\"id2\" ids=\"id1\" level=\"3\" line=\"6\" source=\"<SRC>/index.rst\" type=\"ERROR\">\n                <paragraph>\n                    Unknown interpreted text role \"nod:x\".\n            <paragraph>\n                Body.\n        <paragraph>\n            After.\n",
+            &["WARNING: unknown role name: nod:x", "<SRC>/index.rst:6: ERROR: Unknown interpreted text role \"nod:x\". [docutils]"],
+        ),
+        ]);
+    }
 }
