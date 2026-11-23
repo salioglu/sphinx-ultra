@@ -142,15 +142,12 @@ struct SubstitutionRun {
     /// those the copies bring in, in the order they are found.
     references: Vec<TxId>,
     /// `nested`: per substitution, the definitions whose copies referred
-    /// to it, which tells a definition that refers back to itself.
+    /// to it. A definition among its own is one that refers back to
+    /// itself, directly or through another.
     nested: HashMap<String, Vec<String>>,
     /// `nested_ref['ref-origin']`: the reference whose copy brought each
     /// nested reference in, which a circular one is reported at.
     origin: HashMap<TxId, TxId>,
-    /// The copies a circular reference stopped before they were placed:
-    /// docutils drops them with the nested references it had found in them
-    /// so far, which the loop still reaches.
-    dropped: HashSet<TxId>,
 }
 
 impl Transform for Substitutions {
@@ -258,9 +255,10 @@ fn substitute(cx: &mut TransformCx<'_>, reference: TxId, run: &mut SubstitutionR
             .get(&nested_refname.to_lowercase())
             .cloned();
         if let Some(nested_name) = nested_name {
-            let referrers = run.nested.entry(nested_name).or_default();
-            if referrers.contains(&key) {
-                run.dropped.insert(copy);
+            // `nested_name in nested.setdefault(nested_name, [])`: a copy
+            // of the definition `nested_name` itself referred to it before.
+            let referrers = run.nested.entry(nested_name.clone()).or_default();
+            if referrers.contains(&nested_name) {
                 circular_definition(cx, reference, &refname, run);
                 return;
             }
@@ -308,9 +306,11 @@ fn substitution_def(cx: &TransformCx<'_>, key: &str) -> Option<TxId> {
 /// with its block, at its location), and the message takes its place and
 /// its names, with no id; any other reports the reference the chain of
 /// copies started from (`Circular substitution definition referenced`)
-/// and becomes a problematic. A definition docutils dropped as a copy has
-/// no place to give the message, which crashes Sphinx (decision 13: not
-/// modelled); it is reported and left where it is.
+/// and becomes a problematic. A definition with no place to give the
+/// message — one a message took the place of already, or a copy a
+/// circular reference stopped before it was placed, whose nested
+/// references the loop still reaches — crashes Sphinx in `replace_self`
+/// (decision 13: not modelled); it is reported and left as it is.
 fn circular_definition(
     cx: &mut TransformCx<'_>,
     reference: TxId,
@@ -333,7 +333,11 @@ fn circular_definition(
             Some(definition),
             vec![messages::literal_block(&rawsource)],
         );
-        if !run.dropped.contains(&definition) {
+        let placed = match cx.tree.parent(definition) {
+            Some(parent) => cx.tree.node(parent).children.contains(&definition),
+            None => cx.tree.detached().contains(&definition),
+        };
+        if placed {
             cx.tree.replace_self(definition, vec![message]);
         }
         return;
@@ -1475,8 +1479,9 @@ mod tests {
     /// ERRORs at 220 precede 440's and 850's, and of the ten ids its
     /// messages and problematics take, three stay; `docutils-0243`).
     /// References in a copy are substituted in turn, the definitions' own
-    /// included; a definition that refers to itself, directly or through
-    /// another, is reported where it stands (`detected`, the message taking
+    /// included, however many references copy the same definition; a
+    /// definition that refers to itself, directly or through another, is
+    /// reported where it stands (`detected`, the message taking
     /// the definition's place and names) or at the reference the chain
     /// started from (`referenced`). `ltrim` and `rtrim` strip the
     /// whitespace before and after the reference. A role's `pending_xref`
@@ -1702,9 +1707,71 @@ mod tests {
             warnings: &[],
             trace: &[],
         },
+        SphinxRead {
+            rst: "One |a| and |a|.\n\n.. |a| replace:: x |b|\n.. |b| replace:: B\n",
+            body: "    <paragraph>\n        One \n        x \n        B\n         \
+                and \n        x \n        B\n        .\n    <substitution_definition \
+                names=\"a\">\n        x \n        B\n    <substitution_definition \
+                names=\"b\">\n        B\n",
+            warnings: &[],
+            trace: &[],
+        },
+        SphinxRead {
+            rst: "One |a| x.\n\nTwo |a| y.\n\n.. |a| replace:: |b|_\n.. |b| replace:: B text\n\
+                .. _b: http://x\n",
+            body: "    <paragraph>\n        One \n        <reference \
+                refuri=\"http://x\">\n            B text\n         x.\n    <paragraph>\n        \
+                Two \n        <reference refuri=\"http://x\">\n            B text\n         \
+                y.\n    <substitution_definition names=\"a\">\n        <reference \
+                refuri=\"http://x\">\n            B text\n    <substitution_definition \
+                names=\"b\">\n        B text\n    <target ids=\"b\" names=\"b\" \
+                refuri=\"http://x\">\n",
+            warnings: &[],
+            trace: &[
+                ("parse", "target", "b", true),
+            ],
+        },
         ];
         let differences = differences(&rows);
         assert!(differences.is_empty(), "{}", differences.join("\n\n"));
+    }
+
+    /// Two inputs on which Sphinx 9.1.0 crashes in Substitutions, which
+    /// are not modelled (decision 13), read to the end: a definition that
+    /// refers to an undefined substitution (`normed[...]` raises
+    /// `KeyError`), whose nested reference is then reported as undefined
+    /// where its copy stands, after the definition's own; and a definition
+    /// reported circular a second time after the first message took its
+    /// place (`replace_self` raises `ValueError`), which stays replaced by
+    /// the first.
+    #[test]
+    fn substitutions_read_through_what_crashes_sphinx() {
+        let read = read_snippet("Use |a| here.\n\n.. |a| replace:: x |nope| y\n", true);
+        let mut warnings = error("3", "Undefined substitution referenced: \"nope\".");
+        warnings.extend(error("1", "Undefined substitution referenced: \"nope\"."));
+        assert_eq!(read.warnings, warnings);
+
+        let read = read_snippet(
+            "P3 |b| q.\n\nP0 |b| q.\n\n.. |b| replace:: |a| |b|\n.. |a| replace:: |b| |b| t1\n",
+            true,
+        );
+        assert!(
+            !read.body.contains("<substitution_definition"),
+            "{}",
+            read.body
+        );
+        for name in ["b", "a"] {
+            let message = format!(
+                "<system_message level=\"3\" line=\"{}\" names=\"{name}\"",
+                if name == "b" { 5 } else { 6 }
+            );
+            assert_eq!(read.body.matches(&message).count(), 1, "{}", read.body);
+        }
+        assert_eq!(
+            read.warnings[0],
+            "<SRCDIR>/index.rst:3: ERROR: Circular substitution definition referenced: \"b\". \
+             [docutils]"
+        );
     }
 
     /// A substitution's copy notes each top-level reference that has a
