@@ -1135,14 +1135,14 @@ impl BlockParser {
 
     /// Probe-verified: an explicit-markup element (comment/target) followed
     /// by an ADJACENT non-blank column-0 line that is not itself explicit
-    /// markup warns. Consecutive `..`/`__ ` items chain without warning.
+    /// markup warns. Consecutive `..`/`__` items chain without warning
+    /// ([`is_explicit_markup_start`]: a bare `__` is an anonymous target).
     /// `unindent_warning` locates it at `abs_line_number() + 1`, the
     /// machine's count (`states.py:540-545`).
     fn warn_explicit_markup_end(&mut self, lines: &[LineRec], pos: usize, out: &mut Vec<Node>) {
         if let Some(l) = lines.get(pos) {
             let text = self.sources.line_text(*l);
-            let explicit_ish = text == ".." || text.starts_with(".. ") || text.starts_with("__ ");
-            if !l.is_blank() && l.indent() == 0 && !explicit_ish {
+            if !l.is_blank() && l.indent() == 0 && !is_explicit_markup_start(text) {
                 let message = self.msg_sm(
                     messages::WARNING,
                     "Explicit markup ends without a blank line; unexpected unindent.",
@@ -2715,7 +2715,14 @@ impl BlockParser {
         if construct_error.is_none() {
             if let Some((name, first_rest)) = directive_marker(rest) {
                 self.parse_directive(lines, pos, &name, first_rest, out);
-                self.warn_explicit_markup_end(lines, *pos, out);
+                // `run_directive` returns `blank_finish or
+                // is_next_line_blank()` (`states.py:2299`): an include that
+                // read its file has just put the blank `internal padding
+                // before` line next (`insert_input`), so its markup never
+                // ends without one.
+                if self.pending_splice.is_none() {
+                    self.warn_explicit_markup_end(lines, *pos, out);
+                }
                 return Ending::OffEnd;
             }
         }
@@ -20240,6 +20247,88 @@ mod include_tests {
                 })
                 .collect();
             assert_eq!(input_lines.join(" "), expected, "{index:?}");
+        }
+    }
+
+    /// docutils' `run_directive` returns `blank_finish or
+    /// is_next_line_blank()` (`SP/docutils/parsers/rst/states.py:2299`),
+    /// and an include that read its file has just put the blank `internal
+    /// padding before` line next (`insert_input`,
+    /// `SP/docutils/statemachine.py:385-393`): its explicit markup never
+    /// ends without a blank line, wherever it stands — at the top level,
+    /// in a note, a list item or a grid-table cell, before a section
+    /// title, as an explicit list's second construct, after an option, or
+    /// for an empty file. An include that inserts nothing (a missing file,
+    /// `:literal:`) leaves the line after it next, and warns. Probed on
+    /// Sphinx 9.1.0 (`-w`).
+    #[test]
+    fn an_include_that_inserts_lines_ends_its_explicit_markup_blank() {
+        const UNINDENT: &str = "Explicit markup ends without a blank line; unexpected unindent.";
+        let rows: [(&str, &str, &[i64]); 11] = [
+            (
+                "Title\n=====\n\nBefore.\n\n.. include:: part.inc\nAfter.\n",
+                "Included text.\n",
+                &[],
+            ),
+            (
+                "Title\n=====\n\n.. note::\n\n   .. include:: part.inc\n   Inner.\n",
+                "Included text.\n",
+                &[],
+            ),
+            (
+                "Title\n=====\n\n- item\n\n  .. include:: part.inc\n  Inner.\n",
+                "Included text.\n",
+                &[],
+            ),
+            (
+                "Title\n=====\n\n.. include:: part.inc\nSub\n---\n\nText.\n",
+                "Included text.\n",
+                &[],
+            ),
+            (
+                "Title\n=====\n\n.. |x| replace:: y\n.. include:: part.inc\nText.\n",
+                "Included text.\n",
+                &[],
+            ),
+            (
+                "Title\n=====\n\n.. include:: part.inc\n   :start-line: 0\nAfter.\n",
+                "Included text.\n",
+                &[],
+            ),
+            ("Title\n=====\n\n.. include:: part.inc\nAfter.\n", "", &[]),
+            (
+                "Title\n=====\n\n+------------------------+\n| .. include:: part.inc  |\n\
+                 | Cell text.             |\n+------------------------+\n",
+                "Included text.\n",
+                &[],
+            ),
+            // The controls: nothing inserted, the next line is `After.`.
+            (
+                "Title\n=====\n\n.. include:: nope.inc\nAfter.\n",
+                "Included text.\n",
+                &[5],
+            ),
+            (
+                "Title\n=====\n\n.. include:: part.inc\n   :literal:\nAfter.\n",
+                "Included text.\n",
+                &[6],
+            ),
+            (
+                "Title\n=====\n\n.. include:: part.inc\n\nAfter.\n",
+                "Included text.\n",
+                &[],
+            ),
+        ];
+        for (index, part, expected) in rows {
+            let tmp = tempfile::tempdir().unwrap();
+            write(tmp.path(), "part.inc", part);
+            let tree = parse_sphinx(tmp.path(), "index", index);
+            let lines: Vec<i64> = messages_of(&tree)
+                .into_iter()
+                .filter(|(_, _, _, text)| text == UNINDENT)
+                .map(|(_, line, _, _)| line)
+                .collect();
+            assert_eq!(lines, expected, "{index:?}");
         }
     }
 }

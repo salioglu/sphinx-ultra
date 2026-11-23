@@ -2335,6 +2335,30 @@ pub(crate) mod tests {
         format!("index.rst:{line}: {record}")
     }
 
+    /// docutils' `anonymous` transition is `__( +|$)`
+    /// (`SP/docutils/parsers/rst/states.py`, `Body.patterns`): a bare
+    /// `__` is an anonymous target, so explicit markup goes on through it
+    /// and only the line after it, `After.`, ends the markup without a
+    /// blank line. Probed on Sphinx 9.1.0 (`-w`): nothing for the first
+    /// input, one warning at line 9 for the second.
+    #[test]
+    fn a_bare_anonymous_target_goes_on_with_explicit_markup() {
+        let unindent =
+            "WARNING: Explicit markup ends without a blank line; unexpected unindent. [docutils]";
+        assert_eq!(
+            printed_heads(
+                "Title\n=====\n\nPara `a`_ and `b`__.\n\n.. _a: http://x\n__\n\nAfter.\n"
+            ),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            printed_heads(
+                "Title\n=====\n\nPara `b`__ x.\n\n.. _a: http://x\n__ http://y\n__\nAfter.\n"
+            ),
+            [at(9, unindent)]
+        );
+    }
+
     /// docutils parses each line of a line block at its own line
     /// (`LineBlock.line_block`, `states.py:1736-1742`), a continuation line
     /// joining its `|` line's text. Probed on Sphinx 9.1.0: lines 5, 5, 8.
