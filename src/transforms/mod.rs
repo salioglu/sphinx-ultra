@@ -932,7 +932,13 @@ mod tests {
             [
                 format!("<SRCDIR>/index.rst:3: {message}"),
                 format!("<SRCDIR>/index.rst:: {message}"),
-                format!("<SRCDIR>/part.rst:2: {message}"),
+                // An included file's path is made absolute against the
+                // project the way `os.path.abspath` joins it, with the
+                // platform's separator.
+                format!(
+                    "{}:2: {message}",
+                    Path::new("<SRCDIR>").join("part.rst").display()
+                ),
                 format!("<unknown>:5: {message}"),
                 message.to_string(),
             ]
