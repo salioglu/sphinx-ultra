@@ -2138,26 +2138,36 @@ fn parallel_read_keeps_warning_order() {
     }
 }
 
-/// Review Focus 4: a CRLF source prints the reporter records of its LF
+/// Review Focus 4: a CRLF project prints the reporter records of its LF
 /// twin byte for byte — line numbers, and a record's literal block, which
 /// holds no carriage return.
 #[test]
 fn crlf_reporter_lines_match_lf() {
-    let text = "Title\n====\n\nPara\nmore\n   indented.\n\n| line one\n| line *two\n\n\
-                .. note:: x\n   :name: t\n\n.. _t:\n\nEnd *star.\n";
+    let index = "Title\n====\n\n.. toctree::\n\n   part\n\nPara\nmore\n   indented.\n\n\
+                 | line one\n| line *two\n\n.. note:: x\n   :name: t\n\n.. _t:\n\nEnd *star.\n";
+    let part = "Part title\n=====\n\nText *x.\n";
     let expected = "\
 <SRCDIR>/index.rst:2: WARNING: Title underline too short.
 
 Title
 ==== [docutils]
-<SRCDIR>/index.rst:6: ERROR: Unexpected indentation. [docutils]
-<SRCDIR>/index.rst:9: WARNING: Inline emphasis start-string without end-string. [docutils]
-<SRCDIR>/index.rst:14: WARNING: Duplicate explicit target name: \"t\". [docutils]
-<SRCDIR>/index.rst:16: WARNING: Inline emphasis start-string without end-string. [docutils]
+<SRCDIR>/index.rst:10: ERROR: Unexpected indentation. [docutils]
+<SRCDIR>/index.rst:13: WARNING: Inline emphasis start-string without end-string. [docutils]
+<SRCDIR>/index.rst:18: WARNING: Duplicate explicit target name: \"t\". [docutils]
+<SRCDIR>/index.rst:20: WARNING: Inline emphasis start-string without end-string. [docutils]
+<SRCDIR>/part.rst:2: WARNING: Title underline too short.
+
+Part title
+===== [docutils]
+<SRCDIR>/part.rst:4: WARNING: Inline emphasis start-string without end-string. [docutils]
 ";
-    let crlf = text.replace('\n', "\r\n");
-    for (name, source) in [("t8-lf", text), ("t8-crlf", crlf.as_str())] {
-        let src = temp_source(name, &[("index.rst", source)]);
+    let crlf = |text: &str| text.replace('\n', "\r\n");
+    let (crlf_index, crlf_part) = (crlf(index), crlf(part));
+    for (name, index, part) in [
+        ("t8-lf", index, part),
+        ("t8-crlf", crlf_index.as_str(), crlf_part.as_str()),
+    ] {
+        let src = temp_source(name, &[("index.rst", index), ("part.rst", part)]);
         let (result, written) = warning_stream(&src, &out_dir(name), &[]);
         assert!(result.status.success(), "stderr: {}", stderr_of(&result));
         assert_eq!(written, expected, "{name}");
@@ -2165,20 +2175,20 @@ Title
 }
 
 /// Review Focus 3: Sphinx counts docutils' records in its warning total, so
-/// `-W` fails a build whose only record is a reporter's, after printing it;
-/// `suppress_warnings = ['docutils']` drops the record before it is printed
-/// or counted, and the build passes.
+/// `-W` fails a build whose only records are a reporter's, after printing
+/// them; `suppress_warnings = ['docutils']` drops the records before they
+/// are printed or counted, and the build passes.
 #[test]
 fn fail_on_warning_counts_reporter_records() {
-    let record =
-        "<SRCDIR>/index.rst:2: WARNING: Title underline too short.\n\nTitle\n==== [docutils]\n";
-    let src = temp_source(
-        "t8-fail-on-warning",
-        &[("index.rst", "Title\n====\n\nBody.\n")],
-    );
+    let records = "<SRCDIR>/b.rst:2: WARNING: Title underline too short.\n\nB title\n===== \
+                   [docutils]\n<SRCDIR>/index.rst:2: WARNING: Title underline too short.\n\n\
+                   Title\n==== [docutils]\n";
+    let index = "Title\n====\n\n.. toctree::\n\n   b\n";
+    let b = "B title\n=====\n\nBody.\n";
+    let src = temp_source("t8-fail-on-warning", &[("index.rst", index), ("b.rst", b)]);
     let (result, written) = warning_stream(&src, &out_dir("t8-fail-on-warning"), &["-W"]);
-    assert_eq!(written, record);
-    assert_eq!(srcdir_spelled(&result.stderr, &src), record);
+    assert_eq!(written, records);
+    assert_eq!(srcdir_spelled(&result.stderr, &src), records);
     assert_eq!(
         result.status.code(),
         Some(1),
@@ -2193,7 +2203,8 @@ fn fail_on_warning_counts_reporter_records() {
                 "conf.py",
                 "project = 'p'\nsuppress_warnings = ['docutils']\n",
             ),
-            ("index.rst", "Title\n====\n\nBody.\n"),
+            ("index.rst", index),
+            ("b.rst", b),
         ],
     );
     let (result, written) = warning_stream(
