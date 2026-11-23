@@ -3926,6 +3926,112 @@ pub(crate) mod tests {
         ]);
     }
 
+    /// Sphinx's admonitions (`SP/sphinx/directives/admonitions.py:20-37`)
+    /// add `collapsible` to docutils' option table, converted by
+    /// `_collapsible_arg` (a bare option is `open`, otherwise `open` or
+    /// `closed` whatever the case, else a `ValueError` whose own period
+    /// docutils' option error follows with another), and its `Rubric`
+    /// patch (`SP/sphinx/directives/patches.py:203-225`) adds
+    /// `heading-level`, a choice of `1` to `6` made an int. Both land on
+    /// the node as attributes. Trees and records probed on Sphinx 9.1.0
+    /// (`-w`, post-read trees).
+    #[test]
+    fn sphinx_admonitions_and_rubric_take_their_sphinx_options() {
+        const HEAD: &str = "<document source=\"<SRC>/index.rst\">\n    <section ids=\"title\" \
+                            names=\"title\">\n        <title>\n            Title\n";
+        let body = |text: &str| format!("            <paragraph>\n                {text}\n");
+        let rows: Vec<(String, String)> =
+            vec![
+            (
+                "Title\n=====\n\n.. note::\n   :collapsible:\n\n   BodyA.\n".to_string(),
+                format!("{HEAD}        <note collapsible=\"open\">\n{}", body("BodyA.")),
+            ),
+            (
+                "Title\n=====\n\n.. warning::\n   :collapsible: open\n\n   BodyB.\n".to_string(),
+                format!("{HEAD}        <warning collapsible=\"open\">\n{}", body("BodyB.")),
+            ),
+            (
+                "Title\n=====\n\n.. admonition:: Generic\n   :collapsible: closed\n\n   BodyC.\n"
+                    .to_string(),
+                format!(
+                    "{HEAD}        <admonition classes=\"admonition-generic\" \
+                     collapsible=\"closed\">\n            <title>\n                Generic\n{}",
+                    body("BodyC.")
+                ),
+            ),
+            (
+                "Title\n=====\n\n.. seealso::\n   :collapsible:\n\n   BodyD.\n".to_string(),
+                format!("{HEAD}        <seealso collapsible=\"open\">\n{}", body("BodyD.")),
+            ),
+            (
+                "Title\n=====\n\n.. tip::\n   :class: x\n   :collapsible: CLOSED\n\n   BodyE.\n"
+                    .to_string(),
+                format!(
+                    "{HEAD}        <tip classes=\"x\" collapsible=\"closed\">\n{}",
+                    body("BodyE.")
+                ),
+            ),
+            (
+                "Title\n=====\n\n.. rubric:: RubricG\n   :heading-level: 2\n\nAfter.\n".to_string(),
+                format!(
+                    "{HEAD}        <rubric heading-level=\"2\">\n            RubricG\n        \
+                     <paragraph>\n            After.\n"
+                ),
+            ),
+        ];
+        let kinds = [
+            "danger",
+            "hint",
+            "important",
+            "caution",
+            "error",
+            "attention",
+        ];
+        let rows = rows.into_iter().chain(kinds.iter().map(|kind| {
+            (
+                format!("Title\n=====\n\n.. {kind}::\n   :collapsible:\n\n   Body.\n"),
+                format!(
+                    "{HEAD}        <{kind} collapsible=\"open\">\n{}",
+                    body("Body.")
+                ),
+            )
+        }));
+        for (source, tree) in rows {
+            let out = read_parse(&source, ReadConfig::default());
+            assert_eq!(read_tree(&source, ReadConfig::default()), tree, "{source}");
+            assert_eq!(printed(&out), Vec::<String>::new(), "{source}");
+        }
+        for (source, directive, option, value, reason) in [
+            (
+                "Title\n=====\n\n.. note::\n   :collapsible: bogus\n\n   BodyF.\n",
+                "note",
+                "collapsible",
+                "bogus",
+                "\"bogus\" unknown; choose from \"open\" or \"closed\"..",
+            ),
+            (
+                "Title\n=====\n\n.. rubric:: RubricH\n   :heading-level: 9\n\nAfter.\n",
+                "rubric",
+                "heading-level",
+                "9",
+                "\"9\" unknown; choose from \"1\", \"2\", \"3\", \"4\", \"5\", or \"6\".",
+            ),
+        ] {
+            let out = read_parse(source, ReadConfig::default());
+            let block = source[13..].split("\n\nAfter.").next().unwrap_or_default();
+            assert_eq!(
+                printed(&out),
+                [format!(
+                    "<SRC>/index.rst:4: ERROR: Error in \"{directive}\" directive:\n\
+                     invalid option value: (option: \"{option}\"; value: '{value}')\n\
+                     {reason}\n\n{} [docutils]",
+                    block.trim_end()
+                )],
+                "{source}"
+            );
+        }
+    }
+
     /// Sphinx 9.1.0's option converters and `CodeBlock.run`
     /// (`SP/sphinx/directives/code.py:30-56`, `:58-75`, `:108-183`;
     /// `SP/sphinx/directives/other.py:36-39`): `code-block` and

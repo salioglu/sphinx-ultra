@@ -6664,6 +6664,7 @@ impl BlockParser {
         if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
             node.attrs.classes.extend(classes.iter().cloned());
         }
+        set_collapsible(&mut node, &input.options);
         let loc = self.machine_loc(directive_loc(&input));
         self.directive_add_name(&mut node, &input.options, loc);
         let content = self.parse_nested(&input.content, "seealso");
@@ -7818,6 +7819,13 @@ impl BlockParser {
         if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
             node.attrs.classes.extend(classes.iter().cloned());
         }
+        // Sphinx's patch: `self.options['heading-level'] = int(...)`, an
+        // attribute of the rubric.
+        if let Some(OptVal::Str(level)) = opt_get(&input.options, "heading-level") {
+            if let Ok(level) = level.parse::<i64>() {
+                node.set("heading-level", AttrValue::Int(level));
+            }
+        }
         let loc = self.machine_loc(directive_loc(&input));
         self.directive_add_name(&mut node, &input.options, loc);
         // docutils makes the rubric without a location. Its container's
@@ -8101,6 +8109,7 @@ impl BlockParser {
         if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
             node.attrs.classes.extend(classes.iter().cloned());
         }
+        set_collapsible(&mut node, &input.options);
         let loc = self.machine_loc(directive_loc(&input));
         self.directive_add_name(&mut node, &input.options, loc);
         let content = self.parse_nested(&input.content, kind);
@@ -8132,6 +8141,7 @@ impl BlockParser {
                     .push(format!("admonition-{}", ids::make_id(&title_text)));
             }
         }
+        set_collapsible(&mut node, &input.options);
         let loc = self.machine_loc(directive_loc(&input));
         self.directive_add_name(&mut node, &input.options, loc);
         let inline = self.inline(&title_text, input.span, input.lineno);
@@ -9932,9 +9942,23 @@ fn sphinx_directive_spec(lower: &str) -> Option<DirectiveSpec> {
             optional_arguments: 0,
             final_argument_whitespace: true,
             has_content: true,
-            option_spec: ADMONITION_OPTS,
+            option_spec: SPHINX_ADMONITION_OPTS,
             kind: DirectiveKind::SeeAlso,
         }),
+        // Sphinx's admonitions and its `rubric` patch: docutils' directives
+        // with Sphinx's option tables (`SP/sphinx/directives/admonitions.py`,
+        // `SP/sphinx/directives/patches.py:203-225`).
+        "note" | "warning" | "tip" | "hint" | "important" | "caution" | "danger" | "error"
+        | "attention" | "admonition" | "rubric" => {
+            directive_spec(lower).map(|spec| DirectiveSpec {
+                option_spec: if lower == "rubric" {
+                    SPHINX_RUBRIC_OPTS
+                } else {
+                    SPHINX_ADMONITION_OPTS
+                },
+                ..spec
+            })
+        }
         "code-block" | "sourcecode" => Some(DirectiveSpec {
             required_arguments: 0,
             optional_arguments: 1,
@@ -11743,6 +11767,10 @@ enum Conv {
     /// bare or empty option is 999, anything else Python `int(argument)` —
     /// the toctree `:numbered:`.
     IntOrNothing,
+    /// sphinx `_collapsible_arg` (`SP/sphinx/directives/admonitions.py:20-26`):
+    /// a bare option is `open`, otherwise `argument.lower().strip()` when
+    /// that is `open` or `closed` — the admonitions' `:collapsible:`.
+    Collapsible,
     SingleCharOrUnicode,
     SingleCharOrWhitespaceOrUnicode,
     /// value_or(('auto', 'grid'), positive_int_list) — the table :widths:.
@@ -11797,11 +11825,40 @@ fn directive_loc(input: &DirectiveInput<'_>) -> DocLoc {
     DocLoc::at(input.span.source, input.lineno)
 }
 
+/// Sphinx's admonitions pass their options to the node
+/// (`self.node_class(text, **options)`): `:collapsible:` is its
+/// `collapsible` attribute ([`Conv::Collapsible`]).
+fn set_collapsible(node: &mut Node, options: &[(String, OptVal)]) {
+    if let Some(OptVal::Str(state)) = opt_get(options, "collapsible") {
+        node.set("collapsible", AttrValue::Str(state.clone()));
+    }
+}
+
 fn opt_get<'o>(options: &'o [(String, OptVal)], name: &str) -> Option<&'o OptVal> {
     options.iter().find(|(n, _)| n == name).map(|(_, v)| v)
 }
 
 const ADMONITION_OPTS: &[(&str, Conv)] = &[("class", Conv::ClassOption), ("name", Conv::Unchanged)];
+
+/// Sphinx's admonitions' option table (`SphinxAdmonition.option_spec`,
+/// `SP/sphinx/directives/admonitions.py:29-33`): docutils' plus
+/// `collapsible`.
+const SPHINX_ADMONITION_OPTS: &[(&str, Conv)] = &[
+    ("class", Conv::ClassOption),
+    ("name", Conv::Unchanged),
+    ("collapsible", Conv::Collapsible),
+];
+
+/// The heading levels Sphinx's `rubric` accepts.
+const RUBRIC_HEADING_LEVELS: &[&str] = &["1", "2", "3", "4", "5", "6"];
+
+/// Sphinx's `rubric` option table (`SP/sphinx/directives/patches.py:211-215`):
+/// docutils' plus `heading-level`.
+const SPHINX_RUBRIC_OPTS: &[(&str, Conv)] = &[
+    ("class", Conv::ClassOption),
+    ("name", Conv::Unchanged),
+    ("heading-level", Conv::Choice(RUBRIC_HEADING_LEVELS)),
+];
 
 const SIDEBAR_OPTS: &[(&str, Conv)] = &[
     ("subtitle", Conv::UnchangedRequired),
@@ -13671,6 +13728,22 @@ fn convert_option(conv: Conv, value: Option<&str>) -> Result<OptVal, String> {
         Conv::IntOrNothing => match value {
             None | Some("") => Ok(OptVal::Int(999)),
             Some(v) => convert_option(Conv::PyIntAny, Some(v)),
+        },
+        Conv::Collapsible => match value {
+            None => Ok(OptVal::Str("open".to_string())),
+            Some(v) => {
+                let lowered = v.to_lowercase();
+                let lowered = lowered.trim_matches(crate::utils::py_isspace);
+                if matches!(lowered, "open" | "closed") {
+                    Ok(OptVal::Str(lowered.to_string()))
+                } else {
+                    // The message ends with its own period, which docutils'
+                    // option error follows with another.
+                    Err(format!(
+                        "\"{v}\" unknown; choose from \"open\" or \"closed\"."
+                    ))
+                }
+            }
         },
         Conv::NonnegativeInt => {
             let Some(v) = value else {

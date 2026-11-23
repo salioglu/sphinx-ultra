@@ -38,8 +38,9 @@ const CODE_BLOCK_OPTIONS: &[&str] = &[
     "name",
 ];
 
-/// `ADMONITION_OPTS` — shared by `note`, `warning` and `admonition`.
-const ADMONITION_OPTIONS: &[&str] = &["class", "name"];
+/// `SPHINX_ADMONITION_OPTS` — shared by `note`, `warning` and
+/// `admonition`: docutils' table plus Sphinx's `collapsible`.
+const ADMONITION_OPTIONS: &[&str] = &["class", "name", "collapsible"];
 
 /// `IMAGE_OPTS` (`DU/parsers/rst/directives/images.py` Image.option_spec).
 const IMAGE_OPTIONS: &[&str] = &[
@@ -236,7 +237,7 @@ impl DirectiveValidator for NoteValidator {
         // Validate options
         for option in directive.options.keys() {
             match option.as_str() {
-                "class" | "name" => {
+                "class" | "name" | "collapsible" => {
                     // Valid options
                 }
                 _ => {
@@ -295,7 +296,7 @@ impl DirectiveValidator for WarningValidator {
         // Validate options
         for option in directive.options.keys() {
             match option.as_str() {
-                "class" | "name" => {
+                "class" | "name" | "collapsible" => {
                     // Valid options
                 }
                 _ => {
