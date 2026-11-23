@@ -8983,6 +8983,9 @@ impl BlockParser {
         // Embedded directive marker: simplename + `::` + (space|EOL) — NO
         // optional space before `::` (SubstitutionDef state pattern).
         let mut produced: Vec<Node> = Vec::new();
+        // Whether the definition's block ends blank whatever follows it: an
+        // embedded include that inserted lines.
+        let mut ended_blank = false;
         let dline_src = self.sources.arc(dline.source);
         let dline_text = dline.slice(&dline_src);
         if let Some((dname, dfirst_rest)) = match_embedded_directive(dline_text) {
@@ -9028,6 +9031,12 @@ impl BlockParser {
             });
             self.nested_node_kind = saved_kind;
             self.attached = saved_attached;
+            // `embedded_directive` raises `EOFError` right after the
+            // directive (`states.py:2818-2824`): what an embedded include
+            // inserted is never read, nor its end-of-inclusion marker, so
+            // the include log keeps the file; and as the machine is not at
+            // its end, the include's `blank_finish` stands.
+            ended_blank = self.pending_splice.take().is_some();
             let ctx = self.substitution_ctx.take().unwrap_or_default();
             if ctx.ltrim {
                 subst.set("ltrim", AttrValue::Int(1));
@@ -9063,7 +9072,9 @@ impl BlockParser {
             bq.children.push(para);
             msg.children.push(bq);
             out.push(msg);
-            self.warn_explicit_markup_end(lines, *pos, out);
+            if !ended_blank {
+                self.warn_explicit_markup_end(lines, *pos, out);
+            }
             return true;
         }
         // Disallowed content (states.py:2219-2227). docutils drops the
@@ -9079,7 +9090,9 @@ impl BlockParser {
             );
             out.push(message);
             self.state.detach([subst]);
-            self.warn_explicit_markup_end(lines, *pos, out);
+            if !ended_blank {
+                self.warn_explicit_markup_end(lines, *pos, out);
+            }
             return true;
         }
         // Empty or invalid (states.py:2203-2210).
@@ -9095,7 +9108,9 @@ impl BlockParser {
                 vec![messages::literal_block(&blocktext)],
             );
             out.push(message);
-            self.warn_explicit_markup_end(lines, *pos, out);
+            if !ended_blank {
+                self.warn_explicit_markup_end(lines, *pos, out);
+            }
             return true;
         }
         // note_substitution_def (nodes.py:2056-2073): duplicate names are
@@ -9112,7 +9127,9 @@ impl BlockParser {
         }
         self.state.note_substitution_def(&mut subst, &subname_ws);
         out.push(subst);
-        self.warn_explicit_markup_end(lines, *pos, out);
+        if !ended_blank {
+            self.warn_explicit_markup_end(lines, *pos, out);
+        }
         true
     }
 
@@ -20389,6 +20406,64 @@ mod include_tests {
                 })
                 .collect();
             assert_eq!(input_lines.join(" "), expected, "{index:?}");
+        }
+    }
+
+    /// docutils' `SubstitutionDef.embedded_directive` raises `EOFError`
+    /// right after its directive runs (`SP/docutils/parsers/rst/states.py:2818-2824`):
+    /// the lines an embedded include inserted into the definition's block
+    /// are never parsed, so the included file prints nothing, and neither
+    /// is its end-of-inclusion marker, so the include log keeps the file
+    /// and a later include of it (with the same clip options) is a
+    /// circular inclusion. The definition's machine is not at its end, so
+    /// its block ends blank: no unindent warning for a line right after
+    /// it. Probed on Sphinx 9.1.0 (`-w`).
+    #[test]
+    fn a_substitution_embedded_include_parses_nothing() {
+        let empty = "Substitution definition \"x\" empty or invalid.";
+        let emphasis = "Inline emphasis start-string without end-string.";
+        let circular = "circular inclusion in \"include\" directive:\np.inc\n> p.inc\n> ";
+        let rows: [(&str, &str, &[(i64, &str)]); 4] = [
+            (
+                "Title\n=====\n\nUse |x|.\n\n.. |x| include:: p.inc\n\nAfter *z.\n",
+                "Inc *a.\n\n.. bogus::\n\nMore *b.\n",
+                &[(6, empty), (8, emphasis)],
+            ),
+            (
+                "Title\n=====\n\nUse |x|.\n\n.. |x| include:: p.inc\n\nMiddle.\n\n\
+                 .. include:: p.inc\n\nAfter.\n",
+                "Inc text.\n",
+                &[(6, empty), (10, circular)],
+            ),
+            (
+                "Title\n=====\n\nUse |x|.\n\n.. |x| include:: p.inc\nText *y.\n",
+                "Inc text.\n",
+                &[(6, empty), (7, emphasis)],
+            ),
+            // Other clip options are another inclusion.
+            (
+                "Title\n=====\n\nUse |x|.\n\n.. |x| include:: p.inc\n\nMiddle.\n\n\
+                 .. include:: p.inc\n   :start-line: 0\n\nAfter.\n",
+                "Inc text.\n",
+                &[(6, empty)],
+            ),
+        ];
+        for (index, part, expected) in rows {
+            let tmp = tempfile::tempdir().unwrap();
+            write(tmp.path(), "p.inc", part);
+            let tree = parse_sphinx(tmp.path(), "index", index);
+            let messages = messages_of(&tree);
+            let found: Vec<(i64, String)> = messages
+                .iter()
+                .map(|(_, line, _, text)| (*line, text.clone()))
+                .collect();
+            assert_eq!(found.len(), expected.len(), "{index:?}: {found:#?}");
+            for ((line, text), (want_line, want)) in found.iter().zip(expected) {
+                assert!(
+                    *line == *want_line && text.starts_with(want),
+                    "{index:?}: {found:#?}"
+                );
+            }
         }
     }
 
