@@ -20,6 +20,7 @@ use unicode_normalization::UnicodeNormalization;
 
 use super::pending::PendingTransform;
 use super::{AttrValue, Node, Uid};
+use crate::transforms::reporter::LogRecord;
 use crate::transforms::state::{DocLoc, DocumentState, NodeView, PendingRecord};
 use crate::utils::py_isspace;
 
@@ -229,6 +230,65 @@ impl DocumentState {
         id
     }
 
+    /// [`Self::set_id`] for a node `base_node` locates at `loc`, which
+    /// docutils reports a preset id of when another node holds it
+    /// (`SP/docutils/nodes.py:1832-1843`): `Duplicate ID`, an ERROR at the
+    /// node's location, placed in no tree (no `msgnode`). The holder's
+    /// start tag is spelled once the tree is complete
+    /// ([`Self::spell_duplicate_ids`]).
+    pub(crate) fn set_id_at(&mut self, node: &mut Node, loc: DocLoc) -> String {
+        if node.attrs.ids.is_empty() {
+            return self.set_id(node);
+        }
+        let holder = node.uid();
+        let ids = node.attrs.ids.clone();
+        for id in &ids {
+            if !self.ids.register(id, holder) {
+                let uid = self.identify(node);
+                let starttag = super::pformat::starttag(node);
+                drop(self.report(
+                    super::messages::ERROR,
+                    &format!("Duplicate ID: \"{id}\" used by "),
+                    loc,
+                    Vec::new(),
+                ));
+                self.parse.duplicate_ids.push(crate::rst::DuplicateId {
+                    record: self.log.len() - 1,
+                    id: id.clone(),
+                    node: uid,
+                    starttag,
+                });
+            }
+        }
+        ids.last().cloned().unwrap_or_default()
+    }
+
+    /// Completes each `Duplicate ID` record [`Self::set_id_at`] logged with
+    /// the start tag of the node that holds the id: the first node in the
+    /// tree under `root`, or in a detached subtree, that carries it and is
+    /// not the node the id was preset on.
+    pub(crate) fn spell_duplicate_ids(&mut self, root: &Node) {
+        for duplicate in std::mem::take(&mut self.parse.duplicate_ids) {
+            let holder = std::iter::once(root)
+                .chain(self.detached.iter())
+                .find_map(|tree| find_holder(tree, &duplicate.id, duplicate.node));
+            let Some(holder) = holder else {
+                continue;
+            };
+            let text = format!(
+                "Duplicate ID: \"{}\" used by {} and {}",
+                duplicate.id,
+                super::pformat::starttag(holder),
+                duplicate.starttag
+            );
+            if let Some(LogRecord::Reporter { text: logged, .. }) =
+                self.log.get_mut(duplicate.record)
+            {
+                *logged = text;
+            }
+        }
+    }
+
     /// The node's identity: the [`Uid`] it carries, or a newly minted one
     /// it is stamped with. Every node a registry or a pending record
     /// holds has one.
@@ -422,7 +482,7 @@ impl DocumentState {
     /// name at once, an earlier node (already placed in the parser's tree)
     /// through a [`DupnameFixup`], and the message is reported here.
     fn note_target(&mut self, node: &mut Node, explicit: bool, loc: DocLoc) -> Vec<Node> {
-        let id = self.set_id(node);
+        let id = self.set_id_at(node, loc);
         let duplicates = self.names.bind(NodeView::of(node), &id, explicit);
         let mut reported = Vec::with_capacity(duplicates.len());
         for duplicate in duplicates {
@@ -519,6 +579,17 @@ fn dupname(node: &mut Node, name: &str) {
         node.attrs.names.remove(pos);
         node.attrs.dupnames.push(name.to_string());
     }
+}
+
+/// The first node in pre-order under `node` that carries `id` and is not
+/// `except` ([`DocumentState::spell_duplicate_ids`]).
+fn find_holder<'n>(node: &'n Node, id: &str, except: Uid) -> Option<&'n Node> {
+    if node.uid() != Some(except) && node.attrs.ids.iter().any(|held| held == id) {
+        return Some(node);
+    }
+    node.children
+        .iter()
+        .find_map(|child| find_holder(child, id, except))
 }
 
 /// Post-parse pass: move `name` from `names` to `dupnames` on the node

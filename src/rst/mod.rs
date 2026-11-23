@@ -671,12 +671,33 @@ pub(crate) struct ParseOnlyState {
     /// math directive registered first, whose `Duplicate ID` message it
     /// can spell.
     pub(crate) equation_ids: HashSet<String>,
+    /// The `Duplicate ID` records whose text still lacks the start tag of
+    /// the node that holds the id, which the parse spells once its tree
+    /// is complete ([`DuplicateId`]).
+    pub(crate) duplicate_ids: Vec<DuplicateId>,
     /// `logger.warning` diagnostics raised while running directives.
     pub(crate) log_warnings: Vec<ParseLogWarning>,
     /// Parse-recorded dependency paths and included docnames (see
     /// [`RegistryExport::dependencies`]); sphinx mode only.
     pub(crate) dependency_records: Vec<String>,
     pub(crate) included_records: Vec<String>,
+}
+
+/// docutils' `Duplicate ID: "<id>" used by <holder's start tag> and <the
+/// node's start tag>` (`SP/docutils/nodes.py:1832-1843`), logged when the
+/// node's preset id turned out taken ([`DocumentState::set_id_at`]). The
+/// node that holds the id can be anywhere in the tree the parser is still
+/// building, so its start tag is read off the finished tree
+/// ([`DocumentState::spell_duplicate_ids`]).
+#[derive(Debug, Clone)]
+pub(crate) struct DuplicateId {
+    /// The index of the record in [`DocumentState::log`].
+    pub(crate) record: usize,
+    pub(crate) id: String,
+    /// The node the id was preset on, which is not the holder.
+    pub(crate) node: crate::doctree::Uid,
+    /// That node's start tag when the message was made.
+    pub(crate) starttag: String,
 }
 
 impl ParseOnlyState {
@@ -2334,6 +2355,58 @@ pub(crate) mod tests {
 
     fn at(line: u32, record: &str) -> String {
         format!("index.rst:{line}: {record}")
+    }
+
+    /// docutils' `set_id` reports a node whose preset id another node
+    /// holds (`SP/docutils/nodes.py:1832-1843`): `Duplicate ID` with both
+    /// nodes' start tags, at the node's location, which for a node in no
+    /// tree yet is the top-level machine's position. Sphinx's `index`
+    /// directive presets `index-N` without checking `document.ids`
+    /// (`SP/sphinx/domains/index.py:76-85`). Probed on Sphinx 9.1.0
+    /// (`-w`).
+    #[test]
+    fn a_preset_id_another_node_holds_is_a_duplicate_id() {
+        let duplicate = |line: u32, id: &str, holder: &str| {
+            at(
+                line,
+                &format!(
+                    "ERROR: Duplicate ID: \"{id}\" used by {holder} and \
+                     <target ids=\"{id}\"> [docutils]"
+                ),
+            )
+        };
+        assert_eq!(
+            printed_heads("Index 0\n=======\n\n.. index:: foo\n\nText.\n"),
+            [duplicate(
+                5,
+                "index-0",
+                "<section ids=\"index-0\" names=\"index\\ 0\">"
+            )]
+        );
+        assert_eq!(
+            printed_heads(".. _index-0:\n\nPara.\n\n.. index:: foo\n"),
+            [duplicate(
+                5,
+                "index-0",
+                "<target ids=\"index-0\" names=\"index-0\">"
+            )]
+        );
+        assert_eq!(
+            printed_heads("Title\n=====\n\n.. index:: a\n\nIndex 1\n-------\n\n.. index:: b\n"),
+            [duplicate(
+                9,
+                "index-1",
+                "<section ids=\"index-1\" names=\"index\\ 1\">"
+            )]
+        );
+        assert_eq!(
+            printed_heads("Index 0\n=======\n\n.. note::\n\n   .. index:: foo\n\n   Text.\n"),
+            [duplicate(
+                8,
+                "index-0",
+                "<section ids=\"index-0\" names=\"index\\ 0\">"
+            )]
+        );
     }
 
     /// docutils' `anonymous` transition is `__( +|$)`

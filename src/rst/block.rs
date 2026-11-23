@@ -1244,6 +1244,7 @@ impl BlockParser {
         let fixups = std::mem::take(&mut self.state.parse.dupname_fixups);
         ids::apply_dupname_fixups(&mut root, &mut self.state.detached, &fixups);
         self.state.dupname_redefined_substitutions(&mut root);
+        self.state.spell_duplicate_ids(&root);
         root
     }
 
