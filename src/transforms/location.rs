@@ -55,7 +55,22 @@ const UNLOCATED: &[&str] = &[
 /// rules:
 ///
 /// 1. a node in inline position, a child of a `TextElement`, has none, as
-///    has a Text node;
+///    has a Text node. An `image` is the exception: docutils' Image
+///    directive stamps every image it makes with its source and line
+///    (`SP/docutils/parsers/rst/directives/images.py:99-101`), so an image
+///    in inline position (a substitution's copy in a paragraph, or one a
+///    `:target:` wraps in a `reference`) has a location of its own: its
+///    override, or its span's by rule 4, both of which a deep copy keeps.
+///    [DS §8.2] has it take its parent's from 010, but 010's image branch
+///    applies only to an image without a source
+///    (`SP/sphinx/util/nodes.py:146`). Sphinx stamps some inline kinds
+///    too, through `set_source_info` (`SP/sphinx/util/docutils.py:691-695`):
+///    `pending_xref` and `download_reference` (`XRefRole`,
+///    `SP/sphinx/roles.py:138-139`) and `index` (`IndexRole`,
+///    `SP/sphinx/domains/index.py:115-116`). Those are mixed kinds, which
+///    this rule leaves without a location (the census in [DS §6.1] has
+///    102 `pending_xref`s with a source and a line and 65 with neither):
+///    they need overrides before anything relies on their location;
 /// 2. so has a node of a kind docutils never locates ([`UNLOCATED`]);
 /// 3. 010 gives a section's title its section's location
 ///    (`SP/sphinx/util/nodes.py:153-159`: a title without a source takes
@@ -70,7 +85,8 @@ fn own_location(tree: &TxTree, id: TxId, state: &DocumentState) -> DocLoc {
         return *loc;
     }
     let parent = tree.parent(id);
-    if parent.is_some_and(|parent| is_text_element(tree.node(parent).kind)) {
+    let inline = parent.is_some_and(|parent| is_text_element(tree.node(parent).kind));
+    if inline && node.kind != kinds::IMAGE {
         return DocLoc::default();
     }
     match node.kind {
@@ -157,6 +173,30 @@ mod tests {
         }
     }
 
+    /// The locations of the nodes `pred` accepts in `rst`, parsed as
+    /// Sphinx parses `index.rst`, once Substitutions (220) has copied the
+    /// definitions in: in the tree's pre-order, as Sphinx prints them.
+    fn locate(rst: &str, pred: impl Fn(&TxNode) -> bool) -> Vec<String> {
+        let ParseOutput {
+            doctree, mut state, ..
+        } = parse_rst_full(
+            rst,
+            &ParseOptions {
+                source_path: "<SRCDIR>/index.rst".to_string(),
+                sphinx: true,
+                docname: "index".to_string(),
+                ..ParseOptions::default()
+            },
+        );
+        let sources = doctree.sources.clone();
+        let mut tree = TxTree::from_parse(doctree, &mut state);
+        substitute(&mut tree, &mut state);
+        tree.findall(tree.root(), pred)
+            .into_iter()
+            .map(|node| render(get_source_line(&tree, node, &state), &sources))
+            .collect()
+    }
+
     /// Where docutils locates a message about a node ([DS §6.1]): the
     /// read-state fixture's `state.location.*` cases, [DS §6.1]'s probe
     /// rows and the contexts T6 added, each a `bad_` reference that
@@ -167,6 +207,23 @@ mod tests {
     /// no location of its own, a paragraph has its first line, a section
     /// title its section's, a classifier its item's source and no line,
     /// and an image's `:target:` reference has the source only.
+    ///
+    /// An image has its own line wherever it is, and Sphinx's
+    /// ImageCollector locates `image file not readable` there
+    /// (`location=node`, `SP/sphinx/environment/collectors/asset.py:96-103`):
+    /// the strict aux-gate cases `docutils-0438` and `docutils-0685` expect
+    /// `<SRCDIR>/index.rst:1` for an image a `:target:` wraps, while its
+    /// reference has the source only. A substituted image, plain or
+    /// wrapped, is a deep copy of the definition's image and is located at
+    /// the definition's line, as that image is; the substituted reference
+    /// has no location, so it takes the paragraph's.
+    //
+    // oracle (Sphinx 9.1.0, docutils 0.22.4): each snippet built as
+    //   `index.rst` with the HTML oracle's `conf.py` and a `doctree-read`
+    //   handler printing `utils.get_source_line(node)` for every image and
+    //   reference of `doctree.findall()`; the `-w` stream prints each image
+    //   at its line (the substituted ones twice, the copy and the
+    //   definition's).
     #[test]
     fn location_rules_match_docutils() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -190,34 +247,57 @@ mod tests {
                 })
                 .collect();
             assert!(!expected.is_empty(), "{name}");
-            let ParseOutput {
-                doctree, mut state, ..
-            } = parse_rst_full(
-                case["rst"].as_str().expect("rst"),
-                &ParseOptions {
-                    source_path: "<SRCDIR>/index.rst".to_string(),
-                    sphinx: true,
-                    docname: "index".to_string(),
-                    ..ParseOptions::default()
-                },
-            );
-            let sources = doctree.sources.clone();
-            let mut tree = TxTree::from_parse(doctree, &mut state);
-            substitute(&mut tree, &mut state);
-            let bad = |node: &TxNode| {
+            let ours = locate(case["rst"].as_str().expect("rst"), |node| {
                 node.kind == kinds::REFERENCE && attr(node, "refname") == Some("bad")
-            };
-            let ours: Vec<String> = tree
-                .findall(tree.root(), bad)
-                .into_iter()
-                .map(|reference| render(get_source_line(&tree, reference, &state), &sources))
-                .collect();
+            });
             if ours != expected {
                 mismatches.push(format!("{name}: {ours:?}, docutils {expected:?}"));
             }
             rows += 1;
         }
         assert!(rows >= 27, "only {rows} location cases");
+        // Every image and reference, in pre-order.
+        let images: [(&str, &str, &[&str]); 3] = [
+            (
+                "docutils-0438",
+                ".. image:: pic.png\n   :target: https://example.com/page\n",
+                &["<SRCDIR>/index.rst:", "<SRCDIR>/index.rst:1"],
+            ),
+            (
+                "docutils-0685",
+                ".. image:: p.png\n   :target: http://x^_y\n",
+                &["<SRCDIR>/index.rst:", "<SRCDIR>/index.rst:1"],
+            ),
+            (
+                "substituted images",
+                "Title\n=====\n\nPara |img| text and |img2|.\n\n\
+                 .. |img| image:: pic.png\n\n\
+                 .. |img2| image:: pic2.png\n   :target: http://x.org\n\n\
+                 .. image:: pic3.png\n   :target: http://y.org\n",
+                &[
+                    // The copies in the paragraph: `|img|`'s image, then
+                    // `|img2|`'s reference and image.
+                    "<SRCDIR>/index.rst:6",
+                    "<SRCDIR>/index.rst:4",
+                    "<SRCDIR>/index.rst:8",
+                    // The definitions' own, in the same order.
+                    "<SRCDIR>/index.rst:6",
+                    "<SRCDIR>/index.rst:8",
+                    "<SRCDIR>/index.rst:8",
+                    // The last image's reference, then the image.
+                    "<SRCDIR>/index.rst:",
+                    "<SRCDIR>/index.rst:11",
+                ],
+            ),
+        ];
+        for (name, rst, expected) in images {
+            let ours = locate(rst, |node| {
+                node.kind == kinds::IMAGE || node.kind == kinds::REFERENCE
+            });
+            if ours != expected {
+                mismatches.push(format!("{name}: {ours:?}, docutils {expected:?}"));
+            }
+        }
         assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
     }
 }
