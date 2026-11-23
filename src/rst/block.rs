@@ -8706,26 +8706,60 @@ impl BlockParser {
             return true;
         }
 
+        // A blank line after a marker that took its whole line: docutils
+        // drops the marker's line and hands the SubstitutionDef state a
+        // block whose first line is that blank (`states.py:2161-2183`).
+        // The state's whitespace transitions come before `embedded_directive`
+        // and `text` (`SP/docutils/statemachine.py:956-972`): blank lines do
+        // nothing, and the first other line, indented like every later line
+        // of the block (`strip_indent=False`), opens a block quote with the
+        // rest of the block (`Body.indent`, `states.py:1273-1281`), less its
+        // own common indentation. The quote is not inline, so it is moved
+        // out into the definition's container (`states.py:2184-2191`), and
+        // the definition, left empty, warns after the quote's own messages
+        // (`states.py:2209-2214`).
+        if self.sources.line_text(rem_rec).trim().is_empty()
+            && content_block.first().is_some_and(|l| l.is_blank())
+        {
+            let blanks = content_block.iter().take_while(|l| l.is_blank()).count();
+            let quote_lines = dedent_by_min(&content_block[blanks..]);
+            let quote_span = self.span_of(lines, start + 1 + used + blanks, start + consumed);
+            // The quote's lines are a slice of the disconnected block.
+            let quotes =
+                self.parse_disconnected(|me| me.block_quote_elements(&quote_lines, quote_span));
+            out.extend(quotes);
+            let message = self.report(
+                messages::WARNING,
+                &format!(
+                    "Substitution definition \"{}\" empty or invalid.",
+                    marker.name
+                ),
+                msg_source,
+                lineno,
+                vec![messages::literal_block(&blocktext)],
+            );
+            out.push(message);
+            self.warn_explicit_markup_end(lines, *pos, out);
+            return true;
+        }
+
         // `nodes.substitution_definition(blocktext)` (`states.py:2165`).
         let mut subst = Node::elem("substitution_definition", span);
         subst.set_rawsource(&blocktext);
         subst.attrs.names.push(subname_ws.clone());
 
         // Locate the embedded-directive line: the marker remainder, else
-        // the first non-blank content line (hanging-indent form).
-        // raw_content_from tracks the BLOCK index where the directive's
-        // continuation lines begin, for rawsource reconstruction with
-        // original indentation (docutils strip_indent=False).
+        // the first content line (hanging-indent form), which is not blank
+        // here. raw_content_from tracks the BLOCK index where the
+        // directive's continuation lines begin, for rawsource
+        // reconstruction with original indentation (docutils
+        // strip_indent=False).
         let mut raw_content_from = used;
         let (dline, dlineno) = if !self.sources.line_text(rem_rec).trim().is_empty() {
             let rem_text = self.sources.line_text(rem_rec);
             let spaces = rem_text.len() - rem_text.trim_start_matches(' ').len();
             (self.rewrap_from(rem_rec, spaces), rem_lineno)
         } else {
-            while content_block.first().map(|l| l.is_blank()).unwrap_or(false) {
-                content_block.remove(0);
-                raw_content_from += 1;
-            }
             let first = content_block.remove(0);
             raw_content_from += 1;
             let dedent = first.indent();
@@ -15502,6 +15536,65 @@ mod tests {
         assert_eq!(
             pf(".. csv-table::\n\n   \".. |a| replace:: x\"\n\n.. |a| replace:: y\n"),
             "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"1\">\n            <colspec colwidth=\"100\">\n            <tbody>\n                <row>\n                    <entry>\n                        <substitution_definition dupnames=\"a\">\n                            x\n    <system_message level=\"3\" line=\"5\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Duplicate substitution definition name: \"a\".\n    <substitution_definition names=\"a\">\n        y\n"
+        );
+    }
+
+    /// A bare marker (`.. |c|`) followed by a blank line: `substitution_def`
+    /// drops the marker's line and hands the SubstitutionDef state a block
+    /// whose first line is blank (`states.py:2161-2183`). Its whitespace
+    /// transitions come before `embedded_directive` and `text`: a blank
+    /// line does nothing, and the next line, indented like every later
+    /// line of the block, opens a block quote that holds the rest of the
+    /// block (`Body.indent`). The quote is moved out of the definition like
+    /// any node that is not inline, so the definition is empty or invalid,
+    /// whatever the quote holds: a line that reads like a directive, plain
+    /// text, a real directive. Moved out, the quote follows the definition's
+    /// container (a list item), its own messages stay inside it, and an
+    /// unindented line straight after still warns. The quote's lines lose
+    /// their own common indentation, not the marker line's. With no blank
+    /// line, the one-line and hanging forms still embed the directive.
+    /// Expected output: docutils 0.22.4's parse layer.
+    #[test]
+    fn a_blank_line_after_a_bare_substitution_marker_opens_a_block_quote() {
+        assert_eq!(
+            pf("Para |c| x.\n\n.. |c|\n\n   image:: pic2.png\n"),
+            "<document source=\"<snippet>\">\n    <paragraph>\n        Para \n        <substitution_reference refname=\"c\">\n            c\n         x.\n    <block_quote>\n        <paragraph>\n            image:: pic2.png\n    <system_message level=\"2\" line=\"3\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"c\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |c|\n            \n               image:: pic2.png\n"
+        );
+        assert_eq!(
+            pf("Para |c| x.\n\n.. |c|\n\n   some text\n"),
+            "<document source=\"<snippet>\">\n    <paragraph>\n        Para \n        <substitution_reference refname=\"c\">\n            c\n         x.\n    <block_quote>\n        <paragraph>\n            some text\n    <system_message level=\"2\" line=\"3\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"c\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |c|\n            \n               some text\n"
+        );
+        assert_eq!(
+            pf("Para |c| x.\n\n.. |c|\n\n\n   image:: pic2.png\n"),
+            "<document source=\"<snippet>\">\n    <paragraph>\n        Para \n        <substitution_reference refname=\"c\">\n            c\n         x.\n    <block_quote>\n        <paragraph>\n            image:: pic2.png\n    <system_message level=\"2\" line=\"3\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"c\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |c|\n            \n            \n               image:: pic2.png\n"
+        );
+        assert_eq!(
+            pf("Para |c d| x.\n\n.. |c\n d|\n\n   image:: pic2.png\n"),
+            "<document source=\"<snippet>\">\n    <paragraph>\n        Para \n        <substitution_reference refname=\"c d\">\n            c d\n         x.\n    <block_quote>\n        <paragraph>\n            image:: pic2.png\n    <system_message level=\"2\" line=\"3\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"c d\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |c\n             d|\n            \n               image:: pic2.png\n"
+        );
+        assert_eq!(
+            pf("Para |c| x.\n\n.. |c|\n\n   .. image:: pic2.png\n"),
+            "<document source=\"<snippet>\">\n    <paragraph>\n        Para \n        <substitution_reference refname=\"c\">\n            c\n         x.\n    <block_quote>\n        <image uri=\"pic2.png\">\n    <system_message level=\"2\" line=\"3\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"c\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |c|\n            \n               .. image:: pic2.png\n"
+        );
+        assert_eq!(
+            pf("Para |c| x.\n\n.. |c|\n\n      deep\n   shallow\n"),
+            "<document source=\"<snippet>\">\n    <paragraph>\n        Para \n        <substitution_reference refname=\"c\">\n            c\n         x.\n    <block_quote>\n        <block_quote>\n            <paragraph>\n                deep\n        <system_message level=\"2\" line=\"6\" source=\"<snippet>\" type=\"WARNING\">\n            <paragraph>\n                Block quote ends without a blank line; unexpected unindent.\n        <paragraph>\n            shallow\n    <system_message level=\"2\" line=\"3\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"c\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |c|\n            \n                  deep\n               shallow\n"
+        );
+        assert_eq!(
+            pf("Para |c| x.\n\n.. |c|\n\n   image:: pic2.png\nNext.\n"),
+            "<document source=\"<snippet>\">\n    <paragraph>\n        Para \n        <substitution_reference refname=\"c\">\n            c\n         x.\n    <block_quote>\n        <paragraph>\n            image:: pic2.png\n    <system_message level=\"2\" line=\"3\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"c\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |c|\n            \n               image:: pic2.png\n    <system_message level=\"2\" line=\"6\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Explicit markup ends without a blank line; unexpected unindent.\n    <paragraph>\n        Next.\n"
+        );
+        assert_eq!(
+            pf("- Para |c| x.\n\n  .. |c|\n\n     image:: pic2.png\n"),
+            "<document source=\"<snippet>\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                Para \n                <substitution_reference refname=\"c\">\n                    c\n                 x.\n            <block_quote>\n                <paragraph>\n                    image:: pic2.png\n            <system_message level=\"2\" line=\"3\" source=\"<snippet>\" type=\"WARNING\">\n                <paragraph>\n                    Substitution definition \"c\" empty or invalid.\n                <literal_block xml:space=\"preserve\">\n                    .. |c|\n                    \n                       image:: pic2.png\n"
+        );
+        assert_eq!(
+            pf("Para |c| x.\n\n.. |c| image:: pic2.png\n"),
+            "<document source=\"<snippet>\">\n    <paragraph>\n        Para \n        <substitution_reference refname=\"c\">\n            c\n         x.\n    <substitution_definition names=\"c\">\n        <image alt=\"c\" uri=\"pic2.png\">\n"
+        );
+        assert_eq!(
+            pf("Para |c| x.\n\n.. |c|\n   image:: pic2.png\n"),
+            "<document source=\"<snippet>\">\n    <paragraph>\n        Para \n        <substitution_reference refname=\"c\">\n            c\n         x.\n    <substitution_definition names=\"c\">\n        <image alt=\"c\" uri=\"pic2.png\">\n"
         );
     }
 

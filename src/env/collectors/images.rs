@@ -586,6 +586,89 @@ mod tests {
         );
     }
 
+    /// With a blank line between the bare marker and the indented line, the
+    /// definition embeds nothing: docutils parses the indented lines as a
+    /// block quote, which it moves out of the definition, and the empty
+    /// definition warns at its own line. So `image:: pic2.png` is a
+    /// paragraph, no image is collected, and the reference is undefined
+    /// (Substitutions, 220). A real `.. image::` in such a quote is an
+    /// image of the document's own, which the collector reaches after
+    /// Substitutions' ERROR, at its directive's line. Probed on Sphinx
+    /// 9.1.0: the `-w` stream and the post-read doctree.
+    #[test]
+    fn a_blank_separated_substitution_body_is_a_block_quote() {
+        let read = read_standalone(
+            "Title\n=====\n\nPara |c| x.\n\n.. |c|\n\n   image:: pic2.png\n",
+            &sphinx_options(),
+            &ReadSettings::sphinx_defaults(),
+        );
+        let rendered: Vec<String> = read
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.render(true))
+            .collect();
+        assert_eq!(
+            rendered,
+            [
+                "<SRCDIR>/index.rst:6: WARNING: Substitution definition \"c\" empty or invalid.\
+                 \n\n.. |c|\n\n   image:: pic2.png [docutils]",
+                "<SRCDIR>/index.rst:4: ERROR: Undefined substitution referenced: \"c\". \
+                 [docutils]",
+            ]
+        );
+        assert_eq!(
+            read.outcome.doctree().root.pformat(),
+            "<document source=\"<SRCDIR>/index.rst\" \
+             translation_progress=\"{'total': 0, 'translated': 0}\">\n    \
+             <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        \
+             <paragraph>\n            Para \n            \
+             <problematic ids=\"id2\" refid=\"id1\">\n                |c|\n             x.\n        \
+             <block_quote>\n            <paragraph>\n                image:: pic2.png\n"
+        );
+        assert!(read
+            .env
+            .dependencies
+            .get("index")
+            .is_none_or(BTreeSet::is_empty));
+
+        let read = read_standalone(
+            "Para |c| x.\n\n.. |c|\n\n   .. image:: pic2.png\n",
+            &sphinx_options(),
+            &ReadSettings::sphinx_defaults(),
+        );
+        let rendered: Vec<String> = read
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.render(true))
+            .collect();
+        assert_eq!(
+            rendered,
+            [
+                "<SRCDIR>/index.rst:3: WARNING: Substitution definition \"c\" empty or invalid.\
+                 \n\n.. |c|\n\n   .. image:: pic2.png [docutils]"
+                    .to_string(),
+                "<SRCDIR>/index.rst:1: ERROR: Undefined substitution referenced: \"c\". \
+                 [docutils]"
+                    .to_string(),
+                not_readable(5, "pic2.png"),
+            ]
+        );
+        assert_eq!(
+            read.outcome.doctree().root.pformat(),
+            "<document source=\"<SRCDIR>/index.rst\" \
+             translation_progress=\"{'total': 0, 'translated': 0}\">\n    \
+             <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            \
+             |c|\n         x.\n    <block_quote>\n        \
+             <image candidates=\"{'*': 'pic2.png'}\" uri=\"pic2.png\">\n"
+        );
+        assert_eq!(
+            read.env.dependencies.get("index"),
+            Some(&BTreeSet::from(
+                [PathBuf::from("<SRCDIR>").join("pic2.png")]
+            ))
+        );
+    }
+
     /// A project in a temporary directory: `files` written under it.
     fn project(files: &[(&str, &[u8])]) -> tempfile::TempDir {
         let tmp = tempfile::TempDir::new().expect("tempdir");
