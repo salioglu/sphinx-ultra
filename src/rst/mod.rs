@@ -1983,8 +1983,13 @@ mod tests {
     /// offset` (`build_table_row`, `states.py:1855-1856`), one past the
     /// 0-based offset it stands for, so every line its machine counts —
     /// a paragraph's inline messages, a nested caption's, each line of a
-    /// line block, an explicit target's — prints one high, while
-    /// `Unexpected indentation.` takes
+    /// line block, an explicit target's, and every message located at
+    /// `abs_line_number()`: an unindent warning (`Explicit markup ends
+    /// without a blank line`, a line block's), a quoted literal block's
+    /// messages, `Unexpected section title or transition.`, an explicit
+    /// construct's `MarkupError`, a nested table's `Malformed table.` and
+    /// `Blank line required after table.` — prints one high, while
+    /// a paragraph's `Unexpected indentation.` takes
     /// the true line from the cell's own lines (`get_text_block`). A
     /// csv-table cell is parsed at `self.content_offset`, the first content
     /// line, whichever row (the `:header:` rows included) holds it. Probed
@@ -1993,6 +1998,15 @@ mod tests {
     fn table_cell_messages_take_docutils_cell_offset() {
         let indentation = "ERROR: Unexpected indentation. [docutils]";
         let duplicate = "WARNING: Duplicate explicit target name: \"t\". [docutils]";
+        let explicit =
+            "WARNING: Explicit markup ends without a blank line; unexpected unindent. [docutils]";
+        let quoting = "ERROR: Inconsistent literal block quoting. [docutils]";
+        let none_found = "WARNING: Literal block expected; none found. [docutils]";
+        let transition = "ERROR: Unexpected section title or transition.";
+        let substitution = "WARNING: malformed substitution definition. [docutils]";
+        let line_block = "WARNING: Line block ends without a blank line. [docutils]";
+        let malformed = "ERROR: Malformed table.";
+        let blank = "WARNING: Blank line required after table. [docutils]";
         for (source, expected) in [
             (
                 "+-----------+\n| Cell *a   |\n|           |\n| Para      |\n| more      |\n\
@@ -2029,8 +2043,104 @@ mod tests {
                  1      .. _t:\n2      x\n=====  ============\n",
                 vec![at(9, duplicate)],
             ),
+            // `unindent_warning`: `abs_line_number() + 1`.
+            (
+                "+--------------+\n| Para.        |\n|              |\n| .. comment   |\n\
+                 | Text.        |\n+--------------+\n",
+                vec![at(6, explicit)],
+            ),
+            (
+                "=====  ============\nA      B\n=====  ============\n1      .. comment\n\
+                 \x20      Text.\n=====  ============\n",
+                vec![at(6, explicit)],
+            ),
+            // `QuotedLiteralBlock`: its own machine's `abs_line_number()`.
+            (
+                "+---------------+\n| Para::        |\n|               |\n| > quoted      |\n\
+                 |    indented   |\n+---------------+\n",
+                vec![at(6, indentation)],
+            ),
+            (
+                "+------------+\n| Para::     |\n|            |\n| > quoted   |\n| text       |\n\
+                 +------------+\n",
+                vec![at(6, quoting)],
+            ),
+            (
+                "+----------+\n| Para::   |\n|          |\n| text     |\n+----------+\n",
+                vec![at(5, none_found)],
+            ),
+            (
+                "+----------+\n| Para::   |\n+----------+\n\nAfter.\n",
+                vec![at(4, none_found)],
+            ),
+            // `Body.line`: `abs_line_number()`.
+            (
+                "+----------+\n| Text.    |\n|          |\n| ------   |\n+----------+\n",
+                vec![at(5, transition)],
+            ),
+            (
+                "=====  ========\nA      B\n=====  ========\n1      Text.\n\n       ~~~~~~\n\
+                 =====  ========\n",
+                vec![at(7, transition)],
+            ),
+            // `explicit_construct`'s `MarkupError`: `abs_line_number()`.
+            (
+                "+-----------+\n| Para.     |\n|           |\n| .. _foo   |\n|           |\n\
+                 | Text.     |\n+-----------+\n",
+                vec![at(5, "WARNING: malformed hyperlink target. [docutils]")],
+            ),
+            (
+                "+-----------+\n| Para.     |\n|           |\n| .. |foo   |\n|           |\n\
+                 | Text.     |\n+-----------+\n",
+                vec![at(6, substitution)],
+            ),
+            // `line_block`: `lineno + 1`.
+            (
+                "+---------+\n| | one   |\n| Text.   |\n+---------+\n",
+                vec![at(4, line_block)],
+            ),
+            // A nested table: `malformed_table`'s `startline + offset` and
+            // `table_top`'s `abs_line_number() + 1`.
+            (
+                "+-----------+\n| +-----+   |\n| | a   |   |\n| +-----+   |\n| Text.     |\n\
+                 +-----------+\n",
+                vec![at(6, blank)],
+            ),
+            (
+                "+------------+\n| +-----+    |\n| | a    |   |\n| +-----+    |\n+------------+\n",
+                vec![at(4, malformed)],
+            ),
+            (
+                "+----------------+\n| =====  =====   |\n| a      b       |\n| ====  =====    |\n\
+                 | Text.          |\n+----------------+\n",
+                vec![at(5, malformed), at(6, blank)],
+            ),
         ] {
             assert_eq!(printed_heads(source), expected, "{source:?}");
+        }
+    }
+
+    /// `line_block` warns `Line block ends without a blank line.` at
+    /// `lineno + 1`, one past the machine's count for the block's FIRST
+    /// line (`states.py:1708-1730`), however many lines the block has. A
+    /// `malformed substitution definition.` is located where
+    /// `substitution_def`'s `get_first_known_indented` left the machine
+    /// (`explicit_construct`, `states.py:2492-2505`): on the last line of
+    /// the definition's block, its trailing blank lines included. Probed on
+    /// Sphinx 9.1.0.
+    #[test]
+    fn line_block_end_and_malformed_substitution_take_docutils_lines() {
+        let line_block = "WARNING: Line block ends without a blank line. [docutils]";
+        let substitution = "WARNING: malformed substitution definition. [docutils]";
+        for (source, expected) in [
+            ("| one\nText.\n", at(2, line_block)),
+            ("| one\n| two\n| three\nText.\n", at(2, line_block)),
+            ("| one\n  cont\n| two\nText.\n", at(2, line_block)),
+            (".. |foo\n\nText.\n", at(2, substitution)),
+            (".. |foo\n   bar\n\n\nText.\n", at(4, substitution)),
+            (".. |foo\n", at(1, substitution)),
+        ] {
+            assert_eq!(printed_heads(source), [expected], "{source:?}");
         }
     }
 

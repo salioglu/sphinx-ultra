@@ -265,11 +265,14 @@ pub(crate) struct BlockParser {
     /// +1 inside grid- and simple-table cell parses: docutils starts a
     /// cell's machine at `tableline + offset` (`states.py:1855-1856`), one
     /// past the 0-based offset it stands for, so every line number the
-    /// machine counts runs one high there — the unindent warnings
-    /// ([`Self::msg_sm`]) and the lines the inliner is handed
+    /// machine counts runs one high there — every message located at
+    /// `abs_line_number()` (the unindent warnings through
+    /// [`Self::msg_sm`], a quoted literal block's messages, `Unexpected
+    /// section title or transition.`, an explicit construct's
+    /// `MarkupError`, a nested table's) and the lines the inliner is handed
     /// ([`Self::inline`]), probe-verified on Sphinx 9.1.0 — while a message
-    /// located at a line's own source and offset (`Unexpected
-    /// indentation.`) does not.
+    /// located at a line's own source and offset (a paragraph's
+    /// `Unexpected indentation.`) does not.
     line_bias: u32,
     /// Innermost container node kind during nested content parses (docutils
     /// `state_machine.node`); None at document/section level. Directives
@@ -1008,12 +1011,14 @@ impl BlockParser {
     /// Probe-verified: an explicit-markup element (comment/target) followed
     /// by an ADJACENT non-blank column-0 line that is not itself explicit
     /// markup warns. Consecutive `..`/`__ ` items chain without warning.
+    /// `unindent_warning` locates it at `abs_line_number() + 1`, the
+    /// machine's count (`states.py:540-545`).
     fn warn_explicit_markup_end(&mut self, lines: &[LineRec], pos: usize, out: &mut Vec<Node>) {
         if let Some(l) = lines.get(pos) {
             let text = self.sources.line_text(*l);
             let explicit_ish = text == ".." || text.starts_with(".. ") || text.starts_with("__ ");
             if !l.is_blank() && l.indent() == 0 && !explicit_ish {
-                let message = self.msg(
+                let message = self.msg_sm(
                     messages::WARNING,
                     "Explicit markup ends without a blank line; unexpected unindent.",
                     l.source,
@@ -1401,11 +1406,13 @@ impl BlockParser {
 
         if !match_titles {
             if len >= 4 {
+                // `Body.line` locates it at `abs_line_number()`, the
+                // machine's count ([`Self::line_bias`]).
                 let msg = self.report(
                     messages::ERROR,
                     "Unexpected section title or transition.",
                     line.source,
-                    line.lineno,
+                    line.lineno + self.line_bias,
                     vec![messages::literal_block(self.sources.line_text(line))],
                 );
                 out.push(msg);
@@ -1730,12 +1737,16 @@ impl BlockParser {
         }
         if p >= lines.len() {
             // Probe-verified: at EOF the warning still fires, anchored to
-            // the line after the last one.
+            // the line after the last one. `QuotedLiteralBlock` locates it
+            // and its other messages at its own machine's
+            // `abs_line_number()`, which counts on from the parent's
+            // (`quoted_literal_block`, `states.py:2961-2972`, and
+            // `:3188-3260`), the cell bias included.
             let anchor = lines
                 .last()
                 .map(|l| (l.source, l.lineno + 1))
                 .unwrap_or((0, 1));
-            let message = self.msg(
+            let message = self.msg_sm(
                 messages::WARNING,
                 "Literal block expected; none found.",
                 anchor.0,
@@ -1799,7 +1810,7 @@ impl BlockParser {
                 } else {
                     "Inconsistent literal block quoting."
                 };
-                let message = self.msg(
+                let message = self.msg_sm(
                     messages::ERROR,
                     text,
                     lines[endq].source,
@@ -1813,7 +1824,7 @@ impl BlockParser {
             self.ending = Ending::BlankEnded;
             return;
         }
-        let message = self.msg(
+        let message = self.msg_sm(
             messages::WARNING,
             "Literal block expected; none found.",
             first.source,
@@ -2332,13 +2343,16 @@ impl BlockParser {
         }
         out.push(build_line_block(&mut resolved, span, 0));
         out.append(&mut lb_messages);
-        // Fixture-verified: warning anchored to the LAST line-block line.
+        // `line_block` warns at `lineno + 1`, one past the machine's count
+        // for the block's FIRST line (`states.py:1708-1730`), whatever the
+        // block's length: the line after the first (`p > start` here).
         if p < lines.len() && !lines[p].is_blank() {
+            let at = lines[(start + 1).min(p)];
             out.push(self.msg_sm(
                 messages::WARNING,
                 "Line block ends without a blank line.",
-                lines[p - 1].source,
-                lines[p - 1].lineno,
+                at.source,
+                at.lineno,
             ));
         }
         *pos = p;
@@ -2499,7 +2513,8 @@ impl BlockParser {
                 }
                 None => {
                     // Malformed. `explicit_construct` queues the WARNING at
-                    // `abs_line_number()` — which `hyperlink_target` has
+                    // `abs_line_number()`, the machine's count
+                    // ([`Self::line_bias`]) — which `hyperlink_target` has
                     // already advanced to the LAST line of the block — and
                     // falls through to `Body.comment(match)`, so the comment
                     // starts on that same line, sliced at the TRANSITION
@@ -2509,7 +2524,7 @@ impl BlockParser {
                     comment_first =
                         Some(char_suffix(self.sources.line_text(last_line), dots_end).to_string());
                     *pos = last;
-                    construct_error = Some(self.msg(
+                    construct_error = Some(self.msg_sm(
                         messages::WARNING,
                         "malformed hyperlink target.",
                         last_line.source,
@@ -3209,7 +3224,9 @@ impl BlockParser {
     }
 
     /// `Body.malformed_table` (`states.py:1900-1909`): `Malformed table.`
-    /// and the detail, with the table's text as the message's child.
+    /// and the detail, with the table's text as the message's child, at
+    /// `startline + offset`, counted from the machine's
+    /// `abs_line_number()` ([`Self::line_bias`]).
     fn malformed_table(
         &mut self,
         source: u16,
@@ -3221,17 +3238,17 @@ impl BlockParser {
             messages::ERROR,
             &format!("Malformed table.\n{detail}"),
             source,
-            lineno,
+            lineno + self.line_bias,
             vec![messages::literal_block(block_text)],
         )
     }
 
     /// `table_top`'s `Blank line required after table.`
     /// (`states.py:1788-1797`), at `at`, when the table did not end with a
-    /// blank line.
+    /// blank line: `abs_line_number() + 1`, the machine's count.
     fn blank_line_after_table(&mut self, at: Option<(u16, u32)>, out: &mut Vec<Node>) {
         if let Some((source, lineno)) = at {
-            let message = self.msg(
+            let message = self.msg_sm(
                 messages::WARNING,
                 "Blank line required after table.",
                 source,
@@ -8396,9 +8413,11 @@ impl BlockParser {
         let lineno = marker_rec.lineno;
         let msg_source = marker_rec.source;
         let (block, consumed, _indent, _term) = indented_block(lines, start + 1);
-        // `Body.substitution_def`'s `get_first_known_indented`: the
-        // machine stays there while the embedded directive runs.
-        self.note_top_block(lines[through_blank_lines(lines, start + consumed)]);
+        // `Body.substitution_def`'s `get_first_known_indented` leaves the
+        // machine on the block's last line, its trailing blank lines
+        // included: it stays there while the embedded directive runs.
+        let machine_line = lines[through_blank_lines(lines, start + consumed)];
+        self.note_top_block(machine_line);
         let span = self.span_of(lines, start, start + consumed);
         // blocktext for message literals: the raw marker line + raw block
         // (trailing blanks already trimmed by indented_block).
@@ -8417,11 +8436,14 @@ impl BlockParser {
                 break m;
             }
             if used >= block.len() || block[used].is_blank() {
-                *construct_error = Some(self.msg(
+                // `explicit_construct` locates the `MarkupError` at
+                // `abs_line_number()`: where the machine stands, the
+                // machine's count (`states.py:2492-2505`).
+                *construct_error = Some(self.msg_sm(
                     messages::WARNING,
                     "malformed substitution definition.",
-                    msg_source,
-                    lineno,
+                    machine_line.source,
+                    machine_line.lineno,
                 ));
                 return false;
             }
