@@ -38,7 +38,9 @@ impl Transform for TranslationProgressTotaliser {
 /// indented under a paragraph stands on its own rather than in a quote.
 /// The first block takes the quote's ids, classes and names
 /// ([`TxTree::replace_self`]). An empty quote qualifies too (`all()` of
-/// nothing is true) and is removed.
+/// nothing is true) and is removed: the parse keeps a quote whose content
+/// makes no node, as docutils does. One with a basic attribute stays,
+/// since removing it crashes Sphinx (decision 13).
 ///
 /// The loop is `for node in self.document.findall(nodes.block_quote)`, a
 /// live walk, which goes on from where the quote was, as the generator
@@ -59,7 +61,20 @@ impl Transform for HandleCodeBlocks {
             let doctest_only = blocks
                 .iter()
                 .all(|&block| tree.node(block).kind == kinds::DOCTEST_BLOCK);
-            if !doctest_only {
+            // Replacing an empty quote that has a basic attribute (the
+            // class of an epigraph whose content makes no node) crashes
+            // Sphinx 9.1.0: `replace_self([])` asserts that no basic
+            // attribute is lost (`AssertionError: Losing "classes"
+            // attribute`). Inputs that crash Sphinx are not modelled
+            // (decision 13: the build exits 2, T17a), so the quote stays
+            // and the walk goes on as past any quote it keeps.
+            let attrs = &tree.node(quote).attrs;
+            let crashes_sphinx = blocks.is_empty()
+                && !(attrs.ids.is_empty()
+                    && attrs.classes.is_empty()
+                    && attrs.names.is_empty()
+                    && attrs.dupnames.is_empty());
+            if !doctest_only || crashes_sphinx {
                 next = tree.next_node(quote, is_quote, false, true, true, true);
                 continue;
             }
@@ -278,12 +293,16 @@ mod tests {
     /// node that took its place, subtree and all: a doctest-only quote
     /// right after an empty one stays. An empty last child ends its
     /// parent's walk. (docutils 0.22.4: each tree built with
-    /// `docutils.nodes` and `HandleCodeBlocks(document).apply()`.)
+    /// `docutils.nodes` and `HandleCodeBlocks(document).apply()`.) The
+    /// two `.. default-domain::` rows reach the same walk through the read:
+    /// the parse keeps the quote the directive leaves empty, and Sphinx
+    /// 9.1.0 skips a section after it, subtree included, or a paragraph.
+    /// An empty quote with a class, which crashes Sphinx, stays.
     #[test]
     fn handle_code_blocks_unwraps_doctest_only_block_quotes() {
         const DOC: &str = "<document source=\"<SRCDIR>/index.rst\" \
                            translation_progress=\"{'total': 0, 'translated': 0}\">\n";
-        let rows: [(&str, &str); 5] = [
+        let rows: [(&str, &str); 7] = [
             (
                 // docutils-0147.
                 "Para.\n\n    >>> quoted_code()\n    output\n",
@@ -314,10 +333,38 @@ mod tests {
                 "    <doctest_block classes=\"epigraph doctest\" xml:space=\"preserve\">\n        \
                  >>> 1\n",
             ),
+            (
+                // The parse keeps the quote `.. default-domain::` leaves
+                // empty; 210 removes it and skips the section that took
+                // its place, so the quote in the section stays.
+                "Para.\n\n   .. default-domain:: py\n\nTitle\n=====\n\nText.\n\n   >>> 1\n",
+                "    <paragraph>\n        Para.\n    <section ids=\"title\" names=\"title\">\n        \
+                 <title>\n            Title\n        <paragraph>\n            Text.\n        \
+                 <block_quote>\n            \
+                 <doctest_block classes=\"doctest\" xml:space=\"preserve\">\n                >>> 1\n",
+            ),
+            (
+                // Only the paragraph after the empty quote is skipped.
+                "Para.\n\n   .. default-domain:: py\n\nText.\n\n   >>> 1\n",
+                "    <paragraph>\n        Para.\n    <paragraph>\n        Text.\n    \
+                 <doctest_block classes=\"doctest\" xml:space=\"preserve\">\n        >>> 1\n",
+            ),
         ];
         for (rst, body) in rows {
             assert_eq!(stage_r(rst), format!("{DOC}{body}"), "{rst:?}");
         }
+        // An empty quote with a basic attribute, the class of an epigraph
+        // whose content makes no node, crashes Sphinx 9.1.0: `replace_self`
+        // with no node asserts that no basic attribute is lost
+        // (`AssertionError: Losing "classes" attribute: ['epigraph']`).
+        // Inputs that crash Sphinx are not modelled (decision 13: the build
+        // exits 2, T17a), so 210 leaves the quote where it is.
+        assert_eq!(
+            stage_r("Para.\n\n.. epigraph::\n\n   .. default-domain:: py\n"),
+            format!(
+                "{DOC}    <paragraph>\n        Para.\n    <block_quote classes=\"epigraph\">\n"
+            )
+        );
 
         fn element(kind: &'static str, children: Vec<Node>) -> Node {
             let mut node = Node::elem(kind, Span::ZERO);

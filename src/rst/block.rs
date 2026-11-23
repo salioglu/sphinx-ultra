@@ -2257,9 +2257,10 @@ impl BlockParser {
                 attr_messages = inline.messages;
                 quote.children.push(a);
             }
-            if quote.children.is_empty() {
-                continue;
-            }
+            // A quote whose content makes no node (an include of an empty
+            // file, Sphinx's `.. default-domain::`) is kept, empty, as
+            // docutils keeps every quote it parses (`states.py:1294-1295`).
+            // In Sphinx, `HandleCodeBlocks` (210) removes it in the read.
             out.push(quote);
             out.append(&mut attr_messages);
         }
@@ -19092,6 +19093,45 @@ mod include_tests {
             vec!["before".to_string(), "after".to_string()]
         );
         assert!(messages_of(&tree).is_empty());
+    }
+
+    /// A block quote whose content makes no node stays in the tree, empty:
+    /// docutils' `Body.block_quote` keeps every quote it parses
+    /// (`states.py:1283-1305`), and only Sphinx's `HandleCodeBlocks` (210)
+    /// removes one, in the read. A quote closed by an attribution and the
+    /// quote after it are both kept, and the epigraph's class goes on its
+    /// empty quote. docutils 0.22.4: each input parsed as `<tmp>/main.rst`
+    /// beside an empty `empty.rst`.
+    #[test]
+    fn a_quote_whose_content_makes_no_node_is_kept() {
+        let tmp = tempfile::tempdir().unwrap();
+        write(tmp.path(), "empty.rst", "");
+        let main = tmp.path().join("main.rst");
+        let head = format!(
+            "<document source=\"{}\">\n    <paragraph>\n        Para.\n",
+            main.display()
+        );
+        let rows: [(&str, &str); 3] = [
+            (
+                "Para.\n\n   .. include:: empty.rst\n\nAfter.\n",
+                "    <block_quote>\n    <paragraph>\n        After.\n",
+            ),
+            (
+                "Para.\n\n   .. include:: empty.rst\n\n   -- A\n\n   .. include:: empty.rst\n",
+                "    <block_quote>\n        <attribution>\n            A\n    <block_quote>\n",
+            ),
+            (
+                "Para.\n\n.. epigraph::\n\n   .. include:: empty.rst\n",
+                "    <block_quote classes=\"epigraph\">\n",
+            ),
+        ];
+        for (rst, body) in rows {
+            assert_eq!(
+                parse_docutils(&main, rst).root.pformat(),
+                format!("{head}{body}"),
+                "{rst:?}"
+            );
+        }
     }
 
     /// Included lines join the enclosing document's section hierarchy —
