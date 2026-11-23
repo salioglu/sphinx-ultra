@@ -424,7 +424,7 @@ impl Transform for FootnoteDocnameUpdater {
 
 #[cfg(test)]
 mod tests {
-    use crate::transforms::test_support::{differences, read_snippet, SphinxRead};
+    use crate::transforms::test_support::{differences, SphinxRead};
 
     // oracle (Sphinx 9.1.0, docutils 0.22.4) for every row of this module:
     //   the input read as `index.rst` through tools/gen_read_state_fixture.py's
@@ -775,10 +775,9 @@ mod tests {
     /// 2`; `GlossarySorter` (500) sorts `zeta`'s reference after `alpha`'s
     /// (`state.glossary_sorted_footnote_order`), and it keeps number 1. In
     /// `state.docinfo_abstract_footnote_order` the abstract's reference
-    /// keeps number 1 and the author's 2 (DocInfo, 340, which moves the
-    /// abstract and drops the author field, is T12's: until then the field
-    /// list stays, and only the footnotes and the two references are
-    /// compared).
+    /// keeps number 1 and the author's 2: DocInfo (340) puts the docinfo,
+    /// which holds the author's, ahead of the abstract's topic, and the
+    /// metadata collector (880) pops the docinfo, reference and all.
     #[test]
     fn footnote_numbering_follows_registration() {
         let rows = [
@@ -868,28 +867,28 @@ mod tests {
                     ("parse", "footnote", "id4", true),
                 ],
             },
+            SphinxRead {
+                rst: ":Abstract: abstract text [#]_\n:Author: someone [#]_\n\nBody.\n\n\
+                .. [#] abstract note\n.. [#] author note\n",
+                body: "    <topic classes=\"abstract\">\n        <title>\n            Abstract\n        \
+                <paragraph>\n            abstract text \n            <footnote_reference \
+                auto=\"1\" docname=\"index\" ids=\"id1\" refid=\"id3\">\n                1\n    \
+                <paragraph>\n        Body.\n    <footnote auto=\"1\" backrefs=\"id1\" \
+                docname=\"index\" ids=\"id3\" names=\"1\">\n        <label>\n            1\n        \
+                <paragraph>\n            abstract note\n    <footnote auto=\"1\" backrefs=\"id2\" \
+                docname=\"index\" ids=\"id4\" names=\"2\">\n        <label>\n            2\n        \
+                <paragraph>\n            author note\n",
+                warnings: &[],
+                trace: &[
+                    ("parse", "footnote_reference", "id1", true),
+                    ("parse", "footnote_reference", "id2", false),
+                    ("parse", "footnote", "id3", true),
+                    ("parse", "footnote", "id4", true),
+                ],
+            },
         ];
         let differences = differences(&rows);
         assert!(differences.is_empty(), "{}", differences.join("\n\n"));
-
-        let read = read_snippet(
-            ":Abstract: abstract text [#]_\n:Author: someone [#]_\n\nBody.\n\n\
-             .. [#] abstract note\n.. [#] author note\n",
-            true,
-        );
-        let footnotes = "    <footnote auto=\"1\" backrefs=\"id1\" docname=\"index\" ids=\"id3\" \
-                         names=\"1\">\n        <label>\n            1\n        <paragraph>\n            \
-                         abstract note\n    <footnote auto=\"1\" backrefs=\"id2\" docname=\"index\" \
-                         ids=\"id4\" names=\"2\">\n        <label>\n            2\n        \
-                         <paragraph>\n            author note\n";
-        assert!(read.body.ends_with(footnotes), "{}", read.body);
-        for (id, refid, number) in [("id1", "id3", 1), ("id2", "id4", 2)] {
-            let reference = format!(
-                "<footnote_reference auto=\"1\" docname=\"index\" ids=\"{id}\" \
-                 refid=\"{refid}\">\n                        {number}\n"
-            );
-            assert!(read.body.contains(&reference), "{reference}\n{}", read.body);
-        }
     }
 
     /// The references a rejected `table` or `list-table` parsed stay

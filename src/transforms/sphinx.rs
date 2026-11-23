@@ -10,6 +10,7 @@
 use chrono::{DateTime, Datelike, NaiveDate, Timelike, Utc};
 use unicode_normalization::UnicodeNormalization;
 
+use super::state::NodeView;
 use super::tree::{Findall, TxId, TxNode, TxTree};
 use super::{Transform, TransformCx};
 use crate::doctree::{is_text_element, kinds, AttrValue};
@@ -287,6 +288,54 @@ fn next_after(tree: &TxTree, id: TxId, pred: impl Fn(&TxNode) -> bool) -> Option
         last = child;
     }
     tree.next_node(last, pred, false, true, true, true)
+}
+
+/// 210-025 `AutoNumbering` (`SP/sphinx/transforms/__init__.py:200-214`):
+/// every node the std domain numbers — a figure, a table or a container
+/// (`enumerable_nodes`, matched by exact class,
+/// `SP/sphinx/domains/std/__init__.py:1363-1366`), so a code block's
+/// caption wrapper — that has a caption or a title among its children
+/// (`get_numfig_title` is not `None`) and no ids takes an implicit target:
+/// `document.note_implicit_target(node)`, an id from the shared counter
+/// ([`TransformCx::set_id`]) and its names bound to it, of which a node
+/// without ids has none. As a transform it numbers once the whole parse
+/// is over, so its ids follow every id the parse allocated ([DS §5.6]),
+/// and before PropagateTargets (260) hands a label above the node its
+/// ids. The loop is a live walk over every element, which allocates ids
+/// and moves no node.
+pub struct AutoNumbering;
+
+impl Transform for AutoNumbering {
+    fn apply(&self, cx: &mut TransformCx<'_>) {
+        let root = cx.tree.root();
+        let enumerable = cx.tree.findall(root, |node| {
+            matches!(node.kind, "figure" | kinds::TABLE | "container") && node.attrs.ids.is_empty()
+        });
+        for node in enumerable {
+            let titled = cx
+                .tree
+                .node(node)
+                .children
+                .iter()
+                .any(|&child| matches!(cx.tree.node(child).kind, "caption" | kinds::TITLE));
+            if !titled {
+                continue;
+            }
+            let id = cx.set_id(node);
+            let numbered = cx.tree.node(node);
+            let view = NodeView {
+                kind: numbered.kind,
+                names: &numbered.attrs.names,
+                refuri: numbered.str_attr("refuri"),
+                refname: numbered.str_attr("refname"),
+            };
+            let duplicates = cx.state.names.bind(view, &id, false);
+            debug_assert!(
+                duplicates.is_empty(),
+                "a node without ids has no names to duplicate"
+            );
+        }
+    }
 }
 
 /// 500-024 `DoctestTransform` (`SP/sphinx/transforms/__init__.py:327-334`):
@@ -736,7 +785,8 @@ mod tests {
     use crate::rst::ParseOptions;
     use crate::transforms::state::DocumentState;
     use crate::transforms::test_support::{
-        harness_settings, index_rst, read_snippet, read_snippet_with, DOC,
+        differences, event, harness_settings, index_rst, read_snippet, read_snippet_with, Event,
+        SphinxRead, DOC,
     };
     use crate::transforms::tree::TxTree;
     use crate::transforms::{read_transforms_with, NoOp, TransformId, TransformKey};
@@ -1584,6 +1634,168 @@ mod tests {
                 .map(|child| child.kind)
                 .collect::<Vec<_>>(),
             [kinds::SYSTEM_MESSAGE, kinds::SECTION, kinds::SYSTEM_MESSAGE]
+        );
+    }
+
+    /// `AutoNumbering` (210-025, `SP/sphinx/transforms/__init__.py:200-214`)
+    /// gives every figure, table and code-block container that has a
+    /// caption or a title and no ids an implicit id from the shared
+    /// counter, once the parse is over: `docutils-0534`'s table and an
+    /// unlabelled captioned `code-block` take `id1`, and a captioned
+    /// `code-block` under a label takes `id1` before PropagateTargets
+    /// (260) adds the label's `mylabel`. The ids the parse allocated come
+    /// first (the table after a problematic takes `id3`), and a node a
+    /// `:name:` gave ids takes none. Each row is a Sphinx 9.1.0 read of the
+    /// input as `index.rst` (the read-state harness, `keep_warnings =
+    /// True`).
+    ///
+    /// The figures (`docutils-0490`, and `docutils-0492` without a caption,
+    /// which takes no id) are compared on the figure's line and the id
+    /// trace: their images' `candidates` and `image file not readable`
+    /// are the ImageCollector's (T13a).
+    #[test]
+    fn autonumbering_ids_captioned_enumerables() {
+        let rows = [
+            SphinxRead {
+                // docutils-0534.
+                rst: ".. table:: Table Title\n   :widths: 30 70\n   :align: center\n\n   \
+                      =====  =====\n   A      B\n   =====  =====\n   1      2\n   =====  =====\n",
+                body: "    <table align=\"center\" classes=\"colwidths-given\" ids=\"id1\">\n        \
+                       <title>\n            Table Title\n        <tgroup cols=\"2\">\n            \
+                       <colspec colwidth=\"30\">\n            <colspec colwidth=\"70\">\n            \
+                       <thead>\n                <row>\n                    \
+                       <entry>\n                        <paragraph>\n                            \
+                       A\n                    <entry>\n                        \
+                       <paragraph>\n                            B\n            <tbody>\n                \
+                       <row>\n                    <entry>\n                        \
+                       <paragraph>\n                            1\n                    \
+                       <entry>\n                        <paragraph>\n                            2\n",
+                warnings: &[],
+                trace: &[("AutoNumbering", "table", "id1", true)],
+            },
+            SphinxRead {
+                rst: ".. code-block:: python\n   :caption: cap\n\n   pass\n",
+                body: "    <container classes=\"literal-block-wrapper\" ids=\"id1\" \
+                       literal_block=\"1\">\n        <caption>\n            cap\n        <literal_block \
+                       force=\"0\" highlight_args=\"{}\" language=\"python\" \
+                       xml:space=\"preserve\">\n            pass\n",
+                warnings: &[],
+                trace: &[("AutoNumbering", "container", "id1", true)],
+            },
+            SphinxRead {
+                rst: ".. _mylabel:\n\n.. code-block:: python\n   :caption: cap\n\n   pass\n",
+                body: "    <target refid=\"mylabel\">\n    <container classes=\"literal-block-wrapper\" \
+                       ids=\"id1 mylabel\" literal_block=\"1\" names=\"mylabel\">\n        \
+                       <caption>\n            cap\n        <literal_block force=\"0\" \
+                       highlight_args=\"{}\" language=\"python\" xml:space=\"preserve\">\n            \
+                       pass\n",
+                warnings: &[],
+                trace: &[
+                    ("parse", "target", "mylabel", true),
+                    ("AutoNumbering", "container", "id1", true),
+                ],
+            },
+            SphinxRead {
+                rst: ".. table:: Cap\n\n   =  =\n   a  b\n   =  =\n\nText *x.\n",
+                body: "    <table ids=\"id3\">\n        <title>\n            Cap\n        <tgroup \
+                       cols=\"2\">\n            <colspec colwidth=\"1\">\n            <colspec \
+                       colwidth=\"1\">\n            <tbody>\n                <row>\n                    \
+                       <entry>\n                        <paragraph>\n                            \
+                       a\n                    <entry>\n                        \
+                       <paragraph>\n                            b\n    <paragraph>\n        \
+                       Text \n        <problematic ids=\"id2\" refid=\"id1\">\n            *\n        \
+                       x.\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"7\" \
+                       source=\"<SRCDIR>/index.rst\" type=\"WARNING\">\n        <paragraph>\n            \
+                       Inline emphasis start-string without end-string.\n",
+                warnings: &["<SRCDIR>/index.rst:7: WARNING: Inline emphasis start-string without \
+                             end-string. [docutils]"],
+                trace: &[
+                    ("parse", "system_message", "id1", true),
+                    ("parse", "problematic", "id2", true),
+                    ("AutoNumbering", "table", "id3", true),
+                ],
+            },
+            SphinxRead {
+                rst: ".. table:: Cap\n   :name: tab\n\n   =  =\n   a  b\n   =  =\n",
+                body: "    <table ids=\"tab\" names=\"tab\">\n        <title>\n            Cap\n        \
+                       <tgroup cols=\"2\">\n            <colspec colwidth=\"1\">\n            <colspec \
+                       colwidth=\"1\">\n            <tbody>\n                <row>\n                    \
+                       <entry>\n                        <paragraph>\n                            \
+                       a\n                    <entry>\n                        \
+                       <paragraph>\n                            b\n",
+                warnings: &[],
+                trace: &[("parse", "table", "tab", true)],
+            },
+        ];
+        let mismatches = differences(&rows);
+        assert!(mismatches.is_empty(), "{}", mismatches.join("\n\n"));
+
+        let figures: [(&str, &str, &[Event]); 2] = [
+            (
+                // docutils-0490.
+                ".. figure:: pic.png\n\n   Caption text.\n",
+                "    <figure ids=\"id1\">",
+                &[event("AutoNumbering", "figure", "id1", true)],
+            ),
+            // docutils-0492.
+            (".. figure:: pic.png\n", "    <figure>", &[]),
+        ];
+        for (rst, figure, trace) in figures {
+            let read = read_snippet(rst, true);
+            assert_eq!(read.body.lines().next(), Some(figure), "{rst:?}");
+            assert_eq!(read.trace, trace, "{rst:?}");
+        }
+    }
+
+    /// A `literalinclude`'s caption container is numbered by AutoNumbering
+    /// (210-025) like any captioned code block: after every id the parse
+    /// allocated, the sentinel's `id5`/`id6` included, so it takes `id7`
+    /// (Sphinx 9.1.0, the read-state harness reading the input as
+    /// `index.rst` beside a `code.py` holding `pass`).
+    #[test]
+    fn a_literalinclude_caption_is_numbered_after_the_parse() {
+        let tmp = tempfile::tempdir().expect("a temporary source directory");
+        std::fs::write(tmp.path().join("code.py"), "pass\n").expect("code.py writes");
+        let rst = "Title\n=====\n\n.. literalinclude:: code.py\n   :caption: Cap :nod:bogus:`x` \
+                   *open\n\n.. literalinclude:: code.py\n   :caption: ----------\n\nSentinel \
+                   :nod:sentinel:`z`.\n";
+        let parse = ParseOptions {
+            source_path: tmp.path().join("index.rst").display().to_string(),
+            srcdir: Some(tmp.path().to_path_buf()),
+            ..index_rst()
+        };
+        let read = crate::read::read_standalone(rst, &parse, &harness_settings(true));
+        let trace: Vec<(&str, &str, &str, bool)> = read
+            .outcome
+            .state()
+            .ids
+            .trace()
+            .iter()
+            .map(|event| {
+                let phase = event.phase.rsplit('.').next().unwrap_or_default();
+                (phase, event.kind, event.id.as_str(), event.attached)
+            })
+            .collect();
+        assert_eq!(
+            trace,
+            [
+                ("parse", "section", "title", true),
+                ("parse", "system_message", "id1", false),
+                ("parse", "problematic", "id2", true),
+                ("parse", "system_message", "id3", false),
+                ("parse", "problematic", "id4", true),
+                ("parse", "system_message", "id5", true),
+                ("parse", "problematic", "id6", true),
+                ("AutoNumbering", "container", "id7", true),
+            ]
+        );
+        let pformat = read.outcome.doctree().root.pformat();
+        assert!(
+            pformat.contains(
+                "        <container classes=\"literal-block-wrapper\" ids=\"id7\" \
+                 literal_block=\"1\">\n"
+            ),
+            "{pformat}"
         );
     }
 }

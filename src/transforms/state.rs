@@ -493,6 +493,13 @@ pub struct DocumentState {
     /// ended: the top-level state machine's final position, which a
     /// message with neither a node nor a line is located at ([DS §6.2]).
     pub final_position: DocLoc,
+    /// The top-level state machine's `input_lines` once the parse has
+    /// ended, included files spliced in with their padding lines: each
+    /// line's source-table entry and 1-based line, as
+    /// `input_lines.info(offset)` gives them (`srcoffset + 1`; 0 for an
+    /// `internal padding before` line). What a message given a line after
+    /// the parse is located against ([`Self::source_and_line`]).
+    pub input_lines: Vec<(u16, u32)>,
     /// The docutils locations of the nodes whose location the default rule
     /// ([DS §8.2]) does not give, by identity, as docutils' parse leaves
     /// them: the location model completes one without a source as Sphinx's
@@ -643,6 +650,36 @@ impl DocumentState {
     pub fn mint_uid(&mut self) -> Uid {
         self.next_uid += 1;
         Uid::new(NonZeroU32::new(self.next_uid).expect("a Uid counter past zero"))
+    }
+
+    /// docutils' `reporter.get_source_and_line(lineno)` once the parse has
+    /// ended, which the reporter binds to the top-level state machine
+    /// (`SP/docutils/parsers/rst/states.py:245-246`;
+    /// `StateMachine.get_source_and_line`, `SP/docutils/statemachine.py:358-383`):
+    /// for no line, the machine's final position ([`Self::final_position`]);
+    /// for a line, the location of the input line at offset `lineno - 1`
+    /// ([`Self::input_lines`]), whatever source the line was counted in.
+    /// Python's indexing applies: an offset just past the end is the last
+    /// line's source and its line + 1, one further past is neither, and a
+    /// negative one counts from the end.
+    pub fn source_and_line(&self, lineno: Option<u32>) -> DocLoc {
+        let Some(lineno) = lineno else {
+            return self.final_position;
+        };
+        let len = self.input_lines.len() as i64;
+        let offset = i64::from(lineno) - 1;
+        let index = if offset < 0 { offset + len } else { offset };
+        match usize::try_from(index)
+            .ok()
+            .and_then(|index| self.input_lines.get(index))
+        {
+            Some(&(source, line)) => DocLoc::at(source, line),
+            None if offset == len => match self.input_lines.last() {
+                Some(&(source, line)) => DocLoc::at(source, line + 1),
+                None => DocLoc::default(),
+            },
+            None => DocLoc::default(),
+        }
     }
 
     /// The next record sequence number, from 0 ([`Self::next_seq`]).
@@ -1471,6 +1508,34 @@ mod tests {
         assert_eq!(
             state.registries_dump(&root)["autofootnotes"],
             serde_json::json!([null])
+        );
+    }
+
+    /// `reporter.get_source_and_line(lineno)` after the parse
+    /// (`SP/docutils/statemachine.py:358-383`, `StringList.info`,
+    /// `:1299-1307`): no line is the final position; a line is an offset
+    /// into the top-level input, whatever source it was counted in — here
+    /// `index.rst` lines 1-3, the include's padding, `inc.rst` lines 1-2
+    /// and the closing padding, so line 6 is `inc.rst`'s line 2; the
+    /// offset just past the end is the last line's source and its line +
+    /// 1; any further one is neither; and line 0, offset -1, is Python's
+    /// last item.
+    #[test]
+    fn source_and_line_reads_a_line_as_an_input_offset() {
+        let state = DocumentState {
+            final_position: DocLoc::at(3, 4),
+            input_lines: vec![(0, 1), (0, 2), (0, 3), (1, 0), (2, 1), (2, 2), (3, 3)],
+            ..DocumentState::default()
+        };
+        assert_eq!(state.source_and_line(None), DocLoc::at(3, 4));
+        assert_eq!(state.source_and_line(Some(2)), DocLoc::at(0, 2));
+        assert_eq!(state.source_and_line(Some(6)), DocLoc::at(2, 2));
+        assert_eq!(state.source_and_line(Some(8)), DocLoc::at(3, 4));
+        assert_eq!(state.source_and_line(Some(9)), DocLoc::default());
+        assert_eq!(state.source_and_line(Some(0)), DocLoc::at(3, 3));
+        assert_eq!(
+            DocumentState::default().source_and_line(Some(1)),
+            DocLoc::default()
         );
     }
 }

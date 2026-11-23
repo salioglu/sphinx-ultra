@@ -137,7 +137,8 @@ pub struct NodeExt {
     /// and `doctest_block` (Sphinx's HTML writer highlights a literal block
     /// only when its `rawsource` equals its `astext()`); the field also
     /// serves the other kinds whose `rawsource` a later stage reads:
-    /// Referential inline nodes, `pending` and `substitution_definition`.
+    /// Referential inline nodes, `pending`, `substitution_definition`, and
+    /// a `field_body` that opens with an enumerated list (DocInfo's).
     /// `None` is docutils' default `''` ([`Node::set_rawsource`]).
     pub rawsource: Option<Box<str>>,
     /// The data of a `#text` leaf docutils builds from null-escaped text:

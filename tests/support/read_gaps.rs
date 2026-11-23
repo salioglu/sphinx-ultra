@@ -16,17 +16,19 @@
 //! math directive's names), T9b's `system_message` (an INFO message
 //! `FilterSystemMessages`, 999, removes), T9c's `doctest class` and
 //! `transitions` (`DoctestTransform`, 500, and `Transitions`, 830) and
-//! T10's `propagate targets` (`PropagateTargets`, 260), and T11's
-//! `citations` and the tree shapes and records of `footnotes` and
-//! `substitutions` (Substitutions, 220; the citation transforms, 619;
-//! Footnotes, 620; the unreferenced-footnote warning, 622): a divergence of
-//! that shape now is a regression, which the census reports unexplained.
-//! T10's `dangling refs` and `indirect targets` stay, for what later tasks
-//! shift: a `problematic` whose ids, and the target transforms' id
-//! allocations and records, move when AutoNumbering (210) or a pending
-//! transform takes ids first, in rows those tasks own. The read-state
-//! census keeps `footnotes` and `substitutions` for the same reason, as the
-//! families of the ids 620 and 220 allocate in such rows.
+//! T10's `propagate targets` (`PropagateTargets`, 260), T11's `citations`
+//! and the tree shapes and records of `footnotes` and `substitutions`
+//! (Substitutions, 220; the citation transforms, 619; Footnotes, 620; the
+//! unreferenced-footnote warning, 622), and T12's `autonumber ids`,
+//! `class attribute` and `docinfo` (AutoNumbering, 210; ClassAttribute,
+//! 210; DocInfo, 340, and the metadata collector's pop, 880): a divergence
+//! of that shape now is a regression, which the census reports
+//! unexplained. T10's `dangling refs` and `indirect targets` stay, for
+//! what later tasks shift: a `problematic` whose ids, and the target
+//! transforms' id allocations and records, move when a pending transform
+//! takes ids first, in rows those tasks own. The read-state census keeps
+//! `footnotes`, `substitutions` and `autonumber ids` for the same reason,
+//! as the families of the ids 620, 220 and 210 allocate in such rows.
 
 use std::collections::BTreeSet;
 
@@ -73,9 +75,6 @@ pub const fn gap_fix(family: &'static str, owner: &'static str) -> GapFix {
 // The families, each with the task that ports what it lacks.
 pub const DANGLING_REFS: GapFix = gap_fix("dangling refs", "5a-T10");
 pub const INDIRECT_TARGETS: GapFix = gap_fix("indirect targets", "5a-T10");
-pub const AUTONUMBER_IDS: GapFix = gap_fix("autonumber ids", "5a-T12");
-pub const CLASS_ATTRIBUTE: GapFix = gap_fix("class attribute", "5a-T12");
-pub const DOCINFO: GapFix = gap_fix("docinfo", "5a-T12");
 pub const CANDIDATES: GapFix = gap_fix("candidates", "5a-T13a");
 /// The structure directives' parse halves (`contents`, `sectnum`,
 /// `target-notes`).
@@ -299,15 +298,7 @@ fn hunk_census(hunk: &Hunk<'_>, messages: &[Option<String>], notes: &BTreeSet<St
     let mut census = Census::default();
     let removed: Vec<&str> = hunk.removed.iter().map(|line| line.trim_start()).collect();
     let added: Vec<&str> = hunk.added.iter().map(|line| line.trim_start()).collect();
-    let starts = |lines: &[&str], prefix: &str| lines.iter().any(|line| line.starts_with(prefix));
 
-    // DocInfo (340) and MetadataCollector's pop (880): a leading field list
-    // Sphinx moved out of the body. What it held went with it, so only the
-    // lines Sphinx kept are classified further.
-    let docinfo = hunk.added.contains(&"    <field_list>") && !starts(&removed, "<field_list>");
-    if docinfo {
-        census.add(DOCINFO);
-    }
     // A reference or target Sphinx resolved: its line less its
     // `refuri`/`refid` is ours, less ours' `refname` when it has one.
     let unresolved: BTreeSet<String> = added
@@ -333,14 +324,6 @@ fn hunk_census(hunk: &Hunk<'_>, messages: &[Option<String>], notes: &BTreeSet<St
         if line.contains(" candidates=\"") {
             census.add(CANDIDATES);
         }
-        if (line.starts_with("<figure ") || line.starts_with("<table "))
-            && line.contains(" ids=\"id")
-        {
-            census.add(AUTONUMBER_IDS);
-        }
-        if line.starts_with("<section classes=") {
-            census.add(CLASS_ATTRIBUTE);
-        }
         let target_note_reference = line.starts_with("<footnote_reference ")
             && line
                 .split(" refid=\"")
@@ -364,33 +347,23 @@ fn hunk_census(hunk: &Hunk<'_>, messages: &[Option<String>], notes: &BTreeSet<St
         }
     }
 
-    if !docinfo {
-        let mut our_messages: Vec<&str> = Vec::new();
-        for (at, line) in added.iter().enumerate() {
-            if let Some(message) = messages
-                .get(hunk.added_from + at)
-                .and_then(Option::as_deref)
-            {
-                if !our_messages.contains(&message) {
-                    our_messages.push(message);
-                }
-                continue;
-            }
-            if line.starts_with("<paragraph classes=") && !starts(&removed, "<desc ") {
-                census.add(CLASS_ATTRIBUTE);
-            }
+    let mut our_messages: Vec<&str> = Vec::new();
+    let added_messages = messages.iter().skip(hunk.added_from).take(added.len());
+    for message in added_messages.filter_map(Option::as_deref) {
+        if !our_messages.contains(&message) {
+            our_messages.push(message);
         }
-        for message in our_messages {
-            let pending = PENDING_DIRECTIVE_NAMES
-                .iter()
-                .any(|name| message.contains(&format!("\"{name}\"")));
-            if pending {
-                census.add(PENDING_DIRECTIVES);
-            } else {
-                census
-                    .unexplained
-                    .push(format!("a message only our tree has: {message:?}"));
-            }
+    }
+    for message in our_messages {
+        let pending = PENDING_DIRECTIVE_NAMES
+            .iter()
+            .any(|name| message.contains(&format!("\"{name}\"")));
+        if pending {
+            census.add(PENDING_DIRECTIVES);
+        } else {
+            census
+                .unexplained
+                .push(format!("a message only our tree has: {message:?}"));
         }
     }
 

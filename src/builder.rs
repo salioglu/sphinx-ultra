@@ -72,7 +72,12 @@ const DOCTREE_MAGIC: &[u8; 4] = b"SUDT";
 /// `keep_warnings = False`), and its consumers no longer skip them: a
 /// version-3 blob still holds them, and the search index of a document
 /// recovered from it would index their words.
-const DOCTREE_FORMAT_VERSION: u32 = 4;
+///
+/// Version 5: wave 5a's `DocInfo` (340) and the metadata collector's pop
+/// — the persisted doctree no longer holds a document's leading field
+/// list, and the search index no longer skips one: a version-4 blob still
+/// holds it, and its words would be indexed.
+const DOCTREE_FORMAT_VERSION: u32 = 5;
 
 /// Bytes of the [`DOCTREE_MAGIC`] + [`DOCTREE_FORMAT_VERSION`] header.
 const DOCTREE_HEADER_LEN: usize = DOCTREE_MAGIC.len() + std::mem::size_of::<u32>();

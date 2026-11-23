@@ -212,22 +212,14 @@ fn mismatches(fixture: &Fixture) -> BTreeMap<(String, &'static str), (Value, Val
 /// owner shows whole rows.
 #[rustfmt::skip]
 const KNOWN_READ_STATE_GAPS: &[(&str, &str, &str)] = &[
-    ("state.docinfo_abstract_footnote_order", "id_trace", "docinfo: 5a-T12"),
-    ("state.docinfo_abstract_footnote_order", "pseudo_xml", "docinfo: 5a-T12"),
     ("state.final_position.image", "pseudo_xml", "candidates: 5a-T13a"),
     ("state.final_position.image", "warnings", "candidates: 5a-T13a"),
-    ("state.location.field_body", "id_trace", "dangling refs+docinfo: 5a-T12"),
-    ("state.location.field_body", "pseudo_xml", "docinfo: 5a-T12"),
-    ("state.location.figure_caption", "id_trace", "autonumber ids+dangling refs: 5a-T12"),
-    ("state.location.figure_caption", "pseudo_xml", "autonumber ids+candidates+dangling refs: 5a-T13a"),
+    ("state.location.figure_caption", "pseudo_xml", "candidates: 5a-T13a"),
     ("state.location.figure_caption", "warnings", "candidates: 5a-T13a"),
-    ("state.location.table_title", "id_trace", "autonumber ids+dangling refs: 5a-T12"),
-    ("state.location.table_title", "pseudo_xml", "autonumber ids+dangling refs: 5a-T12"),
     ("state.pending_serials", "id_trace", "pending: 5a-T18b"),
-    ("state.pending_serials", "pseudo_xml", "class attribute+pending: 5a-T18b"),
+    ("state.pending_serials", "pseudo_xml", "pending: 5a-T18b"),
     ("state.pending_serials", "registries_post_parse", "pending: 5a-T18a"),
     ("state.pending_serials", "warnings", "pending: 5a-T18a"),
-    ("state.rst_class_before_section", "pseudo_xml", "class attribute: 5a-T12"),
 ];
 
 /// Holds every key of every read-state case to the oracle, strictly, against
@@ -368,15 +360,6 @@ const SPHINX_ONLY_RECORDS: &[(&str, GapFix)] = &[
     ("image file not readable: ", read_gaps::CANDIDATES),
 ];
 
-/// The tree families of the case, among `families`, that a key beside
-/// the tree depends on.
-fn tree_families(tree: Option<&Census>, families: &[GapFix]) -> Vec<GapFix> {
-    tree.into_iter()
-        .flat_map(|tree| tree.fixes.iter().copied())
-        .filter(|fix| families.contains(fix))
-        .collect()
-}
-
 /// The families of a `warnings` divergence, record by record.
 fn warning_census(expected: &Value, actual: &Value) -> Census {
     let expected = records(expected);
@@ -414,11 +397,13 @@ fn warning_census(expected: &Value, actual: &Value) -> Census {
     census
 }
 
-/// Substitutions' (220) and Footnotes' (620) families, ported in T11. Like
-/// T10's (`dangling refs`, `indirect targets`), they stay for the ids those
-/// transforms allocate, which later tasks' rows can shift.
+/// Substitutions' (220) and Footnotes' (620) families, ported in T11, and
+/// AutoNumbering's (210), ported in T12. Like T10's (`dangling refs`,
+/// `indirect targets`), they stay for the ids those transforms allocate,
+/// which later tasks' rows can shift.
 const SUBSTITUTIONS: GapFix = read_gaps::gap_fix("substitutions", "5a-T11");
 const FOOTNOTES: GapFix = read_gaps::gap_fix("footnotes", "5a-T11");
+const AUTONUMBER_IDS: GapFix = read_gaps::gap_fix("autonumber ids", "5a-T12");
 
 /// The transforms that allocate ids in the corpus, by `python_name`, with
 /// the task that ports each [DS §5.2].
@@ -448,14 +433,13 @@ const ALLOCATING_TRANSFORMS: &[(&str, GapFix)] = &[
         "docutils.transforms.parts.Contents",
         read_gaps::PENDING_TRANSFORMS,
     ),
-    ("sphinx.transforms.AutoNumbering", read_gaps::AUTONUMBER_IDS),
+    ("sphinx.transforms.AutoNumbering", AUTONUMBER_IDS),
 ];
 
 /// The families of an `id_trace` divergence. Each transform-phase event is
 /// owned by the task that ports its transform. Parse events must match in
 /// order; one whose node left the tree (`attached` differs) is explained by
-/// the case's tree divergence, `tree`. Whatever the phase, whether a node
-/// survives the docinfo pop (340, 880) needs that family too.
+/// the case's tree divergence, `tree`.
 fn trace_census(expected: &Value, actual: &Value, tree: Option<&Census>) -> Census {
     let events = |trace: &Value| -> Vec<(String, String, String, bool)> {
         trace
@@ -475,9 +459,6 @@ fn trace_census(expected: &Value, actual: &Value, tree: Option<&Census>) -> Cens
     let expected = events(expected);
     let actual = events(actual);
     let mut census = Census::default();
-    for fix in tree_families(tree, &[read_gaps::DOCINFO]) {
-        census.add(fix);
-    }
     for (phase, kind, id, _) in expected.iter().filter(|event| event.0 != "parse") {
         match ALLOCATING_TRANSFORMS.iter().find(|(name, _)| name == phase) {
             Some((_, fix)) => census.add(*fix),

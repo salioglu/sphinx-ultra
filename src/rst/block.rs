@@ -374,9 +374,6 @@ pub(crate) struct BlockParser {
     /// (`_object.py:477-480` / `:498-503`; research spec §8 trap 14).
     py_module_key: bool,
     py_modules_key: bool,
-    /// Sphinx-mode class/rst-class pending classes (the ClassAttribute
-    /// transform effect applied inline).
-    pending_classes: Option<Vec<String>>,
     /// Per-document equation counter (math domain numbering).
     equation_serial: u32,
     /// Set while running a substitution-embedded directive (docutils
@@ -413,6 +410,11 @@ pub(crate) struct BlockParser {
 struct SubstCtx {
     ltrim: bool,
     rtrim: bool,
+    /// Whether the definition's container has `document` set: docutils
+    /// moves the non-inline nodes the embedded directive returns out into
+    /// that container (`states.py:2184-2191`), whose `setup_child` stamps
+    /// them only then.
+    hoist_attached: bool,
 }
 
 /// Where docutils' top-level state machine is left once a construct ends
@@ -514,7 +516,6 @@ impl BlockParser {
             py_classes_key: false,
             py_module_key: false,
             py_modules_key: false,
-            pending_classes: None,
             equation_serial: 0,
             substitution_ctx: None,
             pending_splice: None,
@@ -761,7 +762,6 @@ impl BlockParser {
             self.open_sections = stack.len();
             let mut out = Vec::new();
             let section = self.parse_element(cur, &mut pos, true, &mut out);
-            self.apply_pending_classes(&mut out, 0);
             for node in out {
                 Self::container(&mut root, &mut stack).children.push(node);
             }
@@ -1067,7 +1067,6 @@ impl BlockParser {
             self.top_block_pending = true;
             let section = self.parse_element(&lines, &mut pos, true, &mut out);
             last_ending = Some(self.ending);
-            self.apply_pending_classes(&mut out, 0);
             for node in out {
                 Self::container(&mut root, &mut stack).children.push(node);
             }
@@ -1088,6 +1087,10 @@ impl BlockParser {
             "a raised `only` outlived its section"
         );
         self.state.final_position = final_position(&lines, last_ending);
+        self.state.input_lines = lines
+            .iter()
+            .map(|line| (line.source, line.lineno))
+            .collect();
 
         // docutils `dupname`s the earlier node object in place, wherever it
         // lives; the parser owns the tree, so it walks it once complete,
@@ -1245,10 +1248,8 @@ impl BlockParser {
                 pos += 1;
                 continue;
             }
-            let before = out.len();
             let section = self.parse_element(cur, &mut pos, false, &mut out);
             debug_assert!(section.is_none(), "titles never match in nested contexts");
-            self.apply_pending_classes(&mut out, before);
             if let Some(request) = self.pending_splice.take() {
                 let mut stream = owned.take().unwrap_or_else(|| lines.to_vec());
                 self.apply_splice(&mut stream, pos, request);
@@ -1256,27 +1257,6 @@ impl BlockParser {
             }
         }
         out
-    }
-
-    /// Sphinx mode runs the ClassAttribute transform effect inline: a
-    /// class/rst-class directive without content stamps the next
-    /// non-invisible sibling element (the pending node itself vanishes).
-    fn apply_pending_classes(&mut self, out: &mut [Node], from: usize) {
-        if self.pending_classes.is_none() {
-            return;
-        }
-        for node in out[from..].iter_mut() {
-            if matches!(
-                node.kind,
-                kinds::COMMENT | kinds::TARGET | kinds::SYSTEM_MESSAGE | "substitution_definition"
-            ) {
-                continue;
-            }
-            if let Some(classes) = self.pending_classes.take() {
-                node.attrs.classes.extend(classes);
-            }
-            break;
-        }
     }
 
     /// Parse one element starting at `lines[*pos]` (non-blank). Returns a
@@ -2833,6 +2813,15 @@ impl BlockParser {
             fbody
                 .children
                 .extend(self.parse_nested(&body_lines, "field_body"));
+            // `nodes.field_body('\n'.join(indented), ...)` (`states.py`,
+            // `Body.field`): the body's text, which one reader reads,
+            // DocInfo (340), to parse a body again that docutils parsed as
+            // an enumerated list (an author's leading initial,
+            // `frontmatter.py:437-455`). Recorded for that body alone.
+            if fbody.children.first().map(|first| first.kind) == Some(kinds::ENUMERATED_LIST) {
+                let text = self.join_lines(&body_lines);
+                fbody.set_rawsource(&text);
+            }
             field.children.push(fbody);
             fl.children.push(field);
 
@@ -4744,8 +4733,11 @@ impl BlockParser {
         }
     }
 
-    /// [`Self::container_wrapper`] plus `add_name` and the read-phase
-    /// `AutoNumbering` id.
+    /// [`Self::container_wrapper`] plus `add_name`, which lands on the
+    /// CONTAINER (`code.py:502`). Without a name, the captioned container
+    /// takes its id after the parse, from `AutoNumbering` (210,
+    /// [`crate::transforms::sphinx::AutoNumbering`]), as a captioned
+    /// `code-block`'s does.
     fn literalinclude_container(
         &mut self,
         caption: &str,
@@ -4753,22 +4745,9 @@ impl BlockParser {
         input: &DirectiveInput<'_>,
     ) -> Result<Node, String> {
         let mut container = self.container_wrapper(caption, literal_node, input)?;
-        // `add_name` lands on the CONTAINER (`code.py:502`); without a
-        // name, Sphinx's `AutoNumbering` transform (priority 210) hands
-        // the captioned enumerable node an implicit id via
-        // `note_implicit_target` (`SP/transforms/__init__.py:200-214` —
-        // probed `ids="id1"`, no name). Stamped here at parse time: the
-        // transform pipeline has no AutoNumbering pass (the known
-        // labelled-figure gap — only the unlabelled case is handled), so
-        // the shared auto-id serial is allocated in document order rather
-        // than after the parse; the two orders only diverge in a document
-        // that also allocates auto ids elsewhere.
         // The wrapping container has no location of its own.
         let loc = self.machine_loc(directive_loc(input));
         self.directive_add_name(&mut container, &input.options, loc);
-        if container.attrs.ids.is_empty() {
-            self.state.set_id(&mut container);
-        }
         Ok(container)
     }
 
@@ -8407,7 +8386,19 @@ impl BlockParser {
 
     /// class (misc.py:434-469): with content, classes apply directly to
     /// every top-level child; without, a pending node is emitted for the
-    /// ClassAttribute transform.
+    /// ClassAttribute transform, which the read runs at 210
+    /// ([`crate::transforms::misc::ClassAttribute`]), in Sphinx mode as in
+    /// docutils mode.
+    ///
+    /// docutils makes the pending node without a location, and its
+    /// container's `setup_child` gives it `document.current_line` when the
+    /// container has `document` set ([`DirectiveInput::current`]): the
+    /// line ClassAttribute's error reads (`line=pending.line`). A pending
+    /// node a substitution definition's directive returns joins the
+    /// definition, which has no `document`, and is moved out into the
+    /// definition's container (`states.py:2184-2191`), whose `setup_child`
+    /// stamps it if it can; the machine is still on the definition's last
+    /// line then, which [`DirectiveInput::current`] holds.
     fn run_class(&mut self, input: DirectiveInput<'_>, out: &mut Vec<Node>) {
         let class_values = match convert_option(Conv::ClassOption, Some(&input.arguments[0])) {
             Ok(OptVal::StrList(list)) => list,
@@ -8430,12 +8421,8 @@ impl BlockParser {
                 child.attrs.classes.extend(class_values.iter().cloned());
             }
             out.extend(children);
-        } else if self.sphinx {
-            // Sphinx's read phase runs ClassAttribute; the pending node
-            // never survives into the doctree — stamp the next sibling.
-            self.pending_classes = Some(class_values);
         } else {
-            let pending = self.note_pending(
+            let mut pending = self.note_pending(
                 PendingTransform::ClassAttribute,
                 vec![
                     ("class".to_string(), PyValue::StrList(class_values)),
@@ -8447,6 +8434,16 @@ impl BlockParser {
                 input.span,
                 input.rawsource,
             );
+            let stamped = match &self.substitution_ctx {
+                Some(ctx) => ctx.hoist_attached,
+                None => self.attached,
+            };
+            let own = if stamped {
+                input.current
+            } else {
+                DocLoc::default()
+            };
+            self.note_location(&mut pending, own);
             out.push(pending);
         }
     }
@@ -8628,7 +8625,10 @@ impl BlockParser {
             // to the end of the definition's block, which `substitution_def`
             // took without its trailing blank lines.
             let block_end = content_block.last().copied().unwrap_or(dline);
-            self.substitution_ctx = Some(SubstCtx::default());
+            self.substitution_ctx = Some(SubstCtx {
+                hoist_attached: self.attached,
+                ..SubstCtx::default()
+            });
             let saved_kind = self.nested_node_kind.replace("substitution_definition");
             let saved_attached = std::mem::replace(&mut self.attached, false);
             self.run_directive_core(
@@ -10604,11 +10604,12 @@ enum DocFieldEntry {
 /// in practice) is dropped with the old node.
 ///
 /// The port rebuilds the children in place, so the faithful move is to
-/// KEEP those four and clear the rest. Reachable, and now for std kinds
-/// too: `.. rst-class:: myclass` before a field list inside a
-/// `py:function`/`confval` body puts `classes="myclass"` on the field
-/// list, and an explicit target before it puts `ids`/`names` there
-/// (probes `rst_class_before_field_list_in_py_desc`,
+/// KEEP those four and clear the rest, for std kinds too. A list holds
+/// them in the parse when an `rst-class` with the list as its content
+/// classes it; an `rst-class` or an explicit target before the list
+/// reaches the rebuilt one after the parse, through ClassAttribute (210)
+/// and PropagateTargets (260) (probes
+/// `rst_class_before_field_list_in_py_desc`,
 /// `name_target_before_field_list_in_py_desc`). The task-7 review's
 /// original premise — that the attributes are dropped — was wrong.
 ///
@@ -18021,26 +18022,16 @@ mod py_docfield_tests {
 
     /// `replace_self` runs `new_list.update_basic_atts(old_list)`
     /// (`DU/nodes.py`), so the rebuilt field list KEEPS `ids`, `names`,
-    /// `classes` and `dupnames` and drops everything else. Task 7 deferred
-    /// this as "over-drops"; task 16 probed 9.1.0
-    /// (`rst_class_before_field_list_in_py_desc` /
-    /// `..._in_confval` / `name_target_before_field_list_in_py_desc`) and
-    /// confirmed the carry-over, so the reset is now selective.
-    ///
-    /// Driven at the function, not through a parse, because BOTH parse-time
-    /// routes to a decorated `field_list` are blocked upstream by
-    /// pre-existing gaps this wave did not touch (both re-probed here and
-    /// ledgered for wave 5):
-    ///
-    /// * `.. class::` / `.. rst-class::` before a field list attaches the
-    ///   class to the field BODY's paragraph here, where docutils attaches
-    ///   it to the `field_list` (`para\n\n.. class:: c\n\n:param x: v`
-    ///   → `<field_list classes="c">` in docutils 0.22.4);
-    /// * `ids`/`names` reach a field list only through `PropagateTargets`,
-    ///   which this crate does not run (an existing documented exemption).
-    ///
-    /// Pinning the mechanism directly means the fix stays correct when
-    /// either gap closes, instead of waiting on it.
+    /// `classes` and `dupnames` and drops everything else: the reset is
+    /// selective. Task 16's probes of 9.1.0
+    /// (`rst_class_before_field_list_in_py_desc` / `..._in_confval` /
+    /// `name_target_before_field_list_in_py_desc`) show those attributes on
+    /// the rebuilt list, which the read now gives it too (wave 5a), but
+    /// they reach it after the parse: ClassAttribute (210) and
+    /// PropagateTargets (260) run on the list the transformer made. Only an
+    /// attribute the parsed list already holds goes through the carry-over
+    /// (an `rst-class` with the list as its content), so the mechanism is
+    /// driven at the function.
     #[test]
     fn the_transformed_field_list_keeps_its_basic_attributes() {
         let mut list = Node::elem(kinds::FIELD_LIST, Span::ZERO);
@@ -20956,19 +20947,30 @@ mod literalinclude_tests {
 
     /// The EMPTY `:caption:` falls back to the path as written, and the
     /// unnamed captioned container gets the AutoNumbering implicit
-    /// `ids="id1"` with no name (probed).
+    /// `ids="id1"` with no name (probed): in the read, from the transform
+    /// (210), not from the parse.
     #[test]
     fn empty_caption_falls_back_to_the_path_and_gets_id1() {
         let tmp = tempfile::tempdir().unwrap();
-        let output = parse(
-            tmp.path(),
-            ".. literalinclude:: example.py\n\
-             \x20  :caption:\n\
-             \x20  :lines: 3\n",
+        let source = ".. literalinclude:: example.py\n\
+                      \x20  :caption:\n\
+                      \x20  :lines: 3\n";
+        let output = parse(tmp.path(), source);
+        assert!(output.doctree.root.children[0].attrs.ids.is_empty());
+        let read = crate::read::read_document(
+            source,
+            &ParseOptions {
+                source_path: tmp.path().join("main.rst").display().to_string(),
+                sphinx: true,
+                docname: "main".to_string(),
+                srcdir: Some(tmp.path().to_path_buf()),
+                ..Default::default()
+            },
+            &crate::read::ReadSettings::sphinx_defaults(),
         );
         let p = at(tmp.path(), "example.py");
         assert_eq!(
-            output.doctree.root.children[0].pformat(),
+            read.doctree().root.children[0].pformat(),
             format!(
                 "<container classes=\"literal-block-wrapper\" ids=\"id1\" \
                  literal_block=\"1\">\n\

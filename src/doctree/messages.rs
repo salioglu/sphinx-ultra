@@ -11,7 +11,8 @@ pub const WARNING: u8 = 2;
 pub const ERROR: u8 = 3;
 pub const SEVERE: u8 = 4;
 
-fn type_name(level: u8) -> &'static str {
+/// The reporter's name for `level`, a message's `type`.
+pub(crate) fn type_name(level: u8) -> &'static str {
     match level {
         1 => "INFO",
         2 => "WARNING",

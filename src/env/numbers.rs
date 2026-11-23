@@ -861,9 +861,13 @@ mod tests {
 
     /// The classic docutils spelling — a `.. _label:` on its own line above
     /// the directive — is as much a label as the `:name:` option, because
-    /// `PropagateTargets` moves the target's ids onto the node before
-    /// numbering runs. The number is filed under the propagated id, which is
-    /// what `get_fignumber` then reads back.
+    /// `PropagateTargets` (260) moves the target's ids onto the node before
+    /// numbering runs. A captioned node without a `:name:` took an id from
+    /// `AutoNumbering` (210) first, so the number is filed under that first
+    /// id (`register_fignumber`, `fignode['ids'][0]`), which is what
+    /// `get_fignumber` reads back for the label's node too. Sphinx 9.1.0
+    /// (`numfig = True`): `{'figure': {'fig-named': (1,), 'id1': (2,)},
+    /// 'table': {'id2': (1,)}, 'code-block': {'id3': (1,)}}`.
     #[test]
     fn a_label_written_above_an_enumerable_node_numbers_it() {
         let (mut env, doctrees) = read(&[
@@ -882,15 +886,12 @@ mod tests {
         let figures = &env.toc_fignumbers["a"]["figure"];
         assert_eq!(figures["fig-named"], vec![1]);
         assert_eq!(
-            figures["fig-labelled"],
+            figures["id1"],
             vec![2],
             "a labelled figure still advances the counter: {figures:?}"
         );
-        assert_eq!(env.toc_fignumbers["a"]["table"]["tab-labelled"], vec![1]);
-        assert_eq!(
-            env.toc_fignumbers["a"]["code-block"]["code-labelled"],
-            vec![1]
-        );
+        assert_eq!(env.toc_fignumbers["a"]["table"]["id2"], vec![1]);
+        assert_eq!(env.toc_fignumbers["a"]["code-block"]["id3"], vec![1]);
     }
 
     /// The `math` domain also registers an enumerable node, and sorts

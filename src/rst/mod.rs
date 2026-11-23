@@ -3062,6 +3062,29 @@ pub(crate) mod tests {
 
     use super::roles::tests::{parse as read_parse, read_tree};
 
+    /// The pformat of the post-read tree of `source` read as `<SRC>/index.rst`
+    /// under `read`, `keep_warnings = True`, as the probes read it: what a
+    /// transform changes, such as the classes ClassAttribute (210) places,
+    /// shows there and not in the parse ([`read_tree`]).
+    fn read_post(source: &str, read: ReadConfig) -> String {
+        let options = ParseOptions {
+            source_path: "<SRC>/index.rst".to_string(),
+            sphinx: true,
+            docname: "index".to_string(),
+            read,
+            ..ParseOptions::default()
+        };
+        let settings = crate::read::ReadSettings {
+            keep_warnings: true,
+            ..crate::read::ReadSettings::sphinx_defaults()
+        };
+        crate::read::read_standalone(source, &options, &settings)
+            .outcome
+            .doctree()
+            .root
+            .pformat()
+    }
+
     /// The `ParseLogWarning`s of a parse, as `(message, location)`.
     fn logged(out: &ParseOutput) -> Vec<(String, LogLocation)> {
         out.registry
@@ -3096,10 +3119,6 @@ pub(crate) mod tests {
             "<document source=\"<SRC>/index.rst\">\n    <system_message level=\"3\" line=\"1\" source=\"<SRC>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error in \"class\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. class::\n            \n               Body.\n",
         ),
         (
-            ".. default-domain:: std\n\n.. class:: x\n\nPara.\n\n.. default-domain:: nonexistent\n\n.. class:: y\n\nPara two.\n\n.. default-domain:: PY\n\n.. class:: z\n",
-            "<document source=\"<SRC>/index.rst\">\n    <paragraph classes=\"x\">\n        Para.\n    <paragraph classes=\"y\">\n        Para two.\n    <index entries=\"('single',\\ 'z\\ (built-in\\ class)',\\ 'z',\\ '',\\ None)\">\n    <desc classes=\"py class\" desctype=\"class\" domain=\"py\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"class\">\n        <desc_signature _toc_name=\"z\" _toc_parts=\"('z',)\" class=\"\" classes=\"sig sig-object\" fullname=\"z\" ids=\"z\" module=\"True\">\n            <desc_annotation xml:space=\"preserve\">\n                <desc_sig_keyword classes=\"k\">\n                    class\n                <desc_sig_space classes=\"w\">\n                     \n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                z\n        <desc_content>\n",
-        ),
-        (
             ".. std:envvar:: E\n\n.. foo:envvar:: F\n\n.. py:envvar:: G\n\n.. std:program:: prog\n\n.. std:option:: -x\n\n.. std:cmdoption:: -y\n\n.. std:confval:: cv\n\n.. std:glossary::\n\n   term\n      def\n",
             "<document source=\"<SRC>/index.rst\">\n    <index entries=\"('single',\\ 'environment\\ variable;\\ E',\\ 'envvar-E',\\ '',\\ None)\">\n    <desc classes=\"std envvar\" desctype=\"envvar\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"envvar\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" classes=\"sig sig-object\" ids=\"envvar-E\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                E\n        <desc_content>\n    <index entries=\"('single',\\ 'environment\\ variable;\\ F',\\ 'envvar-F',\\ '',\\ None)\">\n    <desc classes=\"std envvar\" desctype=\"envvar\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"envvar\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" classes=\"sig sig-object\" ids=\"envvar-F\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                F\n        <desc_content>\n    <index entries=\"('single',\\ 'environment\\ variable;\\ G',\\ 'envvar-G',\\ '',\\ None)\">\n    <desc classes=\"std envvar\" desctype=\"envvar\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"envvar\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" classes=\"sig sig-object\" ids=\"envvar-G\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                G\n        <desc_content>\n    <index entries=\"('pair',\\ 'prog\\ command\\ line\\ option;\\ -x',\\ 'cmdoption-prog-x',\\ '',\\ None)\">\n    <desc classes=\"std option\" desctype=\"option\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"option\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" allnames=\"-x\" classes=\"sig sig-object\" ids=\"cmdoption-prog-x\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                -x\n            <desc_addname classes=\"sig-prename descclassname\" xml:space=\"preserve\">\n        <desc_content>\n    <index entries=\"('pair',\\ 'prog\\ command\\ line\\ option;\\ -y',\\ 'cmdoption-prog-y',\\ '',\\ None)\">\n    <desc classes=\"std cmdoption\" desctype=\"cmdoption\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"cmdoption\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" allnames=\"-y\" classes=\"sig sig-object\" ids=\"cmdoption-prog-y\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                -y\n            <desc_addname classes=\"sig-prename descclassname\" xml:space=\"preserve\">\n        <desc_content>\n    <index entries=\"('pair',\\ 'cv;\\ configuration\\ value',\\ 'confval-cv',\\ '',\\ None)\">\n    <desc classes=\"std confval\" desctype=\"confval\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"confval\">\n        <desc_signature _toc_name=\"cv\" _toc_parts=\"('cv',)\" classes=\"sig sig-object\" fullname=\"cv\" ids=\"confval-cv\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                cv\n        <desc_content>\n    <glossary sorted=\"0\">\n        <definition_list classes=\"glossary\">\n            <definition_list_item>\n                <term ids=\"term-term\">\n                    term\n                    <index entries=\"('single',\\ 'term',\\ 'term-term',\\ 'main',\\ None)\">\n                <definition>\n                    <paragraph>\n                        def\n",
         ),
@@ -3110,6 +3129,15 @@ pub(crate) mod tests {
         ] {
             assert_eq!(read_tree(source, ReadConfig::default()), expected, "{source}");
         }
+        // docutils' `class` defers its classes to the ClassAttribute
+        // transform (210), so the read, not the parse, puts them on the
+        // paragraphs: this tree is the read's.
+        let source = ".. default-domain:: std\n\n.. class:: x\n\nPara.\n\n.. default-domain:: nonexistent\n\n.. class:: y\n\nPara two.\n\n.. default-domain:: PY\n\n.. class:: z\n";
+        assert_eq!(
+            read_post(source, ReadConfig::default()),
+            "<document source=\"<SRC>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph classes=\"x\">\n        Para.\n    <paragraph classes=\"y\">\n        Para two.\n    <index entries=\"('single',\\ 'z\\ (built-in\\ class)',\\ 'z',\\ '',\\ None)\">\n    <desc classes=\"py class\" desctype=\"class\" domain=\"py\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"class\">\n        <desc_signature _toc_name=\"z\" _toc_parts=\"('z',)\" class=\"\" classes=\"sig sig-object\" fullname=\"z\" ids=\"z\" module=\"True\">\n            <desc_annotation xml:space=\"preserve\">\n                <desc_sig_keyword classes=\"k\">\n                    class\n                <desc_sig_space classes=\"w\">\n                     \n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                z\n        <desc_content>\n",
+            "{source}"
+        );
         let out = read_parse(
             ".. std:envvar:: E\n\n.. foo:envvar:: F\n\n.. Foo:Note:: n\n",
             ReadConfig::default(),
@@ -3141,8 +3169,8 @@ pub(crate) mod tests {
             ..ReadConfig::default()
         };
         assert_eq!(
-            read_tree(".. class:: x\n\nPara.\n\n:func:`f`\n", none.clone()),
-            "<document source=\"<SRC>/index.rst\">\n    <paragraph classes=\"x\">\n        Para.\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            :func:`f`\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"3\" line=\"5\" source=\"<SRC>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Unknown interpreted text role \"func\".\n"
+            read_post(".. class:: x\n\nPara.\n\n:func:`f`\n", none.clone()),
+            "<document source=\"<SRC>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph classes=\"x\">\n        Para.\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            :func:`f`\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"3\" line=\"5\" source=\"<SRC>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Unknown interpreted text role \"func\".\n"
         );
         // A name no domain is registered under is no domain either.
         let unknown_domain = ReadConfig {
@@ -3523,7 +3551,7 @@ pub(crate) mod tests {
     /// the wrapper; its caption counts from the line past its option
     /// block. Expected trees are Sphinx 9.1.0's parse-time trees
     /// (`keep_warnings = True`, INFO messages dropped), which
-    /// `AutoNumbering` (T12) numbers after the parse.
+    /// `AutoNumbering` (210) numbers in the read.
     #[test]
     fn a_code_caption_parses_through_container_wrapper() {
         assert_reads(&[

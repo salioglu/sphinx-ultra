@@ -641,13 +641,6 @@ const KNOWN_RESOLVED_GAPS: &[(&str, &str, &str)] = &[
         "`image[candidates]` (see IMAGE_CANDIDATES) plus the `linenos` flag \
          a captioned `code-block` stamps onto its `literal_block`",
     ),
-    (
-        "orphan_doc",
-        "orphan",
-        "`MetadataCollector.process_doc` *removes* the docinfo field list \
-         from the doctree after reading it (`collectors/metadata.py:40`); \
-         ours reads it and leaves the node in place",
-    ),
     // Wave 4.5 py projects: toctree-bearing index documents share the
     // write-phase gap above.
     ("py_basic", "index", TOCTREE_RESOLUTION),
@@ -1718,9 +1711,9 @@ fn resolved_doctrees_match_oracle() {
 /// Update the seven constants and the doc sites together.
 const DOCUMENTED_PROJECTS: usize = 31;
 const DOCUMENTED_DOCUMENTS: usize = 89;
-const DOCUMENTED_WHOLESALE_EXEMPT_DOCUMENTS: usize = 34;
+const DOCUMENTED_WHOLESALE_EXEMPT_DOCUMENTS: usize = 33;
 const DOCUMENTED_STAMP_EXEMPT_DOCUMENTS: usize = 6;
-const DOCUMENTED_BYTE_EXACT_DOCUMENTS: usize = 49;
+const DOCUMENTED_BYTE_EXACT_DOCUMENTS: usize = 50;
 const DOCUMENTED_WARNING_EXEMPT_PROJECTS: usize = 5;
 const DOCUMENTED_BYTE_EXACT_WARNING_PROJECTS: usize = 26;
 

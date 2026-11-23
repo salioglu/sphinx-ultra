@@ -38,7 +38,7 @@ use std::path::Path;
 use crate::diagnostics::{Category, Diagnostic, Location, OrderKey, Severity};
 use crate::doctree::messages;
 use crate::doctree::pending::PendingTransform;
-use crate::doctree::{kinds, Doctree, Node, Span};
+use crate::doctree::{kinds, AttrValue, Doctree, Node, Span};
 use crate::env::dependencies as env_dependencies;
 use crate::env::genindex as env_genindex;
 use crate::env::metadata as env_metadata;
@@ -48,7 +48,7 @@ use crate::env::BuildEnvironment;
 use crate::read::{MergeInputs, ReadOutcome, ReadSettings};
 use crate::rst::{LogLocation, ParseOutput};
 use reporter::LogRecord;
-use state::{DocumentState, SourceRef};
+use state::{DocLoc, DocumentState, PendingRecord, SourceRef};
 use tree::{TxId, TxTree};
 
 /// A transform's place in the read: docutils' priority string
@@ -236,12 +236,15 @@ impl TransformId {
             TransformId::DefaultSubstitutions => &sphinx::DefaultSubstitutions,
             TransformId::MoveModuleTargets => &sphinx::MoveModuleTargets,
             TransformId::HandleCodeBlocks => &sphinx::HandleCodeBlocks,
+            TransformId::AutoNumbering => &sphinx::AutoNumbering,
+            TransformId::ClassAttribute => &misc::ClassAttribute,
             TransformId::Substitutions => &references::Substitutions,
             TransformId::ReorderConsecutiveTargetAndIndexNodes => {
                 &sphinx::ReorderConsecutiveTargetAndIndexNodes
             }
             TransformId::PropagateTargets => &references::PropagateTargets,
             TransformId::SortIds => &sphinx::SortIds,
+            TransformId::DocInfo => &misc::DocInfo,
             TransformId::AnonymousHyperlinks => &references::AnonymousHyperlinks,
             TransformId::IndirectHyperlinks => &references::IndirectHyperlinks,
             TransformId::DoctestTransform => &sphinx::DoctestTransform,
@@ -280,10 +283,6 @@ impl TransformId {
             | TransformId::AddTranslationClasses
             | TransformId::RemoveTranslatableInline => &NoOp,
 
-            // T12.
-            TransformId::AutoNumbering | TransformId::DocInfo | TransformId::ClassAttribute => {
-                &NoOp
-            }
             // T16b.
             TransformId::SphinxSmartQuotes => &NoOp,
             // T18b.
@@ -397,20 +396,27 @@ const DOCTREE_READ_EVENT: TransformKey = TransformKey::at(880, 30);
 /// pending transforms of one priority run in parse order. Past serial
 /// `u16::MAX` the serials saturate; the sort is stable, so the order holds.
 pub fn schedule(state: &DocumentState) -> Vec<(TransformKey, TransformId)> {
-    let first_pending = READ_TRANSFORMS.len() + 1;
     let mut schedule = READ_TRANSFORMS.to_vec();
-    schedule.extend(state.pending.iter().map(|record| {
-        let serial = usize::try_from(record.order)
-            .ok()
-            .and_then(|order| u16::try_from(first_pending + order).ok())
-            .unwrap_or(u16::MAX);
-        (
-            TransformKey::at(record.transform.priority(), serial),
-            TransformId::pending(record.transform),
-        )
-    }));
+    schedule.extend(
+        state
+            .pending
+            .iter()
+            .map(|record| (pending_key(record), TransformId::pending(record.transform))),
+    );
     schedule.sort_by_key(|(key, _)| *key);
     schedule
+}
+
+/// The key [`schedule`] gives the pending transform `record` queues: its
+/// transform's priority, and a serial after the 42 statics' in
+/// `note_pending` order, saturating at `u16::MAX`.
+fn pending_key(record: &PendingRecord) -> TransformKey {
+    let first_pending = READ_TRANSFORMS.len() + 1;
+    let serial = usize::try_from(record.order)
+        .ok()
+        .and_then(|order| u16::try_from(first_pending + order).ok())
+        .unwrap_or(u16::MAX);
+    TransformKey::at(record.transform.priority(), serial)
 }
 
 /// One transform's view of the document while it applies.
@@ -480,6 +486,81 @@ impl TransformCx<'_> {
             text: message.element_astext(),
         });
         self.tree.new_subtree(message)
+    }
+
+    /// docutils `reporter.system_message(level, text, *children,
+    /// line=line)` while this transform applies
+    /// (`SP/docutils/utils/__init__.py:171-221`), for a `line` taken from a
+    /// node (`node.line`, which may be `None`). The reporter keeps the
+    /// line it is given and locates it as its `get_source_and_line(line)`
+    /// does after the parse ([`DocumentState::source_and_line`]): the
+    /// source and line of the input line it reads as the offset, or, for
+    /// no line, the parse's final position; a line that finds nothing
+    /// stays as given, and the source is then the document's own.
+    ///
+    /// When neither gives a line, docutils keeps the `line=None` it was
+    /// given: pformat prints that `None` as `True` (the sentinel the parse
+    /// uses for a `None` attribute), and the message's `astext()` as
+    /// `source:None: (TYPE/level) …`, which Sphinx's `WarningStream`
+    /// cannot read (`report_re`, `SP/sphinx/util/docutils.py:31-33`,
+    /// `:385-393`) and logs whole: a bare `[docutils]` WARNING
+    /// ([`LogRecord::Logger`]) whatever the level, rather than a reporter
+    /// record. The message is returned in no parent, as
+    /// [`Self::report`]'s is.
+    pub fn system_message_at_line(
+        &mut self,
+        level: u8,
+        text: &str,
+        line: Option<u32>,
+        children: Vec<Node>,
+    ) -> TxId {
+        let found = self.state.source_and_line(line);
+        let loc = DocLoc {
+            source: found.source,
+            line: found.line.or(line),
+        };
+        let source = self.tree.source_path(loc.source).to_string();
+        let mut message = messages::system_message(level, text, &source, loc.line, children);
+        let seq = self.state.draw_seq();
+        let key = self.key.order_key(seq);
+        let body = message.element_astext();
+        match loc.line {
+            Some(_) => self.state.log.push(LogRecord::Reporter {
+                key,
+                level,
+                loc,
+                text: body,
+            }),
+            None => {
+                message.set("line", AttrValue::Str("True".to_string()));
+                if level >= messages::WARNING {
+                    let text = format!(
+                        "{source}:None: ({}/{level}) {body}",
+                        messages::type_name(level)
+                    );
+                    self.state.log.push(LogRecord::Logger {
+                        key,
+                        diagnostic: Diagnostic {
+                            location: Location::None,
+                            severity: Severity::Warning,
+                            message: text.trim_end_matches(['\r', '\n']).to_string(),
+                            category: Category::Type("docutils".to_string()),
+                        },
+                    });
+                }
+            }
+        }
+        self.tree.new_subtree(message)
+    }
+
+    /// The `note_pending` record this row applies, docutils'
+    /// `self.startnode`'s: the one whose key [`schedule`] made this row's.
+    pub fn pending_record(&self) -> Option<PendingRecord> {
+        self.state
+            .pending
+            .iter()
+            .copied()
+            .find(|record| pending_key(record) == self.key)
     }
 
     /// Sphinx's `logger.warning(message, type=…, subtype=…, location=node)`
@@ -678,9 +759,14 @@ fn tag_trace(tree: &mut TxTree, state: &mut DocumentState) {
 /// records the read's time. The two environment slots then run in the
 /// order the merge has always run them, the collectors
 /// ([`doctree_read_event`]) before the domains ([`sphinx_domains`]), until
-/// T13a puts them in Sphinx's. The rows after them run over the
-/// document's [`TxTree`], re-entered with no detached forest (stage R's
-/// arena kept it): `FilterSystemMessages` (999-027) and the inert rest.
+/// T13a puts them in Sphinx's. The Metadata collector, which pops the
+/// docinfo out of the tree ([`env_metadata::process_doc`]), runs after
+/// both meanwhile: in Sphinx the domains (850) and the Dependencies
+/// collector, ahead of it at 880, see the docinfo, and so they do here;
+/// the TocTree collector, after it in Sphinx, sees it too until then.
+/// The rows after them run over the document's [`TxTree`], re-entered
+/// with no detached forest (stage R's arena kept it):
+/// `FilterSystemMessages` (999-027) and the inert rest.
 ///
 /// The parse's registry export and toctree records are read from `out`
 /// ([`ReadOutcome`]).
@@ -706,6 +792,8 @@ pub fn run_merge_transforms(
     doctree_read_event(out, env, docname, inputs);
     phase(out, TransformId::SphinxDomains);
     sphinx_domains(out, env, docname, inputs, &mut records);
+    phase(out, TransformId::DoctreeReadEvent);
+    env_metadata::process_doc(env, docname, out.doctree_mut());
 
     let ParseOutput { doctree, state, .. } = &mut out.output;
     let parsed = std::mem::replace(
@@ -733,11 +821,11 @@ pub fn run_merge_transforms(
 }
 
 /// 880-030 `DoctreeReadEvent`: the `doctree-read` collectors as the merge
-/// has run them since wave 4 — Title, Metadata, Dependencies, TocTree —
-/// with two parse-time environment calls replayed among them where the
-/// merge has always replayed them: the include directive's
-/// `env.note_included` and the toctree directive's `env.note_reread`.
-/// They raise no records.
+/// has run them since wave 4 — Title, Dependencies, TocTree; Metadata runs
+/// after the domains ([`run_merge_transforms`]) — with two parse-time
+/// environment calls replayed among them where the merge has always
+/// replayed them: the include directive's `env.note_included` and the
+/// toctree directive's `env.note_reread`. They raise no records.
 fn doctree_read_event(
     out: &ReadOutcome,
     env: &mut BuildEnvironment,
@@ -753,11 +841,6 @@ fn doctree_read_event(
     // (`collectors/title.py:27`).
     env.longtitles.insert(docname.to_string(), title.clone());
     env.titles.insert(docname.to_string(), title);
-
-    env.metadata.insert(
-        docname.to_string(),
-        env_metadata::document_metadata(doctree),
-    );
 
     // The files this document pulls in, which is what makes it outdated
     // when one of *them* changes: image uris from the doctree walk plus the

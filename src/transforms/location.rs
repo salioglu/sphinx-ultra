@@ -55,10 +55,42 @@ const UNLOCATED: &[&str] = &[
 
 /// docutils' `(node.source, node.line)` of the node at `id` once Sphinx's
 /// ApplySourceWorkaround (010) has run: the location docutils' parse
-/// leaves it, as 010 completes it.
-fn own_location(tree: &TxTree, id: TxId, state: &DocumentState) -> DocLoc {
+/// leaves it, as 010 completes it. Unlike [`get_source_line`], the node's
+/// own, as a transform reading `node.line` reads it (ClassAttribute's
+/// `line=pending.line`).
+pub fn own_location(tree: &TxTree, id: TxId, state: &DocumentState) -> DocLoc {
     let parsed = parse_location(tree, id, state);
     apply_source_workaround(tree, id, state, parsed)
+}
+
+/// Freezes the locations ApplySourceWorkaround (010) gives the nodes of
+/// the subtree at `id`, ahead of a transform that moves it under other
+/// ancestors. Sphinx applies 010 once, at priority 10, and a node keeps
+/// what it got there wherever it moves; this model applies 010 at every
+/// lookup ([`own_location`]), reading the ancestors the node has then. A
+/// node 010 completed from an ancestor that does not move with it would
+/// read its new ancestors instead: DocInfo (340) moves a field body's
+/// content into a topic it makes, which has no location, so a rubric 010
+/// gave the field's source and line 0 would have neither. Each node 010
+/// completes takes the completed location as its override
+/// ([`DocumentState::loc_overrides`]), which stays what 010 made it: an
+/// override with a source is final, and one without, a rubric with no
+/// located ancestor, completes to the same under ancestors that have no
+/// location either, as DocInfo's have none.
+pub fn freeze_workaround(tree: &mut TxTree, id: TxId, state: &mut DocumentState) {
+    let completed: Vec<(TxId, DocLoc)> = tree
+        .findall(id, |_| true)
+        .into_iter()
+        .filter_map(|node| {
+            let parsed = parse_location(tree, node, state);
+            let done = apply_source_workaround(tree, node, state, parsed);
+            (done != parsed).then_some((node, done))
+        })
+        .collect();
+    for (node, loc) in completed {
+        let uid = tree.assign_uid(node, state);
+        state.loc_overrides.insert(uid, loc);
+    }
 }
 
 /// docutils' `(node.source, node.line)` of the node at `id` once the parse

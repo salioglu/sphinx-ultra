@@ -167,8 +167,8 @@ pub struct BuildEnvironment {
     pub included: BTreeMap<String, BTreeSet<String>>,
     /// docnames that must always be re-read (e.g. they use `today`/`now`).
     pub reread_always: BTreeSet<String>,
-    /// docname -> its bibliographic field list (`:orphan:`, `:tocdepth:`,
-    /// ...), per [`metadata::document_metadata`].
+    /// docname -> its bibliographic fields (`:orphan:`, `:tocdepth:`, ...),
+    /// read from its docinfo by [`metadata::process_doc`].
     pub metadata: BTreeMap<String, BTreeMap<String, String>>,
     pub titles: BTreeMap<String, Node>,
     pub longtitles: BTreeMap<String, Node>,

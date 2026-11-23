@@ -489,8 +489,14 @@ impl TxTree {
             let children = &self.node(parent).children;
             let Some(index) = children.iter().position(|&child| child == node) else {
                 // docutils' `parent.index(node)` raises: a node replaced
-                // since has no siblings to walk.
-                debug_assert!(false, "{node:?} is not among its parent's children");
+                // since has no siblings to walk. The message names no node:
+                // ClassAttribute starts the walk from a node it found by
+                // its identity, and CodeQL's rust/cleartext-logging reads
+                // anything that flows from a `uid` as sensitive.
+                debug_assert!(
+                    false,
+                    "next_node: the node is not among its parent's children"
+                );
                 return None;
             };
             for &sibling in &children[index + 1..] {
