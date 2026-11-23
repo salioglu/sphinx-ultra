@@ -19,7 +19,7 @@ use crate::transforms::tree::{TxId, TxTree};
 
 /// docutils `get_source_line(node)` for the node at `id`: the location of
 /// the node, or of its nearest ancestor that has a source or a line, up
-/// the parent links (a detached node's lead up its detached subtree).
+/// the parent links (for a detached node, up its detached subtree).
 /// `DocLoc::default()` when none has either; the reporter then locates the
 /// message at the state machine's final position ([DS §6.2]).
 pub fn get_source_line(tree: &TxTree, id: TxId, state: &DocumentState) -> DocLoc {
@@ -60,7 +60,7 @@ const UNLOCATED: &[&str] = &[
 /// 3. 010 gives a section's title its section's location
 ///    (`SP/sphinx/util/nodes.py:153-159`: a title without a source takes
 ///    its parent's), and a classifier its item's source and no line
-///    (`:139-141`: docutils makes a classifier with a rawsource and
+///    (`:143-145`: docutils makes a classifier with a rawsource and
 ///    without a source);
 /// 4. any other node has its span's source and line, and none when the
 ///    line is unknown (0).

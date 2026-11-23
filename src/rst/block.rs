@@ -8012,7 +8012,7 @@ impl BlockParser {
                     figure.children.push(child);
                 } else if child.kind == kinds::PARAGRAPH {
                     // `caption.source = child.source; caption.line =
-                    // child.line` (`images.py:171-173`): the paragraph's
+                    // child.line` (`images.py:171-174`): the paragraph's
                     // location, not the directive's.
                     let mut caption = Node::elem("caption", child.span);
                     caption.children = child.children;
