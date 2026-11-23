@@ -17,9 +17,7 @@ use crate::doctree::{is_text_element, kinds, AttrValue};
 /// `SP/sphinx/util/nodes.py:127-216`), its rawsource half: every
 /// `TextElement`, `image` and `topic` of the tree whose `rawsource` is
 /// empty takes its `astext()`, a `term`'s rawsource first losing each of
-/// its item's classifiers (`\s*:\s*<classifier>`, the last one first). The
-/// location half needs no pass: [`super::location::get_source_line`] reads
-/// a node's location as the workaround leaves it.
+/// its item's classifiers (`\s*:\s*<classifier>`, the last one first).
 ///
 /// What docutils' parse records is the rawsource that stays: the
 /// Referential nodes', a literal block's, a target's. Where docutils
@@ -29,6 +27,22 @@ use crate::doctree::{is_text_element, kinds, AttrValue};
 /// The one the transforms read is a reference's with none of its own, an
 /// image `:target:`'s, which takes the image's `alt`: the text
 /// `DanglingReferences` (850) gives its `problematic`.
+///
+/// The location half is no pass: [`super::location`] applies it whenever
+/// it locates a node, to the location docutils' parse leaves the node
+/// (`location::apply_source_workaround`): a classifier takes its item's
+/// source; an image, title or topic without a source its parent's source
+/// and line (the titles of topics, sidebars and sections are the ones
+/// docutils leaves without); a literal block without a source (a
+/// `parsed-literal` in a container without `document`) its nearest
+/// located ancestor's source; and a rubric, line, image or field name
+/// still without one its nearest located ancestor's source and line 0.
+/// The parse records the two inputs only it knows
+/// ([`super::state::DocumentState::loc_overrides`]): which rubrics and
+/// parsed-literal blocks docutils leaves unstamped, and where 010 puts a
+/// classifier docutils makes with an empty rawsource, the line before its
+/// item's. It also records where docutils stamps each line of a
+/// `line-block` directive, which is not 010's doing.
 pub struct ApplySourceWorkaround;
 
 impl Transform for ApplySourceWorkaround {

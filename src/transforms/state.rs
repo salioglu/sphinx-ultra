@@ -494,18 +494,25 @@ pub struct DocumentState {
     /// message with neither a node nor a line is located at ([DS §6.2]).
     pub final_position: DocLoc,
     /// The docutils locations of the nodes whose location the default rule
-    /// ([DS §8.2]) does not give, by identity, as they stand once Sphinx's
-    /// ApplySourceWorkaround (010) has run. So far:
+    /// ([DS §8.2]) does not give, by identity, as docutils' parse leaves
+    /// them: the location model completes one without a source as Sphinx's
+    /// ApplySourceWorkaround (010) does
+    /// ([`crate::transforms::location`]). So far:
     ///
     /// - the `reference` an `image`'s `:target:` wraps: docutils appends it
     ///   after the option block's nested state machine has cleared the
     ///   line, so it has the source and no line when its container has
     ///   `document` set, and neither when it has not ([DS §6.1]);
     /// - a `parsed-literal`'s `literal_block`, which stands at its first
-    ///   content line;
+    ///   content line, with no source in a container without `document`;
     /// - a `rubric`, which stands where the machine reading its block
     ///   stopped, has the source and no line after an option block, and
-    ///   has line 0 in a container without `document`.
+    ///   has neither in a container without `document`;
+    /// - each `line` of a `line-block` directive, at its block's location
+    ///   moved on by the line's index in the content;
+    /// - a `classifier` docutils makes with an empty rawsource, at the
+    ///   location 010 gives it: its item's source and the line before its
+    ///   item's, which only the rawsource the parse saw decides.
     ///
     /// A node the parse discards keeps its entry only inside a subtree
     /// [`Self::detached`] keeps.

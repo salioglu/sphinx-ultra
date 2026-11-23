@@ -1710,27 +1710,30 @@ pub(crate) mod tests {
 
     /// The locations a `parsed-literal`'s literal block and a `rubric` have
     /// once Sphinx's ApplySourceWorkaround (010) has run, which the default
-    /// rule ([DS §8.2] rule 4: the directive's line) does not give. A
-    /// parsed-literal block keeps `node.line = self.content_offset + 1`
-    /// (`body.py:144`), its first content line as the machine counts it,
-    /// one high in a table cell, and takes its source from its container
-    /// or from 010. docutils makes a rubric without a location, so it takes
-    /// its container's `setup_child` location in a container that has
-    /// `document` set (the document, a section, `only`, object description
-    /// content, a glossary definition): where the machine reading its block
-    /// stopped, its trailing blank lines included, or the source and no
-    /// line after an option block. In any other container (a list item, a
-    /// `note`, also inside `only`, a block quote, a definition) it has none
-    /// until 010 gives it its ancestor's source and line 0. A rubric in a
-    /// substitution definition keeps the default rule. Probed on Sphinx
-    /// 9.1.0: each node's `get_source_line` after the read.
+    /// rule ([DS §8.2] rule 4: the directive's line) does not give: what
+    /// the parse records for them (`DocumentState::loc_overrides`) as the
+    /// location model completes it. A parsed-literal block keeps
+    /// `node.line = self.content_offset + 1` (`body.py:144`), its first
+    /// content line as the machine counts it, one high in a table cell,
+    /// and takes its source from its container or from 010. docutils makes
+    /// a rubric without a location, so it takes its container's
+    /// `setup_child` location in a container that has `document` set (the
+    /// document, a section, `only`, object description content, a glossary
+    /// definition): where the machine reading its block stopped, its
+    /// trailing blank lines included, or the source and no line after an
+    /// option block. In any other container (a list item, a `note`, also
+    /// inside `only`, a block quote, a definition) it has none until 010
+    /// gives it its nearest located ancestor's source and line 0. A rubric
+    /// in a substitution definition keeps the default rule, the directive's
+    /// line. Probed on Sphinx 9.1.0: each node's `get_source_line` after
+    /// the read.
     #[test]
-    fn loc_overrides_for_parsed_literals_and_rubrics() {
+    fn locations_of_parsed_literals_and_rubrics() {
         let source_only = DocLoc {
             source: Some(SourceRef::Table(0)),
             line: None,
         };
-        let at = |line| Some(DocLoc::at(0, line));
+        let at = |line| DocLoc::at(0, line);
         let literal = kinds::LITERAL_BLOCK;
         let rubric = "rubric";
         let cell = "+------------------------+\n| .. parsed-literal::    |\n\
@@ -1776,7 +1779,7 @@ pub(crate) mod tests {
             (
                 rubric,
                 ".. rubric:: Rubric bad_\n   :class: x\n\nPara.\n",
-                Some(source_only),
+                source_only,
             ),
             (
                 rubric,
@@ -1797,7 +1800,7 @@ pub(crate) mod tests {
                 rubric,
                 ".. py:function:: f()\n\n   .. rubric:: Rubric bad_\n      :class: x\n\n   \
                  Text.\n",
-                Some(source_only),
+                source_only,
             ),
             (
                 rubric,
@@ -1830,15 +1833,15 @@ pub(crate) mod tests {
                 ".. only:: html\n\n   .. note::\n\n      .. rubric:: R bad_\n\n      Text.\n",
                 at(0),
             ),
-            (rubric, ".. |s| rubric:: R bad_\n\nPara |s|.\n", None),
+            (rubric, ".. |s| rubric:: R bad_\n\nPara |s|.\n", at(1)),
         ];
         for (kind, source, expected) in rows {
-            let out = sphinx_parse(source);
-            let node = first(&out.doctree.root, kind).expect("the node");
-            let found = node
-                .uid()
-                .and_then(|uid| out.state.loc_overrides.get(&uid))
-                .copied();
+            let ParseOutput {
+                doctree, mut state, ..
+            } = sphinx_parse(source);
+            let tree = crate::transforms::tree::TxTree::from_parse(doctree, &mut state);
+            let node = tree.findall(tree.root(), |node| node.kind == kind)[0];
+            let found = crate::transforms::location::get_source_line(&tree, node, &state);
             assert_eq!(found, expected, "{source:?}");
         }
     }

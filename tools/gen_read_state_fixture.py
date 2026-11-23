@@ -331,6 +331,18 @@ CASES += [
         ".. only:: html\n\n   .. rubric:: Rubric bad_\n\n   Para.\n",
     ),
 ]
+# A field name, which docutils makes without a location
+# (`states.py:1587-1591`) and ApplySourceWorkaround (010) puts at its
+# field's source and line 0 (`SP/sphinx/util/nodes.py:190-216`), and the
+# lines of a `line-block` directive, which `LineBlock.run` stamps at the
+# directive's line plus each line's index in the content (`body.py:112-122`).
+CASES += [
+    ("state.location.field_name", "Title\n=====\n\nPara.\n\n:See bad_: body\n"),
+    (
+        "state.location.line_block_directive",
+        "Title\n=====\n\n.. line-block::\n\n   First bad_ line\n   Second bad_ line\n",
+    ),
+]
 
 
 # ---------------------------------------------------------------------------

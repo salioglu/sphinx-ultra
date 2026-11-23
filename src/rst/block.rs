@@ -200,9 +200,13 @@ fn split_classifiers(text: &str) -> Vec<String> {
 /// part opens a new `classifier` whose Text is that part as it stands,
 /// unstripped (none when it is empty). Inline markup is never split, so
 /// `*term : x*` stays one emphasis and the role in `term : :r:`a : b``
-/// is one role.
-fn split_term_nodes(nodes: Vec<Node>, span: Span) -> Vec<Node> {
+/// is one role. Beside the nodes come the indices of the classifiers an
+/// empty part opens, which docutils makes with an empty rawsource
+/// (`nodes.classifier(unescape(part, True), part)`): markup right after
+/// the delimiter, as in `term : *x*`, leaves one.
+fn split_term_nodes(nodes: Vec<Node>, span: Span) -> (Vec<Node>, Vec<usize>) {
     let mut out = vec![Node::elem(kinds::TERM, span)];
+    let mut bare = Vec::new();
     for node in nodes {
         if node.kind == kinds::TEXT {
             let parts = split_classifiers(&node.text_data());
@@ -213,7 +217,9 @@ fn split_term_nodes(nodes: Vec<Node>, span: Span) -> Vec<Node> {
                 }
                 for part in rest {
                     let mut classifier = Node::elem(kinds::CLASSIFIER, span);
-                    if !part.is_empty() {
+                    if part.is_empty() {
+                        bare.push(out.len());
+                    } else {
                         classifier
                             .children
                             .push(Node::text_node_escaped(part, node.span));
@@ -227,7 +233,7 @@ fn split_term_nodes(nodes: Vec<Node>, span: Span) -> Vec<Node> {
             last.children.push(node);
         }
     }
-    out
+    (out, bare)
 }
 
 struct SectionStart {
@@ -2119,8 +2125,18 @@ impl BlockParser {
             // and its classifiers, so markup may span ` : `.
             let inline = self.inline(&term_text, term_span, term_line.lineno);
             let mut term_msgs = inline.messages;
-            item.children
-                .extend(split_term_nodes(inline.nodes, term_span));
+            let (mut term_nodes, bare) = split_term_nodes(inline.nodes, term_span);
+            // Sphinx's ApplySourceWorkaround (010) gives a classifier with
+            // an empty rawsource its item's source and the line before its
+            // item's (`SP/sphinx/util/nodes.py:133-142`), the item standing
+            // at its term's line (`states.py:2981-2982`). Only the parse
+            // knows which classifiers those are, so it records where 010
+            // puts them ([`DocumentState::loc_overrides`]).
+            for index in bare {
+                let loc = DocLoc::at(term_line.source, term_line.lineno.saturating_sub(1));
+                self.note_location(&mut term_nodes[index], loc);
+            }
+            item.children.extend(term_nodes);
             let mut definition =
                 Node::elem(kinds::DEFINITION, self.span_of(lines, *pos + 1, item_last));
             // Fixture-verified: term/classifier inline messages land INSIDE
@@ -7527,17 +7543,17 @@ impl BlockParser {
         self.directive_add_name(&mut node, &input.options, loc);
         // docutils makes the rubric without a location. Its container's
         // `setup_child` gives it the machine's position when the container
-        // has `document` set ([`DirectiveInput::current`]); otherwise 010
-        // gives it its nearest located ancestor's source, this node's own
-        // but across an `include`, and line 0
-        // (`SP/sphinx/util/nodes.py:193-217`). A rubric in a substitution
+        // has `document` set ([`DirectiveInput::current`]); otherwise it
+        // stays unlocated, and 010 gives it its nearest located ancestor's
+        // source and line 0 (`SP/sphinx/util/nodes.py:190-216`,
+        // [`crate::transforms::location`]). A rubric in a substitution
         // definition, which docutils moves out into the definition's
         // container (`states.py:2184-2191`), keeps the default rule.
         if self.substitution_ctx.is_none() {
             let own = if self.attached {
                 input.current
             } else {
-                DocLoc::at(input.span.source, 0)
+                DocLoc::default()
             };
             self.note_location(&mut node, own);
         }
@@ -7655,11 +7671,23 @@ impl BlockParser {
         // `node.line = self.content_offset + 1` (`body.py:144`): the first
         // content line as the machine counts it ([`Self::line_bias`]). The
         // node keeps that line, and takes its source from its container's
-        // `setup_child` or, in a container without `document`, from Sphinx's
-        // ApplySourceWorkaround (010, `SP/sphinx/util/nodes.py:180-184`).
+        // `setup_child`; in a container without `document` it has none
+        // until Sphinx's ApplySourceWorkaround (010,
+        // `SP/sphinx/util/nodes.py:182-184`) gives it its nearest located
+        // ancestor's ([`crate::transforms::location`]). In a substitution
+        // definition, which docutils moves it out of (`states.py:2184-2191`),
+        // it keeps its own source.
         let loc = DocLoc::at(input.span.source, input.content_lineno + self.line_bias);
         self.directive_add_name(&mut node, &input.options, loc);
-        self.note_location(&mut node, loc);
+        let own = if self.attached || self.substitution_ctx.is_some() {
+            loc
+        } else {
+            DocLoc {
+                source: None,
+                ..loc
+            }
+        };
+        self.note_location(&mut node, own);
         out.push(node);
         out.extend(inline.messages);
     }
@@ -8317,7 +8345,9 @@ impl BlockParser {
             ));
             return;
         }
-        // `LineBlock.run` locates no line; each takes the directive's span.
+        // Each line takes the directive's span; docutils stamps it at the
+        // block's location plus its index in the content, which the parse
+        // records ([`Self::note_line_locations`]).
         let mut resolved: Vec<(usize, Vec<Node>, Span)> = Vec::with_capacity(input.content.len());
         let mut lb_messages: Vec<Node> = Vec::new();
         let mut prev_depth = 0usize;
@@ -8347,12 +8377,32 @@ impl BlockParser {
             resolved.push((depth, inline.nodes, input.span));
         }
         let mut block = build_line_block(&mut resolved, input.span, 0);
+        self.note_line_locations(&mut block, directive_loc(&input), &mut 0);
         if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
             block.attrs.classes.extend(classes.iter().cloned());
         }
         self.directive_add_name(&mut block, &input.options, directive_loc(&input));
         out.push(block);
         out.append(&mut lb_messages);
+    }
+
+    /// Records where `LineBlock.run` stamps each `line` of the
+    /// `line-block` directive's `block` (`body.py:112-128`): at the block's
+    /// location `at`, `get_source_and_line(self.lineno)`, the line moved on
+    /// by the line's index in the directive's content (`line.line =
+    /// block.line + i`), the index running from `index` in document order
+    /// through the blocks `nest_line_block_lines` nests, as the content
+    /// does ([`DocumentState::loc_overrides`]).
+    fn note_line_locations(&mut self, block: &mut Node, at: DocLoc, index: &mut u32) {
+        for child in &mut block.children {
+            if child.kind == kinds::LINE {
+                let line = at.line.map(|line| line + *index);
+                self.note_location(child, DocLoc { line, ..at });
+                *index += 1;
+            } else if child.kind == kinds::LINE_BLOCK {
+                self.note_line_locations(child, at, index);
+            }
+        }
     }
 
     /// class (misc.py:434-469): with content, classes apply directly to

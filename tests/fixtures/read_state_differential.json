@@ -5925,6 +5925,152 @@
       "warnings": [
         "<SRCDIR>/index.rst:4: ERROR: Unknown target name: \"bad\". [docutils]"
       ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "section",
+          "title",
+          true
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.location.field_name",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Para.\n        <field_list>\n            <field>\n                <field_name>\n                    See \n                    <problematic ids=\"id2\" refid=\"id1\">\n                        bad_\n                <field_body>\n                    <paragraph>\n                        body\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [
+          [
+            "title",
+            "title",
+            false
+          ]
+        ],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Title\n=====\n\nPara.\n\n:See bad_: body\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:0: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "section",
+          "title",
+          true
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          true
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id3",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id4",
+          true
+        ]
+      ],
+      "name": "state.location.line_block_directive",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <line_block>\n            <line>\n                First \n                <problematic ids=\"id2\" refid=\"id1\">\n                    bad_\n                 line\n            <line>\n                Second \n                <problematic ids=\"id4\" refid=\"id3\">\n                    bad_\n                 line\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [
+          [
+            "title",
+            "title",
+            false
+          ]
+        ],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ],
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Title\n=====\n\n.. line-block::\n\n   First bad_ line\n   Second bad_ line\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:4: ERROR: Unknown target name: \"bad\". [docutils]",
+        "<SRCDIR>/index.rst:5: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
     }
   ],
   "docutils_version": "0.22.4",
