@@ -1531,7 +1531,7 @@ impl SphinxBuilder {
         }
         self.flush(consistency);
 
-        self.xref_phase(env, results);
+        self.xref_phase(env, results, &doc2path);
         self.genindex_phase(env, &sources);
         self.py_modindex_phase(env);
 
@@ -1586,19 +1586,28 @@ impl SphinxBuilder {
             env_py_domain::generate_modindex(&env.py, &self.config.modindex_common_prefix);
     }
 
-    /// The post-transforms, run per document as Sphinx writes it — after
-    /// numbering, which `:numref:` reads: `ReferencesResolver` (10), then
-    /// `OnlyNodeTransform` (50), `PropagateDescDomain` (200),
-    /// `HighlightLanguageTransform` (400) and `TrimDoctestFlagsTransform`
-    /// (401) ([`post::apply_post_transforms`]), the `only` nodes evaluated
-    /// against the `-t` tags and the builder's own ([`BuilderKind::tags`]).
+    /// Sphinx's `get_and_resolve_doctree`, per document as Sphinx writes it
+    /// — after numbering, which `:numref:` reads: the post-transforms,
+    /// `ReferencesResolver` (10), then `OnlyNodeTransform` (50),
+    /// `PropagateDescDomain` (200), `HighlightLanguageTransform` (400) and
+    /// `TrimDoctestFlagsTransform` (401) ([`post::apply_post_transforms`]),
+    /// then the document's own toctrees, each replaced by its resolution
+    /// ([`env_toctree::resolve_body_toctrees`]); the `only` nodes, the tocs'
+    /// included, are evaluated against the `-t` tags and the builder's own
+    /// ([`BuilderKind::tags`]). `doc2path` is `env.doc2path`, where a
+    /// toctree warning about a document points.
     ///
     /// Each document is resolved over a *copy* of its doctree, exactly like
     /// Sphinx's `get_and_resolve_doctree`, and the result is kept as
     /// pseudo-XML for [`Self::snapshot_env`]. Documents are visited in
     /// docname order, which is the order Sphinx's write loop uses and
     /// therefore the order its warnings come out in.
-    fn xref_phase(&self, env: &BuildEnvironment, results: &[ReadResult]) {
+    fn xref_phase(
+        &self,
+        env: &BuildEnvironment,
+        results: &[ReadResult],
+        doc2path: &dyn Fn(&str) -> PathBuf,
+    ) {
         let in_memory: HashMap<&str, &Doctree> = results
             .iter()
             .map(|result| (result.docname.as_str(), result.outcome.doctree()))
@@ -1640,6 +1649,18 @@ impl SphinxBuilder {
             trim_doctest_flags: self.config.trim_doctest_flags,
             source_dir: &self.source_dir,
         };
+        let sources = |docname: &str| {
+            in_memory
+                .get(docname)
+                .map(|doctree| doctree.sources.as_slice())
+        };
+        let locations = env_toctree::ToctreeLocations {
+            source_dir: &self.source_dir,
+            doc2path,
+            sources: &sources,
+            include_patterns: &self.config.include_patterns,
+            exclude_patterns: &self.config.exclude_patterns,
+        };
 
         let mut ordered: Vec<&ReadResult> = results.iter().collect();
         ordered.sort_by(|a, b| a.docname.cmp(&b.docname));
@@ -1661,7 +1682,8 @@ impl SphinxBuilder {
             );
             unresolvable_domain_refs += post.unresolvable_domain_refs;
             // One resolve sink per document, flushed in this sorted order,
-            // its records in the order the post-transforms logged them.
+            // its records in the order the post-transforms, then the
+            // toctree resolution, logged them.
             let mut sink = DiagnosticSink::default();
             for record in post.records {
                 let key = OrderKey {
@@ -1671,6 +1693,15 @@ impl SphinxBuilder {
                 };
                 sink.push(key, record);
             }
+            env_toctree::resolve_body_toctrees(
+                env,
+                &result.docname,
+                &mut doctree,
+                &relative_uri,
+                &tags,
+                &locations,
+                &mut sink,
+            );
             self.flush(sink);
 
             // Sphinx feeds the search index from exactly this resolved

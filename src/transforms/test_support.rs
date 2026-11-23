@@ -2,8 +2,9 @@
 //! read-state fixture reads one (`tools/gen_read_state_fixture.py`), and the
 //! spellings Sphinx's reads are compared in.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::config::BuildConfig;
 use crate::diagnostics::Diagnostic;
@@ -130,10 +131,16 @@ pub(crate) struct Project {
 /// `documents`, `(docname, source)` pairs, each read as
 /// `<SRCDIR>/<docname>.rst` (stage R) and merged into one environment
 /// (stage M) in the order given, as the build merges a project's documents
-/// in sorted docname order.
+/// in sorted docname order. The project's documents are the parse's
+/// `env.found_docs`, against which a toctree resolves its entries.
 pub(crate) fn merge_project(documents: &[(&str, &str)]) -> Project {
     let settings = ReadSettings::sphinx_defaults();
     let doc2path = |docname: &str| PathBuf::from(format!("<SRCDIR>/{docname}.rst"));
+    let found_docs: BTreeSet<String> = documents
+        .iter()
+        .map(|(docname, _)| docname.to_string())
+        .collect();
+    let found_docs = Arc::new(found_docs);
     let mut project = Project {
         env: BuildEnvironment::default(),
         records: Vec::new(),
@@ -144,6 +151,7 @@ pub(crate) fn merge_project(documents: &[(&str, &str)]) -> Project {
         let parse = ParseOptions {
             source_path: path.display().to_string(),
             docname: docname.to_string(),
+            found_docs: Some(Arc::clone(&found_docs)),
             ..index_rst()
         };
         let mut read = read_document(source, &parse, &settings);

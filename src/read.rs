@@ -24,10 +24,11 @@ use chrono::{DateTime, Utc};
 
 use crate::builder::BuilderKind;
 use crate::config::BuildConfig;
-use crate::diagnostics::{Category, Diagnostic, OrderKey, Severity};
+use crate::diagnostics::{Category, Diagnostic, DiagnosticSink, OrderKey, Severity};
 use crate::doctree::{Doctree, Node, Uid};
 use crate::env::numbers as env_numbers;
 use crate::env::resolve::{NitpickConfig, Resolver};
+use crate::env::toctree::{resolve_body_toctrees, ToctreeLocations};
 use crate::env::BuildEnvironment;
 use crate::intersphinx::Intersphinx;
 use crate::rst::{LogLocation, ParseOptions, ParseOutput, ReadConfig, RegistryExport};
@@ -458,9 +459,11 @@ fn read_standalone_with(
 /// the numbering settings the snippets' `conf.py` leaves at Sphinx's
 /// defaults (`numfig = False`, `numfig_secnum_depth = 1`, the default
 /// `numfig_format`) and no intersphinx, and the `only` nodes evaluated
-/// against `kind`'s tags. The resolved doctree, and the records the
-/// numbering and the post-transforms logged, in the order Sphinx prints
-/// them.
+/// against `kind`'s tags; last, the document's own toctrees, each replaced
+/// by its resolution or removed, through the function the builder's
+/// resolve pass calls ([`resolve_body_toctrees`]). The resolved doctree,
+/// and the records the numbering, the post-transforms and the toctree
+/// resolution logged, in the order Sphinx prints them.
 pub fn resolve_standalone(
     read: &StandaloneRead,
     settings: &ReadSettings,
@@ -528,6 +531,32 @@ pub fn resolve_standalone(
         &mut doctree,
     );
     records.extend(post.records);
+
+    // Then the document's own toctrees, as the builder's resolve pass
+    // resolves them. Every entry naming a document was dropped by the
+    // read, so the patterns, the snippets' `conf.py` leaving them at
+    // Sphinx's defaults, word no warning here.
+    let doc2path = |docname: &str| read.source_dir.join(format!("{docname}.rst"));
+    let sources = |docname: &str| (docname == read.docname).then_some(post_read.sources.as_slice());
+    let include_patterns = ["**".to_string()];
+    let locations = ToctreeLocations {
+        source_dir: &read.source_dir,
+        doc2path: &doc2path,
+        sources: &sources,
+        include_patterns: &include_patterns,
+        exclude_patterns: &[],
+    };
+    let mut sink = DiagnosticSink::default();
+    resolve_body_toctrees(
+        &env,
+        &read.docname,
+        &mut doctree,
+        &|_, _| String::new(),
+        &tags,
+        &locations,
+        &mut sink,
+    );
+    records.extend(sink.into_ordered());
     (doctree, records)
 }
 
@@ -1082,6 +1111,68 @@ mod tests {
                 "domain, same key",
                 "collector"
             ]
+        );
+    }
+
+    /// The resolved doctree holds no `toctree` node: like Sphinx's
+    /// `get_and_resolve_doctree`, the resolve pass replaces every one with
+    /// its resolution, after the post-transforms, or removes it when that is
+    /// nothing. Here `self` and a URL survive the parse of a one-document
+    /// project (the read warns about `missing`, which therefore leaves its
+    /// toctree empty) and the hidden toctree resolves to nothing. Probed on
+    /// Sphinx 9.1.0 with the snippet oracle's `conf.py`.
+    #[test]
+    fn resolve_standalone_resolves_body_toctrees() {
+        let source = "Root\n====\n\n.. toctree::\n   :caption: Links\n\n   self\n   \
+                      Example <https://example.org>\n\n.. toctree::\n\n   missing\n\n\
+                      .. toctree::\n   :hidden:\n\n   self\n";
+        let parse = ParseOptions {
+            docname: "index".to_string(),
+            found_docs: Some(std::sync::Arc::new(
+                ["index".to_string()].into_iter().collect(),
+            )),
+            ..sphinx_options()
+        };
+        let settings = ReadSettings::sphinx_defaults();
+        let read = read_standalone(source, &parse, &settings);
+        assert_eq!(
+            read.diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.render(true))
+                .collect::<Vec<_>>(),
+            [
+                "<SRCDIR>/index.rst:10: WARNING: toctree contains reference to nonexisting \
+                 document 'missing' [toc.not_readable]"
+            ]
+        );
+        let post_read = read.outcome.doctree().root.pformat();
+        assert_eq!(post_read.matches("<toctree ").count(), 3, "{post_read}");
+
+        let (doctree, records) = resolve_standalone(&read, &settings, BuilderKind::Dummy);
+        assert_eq!(records, Vec::<Diagnostic>::new());
+        assert_eq!(
+            doctree.root.pformat(),
+            concat!(
+                "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n",
+                "    <section ids=\"root\" names=\"root\">\n",
+                "        <title>\n",
+                "            Root\n",
+                "        <compound classes=\"toctree-wrapper\">\n",
+                "            <compact_paragraph classes=\"current\" iscurrent=\"1\" toctree=\"1\">\n",
+                "                <title>\n",
+                "                    Links\n",
+                "                <bullet_list classes=\"current\" iscurrent=\"1\">\n",
+                "                    <list_item classes=\"toctree-l1 current\" iscurrent=\"1\">\n",
+                "                        <compact_paragraph classes=\"toctree-l1 current\" iscurrent=\"1\">\n",
+                "                            <reference anchorname=\"\" classes=\"current\" internal=\"1\" iscurrent=\"1\" refuri=\"\">\n",
+                "                                Root\n",
+                "                    <list_item classes=\"toctree-l1\">\n",
+                "                        <compact_paragraph classes=\"toctree-l1\">\n",
+                "                            <reference anchorname=\"\" internal=\"0\" refuri=\"https://example.org\">\n",
+                "                                Example\n",
+                "        <compound classes=\"toctree-wrapper\">\n",
+                "        <compound classes=\"toctree-wrapper\">\n",
+            )
         );
     }
 

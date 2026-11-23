@@ -565,69 +565,16 @@ fn known_toc_gap(project: &str, docname: &str) -> Option<&'static str> {
 /// **strictly**, exactly like [`KNOWN_TOC_GAPS`]: a listed project whose
 /// warnings start matching fails the test, so the exemption is deleted
 /// rather than left to rot.
-const KNOWN_WARNING_GAPS: &[(&str, &str)] = &[(
-    "toctree_circular",
-    "the three `circular toctree references detected` warnings come from \
-         the write phase's toctree *resolution* (`_resolve_toctree` / \
-         `_toctree_entry`, adapters/toctree.py), which lands with the \
-         resolved-doctree task",
-)];
+const KNOWN_WARNING_GAPS: &[(&str, &str)] = &[];
 
 /// Projects whose oracle `std` data this task deliberately does not
 /// reproduce. Checked **strictly**, exactly like [`KNOWN_TOC_GAPS`].
 const KNOWN_STD_GAPS: &[(&str, &str)] = &[];
 
-/// Reasons shared by several [`KNOWN_RESOLVED_GAPS`] entries.
-const TOCTREE_RESOLUTION: &str = "the write-phase toctree resolution that turns a \
-     `toctree` node into a `compact_paragraph` entry tree is not ported yet";
-
 /// Per-document `resolved_pformat` divergences this task deliberately does
 /// not close, each pinned to what would close it. Checked **strictly**,
 /// exactly like [`KNOWN_TOC_GAPS`].
-const KNOWN_RESOLVED_GAPS: &[(&str, &str, &str)] = &[
-    // Write-phase toctree resolution (`adapters/toctree.py`'s
-    // `_resolve_toctree`), which replaces a `toctree` node with the
-    // `compact_paragraph`/`bullet_list` tree of entry references. Not part
-    // of this task; every document below carries a `toctree` and nothing
-    // else it needs.
-    ("toctree_nested", "a", TOCTREE_RESOLUTION),
-    ("toctree_nested", "index", TOCTREE_RESOLUTION),
-    ("toctree_glob", "index", TOCTREE_RESOLUTION),
-    ("toctree_numbered", "index", TOCTREE_RESOLUTION),
-    ("toctree_numbered_depth2", "index", TOCTREE_RESOLUTION),
-    ("toctree_self_ref", "index", TOCTREE_RESOLUTION),
-    ("toctree_circular", "a", TOCTREE_RESOLUTION),
-    ("toctree_circular", "b", TOCTREE_RESOLUTION),
-    ("toctree_circular", "index", TOCTREE_RESOLUTION),
-    ("toctree_multi_parent", "a", TOCTREE_RESOLUTION),
-    ("toctree_multi_parent", "b", TOCTREE_RESOLUTION),
-    ("toctree_multi_parent", "index", TOCTREE_RESOLUTION),
-    ("orphan_doc", "index", TOCTREE_RESOLUTION),
-    ("numfig_on", "index", TOCTREE_RESOLUTION),
-    ("numfig_off_numref", "index", TOCTREE_RESOLUTION),
-    ("labels_dups", "index", TOCTREE_RESOLUTION),
-    ("glossary_terms", "index", TOCTREE_RESOLUTION),
-    ("index_entries", "index", TOCTREE_RESOLUTION),
-    ("doc_refs", "index", TOCTREE_RESOLUTION),
-    ("std_objects", "index", TOCTREE_RESOLUTION),
-    // Wave 4.5 py projects: toctree-bearing index documents share the
-    // write-phase gap above.
-    ("py_basic", "index", TOCTREE_RESOLUTION),
-    ("py_dup", "index", TOCTREE_RESOLUTION),
-    ("py_toc", "index", TOCTREE_RESOLUTION),
-    ("py_toc_parents", "index", TOCTREE_RESOLUTION),
-    // Wave 4.5 include/literalinclude projects: only the toctree-bearing
-    // index documents are skipped; every other document of these three
-    // projects is compared.
-    ("inc_basic", "index", TOCTREE_RESOLUTION),
-    ("inc_warn", "index", TOCTREE_RESOLUTION),
-    ("inc_deps", "index", TOCTREE_RESOLUTION),
-    // Panel fix round B: `py_any` keeps every `:any:` reference in `a`
-    // (compared at full strength) and its definitions in `b`.
-    ("py_any", "index", TOCTREE_RESOLUTION),
-    // Wave 5a read-state projects.
-    ("state.label_order", "index", "toctree resolution: 5a-T15"),
-];
+const KNOWN_RESOLVED_GAPS: &[(&str, &str, &str)] = &[];
 
 fn known_resolved_gap(project: &str, docname: &str) -> Option<&'static str> {
     KNOWN_RESOLVED_GAPS
@@ -1076,9 +1023,8 @@ fn relations_match_oracle() {
 /// message text, `file:line` location, and the `[type.subtype]` suffix
 /// `show_warning_types` appends.
 ///
-/// Live for the projects whose oracle warnings are toctree diagnostics;
-/// the rest are pinned in [`KNOWN_WARNING_GAPS`] to the task that will
-/// produce them.
+/// Live for every project; a project whose warnings diverge on purpose is
+/// pinned in [`KNOWN_WARNING_GAPS`] to the task that will produce them.
 #[test]
 fn warnings_match_oracle() {
     let fixture = load_fixture();
@@ -1384,14 +1330,10 @@ fn dependencies_and_included_match_oracle() {
 }
 
 /// `env.get_and_resolve_doctree(docname, builder)` as pseudo-XML — every
-/// document's doctree after cross-reference resolution.
-///
-/// Compared per document, because only part of that pass exists: the
-/// post-transforms are live (the build resolves as the dummy builder, as
-/// the oracle does), while the write-phase *toctree* resolution
-/// (`adapters/toctree.py`) that turns a `toctree` node into a
-/// `compact_paragraph` tree is not — so every document carrying a toctree
-/// is pinned in [`KNOWN_RESOLVED_GAPS`] rather than compared.
+/// document's doctree after the post-transforms and the resolution of its
+/// own toctrees, which the build runs as the dummy builder, as the oracle
+/// does. Compared per document; a document that diverges on purpose is
+/// pinned in [`KNOWN_RESOLVED_GAPS`] rather than compared.
 #[test]
 fn resolved_doctrees_match_oracle() {
     let fixture = load_fixture();
@@ -1458,10 +1400,10 @@ fn resolved_doctrees_match_oracle() {
 /// the doc sites together.
 const DOCUMENTED_PROJECTS: usize = 31;
 const DOCUMENTED_DOCUMENTS: usize = 89;
-const DOCUMENTED_WHOLESALE_EXEMPT_DOCUMENTS: usize = 29;
-const DOCUMENTED_BYTE_EXACT_DOCUMENTS: usize = 60;
-const DOCUMENTED_WARNING_EXEMPT_PROJECTS: usize = 1;
-const DOCUMENTED_BYTE_EXACT_WARNING_PROJECTS: usize = 30;
+const DOCUMENTED_WHOLESALE_EXEMPT_DOCUMENTS: usize = 0;
+const DOCUMENTED_BYTE_EXACT_DOCUMENTS: usize = 89;
+const DOCUMENTED_WARNING_EXEMPT_PROJECTS: usize = 0;
+const DOCUMENTED_BYTE_EXACT_WARNING_PROJECTS: usize = 31;
 
 #[test]
 fn exemption_arithmetic_matches_the_documented_numbers() {
