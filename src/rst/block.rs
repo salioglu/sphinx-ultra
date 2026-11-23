@@ -494,7 +494,9 @@ fn is_explicit_markup_start(text: &str) -> bool {
 /// markup: right away if its block took its trailing blank lines
 /// ([`Ending::OffEnd`]), and only with no blank line between if its block
 /// stopped at one ([`Ending::BlankEnded`], which the document loop clears
-/// on a blank line). `None` when no construct can join.
+/// on a blank line). `None` when no construct can join. An include's
+/// lines, which open with a blank padding line, end the list whatever the
+/// include's ending: the document loop clears it when it splices them in.
 fn explicit_list_goes_on(explicit: bool, ending: Ending) -> Option<Ending> {
     (explicit && matches!(ending, Ending::OffEnd | Ending::BlankEnded)).then_some(ending)
 }
@@ -1210,6 +1212,14 @@ impl BlockParser {
             // `include` directive's insert mode).
             if let Some((request, connected)) = self.pending_splice.take() {
                 self.apply_splice(&mut lines, pos, request, connected);
+                // The lines open with the padding line `insert_input` puts
+                // before the included ones. Whether the include is the
+                // explicit list's first construct or a later one, the
+                // list reads that blank line next, which ends it
+                // (`Explicit.blank`), and the top-level machine, whose
+                // input the insertion reaches, reads the included file's
+                // first construct as a top-level construct of its own.
+                explicit_list = None;
             }
         }
         while !stack.is_empty() {

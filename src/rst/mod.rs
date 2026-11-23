@@ -2234,14 +2234,19 @@ pub(crate) mod tests {
     /// that Sphinx prints, read as `index.rst`: the form the probes below
     /// print Sphinx 9.1.0's stream in, the source directory left out.
     fn printed_heads(source: &str) -> Vec<String> {
-        let out = parse_rst_full(
+        printed_heads_with(
             source,
             &ParseOptions {
                 source_path: "index.rst".into(),
                 ..sphinx_options()
             },
-        );
-        render_records(out.state.log, &out.doctree.sources, "index.rst")
+        )
+    }
+
+    /// [`printed_heads`] of a parse with `options`.
+    fn printed_heads_with(source: &str, options: &ParseOptions) -> Vec<String> {
+        let out = parse_rst_full(source, options);
+        render_records(out.state.log, &out.doctree.sources, &options.source_path)
             .into_iter()
             .map(|(_, diagnostic)| {
                 let rendered = diagnostic.render(true);
@@ -2624,8 +2629,10 @@ pub(crate) mod tests {
     /// a footnote or a substitution definition, the construct's own lines
     /// for a target or an anonymous target, whose block stops at a blank
     /// line, and which a blank line after it ends the list at. A paragraph
-    /// or a section title ends the list too. Probed on Sphinx 9.1.0 with
-    /// `:name:` and `index` duplicates (each case's warning stream).
+    /// or a section title ends the list too, and so does the padding line
+    /// before an include's lines. Probed on Sphinx 9.1.0 with `:name:` and
+    /// `index` duplicates and equation `Duplicate ID`s (each case's warning
+    /// stream).
     #[test]
     fn explicit_lists_locate_at_their_first_construct() {
         let duplicate =
@@ -2689,6 +2696,137 @@ pub(crate) mod tests {
                 .map(|(line, name)| at(line, &format!("{} [docutils]", duplicate(name))))
                 .collect();
             assert_eq!(printed_heads(&source), expected, "{source:?}");
+        }
+
+        // An include's lines open with the padding line docutils inserts
+        // before them (`insert_input`), which ends the explicit list the
+        // include opens or belongs to, so the included file's first
+        // construct is a top-level construct of its own: a list in the file
+        // is located there. The constructs after the include in the
+        // document are located in the document. Each row is a project
+        // probed on Sphinx 9.1.0: an included file holding a single
+        // construct, a list, or another include; the include in a list;
+        // two includes in a list; explicit markup right after the include.
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let index = tmp.path().join("index.rst").display().to_string();
+        let options = ParseOptions {
+            source_path: index.clone(),
+            srcdir: Some(tmp.path().to_path_buf()),
+            ..sphinx_options()
+        };
+        let named = |name: &str| format!("{} [docutils]", duplicate(name));
+        let duplicate_id = "ERROR: Duplicate ID: \"equation-e1\" used by \
+                            <target ids=\"equation-e1\"> and <target ids=\"equation-e1\"> \
+                            [docutils]";
+        let in_file = |file: &str, line: u32, record: &str| format!("{file}:{line}: {record}");
+        let in_index = |line: u32, record: &str| format!("{index}:{line}: {record}");
+        let chain = format!("{}\n{}", note_x("a"), note_x("b"));
+        let math = |text: &str| format!(".. math:: {text}\n   :label: e1\n");
+        let target_then = |text: &str| format!("{title}.. _a:\n\n.. include:: part.inc\n{text}");
+        let named_a = |text: &str| format!(".. note:: {text}\n   :name: a\n");
+        for (source, files, expected) in [
+            (
+                target_then("\nEnd.\n"),
+                vec![("part.inc", named_a("b"))],
+                vec![in_file("part.inc", 3, &named("a"))],
+            ),
+            (
+                target_then(""),
+                vec![("part.inc", named_a("b"))],
+                vec![in_file("part.inc", 3, &named("a"))],
+            ),
+            (
+                target_then("\nEnd.\n"),
+                vec![("part.inc", ".. index:: x\n   :name: a\n".to_string())],
+                vec![in_file("part.inc", 3, &named("a"))],
+            ),
+            (
+                format!(
+                    "{title}{}\nPara.\n\n.. include:: part.inc\n\nEnd.\n",
+                    math("x")
+                ),
+                vec![("part.inc", math("y"))],
+                vec![in_file("part.inc", 3, duplicate_id)],
+            ),
+            (
+                format!("{title}.. include:: part.inc\n\nEnd.\n"),
+                vec![("part.inc", chain.clone())],
+                vec![in_file("part.inc", 3, &named("x"))],
+            ),
+            (
+                format!("{title}.. include:: part.inc\n\nEnd.\n"),
+                vec![("part.inc", format!("{}{}", note_x("a"), note_x("b")))],
+                vec![in_file("part.inc", 2, &named("x"))],
+            ),
+            (
+                format!("{title}.. include:: part.inc\n\nEnd.\n"),
+                vec![("part.inc", format!("{}\n{}", math("x"), math("y")))],
+                vec![in_file("part.inc", 3, duplicate_id)],
+            ),
+            (
+                format!("{title}.. _a:\n\nText.\n\n.. include:: part.inc\n\nEnd.\n"),
+                vec![("part.inc", format!(".. _b:\n\n{}", named_a("b")))],
+                vec![in_file("part.inc", 5, &named("a"))],
+            ),
+            (
+                format!("{title}.. _t:\n.. include:: part.inc\n\nEnd.\n"),
+                vec![("part.inc", chain.clone())],
+                vec![in_file("part.inc", 3, &named("x"))],
+            ),
+            (
+                format!("{title}.. _a:\n.. include:: part.inc\n\nEnd.\n"),
+                vec![("part.inc", named_a("b"))],
+                vec![in_file("part.inc", 3, &named("a"))],
+            ),
+            (
+                format!(
+                    "{title}.. _t:\n.. include:: part.inc\n{}\nEnd.\n",
+                    note_x("c")
+                ),
+                vec![("part.inc", note_x("a"))],
+                vec![in_index(8, &named("x"))],
+            ),
+            (
+                format!("{title}.. include:: p1.inc\n.. include:: p2.inc\n\nEnd.\n"),
+                vec![("p1.inc", "One.\n".to_string()), ("p2.inc", chain.clone())],
+                vec![in_file("p2.inc", 3, &named("x"))],
+            ),
+            (
+                format!("{title}.. include:: p1.inc\n.. include:: p2.inc\n\nEnd.\n"),
+                vec![("p1.inc", ".. _x:\n".to_string()), ("p2.inc", note_x("b"))],
+                vec![in_file("p2.inc", 3, &named("x"))],
+            ),
+            (
+                format!("{title}.. include:: part.inc\n\nEnd.\n"),
+                vec![
+                    ("part.inc", ".. include:: sub.inc\n".to_string()),
+                    ("sub.inc", chain.clone()),
+                ],
+                vec![in_file("sub.inc", 3, &named("x"))],
+            ),
+            (
+                target_then(&format!("{}\nEnd.\n", named_a("c"))),
+                vec![("part.inc", "Inc.\n".to_string())],
+                vec![in_index(9, &named("a"))],
+            ),
+            (
+                format!(
+                    "{title}.. include:: part.inc\n{}{}\nEnd.\n",
+                    note_x("c"),
+                    note_x("d")
+                ),
+                vec![("part.inc", ".. _p:\n".to_string())],
+                vec![in_index(6, &named("x"))],
+            ),
+        ] {
+            for (name, text) in &files {
+                std::fs::write(tmp.path().join(name), text).expect("write");
+            }
+            assert_eq!(
+                printed_heads_with(&source, &options),
+                expected,
+                "{source:?} {files:?}"
+            );
         }
     }
 
