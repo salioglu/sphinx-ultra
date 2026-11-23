@@ -34,12 +34,6 @@ ignore = [
     # means adding jiff or time, a new dependency that the current wave's
     # no-new-dependencies rule defers; migrate in a separate change.
     { id = "RUSTSEC-2026-0543", reason = "chrono: cache and document timestamps only, no untrusted input; migration to jiff/time needs a new dependency, scheduled as a separate change" },
-    # unsafe-libyaml backs serde_yaml, the loader for sphinx-ultra.yaml. The
-    # only safe-Rust serde YAML crate (serde-saphyr) requires Rust 1.89 and
-    # this crate's MSRV is 1.85; the forks (serde_yaml_ng, serde_norway) keep
-    # the same unsafe-libyaml dependency. Swap to serde-saphyr at the next
-    # MSRV bump.
-    { id = "RUSTSEC-2024-0449", reason = "serde_yaml/unsafe-libyaml: parses the project's own config file; replacement blocked on MSRV 1.89" },
 ]
 
 [licenses]
