@@ -21,6 +21,7 @@ use crate::doctree::{kinds, Doctree, Node, Span};
 use crate::document::{
     Document, DocumentContent, LabelRecord, MarkdownContent, MarkdownNode, RstContent, TocEntry,
 };
+use crate::read::{self, ReadOutcome, ReadSettings};
 use crate::rst;
 use crate::utils;
 
@@ -40,15 +41,20 @@ pub struct Parser {
     srcdir: Option<std::path::PathBuf>,
     /// `source_encoding` (see [`crate::rst::ParseOptions::source_encoding`]).
     source_encoding: String,
+    /// The read configuration ([`ReadSettings`]), projected out of the build
+    /// configuration once.
+    read: ReadSettings,
 }
 
-/// Everything one source file's parse produces: the pipeline's [`Document`]
-/// and the doctree it was derived from. The build's read phase keeps both —
+/// Everything one source file's read produces: the pipeline's [`Document`]
+/// and the read it was derived from ([`ReadOutcome`]: the doctree and the
+/// docutils document state beside it). The build's read phase keeps both —
 /// the doctree is what the environment layer (tocs, titles, domains) reads,
-/// and what gets persisted per document.
+/// and what gets persisted per document; the state is what the merge's
+/// stage M reads beside it.
 pub struct ParsedFile {
     pub document: Document,
-    pub doctree: Doctree,
+    pub outcome: ReadOutcome,
 }
 
 impl Parser {
@@ -58,6 +64,7 @@ impl Parser {
             py: crate::py::PySigConfig::from(config),
             srcdir: None,
             source_encoding: config.source_encoding.clone(),
+            read: ReadSettings::from_config(config),
         })
     }
 
@@ -73,7 +80,7 @@ impl Parser {
         Ok(self.parse_full(file_path, content, docname, None)?.document)
     }
 
-    /// Parse one source file, keeping the doctree.
+    /// Read one source file, keeping the read ([`ParsedFile::outcome`]).
     ///
     /// `found_docs` is the project's full docname set (sphinx
     /// `env.found_docs`), which the `toctree` directive resolves its entries
@@ -97,17 +104,17 @@ impl Parser {
             .and_then(|ext| ext.to_str())
             .unwrap_or("");
 
-        let doctree = match extension {
+        let outcome = match extension {
             "rst" => self.parse_rst_into(content, file_path, docname, found_docs, &mut document),
             "md" => {
                 document.content = self.parse_markdown(content)?;
                 document.title = "Untitled".to_string();
-                empty_doctree()
+                ReadOutcome::without_parse(empty_doctree())
             }
             _ => {
                 document.content = DocumentContent::PlainText(content.to_string());
                 document.title = "Untitled".to_string();
-                empty_doctree()
+                ReadOutcome::without_parse(empty_doctree())
             }
         };
 
@@ -117,12 +124,16 @@ impl Parser {
             content.len()
         );
 
-        Ok(ParsedFile { document, doctree })
+        Ok(ParsedFile { document, outcome })
     }
 
-    /// Returns the parsed doctree so callers (tests included) can inspect
-    /// docname-carrying attrs (`pending_xref[refdoc]`, toctree `parent`)
-    /// that don't otherwise survive onto `Document`.
+    /// Read one RST source ([`read::read_document`]) and build `document`
+    /// from the read: title, toc and labels from its doctree; toctrees,
+    /// directive and role records and the registry export moved out of its
+    /// [`rst::ParseOutput`]. Returns the read, whose doctree callers (tests
+    /// included) can inspect for docname-carrying attrs
+    /// (`pending_xref[refdoc]`, toctree `parent`) that don't otherwise
+    /// survive onto `Document`.
     fn parse_rst_into(
         &self,
         content: &str,
@@ -130,8 +141,8 @@ impl Parser {
         docname: &str,
         found_docs: Option<Arc<BTreeSet<String>>>,
         document: &mut Document,
-    ) -> Doctree {
-        let output = rst::parse_rst_full(
+    ) -> ReadOutcome {
+        let mut outcome = read::read_document(
             content,
             &rst::ParseOptions {
                 source_path: file_path.display().to_string(),
@@ -142,11 +153,12 @@ impl Parser {
                 py: self.py.clone(),
                 srcdir: self.srcdir.clone(),
                 source_encoding: self.source_encoding.clone(),
-                trace_ids: false,
+                trace_ids: self.read.trace_ids,
             },
+            &self.read,
         );
         {
-            let root = &output.doctree.root;
+            let root = &outcome.doctree().root;
 
             // Title: the first section title (the M1 scanner's "Untitled"
             // fallback preserved).
@@ -166,10 +178,11 @@ impl Parser {
             document.labels = labels;
         }
 
-        document.toctrees = output.toctrees;
-        document.directive_records = output.directive_records;
-        document.role_records = output.role_records;
-        document.registry = output.registry;
+        let output = &mut outcome.output;
+        document.toctrees = std::mem::take(&mut output.toctrees);
+        document.directive_records = std::mem::take(&mut output.directive_records);
+        document.role_records = std::mem::take(&mut output.role_records);
+        document.registry = std::mem::take(&mut output.registry);
 
         document.content = DocumentContent::RestructuredText(RstContent {
             raw: content.to_string(),
@@ -177,7 +190,7 @@ impl Parser {
             directives: Vec::new(),
         });
 
-        output.doctree
+        outcome
     }
 
     fn parse_markdown(&self, content: &str) -> Result<DocumentContent> {
@@ -379,13 +392,14 @@ mod tests {
     fn real_docname_threads_into_refdoc_and_toctree_parent() {
         let parser = Parser::new(&BuildConfig::default()).unwrap();
         let mut document = Document::new("guide/install.rst".into(), "guide/install.html".into());
-        let doctree = parser.parse_rst_into(
+        let outcome = parser.parse_rst_into(
             ".. toctree::\n\n   other\n\nSee :doc:`other`.\n",
             Path::new("guide/install.rst"),
             "guide/install",
             None,
             &mut document,
         );
+        let doctree = outcome.doctree();
 
         let toctree = find_by_kind(&doctree.root, "toctree").expect("toctree node");
         assert_eq!(
@@ -437,5 +451,29 @@ mod tests {
             section,
             &("section".to_string(), Some("section".to_string()), false)
         );
+    }
+
+    /// A parsed file carries its read for the merge: the doctree, stamped
+    /// as every Sphinx document is, and the docutils document state beside
+    /// it (here the reporter's record of the short underline), while the
+    /// records the pipeline reads off the `Document` move there.
+    #[test]
+    fn a_parsed_file_carries_its_read() {
+        let parser = Parser::new(&BuildConfig::default()).unwrap();
+        let mut document = Document::new("index.rst".into(), "index.html".into());
+        let outcome = parser.parse_rst_into(
+            "Title\n====\n\n.. toctree::\n\n   other\n",
+            Path::new("index.rst"),
+            "index",
+            None,
+            &mut document,
+        );
+        assert_eq!(
+            outcome.doctree().root.get("translation_progress"),
+            Some(&AttrValue::Str("{'total': 0, 'translated': 0}".to_string()))
+        );
+        assert_eq!(outcome.state().log.len(), 1);
+        assert_eq!(document.toctrees.len(), 1);
+        assert!(outcome.output.toctrees.is_empty());
     }
 }

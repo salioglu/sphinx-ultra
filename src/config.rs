@@ -170,6 +170,13 @@ pub struct BuildConfig {
     /// ([`crate::diagnostics::Diagnostic::render`]).
     pub show_warning_types: bool,
 
+    /// `keep_warnings`, default `False` (`config.py:261`, rebuild class
+    /// `'env'`): whether `FilterSystemMessages` keeps the reporter's
+    /// `system_message`s of level WARNING and up in the post-read doctree
+    /// ([`crate::read::ReadSettings::keep_warnings`]). A `-D` override takes
+    /// Sphinx's bool grammar, `0` or `1` only ([`STRICT_BOOL_KEYS`]).
+    pub keep_warnings: bool,
+
     /// Number figures, tables and code blocks (`numfig`, `config.py:275`).
     /// Off by default, exactly like Sphinx; when off,
     /// `assign_figure_numbers` assigns nothing and `:numref:` degrades.
@@ -326,6 +333,13 @@ const NONE_DEFAULT_INT_KEYS: [&str; 2] = [
     "python_maximum_signature_line_length",
 ];
 
+/// The config keys whose only valid type is `bool` and that this crate
+/// types, whose `-D` value takes Sphinx's bool grammar: `convert_overrides`
+/// turns `'0'` and `'1'` into `False` and `True` and raises `ConfigError`
+/// for anything else (`config.py:366-374`). The crate's other bool keys
+/// still also take `true`/`false`.
+const STRICT_BOOL_KEYS: [&str; 1] = ["keep_warnings"];
+
 /// `deprecate_source_encoding` (`config.py:886-896`, a `config-inited`
 /// handler at priority 790): the encodings it does NOT warn about.
 const UTF8_SPELLINGS: [&str; 3] = ["utf-8", "utf-8-sig", "utf8"];
@@ -468,6 +482,7 @@ impl Default for BuildConfig {
             validate_directives: true,
             suppress_warnings: Vec::new(),
             show_warning_types: true,
+            keep_warnings: false,
 
             numfig: false,
             numfig_format: default_numfig_format(),
@@ -790,6 +805,12 @@ impl BuildConfig {
             }
             self.note_confval_type_mismatch(key, "str");
             return Ok(None);
+        }
+
+        // Sphinx's bool grammar: anything but `0` and `1` is a `ConfigError`,
+        // which aborts configuration (`config.py:366-374`).
+        if STRICT_BOOL_KEYS.contains(&key) && !matches!(value, "0" | "1") {
+            anyhow::bail!("'{key}' must be '0' or '1', got '{value}'");
         }
 
         let mut tree = serde_json::to_value(&*self)?;
@@ -1212,6 +1233,43 @@ output:
             .unwrap()
             .is_none());
         assert!(!config.show_warning_types);
+    }
+
+    /// `keep_warnings` (`config.py:261`: default `False`, type `bool` only).
+    /// Its `-D` value is Sphinx's bool grammar: `convert_overrides` takes
+    /// `'0'` and `'1'` and raises `ConfigError` for anything else
+    /// (`config.py:366-374`), `true` included, with the message Sphinx
+    /// prints. The override reaches `conf_values` like any other.
+    #[test]
+    fn keep_warnings_takes_sphinxs_bool_grammar() {
+        let mut config = BuildConfig::default();
+        assert!(!config.keep_warnings);
+
+        assert!(config
+            .apply_override("keep_warnings", "1")
+            .unwrap()
+            .is_none());
+        assert!(config.keep_warnings);
+        assert_eq!(
+            config.conf_values.get("keep_warnings"),
+            Some(&serde_json::Value::Bool(true))
+        );
+        assert!(config
+            .apply_override("keep_warnings", "0")
+            .unwrap()
+            .is_none());
+        assert!(!config.keep_warnings);
+
+        for value in ["true", "True", "false", "yes", ""] {
+            let error = config
+                .apply_override("keep_warnings", value)
+                .expect_err(value);
+            assert_eq!(
+                error.to_string(),
+                format!("'keep_warnings' must be '0' or '1', got '{value}'")
+            );
+            assert!(!config.keep_warnings, "{value}: the setting is unchanged");
+        }
     }
 
     #[test]

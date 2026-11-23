@@ -29,6 +29,7 @@ use crate::intersphinx::{self, HttpConfig, Intersphinx, LoadRequest, UreqFetcher
 use crate::inventory::InventoryFile;
 use crate::matching;
 use crate::parser::Parser;
+use crate::read::ReadOutcome;
 use crate::utils;
 use crate::utils::py_repr_str;
 
@@ -88,7 +89,11 @@ struct ReadResult {
     /// Root-relative docname (`docname_of_path`).
     docname: String,
     document: Document,
-    doctree: Doctree,
+    /// The read ([`ReadOutcome`]): the document's doctree and, for a
+    /// document this build parsed, the docutils document state beside it,
+    /// which the merge's stage M reads. A document recovered from the cache
+    /// has its persisted doctree and an empty state.
+    outcome: ReadOutcome,
     /// Read completion time in microseconds since the epoch — what Sphinx
     /// stores in `env.all_docs[docname]` (`builders/__init__.py:665`).
     ///
@@ -802,7 +807,7 @@ impl SphinxBuilder {
         // validation pass needs to spell an included file's path.
         let (processed_docs, doctrees): (Vec<Document>, Vec<Doctree>) = read_results
             .into_iter()
-            .map(|result| (result.document, result.doctree))
+            .map(|result| (result.document, result.outcome.output.doctree))
             .unzip();
 
         self.write_phase(&processed_docs);
@@ -1202,7 +1207,7 @@ impl SphinxBuilder {
                     return Ok(ReadResult {
                         docname,
                         document,
-                        doctree,
+                        outcome: ReadOutcome::without_parse(doctree),
                         read_time_us: None,
                     });
                 }
@@ -1238,7 +1243,7 @@ impl SphinxBuilder {
         Ok(ReadResult {
             docname,
             document,
-            doctree: parsed.doctree,
+            outcome: parsed.outcome,
             read_time_us: Some(now_micros()),
         })
     }
@@ -1321,7 +1326,7 @@ impl SphinxBuilder {
 
             env.all_docs.insert(docname.to_string(), read_time_us);
 
-            let title = env_toctree::document_title(&result.doctree);
+            let title = env_toctree::document_title(result.outcome.doctree());
             // Sphinx's longtitle differs from the title only for documents
             // carrying an explicit `title` attribute, which nothing produces
             // yet (`collectors/title.py:27`).
@@ -1330,7 +1335,7 @@ impl SphinxBuilder {
 
             env.metadata.insert(
                 docname.to_string(),
-                env_metadata::document_metadata(&result.doctree),
+                env_metadata::document_metadata(result.outcome.doctree()),
             );
 
             // The files this document pulls in, which is what makes it
@@ -1339,7 +1344,7 @@ impl SphinxBuilder {
             env_dependencies::process_doc(
                 env,
                 docname,
-                &result.doctree,
+                result.outcome.doctree(),
                 &self.source_dir,
                 &result.document.registry.dependencies,
             );
@@ -1353,7 +1358,7 @@ impl SphinxBuilder {
                 env.included.insert(docname.to_string(), included);
             }
 
-            let (toc, num_entries) = env_toctree::build_toc(&result.doctree, docname);
+            let (toc, num_entries) = env_toctree::build_toc(result.outcome.doctree(), docname);
             // Each toctree node copied into the toc is noted, in the order
             // it was copied (which is the order Sphinx notes them in).
             for toctree in env_toctree::toctree_copies(&toc) {
@@ -1385,7 +1390,12 @@ impl SphinxBuilder {
 
             // The document's toctree diagnostics, produced when its entries
             // were resolved, and the parse's other logger warnings.
-            self.report_parse_warnings(docname, &result.document, &result.doctree, &mut sink);
+            self.report_parse_warnings(
+                docname,
+                &result.document,
+                result.outcome.doctree(),
+                &mut sink,
+            );
 
             // The domains' read-phase hooks, dispatched in the order
             // `_DomainsContainer._process_doc` walks them — `c, changeset,
@@ -1403,7 +1413,7 @@ impl SphinxBuilder {
             env_genindex::process_doc(
                 env,
                 docname,
-                &mut result.doctree,
+                result.outcome.doctree_mut(),
                 &result.document.source_path,
                 &mut index_warnings,
             );
@@ -1416,7 +1426,7 @@ impl SphinxBuilder {
                 env,
                 &env_std::DocumentSource {
                     docname,
-                    doctree: &result.doctree,
+                    doctree: result.outcome.doctree(),
                     registry: &result.document.registry,
                     path: &result.document.source_path,
                 },
@@ -1442,7 +1452,7 @@ impl SphinxBuilder {
             // beside a fresh `all_docs` entry would look current to the next
             // build, whereas a missing one simply makes the document
             // outdated and re-read.
-            if let Err(e) = self.store_doctree(docname, &result.doctree) {
+            if let Err(e) = self.store_doctree(docname, result.outcome.doctree()) {
                 let _ = std::fs::remove_file(self.doctree_path(docname));
                 self.errors.lock().unwrap().push(BuildErrorReport::new(
                     result.document.source_path.clone(),
@@ -1655,7 +1665,7 @@ impl SphinxBuilder {
     fn xref_phase(&self, env: &BuildEnvironment, results: &[ReadResult]) {
         let in_memory: HashMap<&str, &Doctree> = results
             .iter()
-            .map(|result| (result.docname.as_str(), &result.doctree))
+            .map(|result| (result.docname.as_str(), result.outcome.doctree()))
             .collect();
         let load_doctree = |docname: &str| -> Option<Cow<'_, Doctree>> {
             match in_memory.get(docname) {
@@ -1691,7 +1701,7 @@ impl SphinxBuilder {
         *self.search_index.lock().unwrap() = crate::search::SphinxIndexBuilder::new();
         let mut unresolvable_domain_refs = 0usize;
         for result in ordered {
-            let mut doctree = result.doctree.clone();
+            let mut doctree = result.outcome.doctree().clone();
             let resolution = env_resolve::resolve_document(
                 &resolver,
                 &nitpick,
@@ -1764,7 +1774,7 @@ impl SphinxBuilder {
     fn number_phase(&self, env: &mut BuildEnvironment, results: &[ReadResult]) {
         let in_memory: HashMap<&str, &Doctree> = results
             .iter()
-            .map(|result| (result.docname.as_str(), &result.doctree))
+            .map(|result| (result.docname.as_str(), result.outcome.doctree()))
             .collect();
         let load_doctree = |docname: &str| -> Option<std::borrow::Cow<'_, Doctree>> {
             match in_memory.get(docname) {
@@ -1812,7 +1822,8 @@ impl SphinxBuilder {
             .and_then(|result| {
                 let toctree = toctree?;
                 result
-                    .doctree
+                    .outcome
+                    .doctree()
                     .sources
                     .get(toctree.source as usize)
                     .map(PathBuf::from)
@@ -2387,6 +2398,16 @@ mod tests {
             config_fingerprint(&untyped).unwrap(),
             baseline,
             "show_warning_types"
+        );
+
+        // `keep_warnings` is rebuild class `'env'` (`config.py:261`): it
+        // decides which messages the persisted doctree keeps.
+        let mut kept = base.clone();
+        kept.keep_warnings = true;
+        assert_ne!(
+            config_fingerprint(&kept).unwrap(),
+            baseline,
+            "keep_warnings"
         );
     }
 

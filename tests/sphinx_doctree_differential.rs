@@ -1,11 +1,26 @@
-//! Differential test: our RST parser vs the SPHINX ORACLE — the pseudo-XML a
-//! real `sphinx-build` 9.1.0 read phase (dummy builder, `extensions = []`,
-//! smartquotes off, keep_warnings on) produces for the committed fixture corpus.
+//! Differential tests: our read vs the SPHINX ORACLE — the pseudo-XML a real
+//! `sphinx-build` 9.1.0 read phase (dummy builder, `extensions = []`)
+//! produces, for two committed corpora:
 //!
-//! Regenerate the fixture (manual, never in CI):
-//!     PYTHONNOUSERSITE=1 uv run --python 3.12 --with 'sphinx==9.1.0' \
-//!         --with 'docutils==0.22.4' \
-//!         python tools/gen_sphinx_fixture.py
+//! - `sphinx_doctree_differential.json`, one-snippet reads under the
+//!   fixture's own settings (smartquotes off, keep_warnings on);
+//! - `sphinx_docutils_doctree_differential.json`, the post-read doctrees of
+//!   the HTML oracle's docutils snippets, each read under the oracle's own
+//!   `conf.py` (keep_warnings off) — compared strictly against
+//!   [`KNOWN_POST_READ_GAPS`].
+//!
+//! Regenerate the fixtures (manual, never in CI), with the locked core
+//! oracle profile:
+//!     PYTHONNOUSERSITE=1 uv run --locked --python 3.12 \
+//!         --project tools/oracle_profiles/core python tools/gen_sphinx_fixture.py
+//! and the same with `--corpus html-oracle-docutils` for the second.
+//!
+//! Both read through [`read_standalone`] with the [`ReadSettings`] the
+//! fixture's recorded settings give through a [`BuildConfig`] (M1's
+//! directive and role validation off, wave 5a decision 7), never Sphinx's
+//! bare defaults. Until `FilterSystemMessages` (999) runs in the read
+//! (T9b), both comparisons drop the `system_message`s of our tree that it
+//! would remove ([`filter_system_messages`]): the one normalization here.
 //!
 //! Clones the tests/doctree_differential.rs shape: committed JSON, version
 //! assertions (BOTH sphinx and docutils are recorded), floor guard against
@@ -21,16 +36,32 @@
 //! of silently parsing under defaults (serde ignores unknown struct fields,
 //! so without the explicit map a conf case would quietly lose its config).
 
-use std::collections::BTreeMap;
+mod support {
+    pub mod read_gaps;
+}
 
+use std::collections::{BTreeMap, BTreeSet};
+
+use sphinx_ultra::config::BuildConfig;
+use sphinx_ultra::doctree::{kinds, AttrValue, Node};
 use sphinx_ultra::py::PySigConfig;
-use sphinx_ultra::rst::{parse_rst, ParseOptions};
+use sphinx_ultra::read::{read_standalone, ReadSettings};
+use sphinx_ultra::rst::ParseOptions;
 
 #[derive(serde::Deserialize)]
 struct Fixture {
     docutils_version: String,
     sphinx_version: String,
+    settings: FixtureSettings,
     cases: Vec<Case>,
+}
+
+/// The read settings the generator recorded in the fixture header (and
+/// asserted against the oracle app): the ones the read consumes.
+#[derive(serde::Deserialize)]
+struct FixtureSettings {
+    keep_warnings: bool,
+    smartquotes: bool,
 }
 
 #[derive(serde::Deserialize)]
@@ -153,6 +184,47 @@ fn a_mapped_conf_translates_onto_py_sig_config() {
     );
 }
 
+/// The read settings of a build whose configuration sets `keep_warnings`
+/// as `settings` records it: a [`BuildConfig`] with M1's validation off
+/// (decision 7), projected the way a build projects it.
+fn read_settings_of(settings: &FixtureSettings) -> ReadSettings {
+    assert!(
+        !settings.smartquotes,
+        "no smart-quote transform exists yet, so only `smartquotes = False` \
+         reads like the oracle"
+    );
+    ReadSettings::from_config(&BuildConfig {
+        validate_directives: false,
+        keep_warnings: settings.keep_warnings,
+        ..BuildConfig::default()
+    })
+}
+
+/// The one normalization of these comparisons, until `FilterSystemMessages`
+/// (999) runs in the read (T9b, which deletes it): drop the
+/// `system_message`s of our tree that it removes, every one under
+/// `keep_warnings = False` and those below WARNING (level 2) under `True`
+/// (`SP/sphinx/transforms/__init__.py:337-347`, [TW A11]).
+fn filter_system_messages(node: &mut Node, keep_warnings: bool) {
+    let filter_level = if keep_warnings { 2 } else { 5 };
+    node.children.retain(|child| {
+        child.kind != kinds::SYSTEM_MESSAGE
+            || matches!(child.get("level"), Some(AttrValue::Int(level)) if *level >= filter_level)
+    });
+    for child in &mut node.children {
+        filter_system_messages(child, keep_warnings);
+    }
+}
+
+/// The pformat of our post-read doctree for `rst`, read standalone as the
+/// oracle harness reads it, after [`filter_system_messages`].
+fn read_pformat(rst: &str, parse: &ParseOptions, settings: &ReadSettings) -> String {
+    let mut read = read_standalone(rst, parse, settings);
+    let root = &mut read.outcome.doctree_mut().root;
+    filter_system_messages(root, settings.keep_warnings);
+    root.pformat()
+}
+
 #[test]
 fn matches_sphinx_oracle_pformat() {
     let raw = include_str!(concat!(
@@ -172,6 +244,7 @@ fn matches_sphinx_oracle_pformat() {
         fixture.cases.len()
     );
 
+    let settings = read_settings_of(&fixture.settings);
     let mut mismatches = Vec::new();
     for case in &fixture.cases {
         let py = match py_config_from_conf(&case.conf) {
@@ -182,22 +255,19 @@ fn matches_sphinx_oracle_pformat() {
             }
         };
         let rst = case.rst.clone();
+        let settings = settings.clone();
         let ours = std::panic::catch_unwind(move || {
-            parse_rst(
-                &rst,
-                &ParseOptions {
-                    source_path: "<snippet>".into(),
-                    sphinx: true,
-                    docname: "index".into(),
-                    exclude_patterns: Vec::new(),
-                    py,
-                    found_docs: None,
-                    srcdir: None,
-                    ..Default::default()
-                },
-            )
-            .root
-            .pformat()
+            let parse = ParseOptions {
+                source_path: "<snippet>".into(),
+                sphinx: true,
+                docname: "index".into(),
+                exclude_patterns: Vec::new(),
+                py,
+                found_docs: None,
+                srcdir: None,
+                ..Default::default()
+            };
+            read_pformat(&rst, &parse, &settings)
         });
         match ours {
             Err(_) => mismatches.push(format!("[{}] PANICKED on:\n{}", case.name, case.rst)),
@@ -213,5 +283,379 @@ fn matches_sphinx_oracle_pformat() {
         "{} divergence(s) from the sphinx 9.1.0 oracle:\n\n{}",
         mismatches.len(),
         mismatches.join("\n\n")
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The HTML oracle's docutils snippets, post-read
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Deserialize)]
+struct DocutilsFixture {
+    docutils_version: String,
+    sphinx_version: String,
+    cases: Vec<DocutilsCase>,
+}
+
+/// One HTML-oracle docutils snippet: its input, the `conf.py` the oracle
+/// read it with and Sphinx's post-read doctree. (The fixture's `resolved`,
+/// the dummy builder's resolved doctree, is compared from T14.)
+#[derive(serde::Deserialize)]
+struct DocutilsCase {
+    name: String,
+    rst: String,
+    conf: String,
+    post_read: String,
+}
+
+fn docutils_fixture() -> DocutilsFixture {
+    let raw = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/sphinx_docutils_doctree_differential.json"
+    ));
+    let fixture: DocutilsFixture = serde_json::from_str(raw).expect("fixture parses");
+    assert_eq!(fixture.docutils_version, "0.22.4");
+    assert_eq!(fixture.sphinx_version, "9.1.0");
+    fixture
+}
+
+/// The docutils snippets of the HTML oracle's core ledger that its harness
+/// runs: status `built` or `build-error`, never a `reference-crash`
+/// (`CaseStatus::is_runnable`, `tests/support/html_oracle.rs`; wave 5a
+/// decision 13).
+fn runnable_docutils_snippets() -> BTreeSet<String> {
+    #[derive(serde::Deserialize)]
+    struct Ledger {
+        cases: Vec<LedgerCase>,
+    }
+    #[derive(serde::Deserialize)]
+    struct LedgerCase {
+        case_id: String,
+        source_set: String,
+        status: String,
+    }
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/html_oracle/core/index.json"
+    );
+    let raw = std::fs::read_to_string(path).expect("the core ledger reads");
+    let ledger: Ledger = serde_json::from_str(&raw).expect("the core ledger parses");
+    ledger
+        .cases
+        .into_iter()
+        .filter(|case| {
+            case.source_set == "docutils_snippets"
+                && matches!(case.status.as_str(), "built" | "build-error")
+        })
+        .map(|case| case.case_id)
+        .collect()
+}
+
+/// The build configuration the oracle's `conf.py` gives, read the way the
+/// CLI reads it, with M1's validation off (decision 7).
+fn conf_py_config(conf: &str) -> BuildConfig {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let path = dir.path().join("conf.py");
+    std::fs::write(&path, conf).expect("conf.py writes");
+    let config = BuildConfig::from_conf_py(&path).expect("the oracle conf.py loads");
+    assert_eq!(
+        config.conf_values.get("smartquotes"),
+        Some(&serde_json::Value::Bool(false)),
+        "no smart-quote transform exists yet, so only `smartquotes = False` reads \
+         like the oracle"
+    );
+    BuildConfig {
+        validate_directives: false,
+        ..config
+    }
+}
+
+/// Every docutils snippet whose post-read doctree differs from the
+/// oracle's, by case: `(expected, actual)` pformats, a panic reported as
+/// the actual text.
+fn post_read_mismatches(fixture: &DocutilsFixture) -> BTreeMap<String, (String, String)> {
+    let mut configs: BTreeMap<&str, BuildConfig> = BTreeMap::new();
+    let mut mismatches = BTreeMap::new();
+    for case in &fixture.cases {
+        let config = configs
+            .entry(case.conf.as_str())
+            .or_insert_with(|| conf_py_config(&case.conf));
+        let settings = ReadSettings::from_config(config);
+        let parse = ParseOptions {
+            source_path: "<SRCDIR>/index.rst".to_string(),
+            sphinx: true,
+            docname: "index".to_string(),
+            exclude_patterns: config.exclude_patterns.clone(),
+            py: PySigConfig::from(&*config),
+            source_encoding: config.source_encoding.clone(),
+            ..ParseOptions::default()
+        };
+        let rst = case.rst.clone();
+        let actual = std::panic::catch_unwind(move || read_pformat(&rst, &parse, &settings))
+            .unwrap_or_else(|_| "PANICKED\n".to_string());
+        if actual != case.post_read {
+            mismatches.insert(case.name.clone(), (case.post_read.clone(), actual));
+        }
+    }
+    mismatches
+}
+
+/// The docutils snippets whose post-read doctree is not Sphinx's yet, each
+/// with the fix families its divergence shows ([BASE §3.8], plus
+/// `system_message`) and the latest task that fixes one of them. Checked
+/// strictly: a listed case that matches fails the test, and so does an
+/// unlisted case that differs. Rows are printed by
+/// [`docutils_snippets_post_read_census`], one per line as the census prints
+/// them, so a task deletes or re-attributes a row by editing one line and a
+/// grep for an owner shows whole rows.
+#[rustfmt::skip]
+const KNOWN_POST_READ_GAPS: &[(&str, &str)] = &[
+    ("docutils-0099", "doctest class: 5a-T9c"),
+    ("docutils-0100", "doctest class: 5a-T9c"),
+    ("docutils-0101", "doctest class: 5a-T9c"),
+    ("docutils-0102", "doctest class: 5a-T9c"),
+    ("docutils-0114", "propagate targets: 5a-T10"),
+    ("docutils-0115", "indirect targets: 5a-T10"),
+    ("docutils-0121", "propagate targets: 5a-T10"),
+    ("docutils-0124", "propagate targets: 5a-T10"),
+    ("docutils-0125", "propagate targets: 5a-T10"),
+    ("docutils-0140", "propagate targets: 5a-T10"),
+    ("docutils-0145", "propagate targets: 5a-T10"),
+    ("docutils-0147", "doctest class: 5a-T9c"),
+    ("docutils-0157", "propagate targets: 5a-T10"),
+    ("docutils-0171", "propagate targets: 5a-T10"),
+    ("docutils-0212", "dangling refs: 5a-T10"),
+    ("docutils-0213", "dangling refs: 5a-T10"),
+    ("docutils-0214", "indirect targets: 5a-T10"),
+    ("docutils-0215", "dangling refs: 5a-T10"),
+    ("docutils-0216", "dangling refs: 5a-T10"),
+    ("docutils-0217", "dangling refs: 5a-T10"),
+    ("docutils-0218", "dangling refs: 5a-T10"),
+    ("docutils-0219", "dangling refs: 5a-T10"),
+    ("docutils-0220", "dangling refs: 5a-T10"),
+    ("docutils-0224", "dangling refs: 5a-T10"),
+    ("docutils-0225", "dangling refs: 5a-T10"),
+    ("docutils-0226", "dangling refs: 5a-T10"),
+    ("docutils-0236", "dangling refs+footnotes: 5a-T11"),
+    ("docutils-0237", "dangling refs: 5a-T10"),
+    ("docutils-0238", "dangling refs: 5a-T10"),
+    ("docutils-0239", "dangling refs: 5a-T10"),
+    ("docutils-0240", "citations: 5a-T11"),
+    ("docutils-0241", "citations: 5a-T11"),
+    ("docutils-0242", "dangling refs+substitutions: 5a-T11"),
+    ("docutils-0243", "dangling refs+substitutions: 5a-T11"),
+    ("docutils-0253", "dangling refs: 5a-T10"),
+    ("docutils-0255", "dangling refs: 5a-T10"),
+    ("docutils-0264", "unknown role: 5a-T7"),
+    ("docutils-0265", "unknown role: 5a-T7"),
+    ("docutils-0266", "unknown role: 5a-T7"),
+    ("docutils-0267", "unknown role: 5a-T7"),
+    ("docutils-0268", "pep/rfc index order: 5a-T7"),
+    ("docutils-0270", "pep/rfc index order: 5a-T7"),
+    ("docutils-0274", "code directive: 5a-T7"),
+    ("docutils-0276", "unknown role: 5a-T7"),
+    ("docutils-0278", "unknown role: 5a-T7"),
+    ("docutils-0280", "footnotes: 5a-T11"),
+    ("docutils-0281", "footnotes: 5a-T11"),
+    ("docutils-0282", "footnotes: 5a-T11"),
+    ("docutils-0283", "footnotes: 5a-T11"),
+    ("docutils-0284", "citations: 5a-T11"),
+    ("docutils-0285", "footnotes: 5a-T11"),
+    ("docutils-0286", "citations: 5a-T11"),
+    ("docutils-0287", "footnotes: 5a-T11"),
+    ("docutils-0288", "citations: 5a-T11"),
+    ("docutils-0289", "footnotes: 5a-T11"),
+    ("docutils-0290", "footnotes: 5a-T11"),
+    ("docutils-0291", "footnotes: 5a-T11"),
+    ("docutils-0292", "citations+footnotes: 5a-T11"),
+    ("docutils-0293", "footnotes: 5a-T11"),
+    ("docutils-0294", "footnotes: 5a-T11"),
+    ("docutils-0295", "footnotes: 5a-T11"),
+    ("docutils-0297", "docinfo: 5a-T12"),
+    ("docutils-0300", "docinfo: 5a-T12"),
+    ("docutils-0301", "docinfo: 5a-T12"),
+    ("docutils-0302", "code directive: 5a-T7"),
+    ("docutils-0303", "docinfo: 5a-T12"),
+    ("docutils-0304", "docinfo: 5a-T12"),
+    ("docutils-0305", "docinfo: 5a-T12"),
+    ("docutils-0306", "docinfo: 5a-T12"),
+    ("docutils-0307", "docinfo: 5a-T12"),
+    ("docutils-0308", "docinfo: 5a-T12"),
+    ("docutils-0309", "docinfo: 5a-T12"),
+    ("docutils-0310", "docinfo: 5a-T12"),
+    ("docutils-0311", "docinfo: 5a-T12"),
+    ("docutils-0359", "footnotes: 5a-T11"),
+    ("docutils-0360", "footnotes: 5a-T11"),
+    ("docutils-0361", "dangling refs: 5a-T10"),
+    ("docutils-0362", "docinfo: 5a-T12"),
+    ("docutils-0364", "dangling refs: 5a-T10"),
+    ("docutils-0367", "substitutions: 5a-T11"),
+    ("docutils-0368", "footnotes: 5a-T11"),
+    ("docutils-0369", "indirect targets: 5a-T10"),
+    ("docutils-0371", "docinfo: 5a-T12"),
+    ("docutils-0372", "footnotes: 5a-T11"),
+    ("docutils-0375", "footnotes: 5a-T11"),
+    ("docutils-0425", "candidates: 5a-T13a"),
+    ("docutils-0426", "candidates: 5a-T13a"),
+    ("docutils-0427", "candidates: 5a-T13a"),
+    ("docutils-0428", "candidates: 5a-T13a"),
+    ("docutils-0434", "candidates: 5a-T13a"),
+    ("docutils-0435", "candidates: 5a-T13a"),
+    ("docutils-0437", "candidates: 5a-T13a"),
+    ("docutils-0438", "candidates: 5a-T13a"),
+    ("docutils-0439", "dangling refs: 5a-T10"),
+    ("docutils-0440", "dangling refs: 5a-T10"),
+    ("docutils-0442", "candidates: 5a-T13a"),
+    ("docutils-0443", "candidates: 5a-T13a"),
+    ("docutils-0446", "candidates: 5a-T13a"),
+    ("docutils-0447", "candidates: 5a-T13a"),
+    ("docutils-0448", "candidates: 5a-T13a"),
+    ("docutils-0449", "candidates: 5a-T13a"),
+    ("docutils-0450", "candidates: 5a-T13a"),
+    ("docutils-0451", "candidates: 5a-T13a"),
+    ("docutils-0489", "autonumber ids+candidates: 5a-T13a"),
+    ("docutils-0490", "autonumber ids+candidates: 5a-T13a"),
+    ("docutils-0491", "candidates: 5a-T13a"),
+    ("docutils-0492", "candidates: 5a-T13a"),
+    ("docutils-0493", "autonumber ids+candidates: 5a-T13a"),
+    ("docutils-0494", "autonumber ids+candidates: 5a-T13a"),
+    ("docutils-0496", "candidates: 5a-T13a"),
+    ("docutils-0497", "candidates: 5a-T13a"),
+    ("docutils-0498", "candidates: 5a-T13a"),
+    ("docutils-0499", "candidates: 5a-T13a"),
+    ("docutils-0501", "candidates: 5a-T13a"),
+    ("docutils-0502", "autonumber ids+candidates: 5a-T13a"),
+    ("docutils-0504", "code directive: 5a-T7"),
+    ("docutils-0505", "code directive: 5a-T7"),
+    ("docutils-0506", "code directive: 5a-T7"),
+    ("docutils-0507", "code directive: 5a-T7"),
+    ("docutils-0508", "code directive: 5a-T7"),
+    ("docutils-0514", "autonumber ids: 5a-T7"),
+    ("docutils-0528", "`class` is `py:class`: 5a-T7"),
+    ("docutils-0529", "`class` is `py:class`: 5a-T7"),
+    ("docutils-0530", "`class` is `py:class`: 5a-T7"),
+    ("docutils-0531", "`class` is `py:class`: 5a-T7"),
+    ("docutils-0532", "`class` is `py:class`: 5a-T7"),
+    ("docutils-0534", "autonumber ids: 5a-T12"),
+    ("docutils-0543", "autonumber ids: 5a-T12"),
+    ("docutils-0548", "autonumber ids: 5a-T12"),
+    ("docutils-0559", "autonumber ids: 5a-T12"),
+    ("docutils-0568", "substitutions: 5a-T11"),
+    ("docutils-0573", "dangling refs: 5a-T10"),
+    ("docutils-0590", "candidates: 5a-T13a"),
+    ("docutils-0591", "candidates: 5a-T13a"),
+    ("docutils-0593", "candidates: 5a-T13a"),
+    ("docutils-0603", "dangling refs: 5a-T10"),
+    ("docutils-0605", "unknown role: 5a-T7"),
+    ("docutils-0606", "unknown role: 5a-T7"),
+    ("docutils-0607", "dangling refs: 5a-T10"),
+    ("docutils-0608", "dangling refs: 5a-T10"),
+    ("docutils-0611", "substitutions: 5a-T11"),
+    ("docutils-0615", "footnotes: 5a-T11"),
+    ("docutils-0616", "footnotes: 5a-T11"),
+    ("docutils-0617", "citations: 5a-T11"),
+    ("docutils-0633", "doctest class: 5a-T9c"),
+    ("docutils-0638", "propagate targets: 5a-T10"),
+    ("docutils-0669", "dangling refs: 5a-T10"),
+    ("docutils-0675", "propagate targets: 5a-T10"),
+    ("docutils-0678", "propagate targets: 5a-T10"),
+    ("docutils-0680", "dangling refs: 5a-T10"),
+    ("docutils-0685", "candidates: 5a-T13a"),
+    ("docutils-0707", "candidates: 5a-T13a"),
+    ("docutils-0708", "candidates: 5a-T13a"),
+    ("docutils-0712", "substitutions: 5a-T11"),
+    ("docutils-0715", "`class` is `py:class`: 5a-T7"),
+    ("docutils-0716", "candidates: 5a-T13a"),
+    ("docutils-0725", "docinfo: 5a-T12"),
+    ("docutils-0726", "docinfo: 5a-T12"),
+];
+
+/// Holds Sphinx's post-read doctree of every runnable HTML-oracle docutils
+/// snippet, read under the oracle's `conf.py`, to [`KNOWN_POST_READ_GAPS`].
+#[test]
+fn docutils_snippets_post_read_differential() {
+    let fixture = docutils_fixture();
+    let names: BTreeSet<String> = fixture.cases.iter().map(|case| case.name.clone()).collect();
+    assert_eq!(names.len(), fixture.cases.len(), "a case name repeats");
+    assert_eq!(
+        names,
+        runnable_docutils_snippets(),
+        "the fixture's cases are not the ledger's runnable docutils snippets"
+    );
+
+    let mismatches = post_read_mismatches(&fixture);
+    let known: BTreeSet<&str> = KNOWN_POST_READ_GAPS.iter().map(|(case, _)| *case).collect();
+    assert_eq!(
+        known.len(),
+        KNOWN_POST_READ_GAPS.len(),
+        "KNOWN_POST_READ_GAPS lists a case twice"
+    );
+    let observed: BTreeSet<&str> = mismatches.keys().map(String::as_str).collect();
+    let regressions: Vec<String> = observed
+        .difference(&known)
+        .map(|case| {
+            let (expected, actual) = &mismatches[*case];
+            let (line, expected, actual) = first_differing_line(expected, actual);
+            format!(
+                "    {case}: line {line}\n        expected: {expected:?}\n        actual:   {actual:?}"
+            )
+        })
+        .collect();
+    let fixed: Vec<&str> = known.difference(&observed).copied().collect();
+    assert!(
+        regressions.is_empty() && fixed.is_empty(),
+        "the post-read mismatch set differs from KNOWN_POST_READ_GAPS: {} regressions, {} fixed \
+         (delete their rows: {fixed:?})\n{}",
+        regressions.len(),
+        fixed.len(),
+        regressions.join("\n")
+    );
+}
+
+/// The first line, numbered from 1, where two texts differ, and that line
+/// of each (empty past a text's end).
+fn first_differing_line<'a>(expected: &'a str, actual: &'a str) -> (usize, &'a str, &'a str) {
+    let mut expected_lines = expected.lines();
+    let mut actual_lines = actual.lines();
+    let mut number = 1;
+    loop {
+        match (expected_lines.next(), actual_lines.next()) {
+            (Some(left), Some(right)) if left == right => number += 1,
+            (None, None) => return (number, "", ""),
+            (left, right) => return (number, left.unwrap_or_default(), right.unwrap_or_default()),
+        }
+    }
+}
+
+/// Prints the current post-read mismatch set as `KNOWN_POST_READ_GAPS`
+/// rows. A row's reason lists the fix families its divergence shows and the
+/// latest task that fixes one of them ([`support::read_gaps`]); a
+/// divergence no family explains gets a `?` family and a comment above its
+/// row, and fails the census once every row is printed:
+///
+/// `cargo test --locked --test sphinx_doctree_differential docutils_snippets_post_read_census -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn docutils_snippets_post_read_census() {
+    let fixture = docutils_fixture();
+    let mut table = String::new();
+    let mut unexplained_rows = 0;
+    let mismatches = post_read_mismatches(&fixture);
+    for (case, (expected, actual)) in &mismatches {
+        let census = support::read_gaps::tree_census(expected, actual);
+        if !census.unexplained.is_empty() {
+            unexplained_rows += 1;
+        }
+        for note in &census.unexplained {
+            for line in note.lines() {
+                table.push_str(&format!("    // ? {line}\n"));
+            }
+        }
+        table.push_str(&format!("    ({case:?}, {:?}),\n", census.reason()));
+    }
+    println!("    // {} rows\n{table}", mismatches.len());
+    assert_eq!(
+        unexplained_rows, 0,
+        "rows with a `?` family need a family the census does not know"
     );
 }

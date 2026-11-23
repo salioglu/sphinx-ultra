@@ -147,6 +147,8 @@ pub struct ConfPyConfig {
     pub suppress_warnings: Vec<String>,
     /// `show_warning_types`, `None` when conf.py said nothing.
     pub show_warning_types: Option<bool>,
+    /// `keep_warnings` (`config.py:261`), `None` when conf.py said nothing.
+    pub keep_warnings: Option<bool>,
 
     // Object-signature / py-domain family. `None` means "conf.py did not
     // mention it", which is what keeps sphinx's own default in place —
@@ -418,6 +420,7 @@ impl PythonConfigParser {
         config.user_agent = extract_string("user_agent");
         config.suppress_warnings = extract_string_list("suppress_warnings");
         config.show_warning_types = extract_bool("show_warning_types");
+        config.keep_warnings = extract_bool("keep_warnings");
 
         // Object-signature / py-domain family. The two line-length keys are
         // `int | None`, so they read through `as_i64` rather than
@@ -579,6 +582,7 @@ impl PythonConfigParser {
                 | "user_agent"
                 | "suppress_warnings"
                 | "show_warning_types"
+                | "keep_warnings"
                 | "intersphinx_mapping"
                 | "intersphinx_disabled_reftypes"
                 | "intersphinx_resolve_self"
@@ -1154,6 +1158,7 @@ impl Default for ConfPyConfig {
             user_agent: None,
             suppress_warnings: Vec::new(),
             show_warning_types: None,
+            keep_warnings: None,
             // `None` = "conf.py said nothing", which leaves
             // `BuildConfig::default()`'s sphinx defaults untouched.
             maximum_signature_line_length: None,
@@ -1372,6 +1377,9 @@ impl ConfPyConfig {
         config.suppress_warnings = self.suppress_warnings.clone();
         if let Some(show_warning_types) = self.show_warning_types {
             config.show_warning_types = show_warning_types;
+        }
+        if let Some(keep_warnings) = self.keep_warnings {
+            config.keep_warnings = keep_warnings;
         }
 
         config.conf_values = self.raw_values.clone();
@@ -1851,5 +1859,24 @@ e = 'esc\n'
             config.to_build_config().unwrap().source_encoding,
             "utf-8-sig"
         );
+    }
+
+    /// `keep_warnings` is a standard key (`config.py:261`): read from
+    /// conf.py into the build configuration, never into `custom_configs`;
+    /// unset, it keeps Sphinx's `False`.
+    #[test]
+    fn keep_warnings_is_read_from_conf_py() {
+        let p = parse("keep_warnings = True\n");
+        let config = p.extract_configuration().unwrap();
+        assert!(!config.custom_configs.contains_key("keep_warnings"));
+        assert!(config.to_build_config().unwrap().keep_warnings);
+
+        let p = parse("keep_warnings = False\n");
+        let config = p.extract_configuration().unwrap();
+        assert!(!config.to_build_config().unwrap().keep_warnings);
+
+        let p = parse("project = 'x'\n");
+        let config = p.extract_configuration().unwrap();
+        assert!(!config.to_build_config().unwrap().keep_warnings);
     }
 }

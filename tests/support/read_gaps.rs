@@ -1,0 +1,446 @@
+//! The census vocabulary of the read differentials (wave 5a, T6): the fix
+//! families a read divergence can show, the task that fixes each, and the
+//! doctree classifier both the post-read census
+//! (`tests/sphinx_doctree_differential.rs`) and the read-state census
+//! (`tests/read_state_differential.rs`) print their gap rows with.
+//!
+//! A gap row's reason is `"<families>: <owner>"`: every family its
+//! divergence shows, and the latest task that fixes one of them (the plan's
+//! Global Constraints). The family names are the corpus-baseline report's
+//! [BASE §3.8] (`dangling refs`, `unknown role`, `docinfo`, `propagate
+//! targets`, `autonumber ids`, `code directive`, `doctest class`,
+//! `footnotes`, `` `class` is `py:class` ``, `citations`, `indirect
+//! targets`, `pep/rfc index order`, `substitutions`, and the
+//! writer-invisible `candidates`), plus `system_message` and, for read
+//! state the HTML oracle's inputs never show, `class attribute`,
+//! `transitions` and `pending`.
+
+use std::collections::BTreeSet;
+
+/// The owners of gap rows in the order their tasks land: a row is owned by
+/// the latest task that fixes one of its families.
+pub const OWNERS: &[&str] = &[
+    "5a-T7",
+    "5a-T8",
+    "5a-T9a",
+    "5a-T9b",
+    "5a-T9c",
+    "5a-T10",
+    "5a-T11",
+    "5a-T12",
+    "5a-T13a",
+    "5a-T13b",
+    "5a-T14",
+    "5a-T15",
+    "5a-T16a",
+    "5a-T16b",
+    "5a-T17a",
+    "5a-T17b",
+    "5a-T17c",
+    "5a-T18a",
+    "5a-T18b",
+    "5a-T18c",
+    "5a-T19a",
+    "5b (oracle regen)",
+    "5b",
+    "5c",
+];
+
+/// One fix family of a gap row and the task that fixes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct GapFix {
+    pub family: &'static str,
+    pub owner: &'static str,
+}
+
+pub const fn gap_fix(family: &'static str, owner: &'static str) -> GapFix {
+    GapFix { family, owner }
+}
+
+// The families, each with the task that ports what it lacks.
+pub const DANGLING_REFS: GapFix = gap_fix("dangling refs", "5a-T10");
+pub const INDIRECT_TARGETS: GapFix = gap_fix("indirect targets", "5a-T10");
+pub const PROPAGATE_TARGETS: GapFix = gap_fix("propagate targets", "5a-T10");
+pub const UNKNOWN_ROLE: GapFix = gap_fix("unknown role", "5a-T7");
+pub const CODE_DIRECTIVE: GapFix = gap_fix("code directive", "5a-T7");
+pub const PY_CLASS: GapFix = gap_fix("`class` is `py:class`", "5a-T7");
+pub const PEP_RFC: GapFix = gap_fix("pep/rfc index order", "5a-T7");
+/// [BASE §3.8] files the math directive's `:name:` ids under autonumber
+/// ids; T7 fixes them (`math_name_without_label_keeps_names`).
+pub const MATH_NAMES: GapFix = gap_fix("autonumber ids", "5a-T7");
+pub const SYSTEM_MESSAGE: GapFix = gap_fix("system_message", "5a-T9b");
+pub const DOCTEST_CLASS: GapFix = gap_fix("doctest class", "5a-T9c");
+pub const TRANSITIONS: GapFix = gap_fix("transitions", "5a-T9c");
+pub const FOOTNOTES: GapFix = gap_fix("footnotes", "5a-T11");
+pub const CITATIONS: GapFix = gap_fix("citations", "5a-T11");
+pub const SUBSTITUTIONS: GapFix = gap_fix("substitutions", "5a-T11");
+pub const AUTONUMBER_IDS: GapFix = gap_fix("autonumber ids", "5a-T12");
+pub const CLASS_ATTRIBUTE: GapFix = gap_fix("class attribute", "5a-T12");
+pub const DOCINFO: GapFix = gap_fix("docinfo", "5a-T12");
+pub const CANDIDATES: GapFix = gap_fix("candidates", "5a-T13a");
+/// The structure directives' parse halves (`contents`, `sectnum`,
+/// `target-notes`).
+pub const PENDING_DIRECTIVES: GapFix = gap_fix("pending", "5a-T18a");
+/// Their transforms (SectNum 710, Contents 720, TargetNotes 540).
+pub const PENDING_TRANSFORMS: GapFix = gap_fix("pending", "5a-T18b");
+
+/// What a census learned about one divergence.
+#[derive(Debug, Default)]
+pub struct Census {
+    pub fixes: BTreeSet<GapFix>,
+    /// Differences no family explains, printed above the row.
+    pub unexplained: Vec<String>,
+}
+
+impl Census {
+    pub fn add(&mut self, fix: GapFix) {
+        self.fixes.insert(fix);
+    }
+
+    pub fn merge(&mut self, other: Census) {
+        self.fixes.extend(other.fixes);
+        self.unexplained.extend(other.unexplained);
+    }
+
+    /// `"<families>: <owner>"`, a `?` family for anything unexplained.
+    pub fn reason(&self) -> String {
+        let mut families: Vec<&str> = self.fixes.iter().map(|fix| fix.family).collect();
+        if !self.unexplained.is_empty() {
+            families.push("?");
+        }
+        families.sort_unstable();
+        families.dedup();
+        let owner = self
+            .fixes
+            .iter()
+            .map(|fix| fix.owner)
+            .max_by_key(|owner| {
+                OWNERS
+                    .iter()
+                    .position(|known| known == owner)
+                    .unwrap_or_else(|| panic!("unknown gap owner {owner:?}"))
+            })
+            .unwrap_or("?");
+        format!("{}: {owner}", families.join("+"))
+    }
+}
+
+/// One run of differing lines: what only the expected text has, and what
+/// only the actual text has, at the same place.
+#[derive(Debug, Default)]
+pub struct Hunk<'a> {
+    pub removed: Vec<&'a str>,
+    pub added: Vec<&'a str>,
+}
+
+/// The line diff of two texts (a longest common subsequence), as hunks.
+pub fn line_hunks<'a>(expected: &'a [&'a str], actual: &'a [&'a str]) -> Vec<Hunk<'a>> {
+    let (n, m) = (expected.len(), actual.len());
+    // lcs[i][j]: the common subsequence length of expected[i..], actual[j..].
+    let mut lcs = vec![vec![0usize; m + 1]; n + 1];
+    for i in (0..n).rev() {
+        for j in (0..m).rev() {
+            lcs[i][j] = if expected[i] == actual[j] {
+                lcs[i + 1][j + 1] + 1
+            } else {
+                lcs[i + 1][j].max(lcs[i][j + 1])
+            };
+        }
+    }
+    let mut hunks = Vec::new();
+    let mut hunk = Hunk::default();
+    let (mut i, mut j) = (0, 0);
+    while i < n || j < m {
+        if i < n && j < m && expected[i] == actual[j] {
+            if !hunk.removed.is_empty() || !hunk.added.is_empty() {
+                hunks.push(std::mem::take(&mut hunk));
+            }
+            i += 1;
+            j += 1;
+        } else if j == m || (i < n && lcs[i + 1][j] >= lcs[i][j + 1]) {
+            hunk.removed.push(expected[i]);
+            i += 1;
+        } else {
+            hunk.added.push(actual[j]);
+            j += 1;
+        }
+    }
+    if !hunk.removed.is_empty() || !hunk.added.is_empty() {
+        hunks.push(hunk);
+    }
+    hunks
+}
+
+fn indent(line: &str) -> usize {
+    line.len() - line.trim_start().len()
+}
+
+/// The text directly under `lines[at]`: the lines after it indented deeper
+/// than it, up to its first child element, each trimmed.
+fn text_under(lines: &[&str], at: usize) -> String {
+    let Some(node) = lines.get(at) else {
+        return String::new();
+    };
+    let depth = indent(node);
+    lines[at + 1..]
+        .iter()
+        .take_while(|line| indent(line) > depth && !line.trim_start().starts_with('<'))
+        .map(|line| line.trim())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// `line` without its `attribute="…"`.
+fn without_attribute(line: &str, attribute: &str) -> String {
+    let needle = format!(" {attribute}=\"");
+    match line.find(&needle) {
+        Some(start) => {
+            let value = start + needle.len();
+            match line[value..].find('"') {
+                Some(end) => format!("{}{}", &line[..start], &line[value + end + 1..]),
+                None => line.to_string(),
+            }
+        }
+        None => line.to_string(),
+    }
+}
+
+/// The substitution names an expected tree defines, as docutils matches
+/// them: whitespace-collapsed and lowercased.
+fn defined_substitutions(expected: &str) -> BTreeSet<String> {
+    expected
+        .lines()
+        .filter_map(|line| {
+            let rest = line
+                .trim_start()
+                .strip_prefix("<substitution_definition ")?;
+            let names = rest.split("names=\"").nth(1)?.split('"').next()?;
+            Some(normalize_name(&names.replace("\\ ", " ")))
+        })
+        .collect()
+}
+
+fn normalize_name(name: &str) -> String {
+    name.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+/// The family of a `problematic` the expected tree has, by its text (the
+/// `rawsource` of the node a transform replaced) [DS §5.2, §5.5].
+fn problematic_fixes(text: &str, defined: &BTreeSet<String>, census: &mut Census) {
+    let substitution = text.strip_prefix('|').and_then(|rest| rest.split_once('|'));
+    match substitution {
+        // `|name|`: Substitutions (220).
+        Some((_, "")) => census.add(SUBSTITUTIONS),
+        // `|name|_` / `|name|__`: the reference is 850's or 440's; when the
+        // substitution is undefined, 220 allocated ids inside it first.
+        Some((name, "_" | "__")) => {
+            census.add(DANGLING_REFS);
+            if !defined.contains(&normalize_name(name)) {
+                census.add(SUBSTITUTIONS);
+            }
+        }
+        // `[#]_` / `[*]_` with no footnote left: Footnotes (620).
+        _ if text == "[#]_" || text == "[*]_" => census.add(FOOTNOTES),
+        _ if text.starts_with(':') || text.ends_with(':') => census.add(UNKNOWN_ROLE),
+        // A named or anonymous reference, a `[label]_` footnote reference
+        // with no footnote, or an image `:target:` reference (no text):
+        // AnonymousHyperlinks (440) or SphinxDanglingReferences (850).
+        _ if text.is_empty() || text.ends_with('_') => census.add(DANGLING_REFS),
+        _ => census
+            .unexplained
+            .push(format!("problematic with text {text:?}")),
+    }
+}
+
+/// The level of a `<system_message …>` start tag.
+fn message_level(line: &str) -> Option<u8> {
+    line.split("level=\"")
+        .nth(1)?
+        .split('"')
+        .next()?
+        .parse()
+        .ok()
+}
+
+/// The structure directives whose parse halves T18a ports.
+const PENDING_DIRECTIVE_NAMES: [&str; 3] = ["contents", "sectnum", "target-notes"];
+
+/// The families a doctree divergence shows: one diff hunk at a time, the
+/// rules below over the lines only Sphinx's tree has (`removed`) and those
+/// only ours has (`added`). Anything they do not explain is reported.
+pub fn tree_census(expected: &str, actual: &str) -> Census {
+    let expected_lines: Vec<&str> = expected.lines().collect();
+    let actual_lines: Vec<&str> = actual.lines().collect();
+    let defined = defined_substitutions(expected);
+    let mut census = Census::default();
+    for hunk in line_hunks(&expected_lines, &actual_lines) {
+        census.merge(hunk_census(&hunk, &defined));
+    }
+    census
+}
+
+fn hunk_census(hunk: &Hunk<'_>, defined: &BTreeSet<String>) -> Census {
+    let mut census = Census::default();
+    let removed: Vec<&str> = hunk.removed.iter().map(|line| line.trim_start()).collect();
+    let added: Vec<&str> = hunk.added.iter().map(|line| line.trim_start()).collect();
+    let starts = |lines: &[&str], prefix: &str| lines.iter().any(|line| line.starts_with(prefix));
+
+    // DocInfo (340) and MetadataCollector's pop (880): a leading field list
+    // Sphinx moved out of the body. What it held went with it, so only the
+    // lines Sphinx kept are classified further.
+    let docinfo = hunk.added.contains(&"    <field_list>") && !starts(&removed, "<field_list>");
+    if docinfo {
+        census.add(DOCINFO);
+    }
+    // A reference or target Sphinx resolved: its line less its
+    // `refuri`/`refid` is ours, less ours' `refname` when it has one.
+    let unresolved: BTreeSet<String> = added
+        .iter()
+        .filter(|line| line.contains(" refname=\""))
+        .map(|line| without_attribute(line, "refname"))
+        .chain(added.iter().map(|line| line.to_string()))
+        .collect();
+
+    // `:pep:` / `:rfc:`: Sphinx's reference precedes its index entry, and
+    // the text and entry numbers move with it.
+    let pep_rfc = removed.iter().chain(&added).any(|line| {
+        line.contains("https://peps.python.org/")
+            || line.contains("https://datatracker.ietf.org/")
+            || line.contains("'Python\\ Enhancement\\ Proposals;")
+            || line.contains("'RFC;\\ RFC")
+            || line.starts_with("PEP ")
+            || line.starts_with("RFC ")
+    });
+    if pep_rfc {
+        census.add(PEP_RFC);
+    }
+
+    for (at, line) in removed.iter().enumerate() {
+        if line.starts_with("<problematic ") {
+            problematic_fixes(&text_under(&hunk.removed, at), defined, &mut census);
+        }
+        if line.starts_with("<doctest_block classes=\"doctest\"") {
+            census.add(DOCTEST_CLASS);
+        }
+        if line.starts_with("<target ") && line.contains(" refid=") && !line.contains(" refuri=") {
+            census.add(PROPAGATE_TARGETS);
+        }
+        if line.starts_with("<reference ") || line.starts_with("<target ") {
+            let resolved = ["refuri", "refid"].iter().any(|attribute| {
+                line.contains(&format!(" {attribute}=\""))
+                    && unresolved.contains(&without_attribute(line, attribute))
+            });
+            if resolved {
+                census.add(INDIRECT_TARGETS);
+            }
+        }
+        if line.starts_with("<footnote ")
+            || line.starts_with("<footnote_reference ")
+            || *line == "<label>"
+        {
+            census.add(FOOTNOTES);
+        }
+        if line.starts_with("<citation ")
+            || line.starts_with("<label support_smartquotes")
+            || line.contains("refdomain=\"citation\"")
+        {
+            census.add(CITATIONS);
+        }
+        if line.contains(" candidates=\"") {
+            census.add(CANDIDATES);
+        }
+        if (line.starts_with("<figure ") || line.starts_with("<table "))
+            && line.contains(" ids=\"id")
+        {
+            census.add(AUTONUMBER_IDS);
+        }
+        if line.starts_with("<math_block ") && line.contains(" names=\"") {
+            census.add(MATH_NAMES);
+        }
+        if line.starts_with("<literal classes=\"code\" language=")
+            || line.starts_with("<literal_block ") && line.contains(" highlight_args=")
+        {
+            census.add(CODE_DIRECTIVE);
+        }
+        if line.starts_with("<desc classes=\"py class\"") {
+            census.add(PY_CLASS);
+        }
+        if line.starts_with("<section classes=") {
+            census.add(CLASS_ATTRIBUTE);
+        }
+        if line.contains("classes=\"sectnum\"")
+            || line.contains("classes=\"contents\"")
+            || line.contains("auto-toc")
+            || line.contains("TARGET_NOTE")
+            || line.starts_with("<title auto=\"1\"")
+        {
+            census.add(PENDING_TRANSFORMS);
+        }
+        if line.starts_with("<system_message ") {
+            let message = text_under(&hunk.removed, at + 1);
+            if message.contains("transition") {
+                census.add(TRANSITIONS);
+            } else {
+                census
+                    .unexplained
+                    .push(format!("a message only Sphinx's tree has: {message:?}"));
+            }
+        }
+    }
+
+    if !docinfo {
+        // A reference Sphinx made problematic inside content Substitutions
+        // (220) copied in, where ours still holds the substitution
+        // reference: 220 first, then the transform that reports it.
+        let substituted_problematic = removed.iter().enumerate().any(|(at, line)| {
+            line.starts_with("<problematic ") && !text_under(&hunk.removed, at).starts_with('|')
+        });
+        for (at, line) in added.iter().enumerate() {
+            if line.starts_with("<substitution_reference ")
+                && (substituted_problematic || !starts(&removed, "<problematic "))
+            {
+                census.add(SUBSTITUTIONS);
+            }
+            if line.starts_with("<problematic ") && !starts(&removed, "<problematic ") {
+                // A role Sphinx knows and we do not (`:index:`).
+                census.add(UNKNOWN_ROLE);
+            }
+            if line.starts_with("<paragraph classes=") && !starts(&removed, "<desc ") {
+                census.add(CLASS_ATTRIBUTE);
+            }
+            if *line == "<inline classes=\"ln\">" {
+                // docutils' line-numbered `code` where Sphinx's numbers none.
+                census.add(CODE_DIRECTIVE);
+            }
+            if line.starts_with("<system_message ") {
+                let message = text_under(&hunk.added, at + 1);
+                let pending = PENDING_DIRECTIVE_NAMES
+                    .iter()
+                    .any(|name| message.contains(&format!("\"{name}\"")));
+                if pending {
+                    census.add(PENDING_DIRECTIVES);
+                } else if message_level(line) == Some(1) {
+                    // An INFO message `FilterSystemMessages` (999) removes
+                    // under `keep_warnings = True`.
+                    census.add(SYSTEM_MESSAGE);
+                } else {
+                    census
+                        .unexplained
+                        .push(format!("a message only our tree has: {message:?}"));
+                }
+            }
+        }
+    }
+
+    if census.fixes.is_empty() && census.unexplained.is_empty() {
+        census.unexplained.push(format!(
+            "unexplained hunk\n- {}\n+ {}",
+            hunk.removed.join("\n- "),
+            hunk.added.join("\n+ ")
+        ));
+    }
+    census
+}

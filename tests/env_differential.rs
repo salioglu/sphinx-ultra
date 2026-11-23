@@ -460,6 +460,10 @@ fn config_of(project: &Project) -> BuildConfig {
 
 /// One conf value rendered as the string a `-D` override carries.
 ///
+/// A boolean is spelled `1` or `0`, Sphinx's `-D` grammar for a bool
+/// (`convert_overrides`, `config.py:366-374`), which `apply_override`
+/// accepts for every bool key and requires for the strict ones.
+///
 /// A `-D` value is a single scalar, so most non-scalar (nested, or null)
 /// conf entries have no faithful spelling here: stringifying one would hand
 /// `apply_override` something like `["a","b"]`, which its `Value::Array`
@@ -476,7 +480,8 @@ fn config_of(project: &Project) -> BuildConfig {
 fn scalar_override(project: &str, key: &str, value: &serde_json::Value) -> String {
     match value {
         serde_json::Value::String(text) => text.clone(),
-        serde_json::Value::Bool(_) | serde_json::Value::Number(_) => value.to_string(),
+        serde_json::Value::Bool(flag) => if *flag { "1" } else { "0" }.to_string(),
+        serde_json::Value::Number(_) => value.to_string(),
         serde_json::Value::Array(items) => {
             let elements: Vec<&str> = items
                 .iter()
@@ -583,19 +588,31 @@ const KNOWN_WARNING_GAPS: &[(&str, &str)] = &[
          carries the include/literalinclude warnings that DO go through the \
          logger on both sides, and compares byte-for-byte",
     ),
+    (
+        "state.label_order",
+        "propagate targets+label order: 5a-T13a — `b`'s two labels both \
+         label its section through `PropagateTargets`, whose chained replay \
+         registers `alpha` only (5a-T10), and the duplicates warn in \
+         `nametypes` insertion order, `zeta` before `alpha`, where the std \
+         collector sorts by name (5a-T13a)",
+    ),
+    (
+        "state.final_position_include",
+        "dangling refs: 5a-T10 — `AnonymousHyperlinks` (440) reports the \
+         unmatched `x`__ of each document with no node and no line, so \
+         docutils locates it at the final state-machine position: `index`'s \
+         is the include's padding line, `part`'s its own end",
+    ),
 ];
 
 /// Projects whose oracle `std` data this task deliberately does not
 /// reproduce. Checked **strictly**, exactly like [`KNOWN_TOC_GAPS`].
-const KNOWN_STD_GAPS: &[(&str, &str)] = &[];
-
-/// The one normalization this harness applies to the oracle's
-/// `resolved_pformat`: docutils' i18n totaliser stamps every `document` node
-/// with a `translation_progress` attribute, which `tools/gen_sphinx_fixture.py`
-/// already strips from *its* oracle as a harness artifact (see that file's
-/// `TP_ATTR`) and which nothing in this crate models. Stripping it here keeps
-/// the two fixtures' document lines comparable to the same parse output.
-const TRANSLATION_PROGRESS_ATTR: &str = " translation_progress=\"{'total': 0, 'translated': 0}\"";
+const KNOWN_STD_GAPS: &[(&str, &str)] = &[(
+    "state.label_order",
+    "propagate targets: 5a-T10 — `zeta` labels `b`'s section through a \
+     chain of two targets, which the `PropagateTargets` replay does not \
+     follow, so `zeta` is never registered",
+)];
 
 /// Reasons shared by several [`KNOWN_RESOLVED_GAPS`] entries.
 const TOCTREE_RESOLUTION: &str = "the write-phase toctree resolution that turns a \
@@ -691,6 +708,20 @@ const KNOWN_RESOLVED_GAPS: &[(&str, &str, &str)] = &[
     // nothing (the py_dup shape) and is not part of the diff.
     ("py_any", "index", TOCTREE_RESOLUTION),
     ("py_any", "b", PROPAGATE_TARGETS),
+    // Wave 5a read-state projects.
+    ("state.label_order", "index", "toctree resolution: 5a-T15"),
+    ("state.label_order", "a", "propagate targets: 5a-T10"),
+    ("state.label_order", "b", "propagate targets: 5a-T10"),
+    (
+        "state.final_position_include",
+        "index",
+        "dangling refs: 5a-T10",
+    ),
+    (
+        "state.final_position_include",
+        "part",
+        "dangling refs: 5a-T10",
+    ),
     (
         "inc_deps",
         "a",
@@ -1069,12 +1100,43 @@ fn conf_arrays_of_comma_free_strings_render_as_the_comma_joined_override() {
 
     assert_eq!(
         scalar_override("p", "nitpicky", &serde_json::json!(true)),
-        "true"
+        "1"
     );
     assert_eq!(
         scalar_override("p", "numfig_secnum_depth", &serde_json::json!(2)),
         "2"
     );
+}
+
+/// A JSON boolean renders as Sphinx's `-D` spelling of a bool, `1` or `0`:
+/// `convert_overrides` accepts nothing else for a key whose only type is
+/// `bool` (`config.py:366-374`), and `apply_override` takes that spelling
+/// for every bool key, the strict `keep_warnings` included.
+#[test]
+fn scalar_override_spells_booleans_like_sphinx() {
+    assert_eq!(
+        scalar_override("p", "numfig", &serde_json::json!(true)),
+        "1"
+    );
+    assert_eq!(
+        scalar_override("p", "numfig", &serde_json::json!(false)),
+        "0"
+    );
+    let mut config = BuildConfig::default();
+    for (key, value) in [
+        ("numfig", true),
+        ("keep_warnings", true),
+        ("nitpicky", false),
+    ] {
+        let spelled = scalar_override("p", key, &serde_json::json!(value));
+        let ignored = config.apply_override(key, &spelled);
+        assert!(
+            matches!(ignored, Ok(None)),
+            "-D {key}={spelled}: {ignored:?}"
+        );
+    }
+    assert!(config.numfig && config.keep_warnings && !config.nitpicky);
+    assert!(config.apply_override("keep_warnings", "true").is_err());
 }
 
 /// [`drop_unstamped_highlight_attrs`] removes an oracle-only highlight
@@ -1667,7 +1729,7 @@ fn resolved_doctrees_match_oracle() {
         for (docname, expected) in &project.expect.resolved_pformat {
             // Both sides pass through the §Scope-8 canonicalization; see
             // [`canon_scope8`] for why this is comparison-preserving.
-            let expected = canon_scope8(&expected.replace(TRANSLATION_PROGRESS_ATTR, ""));
+            let expected = canon_scope8(expected);
             let actual = canon_scope8(&resolved[docname]);
             let matches = actual == expected;
             let stamp_exempt = known_highlight_stamp_gap(&project.name, docname);
@@ -1746,12 +1808,12 @@ fn resolved_doctrees_match_oracle() {
 /// fixture document (or project) exactly once and that the two document
 /// tables are disjoint — so the table lengths ARE the exemption counts.
 /// Update the seven constants and the doc sites together.
-const DOCUMENTED_PROJECTS: usize = 29;
-const DOCUMENTED_DOCUMENTS: usize = 84;
-const DOCUMENTED_WHOLESALE_EXEMPT_DOCUMENTS: usize = 43;
+const DOCUMENTED_PROJECTS: usize = 31;
+const DOCUMENTED_DOCUMENTS: usize = 89;
+const DOCUMENTED_WHOLESALE_EXEMPT_DOCUMENTS: usize = 48;
 const DOCUMENTED_STAMP_EXEMPT_DOCUMENTS: usize = 6;
 const DOCUMENTED_BYTE_EXACT_DOCUMENTS: usize = 35;
-const DOCUMENTED_WARNING_EXEMPT_PROJECTS: usize = 5;
+const DOCUMENTED_WARNING_EXEMPT_PROJECTS: usize = 7;
 const DOCUMENTED_BYTE_EXACT_WARNING_PROJECTS: usize = 24;
 
 #[test]

@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 """Generate tests/fixtures/sphinx_doctree_differential.json from Sphinx 9.1.0.
 
-Regenerate with:
+Regenerate with the locked core oracle profile:
 
-    PYTHONNOUSERSITE=1 uv run --python 3.12 --with 'sphinx==9.1.0' \
-        --with 'docutils==0.22.4' python tools/gen_sphinx_fixture.py
+    PYTHONNOUSERSITE=1 uv run --locked --python 3.12 \
+        --project tools/oracle_profiles/core python tools/gen_sphinx_fixture.py
+
+The same command with `--corpus html-oracle-docutils` writes
+tests/fixtures/sphinx_docutils_doctree_differential.json instead: the
+post-read and dummy-resolved doctrees of the HTML oracle's docutils snippets
+(see `generate_html_oracle_docutils` below).
 
 PYTHONNOUSERSITE=1 is NOT optional: `uv run` keeps the user's site-packages
 on sys.path, and a user-site Pygments there silently re-records every
@@ -50,7 +55,14 @@ Pinned configuration (recorded in the fixture header, asserted at runtime):
   - language: 'en' (Sphinx default), docname: 'index'
   - sphinx.util.console.nocolor(): warning-stream text must not carry ANSI
   - per-case isolation: env.clear_doc + env.ref_context.clear() +
-    env.prepare_settings before every parse (probes doc math-domain finding)
+    env.prepare_settings before every parse (probes doc math-domain finding),
+    and every parse in its own `docutils_namespace()`, because docutils' role
+    and directive registries are process-global: a case's `.. role::` (or a
+    `.. default-role::` while `default_role` is unset) would otherwise leak
+    into every later case of its app (wave-5 research, roles/config report
+    §6.1, probe P25)
+  - default_role: `app.config.default_role`, passed to the parse the way
+    `Builder.read_doc` passes it (`sphinx/builders/__init__.py:656`)
 
 Read-phase transforms INSEPARABLE in this harness (probes doc enumeration --
 this exact pipeline runs on every real Sphinx read; there is no lighter subset
@@ -71,14 +83,12 @@ ImageCollector adds `candidates` to every image node), UIDTransform(880,
 invisible), AddTranslationClasses(950, inert), FilterSystemMessages(999),
 RemoveTranslatableInline(999).
 
-Normalizations applied to recorded pseudo_xml (the ONLY two rewrites):
-  1. the temp srcdir's index.rst absolute path -> "<snippet>" (the Rust test
-     passes the same token as ParseOptions.source_path); generation fails if
-     any srcdir path survives;
-  2. the document-level `translation_progress="{'total': 0, 'translated': 0}"`
-     attribute (added unconditionally by i18n.TranslationProgressTotaliser) is
-     stripped, because the Rust parse layer does not model it yet; generation
-     fails if the attribute survives anywhere else.
+Normalization applied to recorded pseudo_xml (the ONLY rewrite): the temp
+srcdir's index.rst absolute path -> "<snippet>" (the Rust test passes the
+same token as ParseOptions.source_path); generation fails if any srcdir path
+survives. The document-level `translation_progress="{'total': 0,
+'translated': 0}"` attribute, which i18n.TranslationProgressTotaliser adds to
+every document, is kept: the Rust read stamps it too (wave 5a, decision 9).
 
 CORPUS POLICY (merge bar): every emitted case is byte-identical between this
 Sphinx oracle and the wave-1/2/3 docutils parse layer, hence zero-divergence
@@ -138,11 +148,14 @@ WAVE-4.5 EXCLUSIONS (py-domain corpus; every entry in EXCLUDED below carries
 its reason and the assert keeps CASES disjoint from it — see that dict).
 """
 
+import argparse
+import hashlib
 import io
 import json
 import shutil
 import sys
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 
 import docutils
@@ -168,12 +181,17 @@ from sphinx.parsers import RSTParser  # noqa: E402
 from sphinx.testing.util import SphinxTestApp  # noqa: E402
 from sphinx.util.docutils import (  # noqa: E402
     _parse_str_to_doctree,
+    additional_nodes,
     docutils_namespace,
     patch_docutils,
+    register_node,
 )
 
 SOURCE_TOKEN = "<snippet>"
-TP_ATTR = " translation_progress=\"{'total': 0, 'translated': 0}\""
+# The `translation_progress` attribute i18n.TranslationProgressTotaliser
+# stamps on every document (kept; see the docstring).
+TRANSLATION_PROGRESS = "translation_progress=\"{'total': 0, 'translated': 0}\""
+DOCUMENT_START_TAG = f'<document source="{SOURCE_TOKEN}" {TRANSLATION_PROGRESS}>'
 
 CONF_PY = (
     "project = 'fixture'\n"
@@ -1011,8 +1029,30 @@ def make_app(base: Path, conf: dict) -> SphinxTestApp:
     )
 
 
+@contextmanager
+def probe_namespace():
+    """One probe's own `docutils_namespace()`: the role and directive
+    registries it starts from are restored when it ends, so a case's
+    `.. role::` or `.. default-role::` cannot leak into the next case.
+
+    Leaving a `docutils_namespace()` also unregisters every node class Sphinx
+    registered with docutils (`additional_nodes`), which in a real build stay
+    registered for the whole run, and docutils' visitors dispatch on those
+    registrations (a `TitleCollector` walk over an `index` node in a title
+    needs `visit_index`). The ones registered when the probe starts, the
+    app's, are registered again when it ends."""
+    registered = list(additional_nodes)
+    try:
+        with docutils_namespace():
+            yield
+    finally:
+        for node in registered:
+            register_node(node)
+
+
 def probe(app: SphinxTestApp, base: Path, rst_text: str, docname: str = "index"):
-    """harness3 (probes doc): parse one snippet exactly like Builder.read_doc."""
+    """harness3 (probes doc): parse one snippet exactly like Builder.read_doc,
+    in its own `probe_namespace()`."""
     env = app.env
     env.clear_doc(docname)
     env.ref_context.clear()
@@ -1025,15 +1065,17 @@ def probe(app: SphinxTestApp, base: Path, rst_text: str, docname: str = "index")
         if docname in app.project.docnames
         else base / f"{docname}.rst"
     )
-    doctree = _parse_str_to_doctree(
-        rst_text,
-        filename=Path(filename),
-        default_settings=env.settings,
-        env=env,
-        events=app.events,
-        parser=parser,
-        transforms=app.registry.get_transforms(),
-    )
+    with probe_namespace():
+        doctree = _parse_str_to_doctree(
+            rst_text,
+            filename=Path(filename),
+            default_role=app.config.default_role,
+            default_settings=env.settings,
+            env=env,
+            events=app.events,
+            parser=parser,
+            transforms=app.registry.get_transforms(),
+        )
     env.current_document.docname = ""
     return doctree
 
@@ -1041,10 +1083,6 @@ def probe(app: SphinxTestApp, base: Path, rst_text: str, docname: str = "index")
 def normalize(pseudo_xml: str, base: Path) -> str:
     text = pseudo_xml.replace(str(base / "index.rst"), SOURCE_TOKEN)
     assert str(base) not in text, f"srcdir path leaked into pseudo_xml:\n{text}"
-    text = text.replace(TP_ATTR, "")
-    assert "translation_progress" not in text, (
-        f"unexpected translation_progress form:\n{text}"
-    )
     return text
 
 
@@ -1091,7 +1129,7 @@ def case_parts(case):
     return family, name, rst, conf
 
 
-def main() -> int:
+def generate_sphinx_snippets() -> int:
     names = [f"{c[0]}.{c[1]}" for c in CASES]
     assert len(names) == len(set(names)), "family-qualified case names must be unique"
     # Anti-truncation floors. Both the global floor and the per-family ones
@@ -1164,7 +1202,7 @@ def main() -> int:
                         bad.append(f"{family}.{name}: unsupported kinds {sorted(stray)}")
                         continue
                     pseudo = normalize(doctree.pformat(), base)
-                    assert pseudo.startswith(f'<document source="{SOURCE_TOKEN}">\n'), (
+                    assert pseudo.startswith(f"{DOCUMENT_START_TAG}\n"), (
                         f"{family}.{name}: unexpected document start tag:\n{pseudo}"
                     )
                     record_case = {
@@ -1219,8 +1257,6 @@ def main() -> int:
         ),
         "normalizations": [
             f"srcdir index.rst absolute path -> {SOURCE_TOKEN}",
-            "document translation_progress attribute stripped "
-            "(i18n.TranslationProgressTotaliser artifact)",
         ],
         "cases": out_cases,
     }
@@ -1238,6 +1274,161 @@ def main() -> int:
         f"sphinx {sphinx.__version__}, docutils {docutils.__version__}"
     )
     return 0
+
+
+# ---------------------------------------------------------------------------
+# --corpus html-oracle-docutils
+# ---------------------------------------------------------------------------
+#
+# The HTML oracle's docutils snippets (the inputs of
+# tests/fixtures/doctree_differential.json, each committed under the oracle's
+# core profile with the conf.py the oracle built it with), read by a real
+# dummy-builder build. Where the snippet corpus above pins one-snippet parses
+# under the fixture's own settings, this corpus pins what Sphinx's read phase
+# makes of the oracle's inputs under the oracle's settings
+# (`keep_warnings = False`): the post-read doctree a build pickles, and the
+# doctree the dummy builder's write loop resolves from it.
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+HTML_ORACLE_ROOT = REPO_ROOT / "tests" / "fixtures" / "html_oracle" / "core"
+HTML_ORACLE_SOURCE_SET = "docutils_snippets"
+# The ledger's built docutils snippets; its one other docutils snippet,
+# docutils-0500, is a `reference-crash` (Sphinx 9.1.0 crashes reading it).
+HTML_ORACLE_DOCUTILS_CASES = 734
+SRCDIR_TOKEN = "<SRCDIR>"
+
+
+def html_oracle_docutils_cases() -> tuple:
+    """The core ledger's docutils snippets the oracle built, in case_id order,
+    and the ids of the ones it skipped: `reference-crash` cases, inputs that
+    crash Sphinx 9.1.0 and that Ultra does not model (wave 5a, decision 13)."""
+    ledger = json.loads((HTML_ORACLE_ROOT / "index.json").read_text(encoding="utf-8"))
+    snippets = [
+        case for case in ledger["cases"] if case["source_set"] == HTML_ORACLE_SOURCE_SET
+    ]
+    statuses = {case["status"] for case in snippets}
+    assert statuses <= {"built", "reference-crash"}, (
+        f"unexpected {HTML_ORACLE_SOURCE_SET} statuses: {sorted(statuses)}"
+    )
+    assert {case["profile"] for case in snippets} == {"core"}, "core profile only"
+    built = sorted(
+        (case for case in snippets if case["status"] == "built"),
+        key=lambda case: case["case_id"],
+    )
+    assert len(built) == HTML_ORACLE_DOCUTILS_CASES, (
+        f"{len(built)} built {HTML_ORACLE_SOURCE_SET} cases, "
+        f"expected {HTML_ORACLE_DOCUTILS_CASES}"
+    )
+    skipped = sorted(
+        case["case_id"] for case in snippets if case["status"] == "reference-crash"
+    )
+    return built, skipped
+
+
+def normalize_srcdir(text: str, base: Path) -> str:
+    """The temp srcdir -> `<SRCDIR>`, the HTML oracle's own token; generation
+    fails if any spelling of the srcdir survives."""
+    text = text.replace(str(base), SRCDIR_TOKEN)
+    for spelling in {str(base), str(base.parent)}:
+        assert spelling not in text, f"srcdir path leaked:\n{text}"
+    return text
+
+
+def build_html_oracle_case(case: dict) -> dict:
+    """Build one oracle input tree, copied from its committed input files
+    (each checked against the ledger's sha256), with its own conf.py and the
+    dummy builder: the post-read doctree (`env.get_doctree`) and the doctree
+    the write loop resolves (`env.get_and_resolve_doctree`)."""
+    base = Path(tempfile.mkdtemp(prefix="sphinx_oracle_docutils_")).resolve() / "src"
+    base.mkdir(parents=True)
+    try:
+        inputs = {}
+        for entry in case["input_files"]:
+            data = (HTML_ORACLE_ROOT / entry["storage_path"]).read_bytes()
+            assert hashlib.sha256(data).hexdigest() == entry["sha256"], (
+                f"{case['case_id']}: {entry['storage_path']} does not match the ledger"
+            )
+            target = base / entry["logical_path"]
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+            inputs[entry["logical_path"]] = data.decode("utf-8")
+        assert set(inputs) == {"conf.py", "index.rst"}, (
+            f"{case['case_id']}: unexpected input files {sorted(inputs)}"
+        )
+        with docutils_namespace(), patch_docutils(str(base)):
+            app = SphinxTestApp(
+                buildername="dummy",
+                srcdir=base,
+                status=io.StringIO(),
+                warning=io.StringIO(),
+            )
+            try:
+                app.build()
+                post_read = app.env.get_doctree("index").pformat()
+                resolved = app.env.get_and_resolve_doctree("index", app.builder).pformat()
+            finally:
+                app.cleanup()
+        return {
+            "name": case["case_id"],
+            "rst": inputs["index.rst"],
+            "conf": inputs["conf.py"],
+            "post_read": normalize_srcdir(post_read, base),
+            "resolved": normalize_srcdir(resolved, base),
+        }
+    finally:
+        shutil.rmtree(base.parent, ignore_errors=True)
+
+
+def generate_html_oracle_docutils() -> int:
+    cases, skipped = html_oracle_docutils_cases()
+    out_cases = [build_html_oracle_case(case) for case in cases]
+    # In-process determinism check: a second pass (fresh srcdirs, fresh apps)
+    # must be byte-identical.
+    again = [build_html_oracle_case(case) for case in cases]
+    if out_cases != again:
+        print("DETERMINISM VIOLATION: two in-process passes differ", file=sys.stderr)
+        return 1
+
+    fixture = {
+        "docutils_version": docutils.__version__,
+        "sphinx_version": sphinx.__version__,
+        "generator": "tools/gen_sphinx_fixture.py --corpus html-oracle-docutils",
+        "harness": (
+            "one SphinxTestApp(buildername='dummy') + app.build() per case, over "
+            "the case's committed input tree (its own conf.py); post_read = "
+            "env.get_doctree('index').pformat(), resolved = "
+            "env.get_and_resolve_doctree('index', builder).pformat()"
+        ),
+        "ledger": "tests/fixtures/html_oracle/core/index.json",
+        "source_set": HTML_ORACLE_SOURCE_SET,
+        "skipped_reference_crashes": skipped,
+        "normalizations": [f"srcdir absolute path -> {SRCDIR_TOKEN}"],
+        "cases": out_cases,
+    }
+    out_path = REPO_ROOT / "tests" / "fixtures" / "sphinx_docutils_doctree_differential.json"
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump(fixture, f, indent=2, sort_keys=True, ensure_ascii=False)
+        f.write("\n")
+    print(
+        f"wrote {out_path}: {len(out_cases)} cases (skipped {skipped}), "
+        f"sphinx {sphinx.__version__}, docutils {docutils.__version__}"
+    )
+    return 0
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "--corpus",
+        choices=["sphinx-snippets", "html-oracle-docutils"],
+        default="sphinx-snippets",
+        help="sphinx-snippets (default) writes sphinx_doctree_differential.json; "
+        "html-oracle-docutils writes sphinx_docutils_doctree_differential.json",
+    )
+    args = parser.parse_args(argv)
+    if args.corpus == "html-oracle-docutils":
+        return generate_html_oracle_docutils()
+    return generate_sphinx_snippets()
 
 
 if __name__ == "__main__":

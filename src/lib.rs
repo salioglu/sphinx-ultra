@@ -40,6 +40,7 @@ pub mod matching;
 pub mod parser;
 pub mod py;
 pub mod python_config;
+pub mod read;
 pub mod rst;
 pub mod search;
 pub mod template;
