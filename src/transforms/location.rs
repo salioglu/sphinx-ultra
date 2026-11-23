@@ -198,6 +198,36 @@ fn apply_source_workaround(tree: &TxTree, id: TxId, state: &DocumentState, loc: 
     loc
 }
 
+/// Sphinx's `copy_source_info(src, dst)` (`SP/sphinx/util/nodes.py:691-694`):
+/// the location the node at `id` hands a node made to stand in for it. Its
+/// source and its line are found separately: the source of the nearest of
+/// the node and its ancestors that has one (`get_node_source`) and the line
+/// of the nearest that has a non-zero one (`get_node_line`,
+/// `:357-362`), so a rubric 010 left at line 0 gives its own source and an
+/// ancestor's line. With no source found, Python's `ValueError` is
+/// suppressed before either is set: no location; with no line found, the
+/// source alone.
+pub fn copy_source_info(tree: &TxTree, id: TxId, state: &DocumentState) -> DocLoc {
+    let Some(source) = nearest_source(tree, Some(id), state) else {
+        return DocLoc::default();
+    };
+    let mut node = Some(id);
+    let mut line = None;
+    while let Some(current) = node {
+        line = own_location(tree, current, state)
+            .line
+            .filter(|&line| line != 0);
+        if line.is_some() {
+            break;
+        }
+        node = tree.parent(current);
+    }
+    DocLoc {
+        source: Some(source),
+        line,
+    }
+}
+
 /// Sphinx's `get_node_source` (`SP/sphinx/util/nodes.py:349-354`) for a
 /// node without a source whose parent is `from`: the source of its
 /// nearest ancestor that has one, as 010 has left it; `None` where Python

@@ -2318,11 +2318,12 @@ fn unreferenced_citation_warns_in_consistency() {
 /// citations (`CitationDomain.resolve_xref`); one that names no citation
 /// warns `citation not found` (`dangling_warnings`,
 /// `SP/sphinx/domains/citation.py:37-39`), `[ref.ref]`, after the
-/// consistency records. It is located where `copy_source_info` put it: the
-/// reference's nearest located ancestor, the paragraph's first line for
-/// both of `b`'s, and the rubric's for the one a rubric holds, the end of
-/// the rubric's directive block. Probed on Sphinx 9.1.0 (this project's
-/// warning stream).
+/// consistency records. It is located where `copy_source_info` put it, the
+/// source and the line of the reference's nearest ancestors that have one:
+/// the paragraph's first line for both of `b`'s, the rubric's for the one
+/// a rubric holds, the end of the rubric's directive block, and, for a
+/// rubric in a list item, which has line 0, the item's line. Probed on
+/// Sphinx 9.1.0 (this project's warning stream).
 #[test]
 fn citation_not_found_warns_at_resolve() {
     let src = temp_source(
@@ -2332,7 +2333,8 @@ fn citation_not_found_warns_at_resolve() {
             ("a.rst", "A\n=\n\n.. [Z] Unreferenced.\n"),
             (
                 "b.rst",
-                "B\n=\n\nSee [W]_ here,\nand [Q]_ there.\n\n.. rubric:: Rubric [R]_\n\nText *b.\n",
+                "B\n=\n\nSee [W]_ here,\nand [Q]_ there.\n\n.. rubric:: Rubric [R]_\n\nText *b.\n\n\
+                 - item\n\n  .. rubric:: Listed [L]_\n",
             ),
         ],
     );
@@ -2346,6 +2348,7 @@ fn citation_not_found_warns_at_resolve() {
 <SRCDIR>/b.rst:4: WARNING: citation not found: W [ref.ref]
 <SRCDIR>/b.rst:4: WARNING: citation not found: Q [ref.ref]
 <SRCDIR>/b.rst:8: WARNING: citation not found: R [ref.ref]
+<SRCDIR>/b.rst:11: WARNING: citation not found: L [ref.ref]
 "
     );
 }

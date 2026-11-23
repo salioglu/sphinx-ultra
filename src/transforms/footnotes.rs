@@ -57,9 +57,8 @@ impl Transform for CitationDefinitionTransform {
 /// `pending_xref` the write phase resolves through the citation domain,
 /// to the target its text names, holding `[target]` in an `inline`. The
 /// `pending_xref` keeps the reference's ids and classes, and takes its
-/// location (`copy_source_info`, `SP/sphinx/util/nodes.py`:
-/// `get_source_line(node)`, which docutils' parse leaves on no citation
-/// reference, so its nearest located ancestor's), as its span's source and
+/// location ([`location::copy_source_info`]; docutils' parse leaves none
+/// on a citation reference, so its ancestors') as its span's source and
 /// line, where the write phase's warning about it reads it
 /// ([`crate::env::resolve`]); a location without a line leaves the span's
 /// line unknown. The reference leaves the tree but stays in
@@ -77,7 +76,7 @@ impl Transform for CitationReferenceTransform {
         let is_reference = |node: &TxNode| node.kind == kinds::CITATION_REFERENCE;
         for reference in cx.tree.findall(root, is_reference) {
             let target = cx.tree.astext(reference);
-            let loc = location::get_source_line(cx.tree, reference, cx.state);
+            let loc = location::copy_source_info(cx.tree, reference, cx.state);
             let node = cx.tree.node(reference);
             let (ids, classes) = (node.attrs.ids.clone(), node.attrs.classes.clone());
             let mut span = node.span;
