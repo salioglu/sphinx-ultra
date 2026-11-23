@@ -262,9 +262,14 @@ pub(crate) struct BlockParser {
     pub(crate) state: DocumentState,
     styles: Vec<(char, bool)>,
     depth: usize,
-    /// +1 inside table-cell nested parses: docutils' state-machine-derived
-    /// line numbers (the unindent/unexpected-indentation family) run one
-    /// high there (probe-verified); content-anchored messages stay absolute.
+    /// +1 inside grid- and simple-table cell parses: docutils starts a
+    /// cell's machine at `tableline + offset` (`states.py:1855-1856`), one
+    /// past the 0-based offset it stands for, so every line number the
+    /// machine counts runs one high there — the unindent warnings
+    /// ([`Self::msg_sm`]) and the lines the inliner is handed
+    /// ([`Self::inline`]), probe-verified on Sphinx 9.1.0 — while a message
+    /// located at a line's own source and offset (`Unexpected
+    /// indentation.`) does not.
     line_bias: u32,
     /// Innermost container node kind during nested content parses (docutils
     /// `state_machine.node`); None at document/section level. Directives
@@ -376,6 +381,24 @@ pub(crate) struct BlockParser {
     /// How the construct [`Self::parse_element`] parsed last ended; the
     /// document loop keeps the top-level one for [`final_position`].
     ending: Ending,
+    /// Where docutils' top-level state machine stands while the top-level
+    /// construct being parsed runs: the last line of the first block the
+    /// machine read for it ([`Self::note_top_block`]). docutils binds
+    /// `reporter.get_source_and_line` to that machine
+    /// (`SP/docutils/parsers/rst/states.py:245-246`), so a message with
+    /// neither a line nor a located node is located here wherever in the
+    /// construct it is created ([`Self::machine_loc`]): a directive's own
+    /// block end, its trailing blank lines included, or, inside a nested
+    /// construct, the enclosing top-level construct's — a list's first
+    /// item, not the item holding the message. Sections are parsed by the
+    /// top-level machine itself (docutils 0.22), at any depth.
+    machine_position: Option<DocLoc>,
+    /// Whether the top-level construct being parsed has yet to note its
+    /// first block ([`Self::note_top_block`]): set as each one starts, and
+    /// cleared by the first note, so a list's later items, which docutils
+    /// reads in a nested machine, leave the position where its first item
+    /// put it.
+    top_block_pending: bool,
 }
 
 #[derive(Debug, Default)]
@@ -488,6 +511,8 @@ impl BlockParser {
             substitution_ctx: None,
             pending_splice: None,
             ending: Ending::PastEnd,
+            machine_position: None,
+            top_block_pending: false,
         }
     }
 
@@ -619,7 +644,9 @@ impl BlockParser {
         let mut result = super::inline::parse_inline_ext(
             text,
             span,
-            lineno,
+            // A table cell's machine counts every line one high
+            // ([`Self::line_bias`]), the lines it hands the inliner too.
+            lineno + self.line_bias,
             &mut self.state,
             DispatchCtx {
                 sphinx: self.sphinx,
@@ -790,6 +817,8 @@ impl BlockParser {
         sub.attached = false;
         sub.line_bias = self.line_bias;
         sub.depth = self.depth;
+        // A nested state machine: the top-level one stays where it is.
+        sub.machine_position = self.machine_position;
         sub.generated_text = generated.then_some(first_lineno);
         // The mode must flow through the detached parse (review finding:
         // csv cells previously parsed in docutils mode).
@@ -958,6 +987,24 @@ impl BlockParser {
         self.msg(level, text, source, lineno + self.line_bias)
     }
 
+    /// Notes `last` as the last line of the first block docutils'
+    /// top-level state machine reads for the top-level construct being
+    /// parsed ([`Self::machine_position`]); a no-op in a nested parse and
+    /// once the construct has noted its first block.
+    fn note_top_block(&mut self, last: LineRec) {
+        if self.depth == 0 && self.top_block_pending {
+            self.top_block_pending = false;
+            self.machine_position = Some(DocLoc::at(last.source, last.lineno));
+        }
+    }
+
+    /// docutils' `reporter.get_source_and_line(None)` during the parse:
+    /// the top-level machine's position ([`Self::machine_position`]), or
+    /// `fallback` in a parse that has none.
+    fn machine_loc(&self, fallback: DocLoc) -> DocLoc {
+        self.machine_position.unwrap_or(fallback)
+    }
+
     /// Probe-verified: an explicit-markup element (comment/target) followed
     /// by an ADJACENT non-blank column-0 line that is not itself explicit
     /// markup warns. Consecutive `..`/`__ ` items chain without warning.
@@ -1007,6 +1054,7 @@ impl BlockParser {
             }
             let mut out = Vec::new();
             self.open_sections = stack.len();
+            self.top_block_pending = true;
             let section = self.parse_element(&lines, &mut pos, true, &mut out);
             last_ending = Some(self.ending);
             self.apply_pending_classes(&mut out, 0);
@@ -1651,7 +1699,10 @@ impl BlockParser {
             && lines[end].indent() > 0
             && end - start >= 2
         {
-            let message = self.msg_sm(
+            // `get_text_block` locates it at the line's own source and
+            // offset (`StringList.info`), not at a count of the machine's,
+            // so a table cell's bias does not reach it.
+            let message = self.msg(
                 messages::ERROR,
                 "Unexpected indentation.",
                 lines[end].source,
@@ -1853,6 +1904,7 @@ impl BlockParser {
                 Some(n) if !n.is_blank() && n.indent() > 0 => content_indent = n.indent(),
                 _ => {
                     *pos = start + 1;
+                    self.note_top_block(lines[through_blank_lines(lines, start)]);
                     return Node::elem(kinds::LIST_ITEM, self.span_of(lines, start, start));
                 }
             }
@@ -1881,6 +1933,10 @@ impl BlockParser {
             }
         }
         *pos = last_content + 1;
+        // `list_item`'s `get_known_indented` / `get_first_known_indented`:
+        // only a top-level list's first item is read by the top-level
+        // machine; its later items by the nested list machine.
+        self.note_top_block(lines[through_blank_lines(lines, last_content)]);
 
         let children = self.parse_nested(&body, "list_item");
         let mut item = Node::elem(kinds::LIST_ITEM, self.span_of(lines, start, last_content));
@@ -2039,6 +2095,8 @@ impl BlockParser {
             let term_line = lines[*pos];
             let (block, consumed, _indent, terminator) = indented_block(lines, *pos + 1);
             let item_last = *pos + consumed;
+            // `definition_list_item`'s `get_indented()` (the first item).
+            self.note_top_block(lines[through_blank_lines(lines, item_last)]);
             let mut item = Node::elem(
                 kinds::DEFINITION_LIST_ITEM,
                 self.span_of(lines, *pos, item_last),
@@ -2128,6 +2186,8 @@ impl BlockParser {
         let start = *pos;
         let (block, consumed, _indent, terminator) = indented_block(lines, *pos);
         *pos = start + consumed;
+        // `Body.indent`'s `get_indented()`.
+        self.note_top_block(lines[through_blank_lines(lines, start + consumed - 1)]);
         let span = self.span_of(lines, start, start + consumed - 1);
         out.extend(self.block_quote_elements(&block, span));
         if let Some((source, lineno)) = terminator {
@@ -2218,10 +2278,13 @@ impl BlockParser {
 
     fn parse_line_block(&mut self, lines: &[LineRec], pos: &mut usize, out: &mut Vec<Node>) {
         let start = *pos;
-        // (depth, text): depth None on bare `|` lines inherits the previous
-        // line's depth (fixture-verified). Continuations dedent by the FIRST
-        // continuation line's indent, preserving deeper relative indents.
-        let mut items: Vec<(Option<usize>, String)> = Vec::new();
+        // (depth, text, lineno): depth None on bare `|` lines inherits the
+        // previous line's depth (fixture-verified). Continuations dedent by
+        // the FIRST continuation line's indent, preserving deeper relative
+        // indents. Each line is parsed at its `|` line's own number, the
+        // `abs_line_number()` `line_block_line` is called with
+        // (`states.py:1736-1742`), its continuation lines included.
+        let mut items: Vec<(Option<usize>, String, u32)> = Vec::new();
         let mut cont_dedent: Option<usize> = None;
         let mut p = *pos;
         while p < lines.len() && !lines[p].is_blank() {
@@ -2230,11 +2293,11 @@ impl BlockParser {
             if l.indent() == 0 && (text == "|" || text.starts_with("| ")) {
                 cont_dedent = None;
                 if text == "|" {
-                    items.push((None, String::new()));
+                    items.push((None, String::new(), l.lineno));
                 } else {
                     let content = &text[2..];
                     let depth = content.len() - content.trim_start_matches(' ').len();
-                    items.push((Some(depth), content[depth..].to_string()));
+                    items.push((Some(depth), content[depth..].to_string(), l.lineno));
                 }
                 p += 1;
             } else if l.indent() > 0 && !items.is_empty() {
@@ -2253,17 +2316,16 @@ impl BlockParser {
         }
         // Resolve inherited depths and inline-parse each line's text.
         let span = self.span_of(lines, start, p - 1);
-        let first_lineno = lines[start].lineno;
         let mut resolved: Vec<(usize, Vec<Node>)> = Vec::with_capacity(items.len());
         let mut lb_messages: Vec<Node> = Vec::new();
         let mut prev_depth = 0usize;
-        for (depth, text) in items {
+        for (depth, text, lineno) in items {
             let d = depth.unwrap_or(prev_depth);
             prev_depth = d;
             if text.is_empty() {
                 resolved.push((d, Vec::new()));
             } else {
-                let inline = self.inline(&text, span, first_lineno);
+                let inline = self.inline(&text, span, lineno);
                 lb_messages.extend(inline.messages);
                 resolved.push((d, inline.nodes));
             }
@@ -2420,9 +2482,12 @@ impl BlockParser {
                     if anonymous {
                         self.state.set_id(&mut target);
                     } else {
-                        let reported = self
-                            .state
-                            .note_explicit_target(&mut target, DocLoc::at(line.source, lineno));
+                        // `add_target` stamps `target.line = lineno`, the
+                        // machine's count ([`Self::line_bias`]).
+                        let reported = self.state.note_explicit_target(
+                            &mut target,
+                            DocLoc::at(line.source, lineno + self.line_bias),
+                        );
                         out.extend(reported);
                     }
                     // `make_target`'s refname branch notes the indirect
@@ -2607,6 +2672,8 @@ impl BlockParser {
             String::new()
         };
         let (block, consumed, _indent, _term) = indented_block(lines, start + 1);
+        // `Body.footnote` / `Body.citation`'s `get_first_known_indented`.
+        self.note_top_block(lines[through_blank_lines(lines, start + consumed)]);
         let mut body: Vec<LineRec> = Vec::new();
         if !first_rest.trim().is_empty() {
             // remainder starts at a virtual column; treat as its own line
@@ -2705,6 +2772,8 @@ impl BlockParser {
                 body_lines.push(self.rewrap_from(line, offset));
             }
             body_lines.extend(block.iter().copied());
+            // `Body.field`'s `get_first_known_indented` (the first field).
+            self.note_top_block(lines[through_blank_lines(lines, *pos + consumed)]);
             *pos += 1 + consumed;
 
             let name_inline = self.inline(&name_raw, field_span, lineno);
@@ -2786,6 +2855,9 @@ impl BlockParser {
                 body_lines.push(self.rewrap_from(line, offset));
             }
             body_lines.extend(block.iter().copied());
+            // `option_list_item`'s `get_first_known_indented` (the first
+            // item).
+            self.note_top_block(lines[through_blank_lines(lines, *pos + consumed)]);
             *pos += 1 + consumed;
 
             let mut item = Node::elem(kinds::OPTION_LIST_ITEM, span);
@@ -2896,6 +2968,8 @@ impl BlockParser {
                 }
             }
         }
+        // `isolate_grid_table` leaves the machine on the table's last line.
+        self.note_top_block(block[block.len() - 1]);
         let raw_block: Vec<String> = block
             .iter()
             .map(|l| self.sources.line_text(*l).to_string())
@@ -3188,6 +3262,14 @@ impl BlockParser {
                     );
                     out.push(message);
                     *pos = i + 1;
+                    // `isolate_simple_table`'s `blank_finish` on this path
+                    // (`states.py:1871-1876`): the border must end the
+                    // input or a blank line follow it.
+                    let at = lines
+                        .get(*pos)
+                        .filter(|l| !l.is_blank())
+                        .map(|l| (l.source, l.lineno));
+                    self.blank_line_after_table(at, out);
                     return;
                 }
                 found += 1;
@@ -3228,6 +3310,13 @@ impl BlockParser {
         };
         *pos = end + 1;
         let blank_after_ok = lines.get(*pos).map(|l| l.is_blank()).unwrap_or(true);
+        // `table_top` warns after the table, or after its malformed-table
+        // message when the parse fails (`states.py:1787-1815`).
+        let blank_after = (!blank_after_ok)
+            .then(|| lines.get(*pos).map(|l| (l.source, l.lineno)))
+            .flatten();
+        // `isolate_simple_table` leaves the machine on the bottom border.
+        self.note_top_block(lines[end]);
 
         let block: Vec<LineRec> = lines[start..=end].to_vec();
         let raw_block: Vec<String> = block
@@ -3321,6 +3410,7 @@ impl BlockParser {
                     Ok(c) => c,
                     Err((detail, lineno)) => {
                         out.push(malformed(self, &detail, lineno));
+                        self.blank_line_after_table(blank_after, out);
                         return;
                     }
                 };
@@ -3391,6 +3481,7 @@ impl BlockParser {
                             &format!("Text in column margin in table line {}.", bi + 1),
                             block[bi].lineno,
                         ));
+                        self.blank_line_after_table(blank_after, out);
                         return;
                     }
                 }
@@ -3426,6 +3517,7 @@ impl BlockParser {
                         ),
                         block[0].lineno + row.start as u32 + 1,
                     ));
+                    self.blank_line_after_table(blank_after, out);
                     return;
                 };
                 morecols.push(last_col - first_col);
@@ -3521,10 +3613,7 @@ impl BlockParser {
         table.children.push(tgroup);
         out.push(table);
 
-        if !blank_after_ok {
-            let at = lines.get(*pos).map(|l| (l.source, l.lineno));
-            self.blank_line_after_table(at, out);
-        }
+        self.blank_line_after_table(blank_after, out);
     }
 
     /// `.. name:: …` directives: the docutils machinery (probe-verified;
@@ -3557,6 +3646,10 @@ impl BlockParser {
             rawsource.push('\n');
             rawsource.push_str(self.sources.line_text(*l));
         }
+        // `run_directive` reads the block with its trailing blank lines
+        // (`get_first_known_indented`), and the machine stays on its last
+        // line while the directive runs.
+        self.note_top_block(lines[raw_end - 1]);
 
         let first_line = {
             let t = first_rest.trim_start_matches(' ');
@@ -4355,7 +4448,7 @@ impl BlockParser {
             node.attrs.classes.extend(classes.iter().cloned());
         }
         node.set("xml:space", AttrValue::Str("preserve".to_string()));
-        self.directive_add_name(&mut node, &input.options, input.span.source, input.lineno);
+        self.directive_add_name(&mut node, &input.options, directive_loc(input));
         match opt_get(&input.options, "number-lines") {
             Some(value) => {
                 // `firstline = options['number-lines'] or 1` — a bare flag
@@ -4581,7 +4674,7 @@ impl BlockParser {
                 }
             }
             None => {
-                self.directive_add_name(&mut lb, &input.options, input.span.source, input.lineno);
+                self.directive_add_name(&mut lb, &input.options, directive_loc(&input));
                 out.push(lb);
             }
         }
@@ -4606,12 +4699,9 @@ impl BlockParser {
         // the shared auto-id serial is allocated in document order rather
         // than after the parse; the two orders only diverge in a document
         // that also allocates auto ids elsewhere.
-        self.directive_add_name(
-            &mut container,
-            &input.options,
-            input.span.source,
-            input.lineno,
-        );
+        // The wrapping container has no location of its own.
+        let loc = self.machine_loc(directive_loc(input));
+        self.directive_add_name(&mut container, &input.options, loc);
         if container.attrs.ids.is_empty() {
             self.state.set_id(&mut container);
         }
@@ -4829,7 +4919,8 @@ impl BlockParser {
         // (`SP/sphinx/directives/patches.py:170-174`): a `:name:` names the
         // block even when it is also the label, and its id comes before the
         // equation's, which `PropagateTargets` appends (`docutils-0514`).
-        self.directive_add_name(&mut node, &input.options, input.span.source, input.lineno);
+        let loc = self.machine_loc(directive_loc(&input));
+        self.directive_add_name(&mut node, &input.options, loc);
         match label {
             Some(label) => {
                 self.equation_serial += 1;
@@ -4859,10 +4950,11 @@ impl BlockParser {
     /// a `msgnode`, it puts a duplicate name's message in no tree, and
     /// docutils still reports it, at the state machine's line: the target
     /// is not placed yet, so `get_source_line(node)` finds nothing and the
-    /// reporter asks the machine, which `run_directive` has advanced to the
-    /// last line of the directive block, its trailing blank lines included
-    /// (probed: `.. _a:` / `Text.` / `.. index:: x` + `:name: a` reports
-    /// line 6). At the top level that is the last line of `rawsource`.
+    /// reporter asks the top-level machine ([`Self::machine_loc`]): at the
+    /// top level the last line of the directive block, its trailing blank
+    /// lines included (probed: `.. _a:` / `Text.` / `.. index:: x` +
+    /// `:name: a` reports line 6), and inside a nested construct the
+    /// enclosing top-level construct's position.
     fn run_index(&mut self, input: DirectiveInput<'_>, out: &mut Vec<Node>) {
         let mut target = Node::elem(kinds::TARGET, input.span);
         match opt_get(&input.options, "name") {
@@ -4873,9 +4965,8 @@ impl BlockParser {
                 .push(format!("index-{}", self.state.new_index_serialno())),
         }
         let block_end = input.lineno + input.rawsource.matches('\n').count() as u32;
-        let reported = self
-            .state
-            .note_explicit_target(&mut target, DocLoc::at(input.span.source, block_end));
+        let loc = self.machine_loc(DocLoc::at(input.span.source, block_end));
+        let reported = self.state.note_explicit_target(&mut target, loc);
         drop(reported);
         // `targetnode['ids'][0]`: `set_id` left the node one id.
         let target_id = target.attrs.ids[0].clone();
@@ -5088,7 +5179,10 @@ impl BlockParser {
                     start: tl.start,
                     end: tl.end,
                 };
-                let inline = self.inline(&term_text, term_span, tl.lineno);
+                // `self.parse_inline(term_, lineno=lineno)` with the content
+                // item's 0-based offset (`domains/std/__init__.py:518-521`):
+                // its messages print one line before the term's own.
+                let inline = self.inline(&term_text, term_span, tl.lineno.saturating_sub(1));
                 let mut term = Node::elem(kinds::TERM, term_span);
                 term.children = inline.nodes;
                 term_messages.extend(inline.messages);
@@ -6290,7 +6384,8 @@ impl BlockParser {
         if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
             node.attrs.classes.extend(classes.iter().cloned());
         }
-        self.directive_add_name(&mut node, &input.options, input.span.source, input.lineno);
+        let loc = self.machine_loc(directive_loc(&input));
+        self.directive_add_name(&mut node, &input.options, loc);
         let content = self.parse_nested(&input.content, "seealso");
         node.children.extend(content);
         out.push(node);
@@ -6380,12 +6475,10 @@ impl BlockParser {
                 let caption_text = caption_text.clone();
                 match self.container_wrapper(&caption_text, lb, &input) {
                     Ok(mut container) => {
-                        self.directive_add_name(
-                            &mut container,
-                            &input.options,
-                            input.span.source,
-                            input.lineno,
-                        );
+                        // The wrapping container has no location of its
+                        // own.
+                        let loc = self.machine_loc(directive_loc(&input));
+                        self.directive_add_name(&mut container, &input.options, loc);
                         out.push(container);
                     }
                     Err(text) => out.push(self.msg(
@@ -6397,7 +6490,7 @@ impl BlockParser {
                 }
             }
             _ => {
-                self.directive_add_name(&mut lb, &input.options, input.span.source, input.lineno);
+                self.directive_add_name(&mut lb, &input.options, directive_loc(&input));
                 out.push(lb);
             }
         }
@@ -6440,7 +6533,8 @@ impl BlockParser {
         );
         node.set("xml:space", AttrValue::Str("preserve".to_string()));
         node.children.push(Node::text_node(code, input.span));
-        self.directive_add_name(&mut node, &input.options, input.span.source, input.lineno);
+        let loc = self.machine_loc(directive_loc(&input));
+        self.directive_add_name(&mut node, &input.options, loc);
         let language = input
             .arguments
             .first()
@@ -6635,6 +6729,10 @@ impl BlockParser {
         let mut compound = Node::elem("compound", input.span);
         compound.attrs.classes.push("toctree-wrapper".to_string());
         compound.children.push(toctree);
+        // `self.add_name(wrappernode)` (`directives/other.py:82-86`): the
+        // wrapper has no location of its own.
+        let loc = self.machine_loc(directive_loc(&input));
+        self.directive_add_name(&mut compound, &input.options, loc);
         out.push(compound);
     }
 
@@ -6790,7 +6888,8 @@ impl BlockParser {
         if let Some(OptVal::Str(a)) = opt_get(&input.options, "align") {
             table.set("align", AttrValue::Str(a.clone()));
         }
-        self.directive_add_name(&mut table, &input.options, input.span.source, input.lineno);
+        let loc = self.machine_loc(directive_loc(input));
+        self.directive_add_name(&mut table, &input.options, loc);
         if let Some(t) = title {
             table.children.insert(0, t);
         }
@@ -7010,9 +7109,12 @@ impl BlockParser {
                 let mut entry = Node::elem(kinds::ENTRY, input.span);
                 if let Some(cell) = cells.get(i) {
                     if !cell.is_empty() {
+                        // `build_table(table, self.content_offset)`: every
+                        // cell's machine starts at the first content line
+                        // (`tables.py:325-327`, `states.py:1855-1856`).
                         entry.children = self.parse_detached(
                             cell,
-                            input.lineno,
+                            input.content_lineno,
                             input.span.source,
                             "entry",
                             false,
@@ -7387,7 +7489,7 @@ impl BlockParser {
             }
         }
         node.children.append(&mut title_messages);
-        self.directive_add_name(&mut node, &input.options, input.span.source, input.lineno);
+        self.directive_add_name(&mut node, &input.options, directive_loc(&input));
         let content = self.parse_nested(&input.content, kind);
         node.children.extend(content);
         out.push(node);
@@ -7402,7 +7504,8 @@ impl BlockParser {
         if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
             node.attrs.classes.extend(classes.iter().cloned());
         }
-        self.directive_add_name(&mut node, &input.options, input.span.source, input.lineno);
+        let loc = self.machine_loc(directive_loc(&input));
+        self.directive_add_name(&mut node, &input.options, loc);
         out.push(node);
         out.extend(inline.messages);
     }
@@ -7448,7 +7551,7 @@ impl BlockParser {
         if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
             node.attrs.classes.extend(classes.iter().cloned());
         }
-        self.directive_add_name(&mut node, &input.options, input.span.source, input.lineno);
+        self.directive_add_name(&mut node, &input.options, directive_loc(&input));
         let content = self.parse_nested(&input.content, "compound");
         node.children.extend(content);
         out.push(node);
@@ -7485,7 +7588,7 @@ impl BlockParser {
         }
         let mut node = Node::elem("container", input.span);
         node.attrs.classes.extend(classes);
-        self.directive_add_name(&mut node, &input.options, input.span.source, input.lineno);
+        self.directive_add_name(&mut node, &input.options, directive_loc(&input));
         let content = self.parse_nested(&input.content, "container");
         node.children.extend(content);
         out.push(node);
@@ -7514,7 +7617,11 @@ impl BlockParser {
         if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
             node.attrs.classes.extend(classes.iter().cloned());
         }
-        self.directive_add_name(&mut node, &input.options, input.span.source, input.lineno);
+        self.directive_add_name(
+            &mut node,
+            &input.options,
+            DocLoc::at(input.span.source, input.content_lineno),
+        );
         out.push(node);
         out.extend(inline.messages);
     }
@@ -7588,16 +7695,18 @@ impl BlockParser {
     }
 
     /// add_name() (rst/__init__.py:379-389): the :name: option registers an
-    /// explicit target on the node.
-    fn directive_add_name(
-        &mut self,
-        node: &mut Node,
-        options: &[(String, OptVal)],
-        source: u16,
-        lineno: u32,
-    ) {
+    /// explicit target on the node. A duplicate name's message is located
+    /// at the node (`base_node=node`), so `loc` is where the node stands
+    /// when it is named: the directive's line ([`directive_loc`]) when the
+    /// directive located it first (`get_source_and_line(self.lineno)`,
+    /// `set_source_info`), the first content line for `parsed-literal`
+    /// (`node.line = self.content_offset + 1`), and otherwise docutils'
+    /// state-machine position ([`Self::machine_loc`]) — admonitions,
+    /// `seealso`, `rubric`, the tables, Sphinx's `math` and `code`, a
+    /// captioned code block's container. Probed per kind on Sphinx 9.1.0.
+    fn directive_add_name(&mut self, node: &mut Node, options: &[(String, OptVal)], loc: DocLoc) {
         if let Some(OptVal::Str(n)) = opt_get(options, "name") {
-            self.note_explicit_name(node, n, source, lineno);
+            self.note_explicit_name(node, n, loc);
         }
     }
 
@@ -7609,11 +7718,9 @@ impl BlockParser {
     /// model rejects it (`nodes.py:1974-1990`), and Sphinx never runs the
     /// `Messages` transform that would place it again, so such a message
     /// is logged and absent from the tree ([TW A10]).
-    fn note_explicit_name(&mut self, node: &mut Node, name: &str, source: u16, lineno: u32) {
+    fn note_explicit_name(&mut self, node: &mut Node, name: &str, loc: DocLoc) {
         node.attrs.names.push(ids::fully_normalize_name(name));
-        let reported = self
-            .state
-            .note_explicit_target(node, DocLoc::at(source, lineno));
+        let reported = self.state.note_explicit_target(node, loc);
         if keeps_duplicate_name_message(node) {
             // `msgnode += msg` (`nodes.py:1974-1990`): the node's own child,
             // after what it holds when it is named — a title — and before
@@ -7641,7 +7748,8 @@ impl BlockParser {
         if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
             node.attrs.classes.extend(classes.iter().cloned());
         }
-        self.directive_add_name(&mut node, &input.options, input.span.source, input.lineno);
+        let loc = self.machine_loc(directive_loc(&input));
+        self.directive_add_name(&mut node, &input.options, loc);
         let content = self.parse_nested(&input.content, kind);
         node.children.extend(content);
         out.push(node);
@@ -7671,7 +7779,8 @@ impl BlockParser {
                     .push(format!("admonition-{}", ids::make_id(&title_text)));
             }
         }
-        self.directive_add_name(&mut node, &input.options, input.span.source, input.lineno);
+        let loc = self.machine_loc(directive_loc(&input));
+        self.directive_add_name(&mut node, &input.options, loc);
         let inline = self.inline(&title_text, input.span, input.lineno);
         let mut title = Node::elem(kinds::TITLE, input.span);
         title.children = inline.nodes;
@@ -7791,7 +7900,7 @@ impl BlockParser {
             }
         }
         image.set("uri", AttrValue::Str(uri));
-        self.directive_add_name(&mut image, &input.options, input.span.source, input.lineno);
+        self.directive_add_name(&mut image, &input.options, directive_loc(input));
         Ok(match reference {
             Some(mut r) => {
                 r.children.push(image);
@@ -7859,7 +7968,7 @@ impl BlockParser {
         if let Some(OptVal::Str(n)) = opt_get(&input.options, "figname") {
             if !n.is_empty() {
                 let n = n.clone();
-                self.note_explicit_name(&mut figure, &n, input.span.source, input.lineno);
+                self.note_explicit_name(&mut figure, &n, directive_loc(&input));
             }
         }
         if let Some(OptVal::Str(a)) = opt_get(&input.options, "align") {
@@ -7910,7 +8019,7 @@ impl BlockParser {
         if name_on_figure {
             // After the nested parse, exactly where sphinx calls it — the
             // caption's own targets are registered first.
-            self.directive_add_name(&mut figure, &input.options, input.span.source, input.lineno);
+            self.directive_add_name(&mut figure, &input.options, directive_loc(&input));
         }
         out.push(figure);
     }
@@ -8009,7 +8118,8 @@ impl BlockParser {
                 node.children.push(Node::text_node(code, input.span));
             }
         }
-        self.directive_add_name(&mut node, &input.options, input.span.source, input.lineno);
+        let loc = self.machine_loc(directive_loc(input));
+        self.directive_add_name(&mut node, &input.options, loc);
         out.push(node);
     }
 
@@ -8038,7 +8148,7 @@ impl BlockParser {
             }
             node.children.push(Node::text_node(block, input.span));
             if !named {
-                self.directive_add_name(&mut node, &input.options, input.span.source, input.lineno);
+                self.directive_add_name(&mut node, &input.options, directive_loc(&input));
                 named = true;
             }
             out.push(node);
@@ -8176,7 +8286,12 @@ impl BlockParser {
                 .count();
             prev_depth = depth;
             let text = raw.trim_matches(crate::utils::py_isspace).to_string();
-            let inline = self.inline(&text, input.span, l.lineno);
+            // `inline_text(line_text.strip(), self.lineno +
+            // self.content_offset)`, `content_offset` counting up per line
+            // (`body.py:116-128`): the directive's 1-based line plus the
+            // line's 0-based offset.
+            let lineno = input.lineno + l.lineno.saturating_sub(1);
+            let inline = self.inline(&text, input.span, lineno);
             lb_messages.extend(inline.messages);
             resolved.push((depth, inline.nodes));
         }
@@ -8184,7 +8299,7 @@ impl BlockParser {
         if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
             block.attrs.classes.extend(classes.iter().cloned());
         }
-        self.directive_add_name(&mut block, &input.options, input.span.source, input.lineno);
+        self.directive_add_name(&mut block, &input.options, directive_loc(&input));
         out.push(block);
         out.append(&mut lb_messages);
     }
@@ -8281,6 +8396,9 @@ impl BlockParser {
         let lineno = marker_rec.lineno;
         let msg_source = marker_rec.source;
         let (block, consumed, _indent, _term) = indented_block(lines, start + 1);
+        // `Body.substitution_def`'s `get_first_known_indented`: the
+        // machine stays there while the embedded directive runs.
+        self.note_top_block(lines[through_blank_lines(lines, start + consumed)]);
         let span = self.span_of(lines, start, start + consumed);
         // blocktext for message literals: the raw marker line + raw block
         // (trailing blanks already trimmed by indented_block).
@@ -11178,6 +11296,12 @@ struct DirectiveInput<'r> {
     rawsource: &'r str,
 }
 
+/// A directive's own line: where a node the directive located before
+/// anything reported against it stands (`get_source_and_line(self.lineno)`).
+fn directive_loc(input: &DirectiveInput<'_>) -> DocLoc {
+    DocLoc::at(input.span.source, input.lineno)
+}
+
 fn opt_get<'o>(options: &'o [(String, OptVal)], name: &str) -> Option<&'o OptVal> {
     options.iter().find(|(n, _)| n == name).map(|(_, v)| v)
 }
@@ -13642,6 +13766,19 @@ fn match_simplename_chars(chars: &[char], at: usize) -> Option<usize> {
         break;
     }
     Some(i - at)
+}
+
+/// The index of the last line of the block docutils' state machine reads
+/// when an indented block's last content line is `lines[last]`: the blank
+/// lines after it, up to the next non-blank line or the end of the input,
+/// belong to it (`StringList.get_indented`), and the machine stops on the
+/// last of them.
+fn through_blank_lines(lines: &[LineRec], last: usize) -> usize {
+    let mut end = last;
+    while lines.get(end + 1).is_some_and(|line| line.is_blank()) {
+        end += 1;
+    }
+    end
 }
 
 /// Consume an indented block starting at `start`: lines while blank or

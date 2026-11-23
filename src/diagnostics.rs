@@ -106,9 +106,9 @@ impl Category {
         }
     }
 
-    /// The `type.subtype` spelling a [`BuildWarning::category`] carries:
-    /// split on the first `.`.
-    fn parse(spelled: &str) -> Category {
+    /// The `type.subtype` spelling a [`BuildWarning::category`] (or a
+    /// toctree warning's category) carries: split on the first `.`.
+    pub(crate) fn parse(spelled: &str) -> Category {
         match spelled.split_once('.') {
             Some((ty, subtype)) => Category::from_parts(Some(ty), Some(subtype)),
             None => Category::from_parts(Some(spelled), None),

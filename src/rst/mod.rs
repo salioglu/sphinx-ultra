@@ -195,9 +195,9 @@ pub struct ToctreeRecord {
     /// 1-based line of the directive, within `source`.
     pub line: u32,
     /// Diagnostics `TocTree.parse_content` produced while resolving this
-    /// directive's entries. They ride the record (and therefore the
-    /// document cache) because the parser has no warning sink, and because
-    /// a cache hit that skipped the parse must still reproduce them.
+    /// directive's entries. They ride the record because the parser has
+    /// no warning sink: the read logs them with the parse's other records
+    /// ([`crate::read::read_document`]), and the merge reads their kinds.
     pub warnings: Vec<crate::env::toctree::ToctreeWarning>,
 }
 
@@ -382,10 +382,10 @@ pub struct RegistryExport {
     /// Diagnostics the parse raised through Sphinx's *logger* rather than
     /// into the tree, which have nowhere else to go: docutils turns a
     /// directive error into a `system_message` node, but a Sphinx directive
-    /// calling `logger.warning` produces no node at all. They ride the
-    /// export (and therefore the document cache) for the same reason
-    /// [`ToctreeRecord::warnings`] does — a cache hit that skipped the parse
-    /// must still reproduce them.
+    /// calling `logger.warning` produces no node at all. The read moves
+    /// them into the document's log, rendered, beside the reporter's
+    /// records ([`crate::read::read_document`]), so a read's export holds
+    /// none; a bare parse keeps them here.
     pub log_warnings: Vec<ParseLogWarning>,
     /// Files the document pulls in at parse time (docutils
     /// `settings.record_dependencies`, harvested by sphinx's
@@ -445,6 +445,11 @@ impl LogLocation {
     ///   (`SP/sphinx/util/logging.py:554-562`); a node without a line
     ///   prints `path:`;
     /// - `None` prints nothing.
+    ///
+    /// A path already under `srcdir` stands alone, as a rooted one does:
+    /// the document's own table path is absolute in a build, and a read
+    /// with no project spells it under a stand-in source directory
+    /// (`<SRCDIR>/index.rst`, [`crate::read::read_document`]).
     pub fn render(
         self,
         sources: &[String],
@@ -459,7 +464,14 @@ impl LogLocation {
                 .map(String::as_str)
                 .unwrap_or_default()
         };
-        let doc2path = |name: &str| srcdir.join(format!("{name}.rst")).display().to_string();
+        let under_srcdir = |path: &str| {
+            if std::path::Path::new(path).starts_with(srcdir) {
+                path.to_string()
+            } else {
+                srcdir.join(path).display().to_string()
+            }
+        };
+        let doc2path = |name: &str| under_srcdir(&format!("{name}.rst"));
         let path_line = |path: String, line: u32| Location::Path {
             path,
             line: (line != 0).then_some(line),
@@ -470,7 +482,7 @@ impl LogLocation {
             LogLocation::DocLine(line) => path_line(doc2path(docname), line),
             LogLocation::Tuple { source, line } => path_line(doc2path(table_path(source)), line),
             LogLocation::Node { source, line } => {
-                let path = srcdir.join(table_path(source)).display().to_string();
+                let path = under_srcdir(table_path(source));
                 match line {
                     0 => Location::Verbatim(format!("{path}:")),
                     line => path_line(path, line),
@@ -1865,6 +1877,332 @@ mod tests {
         );
     }
 
+    /// A read with no project renders against a stand-in source directory
+    /// whose document path is not rooted (`<SRCDIR>/index.rst`): a path
+    /// already under it stands alone, as the rooted path it stands for
+    /// does in a build, while a name is still joined under it.
+    #[test]
+    fn log_locations_render_under_a_stand_in_source_directory() {
+        use crate::diagnostics::Location;
+        let srcdir = std::path::Path::new("<SRCDIR>");
+        let sources = ["<SRCDIR>/index.rst".to_string(), "part.rst".to_string()];
+        let path = |path: &str, line: Option<u32>| Location::Path {
+            path: path.to_string(),
+            line,
+        };
+        let under = |name: &str| srcdir.join(name).display().to_string();
+        for (location, expected) in [
+            (
+                LogLocation::Node { source: 0, line: 3 },
+                path("<SRCDIR>/index.rst", Some(3)),
+            ),
+            (
+                LogLocation::Tuple { source: 0, line: 1 },
+                path("<SRCDIR>/index.rst.rst", Some(1)),
+            ),
+            (
+                LogLocation::Node { source: 1, line: 6 },
+                path(&under("part.rst"), Some(6)),
+            ),
+            (LogLocation::DocLine(2), path(&under("index.rst"), Some(2))),
+        ] {
+            assert_eq!(
+                location.render(&sources, srcdir, "index"),
+                expected,
+                "{location:?}"
+            );
+        }
+    }
+
+    /// The first line of each record a Sphinx-mode parse of `source` logs
+    /// that Sphinx prints, read as `index.rst`: the form the probes below
+    /// print Sphinx 9.1.0's stream in, the source directory left out.
+    fn printed_heads(source: &str) -> Vec<String> {
+        let out = parse_rst_full(
+            source,
+            &ParseOptions {
+                source_path: "index.rst".into(),
+                ..sphinx_options()
+            },
+        );
+        render_records(out.state.log, &out.doctree.sources, "index.rst")
+            .into_iter()
+            .map(|(_, diagnostic)| {
+                let rendered = diagnostic.render(true);
+                rendered.lines().next().unwrap_or_default().to_string()
+            })
+            .collect()
+    }
+
+    const EMPHASIS: &str = "WARNING: Inline emphasis start-string without end-string. [docutils]";
+
+    fn at(line: u32, record: &str) -> String {
+        format!("index.rst:{line}: {record}")
+    }
+
+    /// docutils parses each line of a line block at its own line
+    /// (`LineBlock.line_block`, `states.py:1736-1742`), a continuation line
+    /// joining its `|` line's text. Probed on Sphinx 9.1.0: lines 5, 5, 8.
+    #[test]
+    fn line_block_lines_report_at_their_own_lines() {
+        assert_eq!(
+            printed_heads("Title\n=====\n\n| LB one\n| LB two *a\n  continued *b\n\n| solo *c\n"),
+            [at(5, EMPHASIS), at(5, EMPHASIS), at(8, EMPHASIS)]
+        );
+    }
+
+    /// The `line-block` directive parses content line `i` at
+    /// `self.lineno + self.content_offset`, the directive's 1-based line
+    /// plus the content's 0-based offset, counting up per line
+    /// (`LineBlock.run`, `SP/docutils/parsers/rst/directives/body.py:116-128`).
+    /// Probed on Sphinx 9.1.0: the directive on line 3, its lines on 5 and
+    /// 6, print 7 and 8.
+    #[test]
+    fn line_block_directive_reports_at_lineno_plus_content_offset() {
+        assert_eq!(
+            printed_heads("Para.\n\n.. line-block::\n\n   one *a\n   two *b\n"),
+            [at(7, EMPHASIS), at(8, EMPHASIS)]
+        );
+    }
+
+    /// Sphinx parses a glossary term at its content item's 0-based offset
+    /// (`Glossary.run`, `SP/sphinx/domains/std/__init__.py:518-521`), one
+    /// line before the term's own. Probed on Sphinx 9.1.0: terms on lines 3
+    /// and 7 print 2 and 6.
+    #[test]
+    fn glossary_term_messages_take_the_zero_based_offset() {
+        assert_eq!(
+            printed_heads(
+                ".. glossary::\n\n   term *a\n      Def.\n\n   other\n   second *b\n      Def.\n"
+            ),
+            [at(2, EMPHASIS), at(6, EMPHASIS)]
+        );
+    }
+
+    /// A grid or simple table cell is parsed at docutils' `tableline +
+    /// offset` (`build_table_row`, `states.py:1855-1856`), one past the
+    /// 0-based offset it stands for, so every line its machine counts —
+    /// a paragraph's inline messages, a nested caption's, each line of a
+    /// line block, an explicit target's — prints one high, while
+    /// `Unexpected indentation.` takes
+    /// the true line from the cell's own lines (`get_text_block`). A
+    /// csv-table cell is parsed at `self.content_offset`, the first content
+    /// line, whichever row (the `:header:` rows included) holds it. Probed
+    /// on Sphinx 9.1.0.
+    #[test]
+    fn table_cell_messages_take_docutils_cell_offset() {
+        let indentation = "ERROR: Unexpected indentation. [docutils]";
+        let duplicate = "WARNING: Duplicate explicit target name: \"t\". [docutils]";
+        for (source, expected) in [
+            (
+                "+-----------+\n| Cell *a   |\n|           |\n| Para      |\n| more      |\n\
+                 |    ind.   |\n+-----------+\n",
+                vec![at(3, EMPHASIS), at(6, indentation)],
+            ),
+            (
+                "=====  =====\nA      B\n=====  =====\n*c     d\n=====  =====\n",
+                vec![at(5, EMPHASIS)],
+            ),
+            (
+                "+------------------------+\n| .. figure:: pic.png    |\n\
+                 |                        |\n|    Caption *x          |\n\
+                 +------------------------+\n",
+                vec![at(5, EMPHASIS)],
+            ),
+            (
+                "+-----------+\n| | one     |\n| | two *x  |\n+-----------+\n",
+                vec![at(4, EMPHASIS)],
+            ),
+            (
+                "Para.\n\n.. csv-table::\n   :header: \"h *h\", b\n\n   \"cell *a\", b\n\
+                 \x20  \"c2 *b\", d\n",
+                vec![at(6, EMPHASIS), at(6, EMPHASIS), at(6, EMPHASIS)],
+            ),
+            // `add_target`'s `target.line = lineno`: the machine's count.
+            (
+                ".. _t:\n\nText.\n\n+-----------------+\n| .. _t:          |\n\
+                 |                 |\n| x               |\n+-----------------+\n",
+                vec![at(7, duplicate)],
+            ),
+            (
+                ".. _t:\n\nText.\n\n=====  ============\nA      B\n=====  ============\n\
+                 1      .. _t:\n2      x\n=====  ============\n",
+                vec![at(9, duplicate)],
+            ),
+        ] {
+            assert_eq!(printed_heads(source), expected, "{source:?}");
+        }
+    }
+
+    /// `add_name`'s duplicate-name message is located at the named node
+    /// when the directive gave the node its location first — the
+    /// directive's line — and otherwise at docutils' state-machine
+    /// position: a top-level directive's block end, its trailing blank
+    /// lines included. A `parsed-literal` node has only `line =
+    /// content_offset + 1`, its first content line. Probed on Sphinx 9.1.0
+    /// for every directive kind that takes `:name:`.
+    #[test]
+    fn duplicate_name_messages_follow_the_node_location_rule() {
+        let duplicate = "WARNING: Duplicate explicit target name: \"a\". [docutils]";
+        let head = ".. _a:\n\nText.\n\n";
+        for (body, line) in [
+            (".. note:: b\n   :name: a\n\n\n\nAfter.\n", 9),
+            (".. seealso:: Body.\n   :name: a\n\nAfter.\n", 7),
+            (
+                ".. admonition:: Adm\n   :name: a\n\n   Body.\n\nAfter.\n",
+                9,
+            ),
+            (".. rubric:: R\n   :name: a\n\nAfter.\n", 7),
+            (
+                ".. parsed-literal::\n   :name: a\n\n   lit one\n\nAfter.\n",
+                8,
+            ),
+            (
+                ".. code-block:: python\n   :name: a\n\n   pass\n\nAfter.\n",
+                5,
+            ),
+            (
+                ".. code-block:: python\n   :name: a\n   :caption: Cap\n\n   pass\n\nAfter.\n",
+                10,
+            ),
+            (".. code:: python\n   :name: a\n\n   pass\n\nAfter.\n", 9),
+            (".. math::\n   :name: a\n\n   a = b\n\nAfter.\n", 9),
+            (
+                ".. table:: T\n   :name: a\n\n   ===  ===\n   a    b\n   ===  ===\n\nAfter.\n",
+                11,
+            ),
+            (".. csv-table:: T\n   :name: a\n\n   a, b\n\nAfter.\n", 9),
+            (
+                ".. list-table:: T\n   :name: a\n\n   * - a\n     - b\n\nAfter.\n",
+                10,
+            ),
+            (".. image:: pic.png\n   :name: a\n\nAfter.\n", 5),
+            (
+                ".. figure:: pic.png\n   :name: a\n\n   Caption.\n\nAfter.\n",
+                5,
+            ),
+            (".. topic:: T\n   :name: a\n\n   Body.\n\nAfter.\n", 5),
+            (".. container:: c\n   :name: a\n\n   Body.\n\nAfter.\n", 5),
+            (".. line-block::\n   :name: a\n\n   one\n\nAfter.\n", 5),
+        ] {
+            assert_eq!(
+                printed_heads(&format!("{head}{body}")),
+                [at(line, duplicate)],
+                "{body:?}"
+            );
+        }
+        // docutils 0.22 parses sections in the top-level machine.
+        assert_eq!(
+            printed_heads(".. _a:\n\nTitle\n=====\n\n.. note:: b\n   :name: a\n\nAfter.\n"),
+            [at(8, duplicate)]
+        );
+    }
+
+    /// A message with neither a line nor a located node is located where
+    /// docutils' top-level state machine stands: inside a nested
+    /// construct, on the last line of the first block it read for the
+    /// enclosing top-level construct — a list's, field list's, option
+    /// list's or definition list's first item, a block quote, a footnote,
+    /// a table, a directive — with the block's trailing blank lines.
+    /// Probed on Sphinx 9.1.0 with an `index` directive's `:name:`, which
+    /// docutils locates that way everywhere.
+    #[test]
+    fn unlocated_messages_take_the_top_level_machine_position() {
+        let duplicate = "WARNING: Duplicate explicit target name: \"a\". [docutils]";
+        let index = |indent: &str| format!("{indent}.. index:: x\n{indent}   :name: a\n");
+        let head = ".. _a:\n\nText.\n\n";
+        for (body, line) in [
+            (
+                format!(
+                    "* one\n\n  first more\n\n* two\n\n{}\n* three\n\nAfter.\n",
+                    index("  ")
+                ),
+                8,
+            ),
+            (
+                format!(
+                    "term1\n   def1\n\n   def1 more\n\nterm2\n   def2\n\n{}\nterm3\n   def3\n\n\
+                     After.\n",
+                    index("   ")
+                ),
+                9,
+            ),
+            (
+                format!(
+                    ":f1: one\n\n   f1 more\n\n:f2: two\n\n{}\n:f3: three\n\nAfter.\n",
+                    index("   ")
+                ),
+                8,
+            ),
+            (
+                format!(
+                    "-a  one\n\n    a more\n\n-b  two\n\n{}\n-c  three\n\nAfter.\n",
+                    index("    ")
+                ),
+                8,
+            ),
+            (
+                format!(
+                    "   Quote.\n\n{}\n   More quote.\n\n\nAfter.\n",
+                    index("   ")
+                ),
+                12,
+            ),
+            (
+                format!(
+                    ".. [1] Foot.\n\n{}\n   More.\n\nAfter [1]_.\n",
+                    index("   ")
+                ),
+                11,
+            ),
+            (
+                "+--------------+\n| Cell         |\n|              |\n| .. index:: x |\n\
+                 |    :name: a  |\n+--------------+\n| Two          |\n+--------------+\n\n\
+                 After.\n"
+                    .to_string(),
+                12,
+            ),
+            (
+                "=====  ===============\nA      B\n=====  ===============\n1      .. index:: x\n\
+                 \x20         :name: a\n2      two\n=====  ===============\n\nAfter.\n"
+                    .to_string(),
+                11,
+            ),
+            (
+                ".. note::\n\n   Inner.\n\n   .. note:: b\n      :name: a\n\n   More.\n\nAfter.\n"
+                    .to_string(),
+                13,
+            ),
+        ] {
+            assert_eq!(
+                printed_heads(&format!("{head}{body}")),
+                [at(line, duplicate)],
+                "{body:?}"
+            );
+        }
+    }
+
+    /// `table_top` warns `Blank line required after table.` whenever the
+    /// isolated table does not end the input or a blank line: after a
+    /// border that does not match the top one, and after a table whose
+    /// parse fails (`states.py:1787-1815`, `:1871-1876`). Probed on Sphinx
+    /// 9.1.0.
+    #[test]
+    fn malformed_simple_tables_warn_about_the_missing_blank_line() {
+        let blank = "WARNING: Blank line required after table. [docutils]";
+        assert_eq!(
+            printed_heads("=====  =====\nA      B\n======  =====\nText after.\n"),
+            [at(3, "ERROR: Malformed table."), at(4, blank)]
+        );
+        assert_eq!(
+            printed_heads(
+                "=====  =====\n*a     b\n=====  =====\nc      d\n--  --------\n=====  =====\n\
+                 Text after.\n"
+            ),
+            [at(5, "ERROR: Malformed table."), at(7, blank)]
+        );
+    }
+
     /// The `PySigConfig` keys a fixture's `conf` sets; the other keys the
     /// fixtures carry steer no parse.
     fn py_config_of(conf: &serde_json::Map<String, Value>) -> crate::py::PySigConfig {
@@ -2589,8 +2927,9 @@ mod tests {
             assert_eq!(tree_messages(&out).len(), 1, "{source}");
         }
         // An admonition and `seealso` hold it first too. Sphinx locates it
-        // at the end of the directive block (lines 6, 10 and 8), which is
-        // T8's to print; the tree position is checked here.
+        // at the end of the directive block (lines 6, 10 and 8), as
+        // `duplicate_name_messages_follow_the_node_location_rule` pins; the
+        // tree position is checked here.
         for (source, kind, paragraphs) in [
             (".. _x:\n\nPara.\n\n.. note:: b\n   :name: x\n", "note", 1),
             (

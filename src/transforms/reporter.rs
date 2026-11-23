@@ -34,6 +34,15 @@ pub enum LogRecord {
     },
 }
 
+impl LogRecord {
+    /// The key the record is ordered by among the document's records.
+    pub fn key(&self) -> OrderKey {
+        match self {
+            LogRecord::Reporter { key, .. } | LogRecord::Logger { key, .. } => *key,
+        }
+    }
+}
+
 /// The warning-stream records of `records`, each with its own key, in
 /// input order. A reporter message prints iff its level reaches Sphinx's
 /// `report_level` of 2 [TW §5.3.3] (INFO never prints and is dropped) as a

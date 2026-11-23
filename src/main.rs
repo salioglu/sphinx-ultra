@@ -240,13 +240,15 @@ struct RunArgs {
     fresh_env: bool,
     fail_on_warning: bool,
     warning_file: Option<PathBuf>,
-    /// Print sphinx-build's closing "The HTML pages are in …" line
-    print_final_location: bool,
+    /// sphinx-build's status stream, stdout: the closing summary and the
+    /// "The HTML pages are in …" line, which `-q` silences. Off in the
+    /// native subcommand, which reports its summary on its own channels.
+    status_stream: bool,
     /// sphinx-build compatible mode: Sphinx's warning stream (bare records,
     /// the same bytes on stderr and in `-w`, which opens before the
     /// configuration loads), its `Configuration error!` report, its closing
-    /// summary at INFO, and no M1 validation pass. The native `build`
-    /// subcommand keeps its env_logger output.
+    /// summary on the status stream, and no M1 validation pass. The native
+    /// `build` subcommand keeps its env_logger output.
     sphinx_build_mode: bool,
 }
 
@@ -270,7 +272,7 @@ impl RunArgs {
             fresh_env: false,
             fail_on_warning: false,
             warning_file: None,
-            print_final_location: false,
+            status_stream: false,
             sphinx_build_mode: false,
         }
     }
@@ -633,12 +635,20 @@ async fn run_build(args: RunArgs) -> Result<i32> {
     let total_warnings = config_records.len() + stats.warnings;
     let plural = |n: usize| if n == 1 { "" } else { "s" };
 
+    // Sphinx logs its closing summary at INFO, on its status stream
+    // (`sphinx/application.py:452-481`): stdout, which `-q` silences, and
+    // never the warning stream or `-w`. The native subcommand keeps its own
+    // channels.
+    let status = |line: &str| {
+        if args.status_stream {
+            println!("{line}");
+        }
+    };
+
     // The exit status follows Sphinx's (`sphinx/cmd/build.py:395-452`,
     // `sphinx/application.py:453-481`): records never change it, whatever
     // their severity, except under `-W`, which fails the build once every
-    // record is out (keep-going is the default since Sphinx 8.1). Sphinx
-    // logs its closing summary at INFO, so `-q` silences it there; the
-    // native subcommand keeps its own channels.
+    // record is out (keep-going is the default since Sphinx 8.1).
     if should_fail_on_warning && total_warnings > 0 {
         let summary = format!(
             "build finished with problems, {} warning{} (with warnings treated as errors).",
@@ -646,7 +656,7 @@ async fn run_build(args: RunArgs) -> Result<i32> {
             plural(total_warnings)
         );
         if sphinx_mode {
-            info!("{summary}");
+            status(&summary);
         } else {
             eprintln!("{summary}");
         }
@@ -670,7 +680,7 @@ async fn run_build(args: RunArgs) -> Result<i32> {
             }
         );
         if sphinx_mode {
-            info!("{summary}");
+            status(&summary);
         } else {
             eprintln!("{summary}");
         }
@@ -685,10 +695,12 @@ async fn run_build(args: RunArgs) -> Result<i32> {
             plural(total_warnings)
         );
         if sphinx_mode {
-            info!("{summary}");
+            status(&summary);
         } else {
             warn!("{summary}");
         }
+    } else if sphinx_mode {
+        status("build succeeded.");
     }
 
     info!("Build completed successfully!");
@@ -698,9 +710,9 @@ async fn run_build(args: RunArgs) -> Result<i32> {
     info!("Build time: {:?}", stats.build_time);
     info!("Output size: {} MB", stats.output_size_mb);
 
-    if args.print_final_location {
-        println!("\nThe HTML pages are in {}.", args.output.display());
-    }
+    // Sphinx's epilog, after an empty status line.
+    status("");
+    status(&format!("The HTML pages are in {}.", args.output.display()));
 
     Ok(0)
 }
@@ -802,7 +814,7 @@ async fn run_sphinx_build_mode(sb: SphinxBuildCli) -> i32 {
         fresh_env: sb.fresh_env,
         fail_on_warning: sb.fail_on_warning,
         warning_file: sb.warning_file.clone(),
-        print_final_location: !sb.quiet,
+        status_stream: !sb.quiet,
         sphinx_build_mode: true,
         ..RunArgs::base(sb.sourcedir.clone(), output)
     };

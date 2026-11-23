@@ -318,11 +318,17 @@ fn canon_scope8(text: &str) -> String {
 
 /// [`normalize_source_paths`] over a build's records, rendered with
 /// Sphinx's default `show_warning_types = True`, which no oracle project
-/// overrides.
+/// overrides, one entry per line of the stream, as the oracle records it: a
+/// multi-line record (a reporter message holding its block) spans several.
 fn normalize_warnings(warnings: &[Diagnostic], root: &str) -> Vec<String> {
     warnings
         .iter()
-        .map(|warning| normalize_source_paths(&warning.render(true), root))
+        .flat_map(|warning| {
+            normalize_source_paths(&warning.render(true), root)
+                .split('\n')
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
         .collect()
 }
 
@@ -576,21 +582,6 @@ const KNOWN_WARNING_GAPS: &[(&str, &str)] = &[
         "`image file not readable` — image collection is not ported yet (the \
          project's other warning, `numfig is disabled. :numref: is ignored.`, \
          this task does produce)",
-    ),
-    (
-        "inc_basic",
-        "every one of this project's oracle warnings is a docutils *reporter* \
-         message (the `[docutils]` suffix): Sphinx's `LoggingReporter` streams \
-         each `system_message` it builds to the warning log as well as into \
-         the doctree, while this crate keeps reporter messages in-tree only. \
-         That split is pre-existing and project-wide (wave-4.5 task 12 \
-         verified it is not include-specific), and it is why the project sets \
-         `keep_warnings`: the same bytes are compared at full strength as \
-         `system_message` nodes in `resolved_pformat` — the missing-file and \
-         `start-after` SEVEREs, the multi-line circular-inclusion chains, and \
-         the `:pyobject:` not-found text. The sibling `inc_warn` project \
-         carries the include/literalinclude warnings that DO go through the \
-         logger on both sides, and compares byte-for-byte",
     ),
     (
         "state.label_order",
@@ -874,7 +865,7 @@ fn known_warning_gap(project: &str) -> Option<&'static str> {
 /// sides still DIFFER — so a project that started emitting a warning of its
 /// own would go on passing under an exemption written for a warning it
 /// FAILS to emit. Every entry's stated reason is of that second kind ("not
-/// ported yet", "the oracle logs reporter messages we keep in-tree"), so
+/// ported yet", "a transform not ported yet reports it"), so
 /// the sound invariant is a one-directional one: our warnings must be a
 /// subset of the oracle's. A warning on our side that the oracle lacks is
 /// a fabricated diagnostic, which is precisely what breaks `-W` on a
@@ -906,21 +897,6 @@ fn assert_warning_gap_is_sound(project: &str, actual: &[String], expected: &[Str
          does not (or emits one more often than it does) — the exemption \
          covers MISSING warnings, never invented ones: {extra:#?}"
     );
-    if project == "inc_basic" {
-        // Its reason is specifically that the whole set is reporter-side,
-        // so anything at all on our side contradicts the exemption.
-        assert!(
-            actual.is_empty(),
-            "[inc_basic] the exemption says every oracle warning is a \
-             docutils reporter message we keep in-tree only, so our logger \
-             side must be empty: {actual:#?}"
-        );
-        assert!(
-            !expected.is_empty(),
-            "[inc_basic] the oracle side went empty — the exemption has \
-             nothing left to excuse; delete it"
-        );
-    }
 }
 
 /// Fixture `conf` keys that provably steer no behavior this crate has
@@ -1817,8 +1793,8 @@ const DOCUMENTED_DOCUMENTS: usize = 89;
 const DOCUMENTED_WHOLESALE_EXEMPT_DOCUMENTS: usize = 48;
 const DOCUMENTED_STAMP_EXEMPT_DOCUMENTS: usize = 6;
 const DOCUMENTED_BYTE_EXACT_DOCUMENTS: usize = 35;
-const DOCUMENTED_WARNING_EXEMPT_PROJECTS: usize = 7;
-const DOCUMENTED_BYTE_EXACT_WARNING_PROJECTS: usize = 24;
+const DOCUMENTED_WARNING_EXEMPT_PROJECTS: usize = 6;
+const DOCUMENTED_BYTE_EXACT_WARNING_PROJECTS: usize = 25;
 
 #[test]
 fn exemption_arithmetic_matches_the_documented_numbers() {

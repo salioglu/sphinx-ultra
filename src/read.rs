@@ -15,13 +15,14 @@
 //! differential compare its output with Sphinx's.
 
 use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 
 use crate::config::BuildConfig;
-use crate::diagnostics::Diagnostic;
+use crate::diagnostics::{Category, Diagnostic, OrderKey, Severity};
 use crate::doctree::{AttrValue, Doctree, Node};
 use crate::env::BuildEnvironment;
-use crate::rst::{ParseOptions, ParseOutput, RegistryExport};
-use crate::transforms::reporter::render_records;
+use crate::rst::{LogLocation, ParseOptions, ParseOutput, RegistryExport};
+use crate::transforms::reporter::{render_records, LogRecord};
 use crate::transforms::state::DocumentState;
 
 /// The value `TranslationProgressTotaliser` (025) stamps on every document
@@ -108,6 +109,9 @@ impl ReadOutcome {
 /// stamps `translation_progress` on the document, as Sphinx's 025
 /// `TranslationProgressTotaliser` does on every document of a build with no
 /// translations (decision 9).
+///
+/// The document's log ([`DocumentState::log`]) then holds every record of
+/// the parse: the reporter's, and the logger's ([`log_parse_warnings`]).
 pub fn read_document(source: &str, parse: &ParseOptions, settings: &ReadSettings) -> ReadOutcome {
     let mut output = if settings.trace_ids && !parse.trace_ids {
         crate::rst::parse_rst_full(
@@ -126,7 +130,77 @@ pub fn read_document(source: &str, parse: &ParseOptions, settings: &ReadSettings
             AttrValue::Str(TRANSLATION_PROGRESS.to_string()),
         );
     }
+    log_parse_warnings(&mut output, parse);
     ReadOutcome { output }
+}
+
+/// Adds the parse's logger records to the document's log, each keyed
+/// `(0, 0, seq)` with the seq it drew when it was logged, so the log holds
+/// the reporter's and the logger's records in the order the parse created
+/// them ([TW §5.5] rule 1; [DS §6.4]): every `ParseLogWarning`, moved out
+/// of the export and located by its [`LogLocation`] rule, and every
+/// toctree warning, copied (the merge still reads the toctree records'
+/// warnings) and located as `TocTree.parse_content` logs it,
+/// `location=toctree`: the `Node` rule, with its category.
+///
+/// Locations render against the project's source directory, or, for a
+/// read with no project, the one the document's path implies
+/// ([`source_dir_of`]).
+fn log_parse_warnings(output: &mut ParseOutput, parse: &ParseOptions) {
+    let srcdir = source_dir_of(parse);
+    let sources = &output.doctree.sources;
+    let key = |seq| OrderKey {
+        priority: 0,
+        serial: 0,
+        seq,
+    };
+    let logged = std::mem::take(&mut output.registry.log_warnings)
+        .into_iter()
+        .map(|warning| LogRecord::Logger {
+            key: key(warning.seq),
+            diagnostic: warning.diagnostic(sources, &srcdir, &parse.docname),
+        });
+    let toctree = output
+        .toctrees
+        .iter()
+        .flat_map(|toctree| &toctree.warnings)
+        .map(|warning| LogRecord::Logger {
+            key: key(warning.seq),
+            diagnostic: Diagnostic {
+                location: LogLocation::Node {
+                    source: warning.source,
+                    line: warning.line,
+                }
+                .render(sources, &srcdir, &parse.docname),
+                severity: Severity::Warning,
+                message: warning.message.clone(),
+                category: warning
+                    .category
+                    .as_deref()
+                    .map_or(Category::None, Category::parse),
+            },
+        });
+    let log = &mut output.state.log;
+    log.extend(logged.chain(toctree));
+    // Every parse record drew its own seq: the stable sort restores the
+    // creation order the reporter's records were logged in.
+    log.sort_by_key(LogRecord::key);
+}
+
+/// The source directory a read's logger locations render against: the
+/// project's, or, for a read with none (a standalone snippet), the one
+/// the document's path implies, Sphinx's `doc2path(docname)` read
+/// backwards — the path less one level per docname component
+/// (`<SRCDIR>/index.rst` → `<SRCDIR>`).
+fn source_dir_of(parse: &ParseOptions) -> PathBuf {
+    if let Some(srcdir) = &parse.srcdir {
+        return srcdir.clone();
+    }
+    let mut dir = Path::new(&parse.source_path);
+    for _ in parse.docname.split('/') {
+        dir = dir.parent().unwrap_or(Path::new(""));
+    }
+    dir.to_path_buf()
 }
 
 /// A document read on its own, as the oracle harnesses read a snippet.
@@ -281,6 +355,51 @@ mod tests {
             .iter()
             .all(|diagnostic| matches!(diagnostic.location, Location::Verbatim(_))));
         assert_eq!(read.env, BuildEnvironment::default());
+    }
+
+    /// The read logs the parse's logger records beside the reporter's, in
+    /// the order the parse created them, each located by its rule against
+    /// the source directory the snippet's path implies: probed on Sphinx
+    /// 9.1.0, the malformed option (`location=signode`), then the reporter's
+    /// WARNING, the unknown role's bare record and its ERROR, then the
+    /// `:emphasize-lines:` tuple location `doc2path` doubles. The export
+    /// keeps none of them.
+    #[test]
+    fn read_logs_the_parse_logger_records_in_creation_order() {
+        let read = read_standalone(
+            "Index\n=====\n\n.. option:: =bad\n\nSee *this.\n\n:a:b:`x`\n\n\
+             .. code-block:: python\n   :emphasize-lines: 9\n\n   pass\n",
+            &sphinx_options(),
+            &ReadSettings::sphinx_defaults(),
+        );
+        let rendered: Vec<String> = read
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.render(true))
+            .collect();
+        assert_eq!(
+            rendered,
+            [
+                "<SRCDIR>/index.rst:4: WARNING: Malformed option description '=bad', should \
+                 look like \"opt\", \"-opt args\", \"--opt args\", \"/opt args\" or \"+opt args\"",
+                "<SRCDIR>/index.rst:6: WARNING: Inline emphasis start-string without \
+                 end-string. [docutils]",
+                "WARNING: unknown role name: a:b",
+                "<SRCDIR>/index.rst:8: ERROR: Unknown interpreted text role \"a:b\". [docutils]",
+                "<SRCDIR>/index.rst.rst:10: WARNING: line number spec is out of range(1-1): '9'",
+            ]
+        );
+        let keys: Vec<OrderKey> = read
+            .outcome
+            .state()
+            .log
+            .iter()
+            .map(LogRecord::key)
+            .collect();
+        let mut sorted = keys.clone();
+        sorted.sort();
+        assert_eq!(keys, sorted, "the log is in creation order");
+        assert!(read.outcome.output.registry.log_warnings.is_empty());
     }
 
     /// With the trace on, a parse event is attached when the read tree

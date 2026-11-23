@@ -30,6 +30,7 @@ use crate::inventory::InventoryFile;
 use crate::matching;
 use crate::parser::Parser;
 use crate::read::ReadOutcome;
+use crate::transforms::reporter::render_records;
 use crate::utils;
 use crate::utils::py_repr_str;
 
@@ -1271,6 +1272,12 @@ impl SphinxBuilder {
     /// This phase also **persists** each re-read document's doctree, at the
     /// end of its merge: the domain hooks below mutate the tree, and a
     /// later build must load what they left, not what the parser produced.
+    ///
+    /// And it prints each re-read document's read-phase records — its
+    /// log's (the parse's reporter and logger records, in creation order),
+    /// then the domains' — one document at a time in sorted docname order,
+    /// whatever order the parallel reads finished in. A document recovered
+    /// from the cache prints none (decision 6).
     fn merge_phase(&self, env: &mut BuildEnvironment, results: &mut [ReadResult]) {
         env.root_doc = self
             .config
@@ -1395,27 +1402,33 @@ impl SphinxBuilder {
             // sorted order, so the read sinks flush in it too.
             let mut sink = DiagnosticSink::default();
 
-            // The document's toctree diagnostics, produced when its entries
-            // were resolved, and the parse's other logger warnings.
-            self.report_parse_warnings(
-                docname,
-                &result.document,
-                result.outcome.doctree(),
-                &mut sink,
-            );
+            // The parse's records — the reporter's, its toctree warnings
+            // and its other logger warnings — rendered from the document's
+            // log with their `(0, 0, seq)` keys, which order them as the
+            // parse created them. A reporter record names its source the
+            // way docutils' reporter does, `reporter.source` (the
+            // document's path) when the message names none.
+            let source_path = result.document.source_path.display().to_string();
+            let log = std::mem::take(&mut result.outcome.state_mut().log);
+            for (key, diagnostic) in
+                render_records(log, &result.outcome.doctree().sources, &source_path)
+            {
+                sink.push(key, diagnostic);
+            }
 
             // The domains' read-phase hooks, dispatched in the order
             // `_DomainsContainer._process_doc` walks them — `c, changeset,
             // citation, cpp, index, js, math, py, rst, std`, so `index`
-            // before `std` with `py` in between — and after the parse
-            // diagnostics above, which Sphinx logs while reading.
+            // before `std` with `py` in between — from `SphinxDomains`,
+            // whose key sorts their records after the parse's.
             // `PythonDomain` defines no `process_doc` hook, so its slot in
             // that walk is a no-op: the py registrations (and their
             // duplicate warnings, which are parse-time in Sphinx and
             // interleave with std's in document order) replay inside
-            // `env_std::process_doc`'s parse-time pass below. Warning
-            // locations come from node spans and the doctree's source
-            // table, not the document text.
+            // `env_std::process_doc`'s parse-time pass below, and stay
+            // after the parse's records until stage M keys the replays
+            // (T13a). Warning locations come from node spans and the
+            // doctree's source table, not the document text.
             let mut index_warnings = Vec::new();
             env_genindex::process_doc(
                 env,
@@ -1425,7 +1438,7 @@ impl SphinxBuilder {
                 &mut index_warnings,
             );
             for warning in index_warnings {
-                push_in_order(&mut sink, warning);
+                push_domain_record(&mut sink, warning);
             }
 
             let mut std_warnings = Vec::new();
@@ -1441,7 +1454,7 @@ impl SphinxBuilder {
                 &mut std_warnings,
             );
             for warning in std_warnings {
-                push_in_order(&mut sink, warning);
+                push_domain_record(&mut sink, warning);
             }
             self.flush(sink);
 
@@ -1468,77 +1481,6 @@ impl SphinxBuilder {
                     ErrorType::Other,
                 ));
             }
-        }
-    }
-
-    /// Push one document's parse-time diagnostics into its read sink:
-    /// `TocTree.parse_content`'s warnings and the `logger.warning` calls
-    /// other directives make (`RegistryExport::log_warnings`). Both are
-    /// carried on the parse records rather than raised as they happen, so
-    /// that a cache hit — which skips the parse entirely — still reproduces
-    /// them.
-    ///
-    /// Each stream replays in its own record sequence — the order the parse
-    /// produced. (The old stable sort by line only reproduced document
-    /// order while every record came from one source; an included file's
-    /// warnings would be shuffled into the includer's. A warning's line is
-    /// display data, not an ordering key.) A document carrying both kinds
-    /// emits all toctree warnings before all log warnings rather than
-    /// interleaved by position — the same cross-category simplification
-    /// `std_domain::process_doc` documents.
-    ///
-    /// `doctree` supplies the source table: a warning raised inside an
-    /// included file — a toctree's `location=toctree` or a log warning's
-    /// `location=node` — renders that file's path, not the document's. A
-    /// log warning renders its location the way Sphinx's log translator
-    /// does ([`crate::rst::LogLocation::render`]): a node location is made
-    /// absolute against the source directory, a tuple location goes
-    /// through `doc2path`.
-    fn report_parse_warnings(
-        &self,
-        docname: &str,
-        document: &Document,
-        doctree: &Doctree,
-        sink: &mut DiagnosticSink,
-    ) {
-        for toctree in &document.toctrees {
-            for warning in &toctree.warnings {
-                let warning_type = match warning.kind {
-                    ToctreeWarningKind::MissingDocument => WarningType::MissingToctreeRef,
-                    ToctreeWarningKind::EmptyGlob | ToctreeWarningKind::PatternError => {
-                        WarningType::EmptyToctree
-                    }
-                    ToctreeWarningKind::DuplicateEntry => WarningType::Other,
-                };
-                let source_path = doctree
-                    .sources
-                    .get(warning.source as usize)
-                    .map(PathBuf::from)
-                    .unwrap_or_else(|| document.source_path.clone());
-                push_in_order(
-                    sink,
-                    BuildWarning::new(
-                        source_path,
-                        Some(warning.line as usize),
-                        warning.message.clone(),
-                        warning_type,
-                    )
-                    .with_category(warning.category.clone()),
-                );
-            }
-        }
-        for warning in &document.registry.log_warnings {
-            // Sphinx logs these with no `type`/`subtype`, so they render
-            // with no `[category]` suffix.
-            let key = OrderKey {
-                priority: 0,
-                serial: 0,
-                seq: sink.next_seq(),
-            };
-            sink.push(
-                key,
-                warning.diagnostic(&doctree.sources, &self.source_dir, docname),
-            );
         }
     }
 
@@ -2246,6 +2188,19 @@ fn push_in_order(sink: &mut DiagnosticSink, warning: BuildWarning) {
     let key = OrderKey {
         priority: 0,
         serial: 0,
+        seq: sink.next_seq(),
+    };
+    sink.push(key, Diagnostic::from(warning));
+}
+
+/// Pushes a domain's read-phase record into a document's read sink, keyed
+/// at `SphinxDomains`' slot (850-040, [DS §9]): after the parse's records,
+/// which [`SphinxBuilder::merge_phase`] keys `(0, 0, seq)` from the
+/// document's log, and in push order among the domains'.
+fn push_domain_record(sink: &mut DiagnosticSink, warning: BuildWarning) {
+    let key = OrderKey {
+        priority: 850,
+        serial: 40,
         seq: sink.next_seq(),
     };
     sink.push(key, Diagnostic::from(warning));
