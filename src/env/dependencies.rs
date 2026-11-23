@@ -2,213 +2,77 @@
 //! its own source, and the reason a build re-reads a document whose source
 //! never changed.
 //!
-//! Port of the `note_dependency` half of Sphinx's asset collectors
-//! (`environment/collectors/asset.py:26-104`, `ImageCollector.process_doc`)
-//! plus the path arithmetic it relies on,
-//! `BuildEnvironment.relfn2path` (`environment/__init__.py:378-400`).
+//! Port of Sphinx's `DependenciesCollector`
+//! (`SP/sphinx/environment/collectors/dependencies.py`), the first
+//! `doctree-read` collector: the files docutils recorded while it parsed
+//! the document (`settings.record_dependencies`), here the parse's records
+//! ([`crate::rst::RegistryExport::dependencies`]), each noted as
+//! `env.note_dependency` notes it (`SP/sphinx/environment/__init__.py:605-618`).
+//! The image collector notes each image after it
+//! ([`crate::env::collectors::images`]).
 //! [`crate::env::BuildEnvironment::get_outdated_files`] is the consumer: a
 //! dependency that is missing, or newer than the time the document was
 //! read, makes the document outdated.
 //!
 //! **Scope.** Sphinx notes a dependency for every file-inserting construct:
 //! images, `figure`, `literalinclude`, `include`, `download`, `docutils.conf`
-//! and the gettext catalogs. This crate covers images (`figure` builds one)
-//! by walking the doctree here, and — since wave 4.5 — `include`, whose
-//! targets arrive as parse-time records
-//! ([`crate::rst::RegistryExport::dependencies`], the counterpart of
-//! docutils' `settings.record_dependencies` harvested by sphinx's
-//! `DependenciesCollector`). The remaining producers are a matter of
-//! calling [`note`] or extending the record stream from wherever their
-//! nodes are collected.
-//!
-//! Deliberate omissions, each of which only costs a *warning*, never a
-//! wrong rebuild decision:
-//!
-//! * `image file not readable: %s` — Sphinx stats the image at read time
-//!   and warns; here a missing image simply makes the document outdated on
-//!   every build (the honest consequence of "a dependency is missing"), and
-//!   nothing is said about it.
-//! * `candidates` — Sphinx expands `foo.*` into per-mimetype candidates and
-//!   notes each. Nothing in this crate resolves candidates, so a `*` uri is
-//!   noted as no dependency at all rather than as one file that does not
-//!   exist and would peg the document to a re-read forever.
+//! and the gettext catalogs. This crate covers images and — since wave 4.5 —
+//! `include`. The remaining producers are a matter of extending the record
+//! stream from wherever their nodes are collected.
 
-use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
-
-use crate::doctree::{kinds, AttrValue, Doctree, Node};
-use crate::utils::relfn2path;
+use std::path::Path;
 
 use super::BuildEnvironment;
 
-/// Record every file `docname`'s doctree pulls in, replacing whatever the
-/// previous read of that document left behind.
-///
-/// `parse_dependencies` are the parse-recorded srcdir-relative paths
-/// (`include` targets); the doctree walk contributes the image uris.
-///
-/// Mirrors Sphinx's collector contract: the entry is dropped entirely when
-/// the document depends on nothing, so `dependencies` holds only documents
-/// that have dependencies (Sphinx's `defaultdict(set)` behaves the same way
-/// after `clear_doc`).
+/// `DependenciesCollector.process_doc`: notes every file the parse of
+/// `docname` recorded, a path relative to the source directory `srcdir`
+/// (a leading `..` walks outside it, like Sphinx's `srcdir / relpath` for
+/// an out-of-tree include), as `env.note_dependency` notes it — the
+/// document's entry, which the read's `clear_doc` emptied, holds only
+/// documents that depend on something (Sphinx's `setdefault`).
 pub fn process_doc(
     env: &mut BuildEnvironment,
     docname: &str,
-    doctree: &Doctree,
     srcdir: &Path,
     parse_dependencies: &[String],
 ) {
-    let mut paths = BTreeSet::new();
-    collect(&doctree.root, docname, srcdir, &mut paths);
     for dependency in parse_dependencies {
-        // Recorded srcdir-relative (a leading `..` walks outside, like
-        // sphinx's `srcdir / relpath` for an out-of-tree include).
-        paths.insert(srcdir.join(dependency));
-    }
-    if paths.is_empty() {
-        env.dependencies.remove(docname);
-    } else {
-        env.dependencies.insert(docname.to_string(), paths);
-    }
-}
-
-/// `env.note_dependency(filename)`: the absolute path a `uri` seen in
-/// `docname` refers to, or `None` when the uri names no local file.
-///
-/// Skipped, exactly as `ImageCollector.process_doc` skips them: `data:`
-/// URIs (the image is inline), anything with a scheme (`http://…`), and
-/// candidate patterns (see the module note).
-pub fn note(uri: &str, docname: &str, srcdir: &Path) -> Option<PathBuf> {
-    if uri.starts_with("data:") || uri.contains("://") || uri.contains('*') || uri.is_empty() {
-        return None;
-    }
-    Some(relfn2path(uri, docname, srcdir))
-}
-
-/// Walk the doctree for every node that names a file. `figure` needs no
-/// case of its own: it holds the `image` node this matches.
-fn collect(node: &Node, docname: &str, srcdir: &Path, out: &mut BTreeSet<PathBuf>) {
-    if node.kind == kinds::IMAGE {
-        if let Some(AttrValue::Str(uri)) = node.get("uri") {
-            if let Some(path) = note(uri, docname, srcdir) {
-                out.insert(path);
-            }
-        }
-    }
-    for child in &node.children {
-        collect(child, docname, srcdir, out);
+        env.dependencies
+            .entry(docname.to_string())
+            .or_default()
+            .insert(srcdir.join(dependency));
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
     use super::*;
-    use crate::rst;
 
-    fn deps(docname: &str, source: &str) -> Vec<PathBuf> {
-        let doctree = rst::parse_rst(source, &rst::ParseOptions::default());
-        let mut env = BuildEnvironment::default();
-        process_doc(&mut env, docname, &doctree, Path::new("/src"), &[]);
-        env.dependencies
-            .get(docname)
-            .map(|set| set.iter().cloned().collect())
-            .unwrap_or_default()
-    }
-
-    /// Parse-recorded include dependencies fold in beside the image walk,
-    /// srcdir-joined.
+    /// The parse-recorded dependencies are noted srcdir-joined; a document
+    /// that recorded none gets no entry.
     #[test]
-    fn parse_recorded_dependencies_join_the_image_walk() {
-        let doctree = rst::parse_rst(".. image:: pic.png\n", &rst::ParseOptions::default());
+    fn parse_recorded_dependencies_are_noted_against_the_source_directory() {
         let mut env = BuildEnvironment::default();
         process_doc(
             &mut env,
             "index",
-            &doctree,
             Path::new("/src"),
             &["part.rst".to_string(), "data/snippet.txt".to_string()],
         );
-        let paths: Vec<PathBuf> = env.dependencies["index"].iter().cloned().collect();
         assert_eq!(
-            paths,
-            vec![
-                PathBuf::from("/src/data/snippet.txt"),
-                PathBuf::from("/src/part.rst"),
-                PathBuf::from("/src/pic.png"),
-            ]
+            env.dependencies["index"],
+            BTreeSet::from([
+                Path::new("/src").join("data/snippet.txt"),
+                Path::new("/src").join("part.rst"),
+            ])
         );
-    }
 
-    #[test]
-    fn an_image_uri_resolves_against_the_documents_own_directory() {
-        assert_eq!(
-            deps("chapters/intro", ".. image:: pic.png\n"),
-            vec![PathBuf::from("/src/chapters/pic.png")]
-        );
-        assert_eq!(
-            deps("index", ".. image:: img/pic.png\n"),
-            vec![PathBuf::from("/src/img/pic.png")]
-        );
-    }
-
-    #[test]
-    fn a_rooted_uri_resolves_against_the_source_directory() {
-        assert_eq!(
-            deps("chapters/intro", ".. image:: /img/pic.png\n"),
-            vec![PathBuf::from("/src/img/pic.png")]
-        );
-    }
-
-    #[test]
-    fn dot_segments_are_normalized_away() {
-        assert_eq!(
-            deps("chapters/intro", ".. image:: ../img/./pic.png\n"),
-            vec![PathBuf::from("/src/img/pic.png")]
-        );
-    }
-
-    #[test]
-    fn a_figures_image_is_a_dependency_too() {
-        assert_eq!(
-            deps("index", ".. figure:: pic.png\n\n   A caption.\n"),
-            vec![PathBuf::from("/src/pic.png")]
-        );
-    }
-
-    #[test]
-    fn remote_inline_and_candidate_uris_are_not_local_files() {
-        assert!(deps("index", ".. image:: https://example.com/pic.png\n").is_empty());
-        assert!(deps("index", ".. image:: data:image/png;base64,iVBOR\n").is_empty());
+        process_doc(&mut env, "other", Path::new("/src"), &[]);
         assert!(
-            deps("index", ".. image:: pic.*\n").is_empty(),
-            "a candidate pattern names no single file; noting it would peg \
-             the document to a re-read on every build"
-        );
-    }
-
-    #[test]
-    fn a_document_without_files_has_no_entry_at_all() {
-        let doctree = rst::parse_rst("Title\n=====\n", &rst::ParseOptions::default());
-        let mut env = BuildEnvironment::default();
-        env.dependencies
-            .insert("index".to_string(), BTreeSet::from([PathBuf::from("/old")]));
-
-        process_doc(&mut env, "index", &doctree, Path::new("/src"), &[]);
-
-        assert!(
-            !env.dependencies.contains_key("index"),
-            "a re-read that finds no dependencies must drop the stale ones"
-        );
-    }
-
-    #[test]
-    fn several_images_all_count_once() {
-        assert_eq!(
-            deps(
-                "index",
-                ".. image:: a.png\n\n.. image:: b.png\n\n.. image:: a.png\n"
-            ),
-            vec![PathBuf::from("/src/a.png"), PathBuf::from("/src/b.png")]
+            !env.dependencies.contains_key("other"),
+            "a document without dependencies has no entry at all"
         );
     }
 }

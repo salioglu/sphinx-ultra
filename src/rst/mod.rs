@@ -320,6 +320,19 @@ pub struct GlossaryTermRecord {
     pub term: String,
     /// The term node's id (`make_id(env, document, 'term', termtext)`).
     pub id: String,
+    /// The term's `location=term`, as `make_glossary_term` stamps it
+    /// (`term.source, term.line = source, lineno`): the source-table index
+    /// of the term's line, and [`Self::line`]. Not `#[serde(default)]`
+    /// (cache-shape rule, see [`RegistryExport::program_options`]).
+    pub source: u16,
+    /// The term's `term.line`, which is one *less* than the line it is on:
+    /// `make_glossary_term` is handed the linenos of `self.content.items`,
+    /// and a directive's content items carry docutils' **0-based** line
+    /// offsets (`content_offset` comes from `abs_line_offset()`), while
+    /// everything else in a warning location is 1-based. Verified against
+    /// Sphinx 9.1.0: a term on source line 8 reports `b.rst:7`, one on line
+    /// 11 reports `b.rst:10`.
+    pub line: u32,
     /// The parse's record sequence number, drawn at the registration (see
     /// [`ProgramOptionRecord::seq`]).
     pub seq: u32,
@@ -660,7 +673,7 @@ pub(crate) mod tests {
             "aliased":false,"source":0,"lineno":1,"seq":2}],
         "py_modules":[{"name":"m","node_id":"module-m","synopsis":"","platform":"",
             "deprecated":false,"source":0,"lineno":1,"seq":3}],
-        "glossary_terms":[{"term":"T","id":"term-T","seq":4}],
+        "glossary_terms":[{"term":"T","id":"term-T","source":0,"line":1,"seq":4}],
         "log_warnings":[{"message":"m","location":{"Node":{"source":0,"line":2}},"seq":5}],
         "dependencies":["part.rst"],"included":["part"]}"#;
 
@@ -738,6 +751,10 @@ pub(crate) mod tests {
         must_miss(&["std_objects", "0"], "source");
         must_miss(&["py_objects", "0"], "source");
         must_miss(&["py_modules", "0"], "source");
+        // A glossary term recorded before its location (wave 5a, T13a)
+        // must MISS: the duplicate-term warning reads it.
+        must_miss(&["glossary_terms", "0"], "source");
+        must_miss(&["glossary_terms", "0"], "line");
         // A pre-wave-5a log record (its `source`/`line`/`doc2path_location`
         // triple, no `location`) must MISS: decoding it with a default
         // location would render the warning at the wrong path.
@@ -1375,9 +1392,9 @@ pub(crate) mod tests {
     /// quoted literal block end at a blank line, so trailing blank lines
     /// put them past the end; a `::` paragraph with no literal block on the
     /// last line stays on it; a document ending inside an include ends on
-    /// the include's padding line, `n + 4` for `n` included lines.
-    /// Every row probed on docutils 0.22.4 (`reporter.get_source_and_line(None)`
-    /// after the parse).
+    /// the include's padding line, `n + 4` for `n` included lines, whatever
+    /// blank lines follow the include. Every row probed on docutils 0.22.4
+    /// (`reporter.get_source_and_line(None)` after the parse).
     #[test]
     fn final_position_follows_the_state_machine() {
         let rows: [(&str, Option<u32>); 36] = [
@@ -1434,6 +1451,7 @@ pub(crate) mod tests {
             ("para.rst", "Inc para.\n"),
             ("list.rst", "- a\n- b\n"),
             ("target.rst", ".. _t:\n"),
+            ("inc.rst", "A.\n\nB.\n"),
         ] {
             std::fs::write(tmp.path().join(name), text).expect("write");
         }
@@ -1448,10 +1466,21 @@ pub(crate) mod tests {
                 },
             )
         };
+        // docutils inserts an include's lines after the blank lines that
+        // follow the directive, so blank lines after an include that ends
+        // the document do not end it; nor does an include in a block quote.
         for (source, padding, line) in [
             ("Para.\n\n.. include:: para.rst\n", "para.rst", 5),
             ("Para.\n\n.. include:: list.rst\n", "list.rst", 6),
             ("Para.\n\n.. include:: target.rst\n", "target.rst", 5),
+            ("Para.\n\n.. include:: para.rst\n\n", "para.rst", 5),
+            ("Para.\n\n.. include:: para.rst\n\n\n", "para.rst", 5),
+            ("Para.\n\n.. include:: list.rst\n\n", "list.rst", 6),
+            ("Para.\n\n.. include:: target.rst\n\n", "target.rst", 5),
+            ("`a`__\n\n.. include:: inc.rst\n", "inc.rst", 7),
+            ("`a`__\n\n.. include:: inc.rst\n\n", "inc.rst", 7),
+            ("`a`__\n\n   .. include:: inc.rst\n", "inc.rst", 7),
+            ("`a`__\n\n   .. include:: inc.rst\n\n", "inc.rst", 7),
         ] {
             let out = parse_in(source);
             let position = out.state.final_position;
@@ -1650,6 +1679,8 @@ pub(crate) mod tests {
             [GlossaryTermRecord {
                 term: "term".to_string(),
                 id: "term-term".to_string(),
+                source: 0,
+                line: 4,
                 seq: 1,
             }]
         );

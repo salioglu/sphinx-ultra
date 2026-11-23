@@ -785,8 +785,7 @@ mod tests {
     use crate::rst::ParseOptions;
     use crate::transforms::state::DocumentState;
     use crate::transforms::test_support::{
-        differences, event, harness_settings, index_rst, read_snippet, read_snippet_with, Event,
-        SphinxRead, DOC,
+        differences, harness_settings, index_rst, read_snippet, read_snippet_with, SphinxRead, DOC,
     };
     use crate::transforms::tree::TxTree;
     use crate::transforms::{read_transforms_with, NoOp, TransformId, TransformKey};
@@ -1647,12 +1646,9 @@ mod tests {
     /// first (the table after a problematic takes `id3`), and a node a
     /// `:name:` gave ids takes none. Each row is a Sphinx 9.1.0 read of the
     /// input as `index.rst` (the read-state harness, `keep_warnings =
-    /// True`).
-    ///
-    /// The figures (`docutils-0490`, and `docutils-0492` without a caption,
-    /// which takes no id) are compared on the figure's line and the id
-    /// trace: their images' `candidates` and `image file not readable`
-    /// are the ImageCollector's (T13a).
+    /// True`), the figures' images stamped and warned about by the image
+    /// collector (880-030): `docutils-0490`, and `docutils-0492` without a
+    /// caption, which takes no id.
     #[test]
     fn autonumbering_ids_captioned_enumerables() {
         let rows = [
@@ -1726,25 +1722,27 @@ mod tests {
                 warnings: &[],
                 trace: &[("parse", "table", "tab", true)],
             },
+            SphinxRead {
+                // docutils-0490.
+                rst: ".. figure:: pic.png\n\n   Caption text.\n",
+                body: "    <figure ids=\"id1\">\n        <image candidates=\"{'*': 'pic.png'}\" \
+                       uri=\"pic.png\">\n        <caption>\n            Caption text.\n",
+                warnings: &["<SRCDIR>/index.rst:1: WARNING: image file not readable: pic.png \
+                             [image.not_readable]"],
+                trace: &[("AutoNumbering", "figure", "id1", true)],
+            },
+            SphinxRead {
+                // docutils-0492.
+                rst: ".. figure:: pic.png\n",
+                body: "    <figure>\n        <image candidates=\"{'*': 'pic.png'}\" \
+                       uri=\"pic.png\">\n",
+                warnings: &["<SRCDIR>/index.rst:1: WARNING: image file not readable: pic.png \
+                             [image.not_readable]"],
+                trace: &[],
+            },
         ];
         let mismatches = differences(&rows);
         assert!(mismatches.is_empty(), "{}", mismatches.join("\n\n"));
-
-        let figures: [(&str, &str, &[Event]); 2] = [
-            (
-                // docutils-0490.
-                ".. figure:: pic.png\n\n   Caption text.\n",
-                "    <figure ids=\"id1\">",
-                &[event("AutoNumbering", "figure", "id1", true)],
-            ),
-            // docutils-0492.
-            (".. figure:: pic.png\n", "    <figure>", &[]),
-        ];
-        for (rst, figure, trace) in figures {
-            let read = read_snippet(rst, true);
-            assert_eq!(read.body.lines().next(), Some(figure), "{rst:?}");
-            assert_eq!(read.trace, trace, "{rst:?}");
-        }
     }
 
     /// A `literalinclude`'s caption container is numbered by AutoNumbering

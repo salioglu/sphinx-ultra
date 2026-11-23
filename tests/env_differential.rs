@@ -561,36 +561,13 @@ fn known_toc_gap(project: &str, docname: &str) -> Option<&'static str> {
 /// **strictly**, exactly like [`KNOWN_TOC_GAPS`]: a listed project whose
 /// warnings start matching fails the test, so the exemption is deleted
 /// rather than left to rot.
-const KNOWN_WARNING_GAPS: &[(&str, &str)] = &[
-    (
-        "toctree_circular",
-        "the three `circular toctree references detected` warnings come from \
+const KNOWN_WARNING_GAPS: &[(&str, &str)] = &[(
+    "toctree_circular",
+    "the three `circular toctree references detected` warnings come from \
          the write phase's toctree *resolution* (`_resolve_toctree` / \
          `_toctree_entry`, adapters/toctree.py), which lands with the \
          resolved-doctree task",
-    ),
-    (
-        "toctree_numbered_depth2",
-        "`image file not readable` — image collection is not ported yet",
-    ),
-    (
-        "numfig_on",
-        "`image file not readable` — image collection is not ported yet",
-    ),
-    (
-        "numfig_off_numref",
-        "`image file not readable` — image collection is not ported yet (the \
-         project's other warning, `numfig is disabled. :numref: is ignored.`, \
-         this task does produce)",
-    ),
-    (
-        "state.label_order",
-        "label order: 5a-T13a — `b`'s two labels both label its section, \
-         and the duplicates warn in `nametypes` insertion order, `zeta` \
-         before `alpha`, where the std collector orders the labels of one \
-         node by name",
-    ),
-];
+)];
 
 /// Projects whose oracle `std` data this task deliberately does not
 /// reproduce. Checked **strictly**, exactly like [`KNOWN_TOC_GAPS`].
@@ -599,8 +576,6 @@ const KNOWN_STD_GAPS: &[(&str, &str)] = &[];
 /// Reasons shared by several [`KNOWN_RESOLVED_GAPS`] entries.
 const TOCTREE_RESOLUTION: &str = "the write-phase toctree resolution that turns a \
      `toctree` node into a `compact_paragraph` entry tree is not ported yet";
-const IMAGE_CANDIDATES: &str = "`ImageCollector.process_doc` stamps `candidates` onto \
-     every `image`; no image collection exists yet";
 
 /// Per-document `resolved_pformat` divergences this task deliberately does
 /// not close, each pinned to what would close it. Checked **strictly**,
@@ -633,13 +608,11 @@ const KNOWN_RESOLVED_GAPS: &[(&str, &str, &str)] = &[
     ("std_objects", "index", TOCTREE_RESOLUTION),
     // Read-phase gaps of other subsystems, each already tracked by the
     // task that owns it.
-    ("toctree_numbered_depth2", "a", IMAGE_CANDIDATES),
-    ("numfig_off_numref", "a", IMAGE_CANDIDATES),
     (
         "numfig_on",
         "a",
-        "`image[candidates]` (see IMAGE_CANDIDATES) plus the `linenos` flag \
-         a captioned `code-block` stamps onto its `literal_block`",
+        "highlight stamp: 5a-T14 — the `linenos` flag `HighlightLanguageTransform` \
+         stamps onto the captioned `code-block`'s `literal_block`",
     ),
     // Wave 4.5 py projects: toctree-bearing index documents share the
     // write-phase gap above.
@@ -648,10 +621,10 @@ const KNOWN_RESOLVED_GAPS: &[(&str, &str, &str)] = &[
     ("py_toc", "index", TOCTREE_RESOLUTION),
     ("py_toc_parents", "index", TOCTREE_RESOLUTION),
     // Wave 4.5 include/literalinclude projects. Only the toctree-bearing
-    // index documents and the one image-bearing document are skipped
-    // outright; every other document of these three projects is compared,
-    // six of them through the narrow [`KNOWN_HIGHLIGHT_STAMP_GAPS`]
-    // exemption rather than being dropped.
+    // index documents and `inc_deps/a` (below) are skipped outright; every
+    // other document of these three projects is compared, six of them
+    // through the narrow [`KNOWN_HIGHLIGHT_STAMP_GAPS`] exemption rather
+    // than being dropped.
     ("inc_basic", "index", TOCTREE_RESOLUTION),
     ("inc_warn", "index", TOCTREE_RESOLUTION),
     ("inc_deps", "index", TOCTREE_RESOLUTION),
@@ -663,10 +636,9 @@ const KNOWN_RESOLVED_GAPS: &[(&str, &str, &str)] = &[
     (
         "inc_deps",
         "a",
-        "`image[candidates]` (see IMAGE_CANDIDATES) — and, on the same \
-         document's `literal_block`, the highlight stamp of \
-         KNOWN_HIGHLIGHT_STAMP_GAPS, which cannot be applied to a document \
-         that already diverges structurally",
+        "highlight stamp: 5a-T14 — the `literal_block`'s highlight stamp (see \
+         KNOWN_HIGHLIGHT_STAMP_GAPS), exempted wholesale until \
+         `HighlightLanguageTransform` is ported",
     ),
 ];
 
@@ -1711,11 +1683,11 @@ fn resolved_doctrees_match_oracle() {
 /// Update the seven constants and the doc sites together.
 const DOCUMENTED_PROJECTS: usize = 31;
 const DOCUMENTED_DOCUMENTS: usize = 89;
-const DOCUMENTED_WHOLESALE_EXEMPT_DOCUMENTS: usize = 33;
+const DOCUMENTED_WHOLESALE_EXEMPT_DOCUMENTS: usize = 31;
 const DOCUMENTED_STAMP_EXEMPT_DOCUMENTS: usize = 6;
-const DOCUMENTED_BYTE_EXACT_DOCUMENTS: usize = 50;
-const DOCUMENTED_WARNING_EXEMPT_PROJECTS: usize = 5;
-const DOCUMENTED_BYTE_EXACT_WARNING_PROJECTS: usize = 26;
+const DOCUMENTED_BYTE_EXACT_DOCUMENTS: usize = 52;
+const DOCUMENTED_WARNING_EXEMPT_PROJECTS: usize = 1;
+const DOCUMENTED_BYTE_EXACT_WARNING_PROJECTS: usize = 30;
 
 #[test]
 fn exemption_arithmetic_matches_the_documented_numbers() {
@@ -2436,7 +2408,8 @@ fn sphinxs_non_xref_roles_do_not_report_missing_references() {
 
 /// `:numref:` is registered with `lowercase=True`, so a `:name:` that was
 /// written in mixed case still resolves (docutils lowercases the label it
-/// registers, and the role has to match).
+/// registers, and the role has to match). The figure's image is remote, so
+/// that the image collector has no file to find.
 #[test]
 fn a_numref_target_is_lowercased_like_the_label_it_names() {
     let config = BuildConfig {
@@ -2448,7 +2421,8 @@ fn a_numref_target_is_lowercased_like_the_label_it_names() {
             ("index", "Index\n=====\n\n.. toctree::\n\n   a\n   b\n"),
             (
                 "a",
-                "A\n=\n\n.. figure:: pic.png\n   :name: Fig-A\n\n   The Caption\n",
+                "A\n=\n\n.. figure:: https://example.com/pic.png\n   :name: Fig-A\n\n   \
+                 The Caption\n",
             ),
             ("b", "B\n=\n\nSee :numref:`FIG-A` and :ref:`Fig-A`.\n"),
         ],

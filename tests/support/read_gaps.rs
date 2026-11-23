@@ -19,16 +19,18 @@
 //! T10's `propagate targets` (`PropagateTargets`, 260), T11's `citations`
 //! and the tree shapes and records of `footnotes` and `substitutions`
 //! (Substitutions, 220; the citation transforms, 619; Footnotes, 620; the
-//! unreferenced-footnote warning, 622), and T12's `autonumber ids`,
-//! `class attribute` and `docinfo` (AutoNumbering, 210; ClassAttribute,
-//! 210; DocInfo, 340, and the metadata collector's pop, 880): a divergence
-//! of that shape now is a regression, which the census reports
-//! unexplained. T10's `dangling refs` and `indirect targets` stay, for
-//! what later tasks shift: a `problematic` whose ids, and the target
-//! transforms' id allocations and records, move when a pending transform
-//! takes ids first, in rows those tasks own. The read-state census keeps
-//! `footnotes`, `substitutions` and `autonumber ids` for the same reason,
-//! as the families of the ids 620, 220 and 210 allocate in such rows.
+//! unreferenced-footnote warning, 622), T12's `autonumber ids`, `class
+//! attribute` and `docinfo` (AutoNumbering, 210; ClassAttribute, 210;
+//! DocInfo, 340, and the metadata collector's pop, 880), and T13a's
+//! `candidates` (the image collector, 880, and its `image file not
+//! readable`): a divergence of that shape now is a regression, which the
+//! census reports unexplained. T10's `dangling refs` and `indirect
+//! targets` stay, for what later tasks shift: a `problematic` whose ids,
+//! and the target transforms' id allocations and records, move when a
+//! pending transform takes ids first, in rows those tasks own. The
+//! read-state census keeps `footnotes`, `substitutions` and `autonumber
+//! ids` for the same reason, as the families of the ids 620, 220 and 210
+//! allocate in such rows.
 
 use std::collections::BTreeSet;
 
@@ -75,7 +77,6 @@ pub const fn gap_fix(family: &'static str, owner: &'static str) -> GapFix {
 // The families, each with the task that ports what it lacks.
 pub const DANGLING_REFS: GapFix = gap_fix("dangling refs", "5a-T10");
 pub const INDIRECT_TARGETS: GapFix = gap_fix("indirect targets", "5a-T10");
-pub const CANDIDATES: GapFix = gap_fix("candidates", "5a-T13a");
 /// The structure directives' parse halves (`contents`, `sectnum`,
 /// `target-notes`).
 pub const PENDING_DIRECTIVES: GapFix = gap_fix("pending", "5a-T18a");
@@ -320,9 +321,6 @@ fn hunk_census(hunk: &Hunk<'_>, messages: &[Option<String>], notes: &BTreeSet<St
             if resolved {
                 census.add(INDIRECT_TARGETS);
             }
-        }
-        if line.contains(" candidates=\"") {
-            census.add(CANDIDATES);
         }
         let target_note_reference = line.starts_with("<footnote_reference ")
             && line

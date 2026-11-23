@@ -390,43 +390,7 @@ fn post_read_mismatches(fixture: &DocutilsFixture) -> BTreeMap<String, (String, 
 /// the census prints them, so a task deletes or re-attributes a row by
 /// editing one line and a grep for an owner shows whole rows.
 #[rustfmt::skip]
-const KNOWN_POST_READ_GAPS: &[(&str, &str)] = &[
-    ("docutils-0425", "candidates: 5a-T13a"),
-    ("docutils-0426", "candidates: 5a-T13a"),
-    ("docutils-0427", "candidates: 5a-T13a"),
-    ("docutils-0428", "candidates: 5a-T13a"),
-    ("docutils-0434", "candidates: 5a-T13a"),
-    ("docutils-0435", "candidates: 5a-T13a"),
-    ("docutils-0437", "candidates: 5a-T13a"),
-    ("docutils-0438", "candidates: 5a-T13a"),
-    ("docutils-0442", "candidates: 5a-T13a"),
-    ("docutils-0443", "candidates: 5a-T13a"),
-    ("docutils-0446", "candidates: 5a-T13a"),
-    ("docutils-0447", "candidates: 5a-T13a"),
-    ("docutils-0448", "candidates: 5a-T13a"),
-    ("docutils-0449", "candidates: 5a-T13a"),
-    ("docutils-0450", "candidates: 5a-T13a"),
-    ("docutils-0451", "candidates: 5a-T13a"),
-    ("docutils-0489", "candidates: 5a-T13a"),
-    ("docutils-0490", "candidates: 5a-T13a"),
-    ("docutils-0491", "candidates: 5a-T13a"),
-    ("docutils-0492", "candidates: 5a-T13a"),
-    ("docutils-0493", "candidates: 5a-T13a"),
-    ("docutils-0494", "candidates: 5a-T13a"),
-    ("docutils-0496", "candidates: 5a-T13a"),
-    ("docutils-0497", "candidates: 5a-T13a"),
-    ("docutils-0498", "candidates: 5a-T13a"),
-    ("docutils-0499", "candidates: 5a-T13a"),
-    ("docutils-0501", "candidates: 5a-T13a"),
-    ("docutils-0502", "candidates: 5a-T13a"),
-    ("docutils-0590", "candidates: 5a-T13a"),
-    ("docutils-0591", "candidates: 5a-T13a"),
-    ("docutils-0593", "candidates: 5a-T13a"),
-    ("docutils-0685", "candidates: 5a-T13a"),
-    ("docutils-0707", "candidates: 5a-T13a"),
-    ("docutils-0708", "candidates: 5a-T13a"),
-    ("docutils-0716", "candidates: 5a-T13a"),
-];
+const KNOWN_POST_READ_GAPS: &[(&str, &str)] = &[];
 
 /// Holds Sphinx's post-read doctree of every runnable HTML-oracle docutils
 /// snippet, read under the oracle's `conf.py`, to [`KNOWN_POST_READ_GAPS`].

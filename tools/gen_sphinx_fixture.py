@@ -96,25 +96,23 @@ against the Rust parser. Candidate cases where the Sphinx read phase genuinely
 diverges from the docutils parse layer (INFO stripping, PropagateTargets/
 IndirectHyperlinks/ExternalTargets/AnonymousHyperlinks target rewrites,
 Footnotes+FootnoteDocnameUpdater, DoctestTransform classes, doc-start docinfo
-consumption, image `candidates`, Transitions edge warnings, Sphinx role
-replacements for pep/rfc/code/index) are EXCLUDED and documented with full
-diffs in the wave-3 recon report (sphinx-harness-report.md). Later tasks extend
-this corpus with Sphinx-specific directives (toctree, code-block, versionadded/
+consumption, Transitions edge warnings, Sphinx role replacements for
+pep/rfc/code/index) are EXCLUDED and documented with full diffs in the wave-3
+recon report (sphinx-harness-report.md). Later tasks extend this corpus with
+Sphinx-specific directives (toctree, code-block, versionadded/
 versionchanged/deprecated, seealso, only, highlight, math, index, rst-class,
 ...) once the Rust side grows the sphinx registry + env surface.
 
-Wave-4 task 9 tried to add a sphinx-mode `.. figure::` case (to pin where the
-`:name:` id lands, which the docutils-mode fixture already covers as
-`dir_media.figure_name_option`). It is EXCLUDED by the policy above: a figure
-must contain an `image`, and `ImageCollector.process_doc` stamps every image
-with `candidates="{'*': 'pic.png'}"` — one of the enumerated excluded
-divergences. Verified by hand against the oracle in that task: sphinx-mode
-output for `.. figure:: pic.png` + `:name: myfig` is `<figure ids="myfig"
-names="myfig">`, byte-identical to ours apart from that one attribute (an
-unnamed figure additionally picks up `ids="id1"` from Sphinx's `AutoNumbering`
-transform, which this crate does not run). src/rst/block.rs's
-`a_figure_name_lands_on_the_image_in_docutils_and_the_figure_in_sphinx` pins
-the id placement until the image-collection task can fold the case in here.
+IMAGES (wave 5a, task 13a): image `candidates` were on the excluded list until
+the read ran Sphinx's ImageCollector, which stamps every image with
+`candidates="{'*': 'pic.png'}"` in the `doctree-read` slot of the read
+(DoctreeReadEvent, 880). The Rust read runs it too, so an image case is
+byte-identical and the policy no longer excludes one. Wave-4 task 9's
+sphinx-mode `.. figure::` case, which pins where the `:name:` id lands (on
+the figure in Sphinx; the docutils-mode fixture covers the image as
+`dir_media.figure_name_option`), is folded in as `sx_image.figure_name`. The
+`image file not readable` warning its missing `pic.png` raises is a logger
+record, which a pseudo-XML fixture does not hold.
 
 Wave-4 task 9 also left `ObjectDescription`'s `parse_content_to_nodes(
 allow_section_headings=True)` (`directives/__init__.py:288`) out of the corpus.
@@ -268,6 +266,7 @@ SUPPORTED_KINDS = {
     "admonition",
     # body directives
     "image",
+    "figure",
     "topic",
     "sidebar",
     "rubric",
@@ -951,6 +950,10 @@ CASES = [
     ('py', 'module_basic', '.. py:module:: mymod\n   :synopsis: A module.\n   :platform: Unix\n\n.. py:function:: f(x)\n\n   Body.\n'),
     ('py', 'module_content_and_sections', '.. py:module:: secmod\n\n   Module body content.\n'),
     ('py', 'duplicate_modules', '.. py:module:: dupmod\n\n.. py:module:: dupmod\n'),
+    # ----- wave 5a T13a: a figure's image, stamped by the ImageCollector
+    # (880) now that the read runs it; `:name:` lands on the figure
+    # (Sphinx's Figure override, `sphinx/directives/patches.py`) -----
+    ('sx_image', 'figure_name', '.. figure:: pic.png\n   :name: myfig\n\n   Caption.\n'),
 ]
 
 

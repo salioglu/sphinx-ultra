@@ -19,6 +19,7 @@ use crate::env::numbers::{clean_astext, std_numfig_title};
 use crate::env::BuildEnvironment;
 use crate::error::{BuildWarning, WarningType};
 use crate::rst::RegistryExport;
+use crate::transforms::state::NameTable;
 
 /// Standard-domain (`std`) registries: cross-reference labels, generic
 /// objects (`:option:`, `:envvar:`, ...), program options, and glossary
@@ -136,13 +137,16 @@ impl StdDomainData {
     }
 }
 
-/// One document's parse output, as [`process_doc`] consumes it.
+/// One document's read, as [`process_doc`] consumes it.
 pub struct DocumentSource<'a> {
     pub docname: &'a str,
+    /// The doctree as `SphinxDomains` (850-040) sees it, after stage R.
     pub doctree: &'a Doctree,
-    /// docutils `document.nameids`/`nametypes`, harvested at the end of the
-    /// parse.
+    /// The registrations the parse recorded ([`RegistryExport`]).
     pub registry: &'a RegistryExport,
+    /// docutils `document.nameids` and `nametypes`, in the order the names
+    /// were first bound ([`NameTable`]).
+    pub names: &'a NameTable,
     pub path: &'a Path,
 }
 
@@ -157,17 +161,33 @@ pub(crate) fn source_path_of(doc: &DocumentSource<'_>, source: u16) -> PathBuf {
         .unwrap_or_else(|| doc.path.to_path_buf())
 }
 
+/// What [`process_doc`] warns about, in the two places Sphinx warns.
+#[derive(Debug, Default)]
+pub struct DomainWarnings {
+    /// The duplicates the parse-time registrations find (`duplicate %s
+    /// description`, `duplicate object description`), each with the seq the
+    /// parse drew when it registered: Sphinx warns while it parses, so
+    /// these are parse records, ordered among the parse's by that seq.
+    pub parse_time: Vec<(u32, BuildWarning)>,
+    /// `process_doc`'s own `duplicate label` warnings, in the order it
+    /// raised them.
+    pub labels: Vec<BuildWarning>,
+}
+
 /// `StandardDomain.process_doc` (`domains/std/__init__.py:937-993`) plus the
-/// registrations Sphinx performs from directives at parse time, which our
-/// parse layer has no domain callbacks to run: glossary terms
-/// (`make_glossary_term`) are replayed from the finished doctree, and the
-/// `option`/`envvar`/`confval` registrations
-/// (`ObjectDescription.add_target_and_index`) from the records the parse
-/// layer kept — see [`RegistryExport::program_options`] for why the doctree
-/// cannot carry those. The **py domain's** registrations
-/// ([`crate::env::py_domain::collect_registrations`]) replay in the same
-/// parse-time pass, because that is where they fire in Sphinx — their
-/// duplicate warnings interleave with std's in document order.
+/// registrations Sphinx performs from directives at parse time, which the
+/// parse layer has no domain callbacks to run and records instead
+/// ([`RegistryExport`]): glossary terms (`make_glossary_term` ->
+/// `_note_term`), the `option`/`envvar`/`confval` descriptions
+/// (`ObjectDescription.add_target_and_index`; see
+/// [`RegistryExport::program_options`] for why the doctree cannot carry
+/// them) and the **py domain's** ([`crate::env::py_domain::collect_registrations`]).
+/// They replay here, against the environment the documents merge into in
+/// docname order, and their duplicate warnings come back with the seqs the
+/// parse drew for them ([`DomainWarnings::parse_time`]): in Sphinx they
+/// interleave with the parse's own records in the order the parse made
+/// them, across domains too, and precede every transform's — the label
+/// pass's among them.
 ///
 /// `doc2path` renders another document's source path for the duplicate-label
 /// warning [ENV §8 #1], which names the *path*, not the docname.
@@ -175,75 +195,40 @@ pub fn process_doc(
     env: &mut BuildEnvironment,
     doc: &DocumentSource<'_>,
     doc2path: &dyn Fn(&str) -> PathBuf,
-    warnings: &mut Vec<BuildWarning>,
-) {
-    let ids = DocumentIds::of(doc.doctree);
-    // Order matters, and it is Sphinx's. Glossary terms and object
-    // descriptions — the py domain's included — register *during the
-    // parse* (`make_glossary_term` -> `_note_term`,
-    // `ObjectDescription.add_target_and_index` -> `note_object`), while
-    // `StandardDomain.process_doc`'s label pass runs only once the parse
-    // has finished. So Sphinx's duplicate-term and duplicate-object
-    // warnings always precede the same document's duplicate-label
-    // warnings, and come out interleaved with each other in document
-    // order — across domains too: a document carrying an envvar
-    // duplicate, a py duplicate and a term duplicate warns in document
-    // position order, not grouped by domain (probe-verified against
-    // sphinx 9.1.0; see `py_domain`'s
-    // `py_duplicate_warnings_interleave_with_std_s_in_document_order`).
-    // This crate has no domain callbacks in the parse, so every
-    // registration pass runs here: each replays in its own record
-    // sequence, and the warning streams merge on DOCTREE order — where
-    // each registration's node sits in the finished tree. (The old merge
-    // sorted by line, which only reproduced document order while every
-    // line came from one source; an included file's registrations would
-    // be shuffled into the includer's. Tree order is document order
-    // whatever the source, and a warning's line stays display data.)
-    //
-    // Still not Sphinx: these warnings interleave with the document's
-    // *parse* warnings there, where the builder emits the whole parse
-    // stream before calling this. That is the cross-category ordering the
-    // ledger defers to a later wave.
-    let mut parse_time: Vec<(usize, BuildWarning)> = Vec::new();
-    collect_glossary_terms(env, doc, &ids, &mut parse_time);
-    collect_descriptions(env, doc, &ids, &mut parse_time);
-    crate::env::py_domain::collect_registrations(env, doc, &ids, &mut parse_time);
-    parse_time.sort_by_key(|(order, _)| *order);
-    warnings.extend(parse_time.into_iter().map(|(_, warning)| warning));
-    collect_labels(env, doc, &ids, doc2path, warnings);
+) -> DomainWarnings {
+    let mut warnings = DomainWarnings::default();
+    collect_glossary_terms(env, doc, &mut warnings.parse_time);
+    collect_descriptions(env, doc, &mut warnings.parse_time);
+    crate::env::py_domain::collect_registrations(env, doc, &mut warnings.parse_time);
+    collect_labels(env, doc, doc2path, &mut warnings.labels);
+    warnings
 }
 
-/// The label half of `process_doc` (`:938-993`).
+/// The label half of `process_doc` (`:938-993`): every explicit name, in
+/// `document.nametypes` order — the order the names were first bound, not
+/// the tree's ([DS §7.4]) — whose id still names a node.
 fn collect_labels(
     env: &mut BuildEnvironment,
     doc: &DocumentSource<'_>,
-    ids: &DocumentIds<'_>,
     doc2path: &dyn Fn(&str) -> PathBuf,
     warnings: &mut Vec<BuildWarning>,
 ) {
-    // Sphinx iterates `document.nametypes` — a dict, so in the order names
-    // were registered, which is document order. Our registry is a hash map,
-    // so the order is recovered from where each name's node sits in the
-    // document instead (same sequence, and deterministic either way).
-    let mut named: Vec<(&str, &str, usize, &Node)> = Vec::new();
-    for (name, labelid, explicit) in &doc.registry.nameids {
+    let ids = DocumentIds::of(doc.doctree);
+    for (name, entry) in doc.names.iter() {
         // `if not explicit: continue` / `if labelid is None: continue`.
-        if !explicit {
+        if !entry.explicit {
             continue;
         }
-        let Some(labelid) = labelid else { continue };
+        let Some(labelid) = entry.id.as_deref() else {
+            continue;
+        };
         // Sphinx indexes `document.ids[labelid]` unconditionally; a name
         // whose id names no node in the tree can only mean our parse layer
         // registered an id it never stamped onto a node, so skip rather
         // than crash.
-        let Some((order, node)) = ids.get(labelid) else {
+        let Some(node) = ids.node(labelid) else {
             continue;
         };
-        named.push((name, labelid, order, node));
-    }
-    named.sort_by_key(|(name, _, order, _)| (*order, *name));
-
-    for (name, labelid, _, node) in named {
         // "ignore footnote labels, labels automatically generated from a
         // link and object descriptions" (`:951-958`).
         if node.kind == kinds::FOOTNOTE
@@ -363,61 +348,29 @@ fn numfig_title(node: &Node) -> Option<String> {
 }
 
 /// Glossary terms: `make_glossary_term` (`domains/std/__init__.py:375-407`)
-/// calls `_note_term(term.astext(), node_id)` while the directive runs. Our
-/// parse layer emits the finished `glossary`/`definition_list` anatomy
-/// without calling back into a domain, so the registration is replayed from
-/// the tree: every `term` carrying an id inside a `definition_list` classed
-/// `glossary`.
+/// calls `_note_term(termtext, node_id, location=term)` while the directive
+/// runs, which the parse recorded ([`RegistryExport::glossary_terms`]); the
+/// registration replays from the records, in parse order, each duplicate
+/// warning located at its term ([`crate::rst::GlossaryTermRecord`]) and
+/// keyed by its seq.
 fn collect_glossary_terms(
     env: &mut BuildEnvironment,
     doc: &DocumentSource<'_>,
-    ids: &DocumentIds<'_>,
-    warnings: &mut Vec<(usize, BuildWarning)>,
+    warnings: &mut Vec<(u32, BuildWarning)>,
 ) {
-    let mut terms: Vec<&Node> = Vec::new();
-    collect_glossary_term_nodes(&doc.doctree.root, &mut terms);
-    for term in terms {
-        let Some(node_id) = term.attrs.ids.first() else {
-            continue;
-        };
-        // `termtext = term.astext()` is taken before the index node is
-        // appended; an `index` node contributes no text either way.
-        let text = term.astext();
-        if let Some(other) = env.std.note_term(&text, doc.docname, node_id) {
-            let (source_path, _) = doc.doctree.source_and_line(term.span);
-            let order = ids
-                .get(node_id)
-                .map(|(order, _)| order)
-                .unwrap_or(usize::MAX);
+    for record in &doc.registry.glossary_terms {
+        if let Some(other) = env.std.note_term(&record.term, doc.docname, &record.id) {
             warnings.push((
-                order,
+                record.seq,
                 duplicate_object_warning(
-                    PathBuf::from(source_path),
-                    glossary_term_line(term),
+                    source_path_of(doc, record.source),
+                    record.line as usize,
                     "term",
-                    &text,
+                    &record.term,
                     &other,
                 ),
             ));
         }
-    }
-}
-
-fn collect_glossary_term_nodes<'a>(node: &'a Node, out: &mut Vec<&'a Node>) {
-    if node.kind == kinds::DEFINITION_LIST
-        && node.attrs.classes.iter().any(|class| class == "glossary")
-    {
-        for item in &node.children {
-            for child in &item.children {
-                if child.kind == kinds::TERM {
-                    out.push(child);
-                }
-            }
-        }
-        return;
-    }
-    for child in &node.children {
-        collect_glossary_term_nodes(child, out);
     }
 }
 
@@ -426,7 +379,8 @@ fn collect_glossary_term_nodes<'a>(node: &'a Node, out: &mut Vec<&'a Node>) {
 /// `add_program_option`, `domains/std/__init__.py:226-330`), against state
 /// the finished doctree does not carry — see
 /// [`RegistryExport::program_options`] — so the parse layer records the
-/// calls and this replays them.
+/// calls and this replays them, each duplicate warning keyed by the
+/// record's seq.
 ///
 /// `describe`/`object` produce no records at all: the base
 /// `add_target_and_index` is a no-op, so they contribute neither an object
@@ -434,8 +388,7 @@ fn collect_glossary_term_nodes<'a>(node: &'a Node, out: &mut Vec<&'a Node>) {
 fn collect_descriptions(
     env: &mut BuildEnvironment,
     doc: &DocumentSource<'_>,
-    ids: &DocumentIds<'_>,
-    warnings: &mut Vec<(usize, BuildWarning)>,
+    warnings: &mut Vec<(u32, BuildWarning)>,
 ) {
     for record in &doc.registry.program_options {
         env.std.add_program_option(
@@ -450,15 +403,8 @@ fn collect_descriptions(
             env.std
                 .note_object(&record.objtype, &record.name, doc.docname, &record.node_id)
         {
-            // Tree position of the registered id (the signature node — or,
-            // for `:no-typesetting:`, the target that replaced the desc):
-            // the document-order merge key shared with the glossary pass.
-            let order = ids
-                .get(&record.node_id)
-                .map(|(order, _)| order)
-                .unwrap_or(usize::MAX);
             warnings.push((
-                order,
+                record.seq,
                 duplicate_object_warning(
                     source_path_of(doc, record.source),
                     record.line as usize,
@@ -469,17 +415,6 @@ fn collect_descriptions(
             ));
         }
     }
-}
-
-/// The line Sphinx reports for a glossary term, which is one *less* than
-/// the term's own: `make_glossary_term` is handed the linenos of
-/// `self.content.items`, and a directive's content items carry docutils'
-/// **0-based** line offsets (`content_offset` comes from
-/// `abs_line_offset()`), while everything else in a warning location is
-/// 1-based. Verified against sphinx 9.1.0: a term on source line 8 reports
-/// `b.rst:7`, one on line 11 reports `b.rst:10`.
-fn glossary_term_line(term: &Node) -> usize {
-    (term.span.line as usize).saturating_sub(1)
 }
 
 /// Warning [ENV §8 #2]: `duplicate %s description of %s, other instance in %s`.
@@ -500,43 +435,32 @@ fn duplicate_object_warning(
 }
 
 /// docutils `document.ids` as `process_doc` indexes it: each id of the
-/// post-read doctree, with the node that holds it and that node's place in
-/// a pre-order walk, the order `process_doc`'s replays merge their
-/// warnings by. The read's transforms have run, so a `.. _label:` above a
-/// section already labels the section (`PropagateTargets`, 260) and a
-/// `py:module` target that opens a section has given it its id
-/// (`MoveModuleTargets`, 210).
+/// post-read doctree, with the node that holds it. The read's transforms
+/// have run, so a `.. _label:` above a section already labels the section
+/// (`PropagateTargets`, 260) and a `py:module` target that opens a section
+/// has given it its id (`MoveModuleTargets`, 210).
 pub(crate) struct DocumentIds<'a> {
-    map: HashMap<&'a str, (usize, &'a Node)>,
+    map: HashMap<&'a str, &'a Node>,
 }
 
 impl<'a> DocumentIds<'a> {
     pub(crate) fn of(doctree: &'a Doctree) -> Self {
-        fn walk<'a>(
-            node: &'a Node,
-            map: &mut HashMap<&'a str, (usize, &'a Node)>,
-            order: &mut usize,
-        ) {
+        fn walk<'a>(node: &'a Node, map: &mut HashMap<&'a str, &'a Node>) {
             for id in &node.attrs.ids {
-                map.insert(id.as_str(), (*order, node));
+                map.insert(id.as_str(), node);
             }
-            *order += 1;
             for child in &node.children {
-                walk(child, map, order);
+                walk(child, map);
             }
         }
         let mut map = HashMap::new();
-        walk(&doctree.root, &mut map, &mut 0);
+        walk(&doctree.root, &mut map);
         Self { map }
-    }
-
-    pub(crate) fn get(&self, id: &str) -> Option<(usize, &'a Node)> {
-        self.map.get(id).copied()
     }
 
     /// The node an id names.
     pub(crate) fn node(&self, id: &str) -> Option<&'a Node> {
-        self.map.get(id).map(|(_, node)| *node)
+        self.map.get(id).copied()
     }
 }
 
@@ -551,10 +475,23 @@ fn find_first<'a>(node: &'a Node, kind: &str) -> Option<&'a Node> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::read::{read_document, ReadSettings};
     use crate::rst::ParseOptions;
+
+    /// One document's warnings in the order the read prints them: the
+    /// parse-time duplicates by the seq the parse drew for them, then the
+    /// label pass's ([DS §6.4]).
+    pub(crate) fn in_print_order(found: DomainWarnings) -> Vec<BuildWarning> {
+        let mut parse_time = found.parse_time;
+        parse_time.sort_by_key(|(seq, _)| *seq);
+        parse_time
+            .into_iter()
+            .map(|(_, warning)| warning)
+            .chain(found.labels)
+            .collect()
+    }
 
     /// Stage R's read of `source` ([`read_document`]): the post-read
     /// doctree `SphinxDomains` (850) sees.
@@ -613,19 +550,68 @@ mod tests {
         for (docname, source) in sources {
             let parsed = parse(source, docname);
             let path = PathBuf::from(format!("/src/{docname}.rst"));
-            process_doc(
+            let found = process_doc(
                 &mut env,
                 &DocumentSource {
                     docname,
                     doctree: &parsed.doctree,
                     registry: &parsed.registry,
+                    names: &parsed.state.names,
                     path: &path,
                 },
                 &doc2path,
-                &mut warnings,
             );
+            warnings.extend(in_print_order(found));
         }
         (env, warnings)
+    }
+
+    /// `StandardDomain.process_doc` walks `document.nametypes`, a dict, in
+    /// the order the parse bound the names, not in tree order: `b`'s two
+    /// labels both label its section, and their duplicates warn in the
+    /// order they were written, `zeta` before `alpha` ([DS §7.4]). Probed
+    /// on Sphinx 9.1.0: the env fixture's `state.label_order` project.
+    #[test]
+    fn duplicate_labels_follow_insertion_order() {
+        use crate::read::{merge_document, MergeInputs};
+
+        let settings = ReadSettings::sphinx_defaults();
+        let doc2path = |docname: &str| PathBuf::from(format!("<SRCDIR>/{docname}.rst"));
+        let mut env = BuildEnvironment::default();
+        let mut rendered = Vec::new();
+        for (docname, source) in [
+            ("a", ".. _zeta:\n.. _alpha:\n\nA\n=\n\nText.\n"),
+            ("b", ".. _zeta:\n.. _alpha:\n\nB\n=\n\nText.\n"),
+        ] {
+            let path = doc2path(docname);
+            let parse = ParseOptions {
+                source_path: path.display().to_string(),
+                sphinx: true,
+                docname: docname.to_string(),
+                ..Default::default()
+            };
+            let mut read = read_document(source, &parse, &settings);
+            let inputs = MergeInputs {
+                source_path: &path,
+                source_dir: Path::new("<SRCDIR>"),
+                doc2path: &doc2path,
+                read_time_us: 0,
+            };
+            rendered.extend(
+                merge_document(&mut env, docname, &mut read, &inputs, &settings)
+                    .iter()
+                    .map(|diagnostic| diagnostic.render(true)),
+            );
+        }
+        assert_eq!(
+            rendered,
+            [
+                "<SRCDIR>/b.rst:5: WARNING: duplicate label zeta, other instance in \
+                 <SRCDIR>/a.rst",
+                "<SRCDIR>/b.rst:5: WARNING: duplicate label alpha, other instance in \
+                 <SRCDIR>/a.rst",
+            ]
+        );
     }
 
     /// Sphinx registers glossary terms and object descriptions during the
@@ -938,8 +924,9 @@ mod tests {
     /// b.rst:5: WARNING: duplicate term description of environment, other instance in a
     /// ```
     ///
-    /// The term is on line 6 — see [`glossary_term_line`] for why Sphinx
-    /// says 5 (the same run reports 7 and 10 for terms on lines 8 and 11).
+    /// The term is on line 6 — see [`crate::rst::GlossaryTermRecord::line`] for why
+    /// Sphinx says 5 (the same run reports 7 and 10 for terms on lines 8
+    /// and 11).
     #[test]
     fn a_term_defined_twice_warns_naming_the_other_document() {
         let glossary = "A\n=\n\n.. glossary::\n\n   environment\n      A thing.\n";

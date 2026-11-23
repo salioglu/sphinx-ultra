@@ -39,6 +39,7 @@ use crate::diagnostics::{Category, Diagnostic, Location, OrderKey, Severity};
 use crate::doctree::messages;
 use crate::doctree::pending::PendingTransform;
 use crate::doctree::{kinds, AttrValue, Doctree, Node, Span};
+use crate::env::collectors::images;
 use crate::env::dependencies as env_dependencies;
 use crate::env::genindex as env_genindex;
 use crate::env::metadata as env_metadata;
@@ -749,24 +750,29 @@ fn tag_trace(tree: &mut TxTree, state: &mut DocumentState) {
 }
 
 /// Stage M for the document `docname`: the rows of the read's
-/// [`schedule`] from `SphinxDomains` (850-040) on, which merge the document
-/// into `env`. It returns their records, each keyed by the slot that
-/// raised it ([`TransformKey::order_key`]): the domains' `(850, 40, seq)`,
-/// and a `doctree-read` collector's `(880, 30, seq)`.
+/// [`schedule`] from `SphinxDomains` (850-040) on, every one of them, in
+/// order ([DS §9]), which merge the document into `env`:
+///
+/// - 850-040 `SphinxDomains`, the domains' `process_doc`
+///   ([`sphinx_domains`]);
+/// - 880-030 `DoctreeReadEvent`, the `doctree-read` collectors in the
+///   order Sphinx registers them ([`doctree_read_event`]);
+/// - the transforms after them, over the document's [`TxTree`], re-entered
+///   with no detached forest (stage R's arena kept it):
+///   `FilterSystemMessages` (999-027) and the inert rest.
+///
+/// It returns the domains' records: the label and index records `(850,
+/// 40, seq)`, and the parse-time registrations' replayed duplicates with
+/// the parse's key, `(0, 0, seq)`, under the seq the parse drew when it
+/// registered them, so that they print among the parse's records
+/// ([`TransformKey::order_key`], [DS §6.4]). The transforms and the image
+/// collector log theirs to the document's log, keyed by their row.
 ///
 /// The environment first forgets what an earlier read of the document
 /// left (`env.clear_doc`, which `_read_serial` runs before every read) and
-/// records the read's time. The two environment slots then run in the
-/// order the merge has always run them, the collectors
-/// ([`doctree_read_event`]) before the domains ([`sphinx_domains`]), until
-/// T13a puts them in Sphinx's. The Metadata collector, which pops the
-/// docinfo out of the tree ([`env_metadata::process_doc`]), runs after
-/// both meanwhile: in Sphinx the domains (850) and the Dependencies
-/// collector, ahead of it at 880, see the docinfo, and so they do here;
-/// the TocTree collector, after it in Sphinx, sees it too until then.
-/// The rows after them run over the document's [`TxTree`], re-entered
-/// with no detached forest (stage R's arena kept it):
-/// `FilterSystemMessages` (999-027) and the inert rest.
+/// records the read's time. Stage R applied the rows before 850-040; of
+/// those, only the 619 rows have an environment half, which T13b runs here,
+/// in their place.
 ///
 /// The parse's registry export and toctree records are read from `out`
 /// ([`ReadOutcome`]).
@@ -785,55 +791,144 @@ pub fn run_merge_transforms(
         .insert(docname.to_string(), inputs.read_time_us);
 
     let mut records = Vec::new();
-    let phase = |out: &mut ReadOutcome, id: TransformId| {
-        out.state_mut().ids.set_phase(id.python_name().to_string());
+    let rows = schedule(out.state());
+    let mut doc = MergeDocument {
+        output: &mut out.output,
+        arena: None,
     };
-    phase(out, TransformId::DoctreeReadEvent);
-    doctree_read_event(out, env, docname, inputs);
-    phase(out, TransformId::SphinxDomains);
-    sphinx_domains(out, env, docname, inputs, &mut records);
-    phase(out, TransformId::DoctreeReadEvent);
-    env_metadata::process_doc(env, docname, out.doctree_mut());
-
-    let ParseOutput { doctree, state, .. } = &mut out.output;
-    let parsed = std::mem::replace(
-        doctree,
-        Doctree {
-            root: Node::elem(kinds::DOCUMENT, Span::ZERO),
-            sources: Vec::new(),
-        },
-    );
-    let mut tree = TxTree::from_parse(parsed, state);
-    for (key, id) in schedule(state) {
-        if key > DOCTREE_READ_EVENT {
-            apply(
-                &mut tree,
-                state,
-                settings,
-                (docname, inputs.source_dir),
-                (key, id),
-                id.transform(),
-            );
+    for (key, id) in rows {
+        match id {
+            TransformId::SphinxDomains => {
+                let output = doc.output();
+                output.state.ids.set_phase(id.python_name().to_string());
+                sphinx_domains(output, env, docname, inputs, &mut records);
+            }
+            TransformId::DoctreeReadEvent => {
+                doc.output()
+                    .state
+                    .ids
+                    .set_phase(id.python_name().to_string());
+                doctree_read_event(&mut doc, env, docname, inputs, settings);
+            }
+            _ if key > SPHINX_DOMAINS => {
+                let (tree, state) = doc.arena();
+                apply(
+                    tree,
+                    state,
+                    settings,
+                    (docname, inputs.source_dir),
+                    (key, id),
+                    id.transform(),
+                );
+            }
+            // Stage R applied it.
+            _ => {}
         }
     }
-    *doctree = tree.into_doctree();
+    doc.finish();
     records
 }
 
-/// 880-030 `DoctreeReadEvent`: the `doctree-read` collectors as the merge
-/// has run them since wave 4 — Title, Dependencies, TocTree; Metadata runs
-/// after the domains ([`run_merge_transforms`]) — with two parse-time
-/// environment calls replayed among them where the merge has always
-/// replayed them: the include directive's `env.note_included` and the
-/// toctree directive's `env.note_reread`. They raise no records.
+/// The parse's records' key, `(0, 0)`: they sort before every transform's,
+/// in the order the parse drew their seqs ([DS §6.4]).
+const PARSE: TransformKey = TransformKey::at(0, 0);
+
+/// The document stage M merges: the read's output, whose tree is held as
+/// the doctree the environment slots read, or as the arena ([`TxTree`])
+/// the transforms apply to, and made the one from the other when a step
+/// needs the other form.
+struct MergeDocument<'o> {
+    output: &'o mut ParseOutput,
+    /// The document's tree, while it is held as an arena: the output's
+    /// doctree is then an empty stand-in.
+    arena: Option<TxTree>,
+}
+
+impl MergeDocument<'_> {
+    /// The read's output, its doctree the document's tree: the arena, if
+    /// one is held, is turned back into it first.
+    fn output(&mut self) -> &mut ParseOutput {
+        if let Some(tree) = self.arena.take() {
+            self.output.doctree = tree.into_doctree();
+        }
+        self.output
+    }
+
+    /// Ends the stage: the arena, if one is held, is turned back into the
+    /// output's doctree.
+    fn finish(mut self) {
+        self.output();
+    }
+
+    /// The document's arena and its state: the arena is made from the
+    /// doctree first, unless one is held.
+    fn arena(&mut self) -> (&mut TxTree, &mut DocumentState) {
+        let output = &mut *self.output;
+        let tree = self.arena.get_or_insert_with(|| {
+            let doctree = std::mem::replace(
+                &mut output.doctree,
+                Doctree {
+                    root: Node::elem(kinds::DOCUMENT, Span::ZERO),
+                    sources: Vec::new(),
+                },
+            );
+            TxTree::from_parse(doctree, &mut output.state)
+        });
+        (tree, &mut output.state)
+    }
+}
+
+/// 880-030 `DoctreeReadEvent`: the `doctree-read` collectors, all at
+/// priority 500, in the order Sphinx registers them ([TW §2.4]):
+///
+/// 1. Dependencies, the files the parse recorded
+///    ([`env_dependencies::process_doc`]);
+/// 2. Image, over the document's arena ([`images::process_doc`]), which
+///    logs its records there, keyed `(880, 30, seq)`; a document without
+///    an `image` node, which leaves it nothing to do, is not converted for
+///    it;
+/// 3. DownloadFile (T17c);
+/// 4. Metadata, which pops the docinfo out of the tree
+///    ([`env_metadata::process_doc`]), so that the domains (850) and the
+///    collectors before it see the docinfo and the two after it do not;
+/// 5. Title and 6. TocTree.
+///
+/// Two parse-time environment calls are replayed after them, as the merge
+/// has always replayed them: the include directive's `env.note_included`
+/// and the toctree directive's `env.note_reread`. They raise no records.
 fn doctree_read_event(
-    out: &ReadOutcome,
+    doc: &mut MergeDocument<'_>,
     env: &mut BuildEnvironment,
     docname: &str,
     inputs: &MergeInputs<'_>,
+    settings: &ReadSettings,
 ) {
-    let doctree = out.doctree();
-    let parse = &out.output;
+    let output = doc.output();
+    env_dependencies::process_doc(
+        env,
+        docname,
+        inputs.source_dir,
+        &output.registry.dependencies,
+    );
+
+    if has_image(&output.doctree.root) {
+        let (tree, state) = doc.arena();
+        images::process_doc(
+            &mut TransformCx {
+                tree,
+                state,
+                settings,
+                key: DOCTREE_READ_EVENT,
+                docname,
+                srcdir: inputs.source_dir,
+            },
+            env,
+        );
+    }
+
+    let output = doc.output();
+    env_metadata::process_doc(env, docname, &mut output.doctree);
+    let doctree = &output.doctree;
 
     let title = env_toctree::document_title(doctree);
     // Sphinx's longtitle differs from the title only for documents carrying
@@ -841,25 +936,6 @@ fn doctree_read_event(
     // (`collectors/title.py:27`).
     env.longtitles.insert(docname.to_string(), title.clone());
     env.titles.insert(docname.to_string(), title);
-
-    // The files this document pulls in, which is what makes it outdated
-    // when one of *them* changes: image uris from the doctree walk plus the
-    // parse-recorded include targets.
-    env_dependencies::process_doc(
-        env,
-        docname,
-        doctree,
-        inputs.source_dir,
-        &parse.registry.dependencies,
-    );
-
-    // The docnames it textually includes (`env.note_included` replayed from
-    // the parse records): the orphan check in `check_consistency` is the
-    // one consumer.
-    let included: BTreeSet<String> = parse.registry.included.iter().cloned().collect();
-    if !included.is_empty() {
-        env.included.insert(docname.to_string(), included);
-    }
 
     let (toc, num_entries) = env_toctree::build_toc(doctree, docname);
     // Each toctree node copied into the toc is noted, in the order it was
@@ -870,6 +946,14 @@ fn doctree_read_event(
     env.tocs.insert(docname.to_string(), toc);
     env.toc_num_entries.insert(docname.to_string(), num_entries);
 
+    // The docnames it textually includes (`env.note_included` replayed from
+    // the parse records): the orphan check in `check_consistency` is the
+    // one consumer.
+    let included: BTreeSet<String> = output.registry.included.iter().cloned().collect();
+    if !included.is_empty() {
+        env.included.insert(docname.to_string(), included);
+    }
+
     // `TocTree.parse_content` calls `env.note_reread()` for every entry
     // that names a document the project does not have
     // (`directives/other.py`): such a document is re-read on every build,
@@ -877,7 +961,7 @@ fn doctree_read_event(
     // and stops warning about it. `clear_doc` dropped the previous read's
     // claim, so a document that no longer has a dangling entry is no longer
     // re-read either.
-    if parse.toctrees.iter().any(|toctree| {
+    if output.toctrees.iter().any(|toctree| {
         toctree
             .warnings
             .iter()
@@ -887,18 +971,25 @@ fn doctree_read_event(
     }
 }
 
+/// Whether the tree under `node` holds an `image` node.
+fn has_image(node: &Node) -> bool {
+    node.kind == kinds::IMAGE || node.children.iter().any(has_image)
+}
+
 /// 850-040 `SphinxDomains`: the domains' `process_doc`, in the order
 /// `_DomainsContainer._process_doc` walks them — `c, changeset, citation,
 /// cpp, index, js, math, py, rst, std`, so `index` before `std` with `py`
 /// in between. `PythonDomain` defines no `process_doc` hook, so its slot in
-/// that walk is a no-op: the py registrations (and their duplicate
-/// warnings, which are parse-time in Sphinx and interleave with std's in
-/// document order) replay inside `env_std::process_doc`'s parse-time pass,
-/// keyed with the domains' records until T13a keys the replays as the
-/// parse's. Warning locations come from node spans and the doctree's
-/// source table, not the document text.
+/// that walk is a no-op. The std and py registrations Sphinx makes while
+/// the document is parsed (`note_object`, `_note_term`, `note_module`)
+/// replay here, in `env_std::process_doc`, because the environment they
+/// change is the one the documents merge into in docname order; their
+/// duplicate warnings are the parse's records, keyed `(0, 0, seq)`. The
+/// index domain's records and the std domain's label records are the
+/// slot's own, `(850, 40, seq)`. Warning locations come from node spans,
+/// the records and the doctree's source table, not the document text.
 fn sphinx_domains(
-    out: &mut ReadOutcome,
+    output: &mut ParseOutput,
     env: &mut BuildEnvironment,
     docname: &str,
     inputs: &MergeInputs<'_>,
@@ -910,25 +1001,30 @@ fn sphinx_domains(
     env_genindex::process_doc(
         env,
         docname,
-        out.doctree_mut(),
+        &mut output.doctree,
         inputs.source_path,
         &mut index_warnings,
     );
-    let mut std_warnings = Vec::new();
-    env_std::process_doc(
+    let std_warnings = env_std::process_doc(
         env,
         &env_std::DocumentSource {
             docname,
-            doctree: out.doctree(),
-            registry: &out.output.registry,
+            doctree: &output.doctree,
+            registry: &output.registry,
+            names: &output.state.names,
             path: inputs.source_path,
         },
         inputs.doc2path,
-        &mut std_warnings,
     );
-    for warning in index_warnings.into_iter().chain(std_warnings) {
+    for (seq, warning) in std_warnings.parse_time {
         records.push(LogRecord::Logger {
-            key: SPHINX_DOMAINS.order_key(out.state_mut().draw_seq()),
+            key: PARSE.order_key(seq),
+            diagnostic: Diagnostic::from(warning),
+        });
+    }
+    for warning in index_warnings.into_iter().chain(std_warnings.labels) {
+        records.push(LogRecord::Logger {
+            key: SPHINX_DOMAINS.order_key(output.state.draw_seq()),
             diagnostic: Diagnostic::from(warning),
         });
     }

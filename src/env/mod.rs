@@ -21,6 +21,7 @@
 //! `Hash*` equivalent so that bincode bytes and [`BuildEnvironment::snapshot`]
 //! output are deterministic across runs and processes.
 
+pub mod collectors;
 pub mod dependencies;
 pub mod genindex;
 pub mod metadata;
@@ -74,7 +75,10 @@ use crate::doctree::Node;
 ///
 /// Version 4: wave 5a's node side-car — `Node` gains `ext` (`NodeExt`),
 /// and `env.bin` stores `Node` trees in `titles`, `longtitles` and `tocs`.
-pub const ENV_VERSION: u32 = 4;
+///
+/// Version 5: wave 5a's image collector — the environment gains `images`
+/// (`env.images`, [`collectors::images::FilenameUniqDict`]).
+pub const ENV_VERSION: u32 = 5;
 
 /// The `env.bin` filename inside a build's cache directory.
 const ENV_FILENAME: &str = "env.bin";
@@ -195,6 +199,10 @@ pub struct BuildEnvironment {
     pub py: PyDomainData,
     /// docname -> its `.. index::` entries, in document order.
     pub index_entries: BTreeMap<String, Vec<IndexEntryRecord>>,
+    /// `env.images`: the image files the documents use, each with the
+    /// documents that use it and the unique basename the builder copies it
+    /// under ([`collectors::images`]).
+    pub images: collectors::images::FilenameUniqDict,
 }
 
 impl BuildEnvironment {
@@ -334,6 +342,7 @@ impl BuildEnvironment {
     /// toctree.py:30` (toctree fields + `files_to_rebuild`),
     /// `environment/collectors/title.py:23` (titles/longtitles),
     /// `environment/collectors/dependencies.py:24` (dependencies),
+    /// `environment/collectors/asset.py:36-37` (images),
     /// `environment/collectors/metadata.py:22` (metadata),
     /// `domains/std/__init__.py:896` (std domain), `domains/index.py:41`
     /// (index entries).
@@ -342,6 +351,7 @@ impl BuildEnvironment {
         self.included.remove(docname);
         self.reread_always.remove(docname);
         self.dependencies.remove(docname);
+        self.images.purge_doc(docname);
         self.metadata.remove(docname);
 
         self.titles.remove(docname);
@@ -650,6 +660,7 @@ mod tests {
                 category_key: None,
             }],
         );
+        env.images.add_file("index", "img/pic.png");
         env
     }
 
@@ -782,6 +793,7 @@ mod tests {
         assert!(env.py.objects.is_empty() && env.py.objects_index.is_empty());
         assert!(env.py.modules.is_empty() && env.py.modules_index.is_empty());
         assert!(env.index_entries.is_empty());
+        assert!(env.images.is_empty());
     }
 
     #[test]

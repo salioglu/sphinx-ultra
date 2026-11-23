@@ -212,10 +212,6 @@ fn mismatches(fixture: &Fixture) -> BTreeMap<(String, &'static str), (Value, Val
 /// owner shows whole rows.
 #[rustfmt::skip]
 const KNOWN_READ_STATE_GAPS: &[(&str, &str, &str)] = &[
-    ("state.final_position.image", "pseudo_xml", "candidates: 5a-T13a"),
-    ("state.final_position.image", "warnings", "candidates: 5a-T13a"),
-    ("state.location.figure_caption", "pseudo_xml", "candidates: 5a-T13a"),
-    ("state.location.figure_caption", "warnings", "candidates: 5a-T13a"),
     ("state.pending_serials", "id_trace", "pending: 5a-T18b"),
     ("state.pending_serials", "pseudo_xml", "pending: 5a-T18b"),
     ("state.pending_serials", "registries_post_parse", "pending: 5a-T18a"),
@@ -352,12 +348,12 @@ fn records(lines: &Value) -> Vec<String> {
 
 /// Records only Sphinx prints, by message, with the transform or collector
 /// that raises them [TW §6.3]. Substitutions' (220), Footnotes' (620) and
-/// the unreferenced-footnote warning (622) print since T11.
+/// the unreferenced-footnote warning (622) print since T11, and the image
+/// collector's (880) since T13a.
 const SPHINX_ONLY_RECORDS: &[(&str, GapFix)] = &[
     ("Unknown target name: ", read_gaps::DANGLING_REFS),
     ("Anonymous hyperlink mismatch: ", read_gaps::DANGLING_REFS),
     ("Indirect hyperlink target ", read_gaps::INDIRECT_TARGETS),
-    ("image file not readable: ", read_gaps::CANDIDATES),
 ];
 
 /// The families of a `warnings` divergence, record by record.

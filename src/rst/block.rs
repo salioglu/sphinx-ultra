@@ -1176,7 +1176,10 @@ impl BlockParser {
             self.raised.is_empty(),
             "a raised `only` outlived its section"
         );
-        self.state.final_position = final_position(&lines, last_ending);
+        // The position follows the top-level input, where an include's
+        // lines stand after the blank lines that follow the directive, not
+        // the stream this loop read, where they stand before them.
+        self.state.final_position = final_position(&self.input, last_ending);
         self.state.input_lines = std::mem::take(&mut self.input)
             .iter()
             .map(|line| (line.source, line.lineno))
@@ -5362,6 +5365,8 @@ impl BlockParser {
                     .push(super::GlossaryTermRecord {
                         term: term_text.clone(),
                         id: node_id.clone(),
+                        source: tl.source,
+                        line: tl.lineno.saturating_sub(1),
                         seq,
                     });
                 let mut index = Node::elem("index", term_span);
@@ -8049,7 +8054,18 @@ impl BlockParser {
             }
             reference = Some(node);
         }
-        let mut image = Node::elem("image", input.span);
+        // `(image_node.source, image_node.line) =
+        // get_source_and_line(self.lineno)` (`images.py:99-101`): the
+        // directive's own line, which in a substitution definition's
+        // hanging form (`.. |s|` / `   image:: pic.png`) is the line after
+        // the definition's.
+        let mut image = Node::elem(
+            "image",
+            Span {
+                line: input.lineno,
+                ..input.span
+            },
+        );
         for (name, val) in &input.options {
             match (name.as_str(), val) {
                 ("alt", OptVal::Str(v)) => image.set("alt", AttrValue::Str(v.clone())),
@@ -14850,12 +14866,11 @@ mod tests {
     ///
     /// The sphinx half was re-verified against the 9.1.0 oracle in wave-4
     /// task 9 (`.. figure:: pic.png` + `:name: myfig` →
-    /// `<figure ids="myfig" names="myfig">` over `<image ...>`), but the
-    /// case cannot join `tests/fixtures/sphinx_doctree_differential.json`:
-    /// a figure needs an `image`, and `ImageCollector.process_doc` stamps
-    /// every image with `candidates="{'*': 'pic.png'}"`, one of that
-    /// corpus's enumerated excluded divergences. This assertion is the
-    /// standing pin until image collection lands.
+    /// `<figure ids="myfig" names="myfig">` over `<image ...>`), and the
+    /// read's whole tree, the image collector's `candidates` included, is
+    /// `tests/fixtures/sphinx_doctree_differential.json`'s
+    /// `sx_image.figure_name` since wave 5a. This pins the two modes'
+    /// parses side by side.
     #[test]
     fn a_figure_name_lands_on_the_image_in_docutils_and_the_figure_in_sphinx() {
         let src = ".. figure:: pic.png\n   :name: fig one\n\n   Caption.\n";
@@ -14882,8 +14897,7 @@ mod tests {
     /// other. It is `directives.unchanged`, so `if figname:` makes a
     /// valueless `:figname:` a no-op. Expectations pasted from
     /// `probe_figname.py` / `probe_figname_sx.py` (fix round 1); the
-    /// docutils-mode shapes are also pinned in the docutils fixture corpus,
-    /// which the sphinx corpus cannot carry (`candidates=` on every image).
+    /// docutils-mode shapes are also pinned in the docutils fixture corpus.
     #[test]
     fn figname_targets_the_figure_itself_in_both_modes() {
         let src = ".. figure:: pic.png\n   :figname: my fig\n\n   Caption.\n";

@@ -62,6 +62,10 @@ pub struct ReadSettings {
     /// every document of a build reads the same date, and no transform
     /// reads the environment.
     pub build_date: DateTime<Utc>,
+    /// `language` (`SP/sphinx/config.py:230`, default `'en'`): the language
+    /// whose variant of an image the image collector prefers
+    /// ([`crate::env::collectors::images`]).
+    pub language: String,
 }
 
 impl ReadSettings {
@@ -75,6 +79,7 @@ impl ReadSettings {
             version: String::new(),
             release: String::new(),
             build_date: build_date(),
+            language: "en".to_string(),
         }
     }
 
@@ -87,6 +92,9 @@ impl ReadSettings {
             today_fmt: config.today_fmt.clone(),
             version: config.version.clone().unwrap_or_default(),
             release: config.release.clone().unwrap_or_default(),
+            // Sphinx reads a `language` of `None` as `'en'`
+            // (`SP/sphinx/config.py:573-581`).
+            language: config.language.clone().unwrap_or_else(|| "en".to_string()),
             ..Self::sphinx_defaults()
         }
     }
@@ -321,9 +329,11 @@ pub struct MergeInputs<'a> {
 /// Stage M for one document: merges its read into `env`
 /// ([`crate::transforms::run_merge_transforms`]) and returns the
 /// document's records in the order Sphinx prints them: its log (stage R's
-/// records) and stage M's, rendered by [`render_records`] (a record with no
-/// source of its own is located at [`MergeInputs::source_path`]),
-/// stable-sorted by key, keys dropped. The log itself is left in place.
+/// records, and those stage M's collectors and transforms log there) and
+/// the domains' records stage M returns, rendered by [`render_records`] (a
+/// record with no source of its own is located at
+/// [`MergeInputs::source_path`]), stable-sorted by key, keys dropped. The
+/// log itself is left in place.
 pub fn merge_document(
     env: &mut BuildEnvironment,
     docname: &str,
@@ -460,7 +470,7 @@ mod tests {
     }
 
     /// The read settings follow the configuration, Sphinx's defaults
-    /// otherwise (`config.py:225-229`, `:261`); the trace is a test switch
+    /// otherwise (`config.py:225-230`, `:261`); the trace is a test switch
     /// no configuration sets. The build date is the moment the settings
     /// were made, so the comparisons carry it over.
     #[test]
@@ -476,6 +486,7 @@ mod tests {
                 version: String::new(),
                 release: String::new(),
                 build_date: defaults.build_date,
+                language: "en".to_string(),
             }
         );
         assert_eq!(
@@ -491,6 +502,7 @@ mod tests {
             today_fmt: Some("%Y".to_string()),
             version: Some("1.2".to_string()),
             release: Some("1.2.3".to_string()),
+            language: Some("de".to_string()),
             ..BuildConfig::default()
         };
         let settings = ReadSettings::from_config(&config);
@@ -502,6 +514,12 @@ mod tests {
             (settings.version.as_str(), settings.release.as_str()),
             ("1.2", "1.2.3")
         );
+        assert_eq!(settings.language, "de");
+        let unset = BuildConfig {
+            language: None,
+            ..BuildConfig::default()
+        };
+        assert_eq!(ReadSettings::from_config(&unset).language, "en");
     }
 
     /// `SOURCE_DATE_EPOCH` read as `datetime.fromtimestamp(float(value),
@@ -835,11 +853,86 @@ mod tests {
         );
     }
 
+    /// The environment's parse-time registrations warn about a duplicate
+    /// as Sphinx's directive does, while the document is parsed: the
+    /// replayed `duplicate … description` records are keyed with the
+    /// parse's `(0, 0, seq)` and the registration's seq ([DS §6.4]; [TW
+    /// §5.5] rule 1), so they print among the parse's records and before
+    /// every transform's. Probed on Sphinx 9.1.0: the envvar duplicate on
+    /// line 5 prints between the parse's WARNING on line 2 and its ERROR
+    /// on line 9, and the py duplicate before `SphinxDanglingReferences`'
+    /// (850-039) ERROR.
+    #[test]
+    fn parse_time_env_duplicates_keep_parse_order() {
+        let rendered = |source: &str| -> Vec<String> {
+            read_standalone(source, &sphinx_options(), &ReadSettings::sphinx_defaults())
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.render(true))
+                .collect()
+        };
+        assert_eq!(
+            rendered("Title\n====\n\n.. envvar:: X\n.. envvar:: X\n\nPara\nmore\n   indented.\n"),
+            [
+                "<SRCDIR>/index.rst:2: WARNING: Title underline too short.\n\nTitle\n==== \
+                 [docutils]",
+                "<SRCDIR>/index.rst:5: WARNING: duplicate envvar description of X, other \
+                 instance in index",
+                "<SRCDIR>/index.rst:9: ERROR: Unexpected indentation. [docutils]",
+            ]
+        );
+        assert_eq!(
+            rendered(".. py:function:: f()\n\n.. py:function:: f()\n\nSee x_.\n"),
+            [
+                "<SRCDIR>/index.rst:3: WARNING: duplicate object description of f, other \
+                 instance in index, use :no-index: for one of them",
+                "<SRCDIR>/index.rst:5: ERROR: Unknown target name: \"x\". [docutils]",
+            ]
+        );
+    }
+
+    /// A line-less record — AnonymousHyperlinks' (440) mismatch — of a
+    /// document that ends in an include, followed by blank lines or not, is
+    /// located at the parse's final position, the padding docutils inserts
+    /// after the included lines (`n + 4` for the 3 lines of `inc.rst`).
+    /// Probed on Sphinx 9.1.0 for both inputs; the oracle's cwd is the
+    /// source directory, so the padding names `inc.rst` as the include
+    /// wrote it.
+    #[test]
+    fn line_less_records_after_a_trailing_include_locate_at_its_padding() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        std::fs::write(tmp.path().join("inc.rst"), "A.\n\nB.\n").expect("write");
+        let parse = ParseOptions {
+            source_path: tmp.path().join("index.rst").display().to_string(),
+            srcdir: Some(tmp.path().to_path_buf()),
+            ..sphinx_options()
+        };
+        for source in [
+            "`a`__\n\n.. include:: inc.rst\n",
+            "`a`__\n\n.. include:: inc.rst\n\n",
+        ] {
+            let rendered: Vec<String> =
+                read_standalone(source, &parse, &ReadSettings::sphinx_defaults())
+                    .diagnostics
+                    .iter()
+                    .map(|diagnostic| diagnostic.render(true))
+                    .collect();
+            assert_eq!(
+                rendered,
+                [
+                    "internal padding after inc.rst:7: ERROR: Anonymous hyperlink mismatch: 1 \
+                     references but 0 targets.\nSee \"backrefs\" attribute for IDs. [docutils]"
+                ],
+                "{source:?}"
+            );
+        }
+    }
+
     /// A document's records print in key order, not in the order they
-    /// were raised: stage M raises the collectors' records `(880, 30)`
-    /// before the domains' `(850, 40)` until T13a runs them in Sphinx's
-    /// order, and both sort after the parse's `(0, 0)` whatever their
-    /// seqs. Records with equal keys keep their order.
+    /// were raised: stage M raises the replayed parse-time duplicates with
+    /// the parse's `(0, 0)` after the parse's own, and each slot's records
+    /// sort by its key whatever their seqs. Records with equal keys keep
+    /// their order.
     #[test]
     fn records_print_in_key_order() {
         let logged = |priority, serial, seq, message: &str| LogRecord::Logger {

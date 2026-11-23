@@ -3045,6 +3045,12 @@
       "name": "py.duplicate_modules",
       "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <index entries=\"('pair',\\ 'module;\\ dupmod',\\ 'module-dupmod',\\ '',\\ None)\">\n    <index entries=\"('pair',\\ 'module;\\ dupmod',\\ 'module-0',\\ '',\\ None)\">\n    <target ismod=\"1\" refid=\"module-dupmod\">\n    <target ids=\"module-0 module-dupmod\" ismod=\"1\">\n",
       "rst": ".. py:module:: dupmod\n\n.. py:module:: dupmod\n"
+    },
+    {
+      "family": "sx_image",
+      "name": "sx_image.figure_name",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <figure ids=\"myfig\" names=\"myfig\">\n        <image candidates=\"{'*': 'pic.png'}\" uri=\"pic.png\">\n        <caption>\n            Caption.\n",
+      "rst": ".. figure:: pic.png\n   :name: myfig\n\n   Caption.\n"
     }
   ],
   "conf_semantics": "a case's optional 'conf' dict is confoverrides applied on top of the base settings above; absent = defaults. The consumer maps every key onto ParseOptions.py and errors on unmapped keys.",
