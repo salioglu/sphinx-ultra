@@ -173,11 +173,11 @@ them. Divergences from earlier waves are recorded in the tables above.
   `:parser: myst` produces a SEVERE reading `parser mode is not supported by
   sphinx-ultra (planned with MyST, M2 wave 6)`. Sphinx would run the named
   parser.
-- `:code:` **with a language argument** goes through this crate's Pygments-less
-  `code` machinery (wave 3), which emits docutils' `Cannot analyze code. Pygments
-  package not found.` where the sphinx oracle — which ships Pygments — tokenizes.
-  The language-less form is at parity, and both probe-verified forms are the only
-  ones the oracle corpus uses.
+- `:code:` **with a language argument** keeps its `literal_block` (classes
+  `code <language>`, the file as `source`) for every language Pygments 2.21.0
+  has a lexer for, and reports docutils' `No Pygments lexer found` for any
+  other, as a Sphinx build does. The block holds the code as one text node:
+  Pygments' token `inline`s inside it wait for the Pygments port (5b).
 - **Provenance path spelling.** docutils' `adapt_path` keeps the cwd-relative
   spelling of an *included* file only in the node `source` attribute; what a
   user sees from Sphinx is **absolute** — an in-include warning location is

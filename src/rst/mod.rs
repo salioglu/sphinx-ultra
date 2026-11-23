@@ -14,6 +14,7 @@ pub(crate) mod digits;
 pub mod inline;
 pub mod lines;
 mod punctuation;
+pub(crate) mod pygments_aliases;
 pub(crate) mod roles;
 
 use std::collections::{HashMap, HashSet};

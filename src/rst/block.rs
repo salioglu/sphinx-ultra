@@ -4721,10 +4721,10 @@ impl BlockParser {
     }
 
     /// `:code:` mode (`misc.py:187-205`): delegate to the `code` directive
-    /// machinery with the option value as the language argument. This
-    /// crate's `code` is the Pygments-less docutils shape (wave 3), so a
-    /// language argument fails with the pygments WARNING — a pinned
-    /// divergence from the sphinx oracle, which ships pygments.
+    /// machinery with the option value as the language argument
+    /// ([`Self::run_code_with_lines`]): in a Sphinx parse, where Pygments
+    /// is there, a known language keeps the block, its tokens unsplit
+    /// until 5b's Pygments port.
     fn include_as_code(
         &mut self,
         text: &str,
@@ -8442,15 +8442,36 @@ impl BlockParser {
         content_len: usize,
         out: &mut Vec<Node>,
     ) {
-        if !input.arguments.is_empty() {
-            out.push(self.directive_run_message(
-                messages::WARNING,
-                "Cannot analyze code. Pygments package not found.",
-                input.span.source,
-                input.lineno,
-                input.rawsource,
-            ));
-            return;
+        // docutils' `Lexer` (`SP/docutils/utils/code_analyzer.py`) needs no
+        // lexer for '' and `text`; any other language needs Pygments, which
+        // the docutils parse-layer oracle runs without and every Sphinx
+        // build has, where `get_lexer_by_name` finds the language's lexer
+        // or none ([`super::pygments_aliases::LEXER_ALIASES`]).
+        if let Some(language) = input.arguments.first().filter(|lang| *lang != "text") {
+            let unknown = || {
+                super::pygments_aliases::LEXER_ALIASES
+                    .binary_search(&language.to_lowercase().as_str())
+                    .is_err()
+            };
+            let failure = if !self.sphinx {
+                Some("Cannot analyze code. Pygments package not found.".to_string())
+            } else if unknown() {
+                Some(format!(
+                    "Cannot analyze code. No Pygments lexer found for \"{language}\"."
+                ))
+            } else {
+                None
+            };
+            if let Some(failure) = failure {
+                out.push(self.directive_run_message(
+                    messages::WARNING,
+                    &failure,
+                    input.span.source,
+                    input.lineno,
+                    input.rawsource,
+                ));
+                return;
+            }
         }
         let number_lines = match opt_get(&input.options, "number-lines") {
             Some(OptVal::Str(v)) => {
@@ -8477,6 +8498,8 @@ impl BlockParser {
         };
         let mut node = Node::elem(kinds::LITERAL_BLOCK, input.span);
         node.attrs.classes.push("code".to_string());
+        // `classes.append(language)`, then the `:class:` ones.
+        node.attrs.classes.extend(input.arguments.first().cloned());
         if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
             node.attrs.classes.extend(classes.iter().cloned());
         }
@@ -8488,6 +8511,9 @@ impl BlockParser {
         // the include `:code:` path's content is the one file-text element.
         let code = code_lines.join("\n");
         node.set_rawsource(&code);
+        // Divergence (5b's Pygments port): with a lexer, docutils adds the
+        // tokens as `inline`s classed by their Pygments token names
+        // (`syntax_highlight = 'long'`); the code stays unsplit text here.
         match number_lines {
             Some(start) => {
                 push_number_lines(&mut node, &code_lines, start, content_len, input.span)
@@ -19981,28 +20007,6 @@ mod include_tests {
         );
     }
 
-    /// Pins OUR `:code:` shape: this crate's `code` machinery is the
-    /// Pygments-less docutils (wave 3), so a language argument fails with
-    /// the pygments WARNING where the sphinx oracle (pygments installed)
-    /// would tokenize — a documented divergence for T14 to exclude.
-    #[test]
-    fn code_mode_with_a_language_pins_our_pygments_less_shape() {
-        let tmp = tempfile::tempdir().unwrap();
-        write(tmp.path(), "inc.rst", "x = 1\n");
-        let tree = parse_sphinx(
-            tmp.path(),
-            "main",
-            ".. include:: inc.rst\n   :code: python\n",
-        );
-        let msgs = messages_of(&tree);
-        assert_eq!(msgs.len(), 1);
-        assert_eq!(msgs[0].0, 2);
-        assert_eq!(
-            msgs[0].3,
-            "Cannot analyze code. Pygments package not found."
-        );
-    }
-
     #[test]
     fn code_mode_without_a_language_is_a_code_classed_literal_with_source() {
         let tmp = tempfile::tempdir().unwrap();
@@ -20385,6 +20389,67 @@ mod include_tests {
                 })
                 .collect();
             assert_eq!(input_lines.join(" "), expected, "{index:?}");
+        }
+    }
+
+    /// docutils' `Include` hands `:code:` to its own `CodeBlock`
+    /// (`SP/docutils/parsers/rst/directives/misc.py:187-205`, `body.py`),
+    /// whose `Lexer` needs no lexer for '' and `text` and asks Pygments'
+    /// `get_lexer_by_name` for any other language. Under Sphinx Pygments
+    /// is there, so a known language keeps the `literal_block`, classes
+    /// `code <language>` and the file as its `source`, with no record,
+    /// and an unknown one is `No Pygments lexer found` in place of the
+    /// block. (Pygments' token `inline`s inside the block are 5b's
+    /// port; the text is one node here.) Probed on Sphinx 9.1.0 (`-w`,
+    /// post-read trees).
+    #[test]
+    fn an_included_code_file_keeps_its_block_under_sphinx() {
+        /// The `code` block, not a message's block text.
+        fn find_kind<'n>(node: &'n Node, kind: &str) -> Option<&'n Node> {
+            if node.kind == kind && node.attrs.classes.first().is_some_and(|c| c == "code") {
+                return Some(node);
+            }
+            node.children
+                .iter()
+                .find_map(|child| find_kind(child, kind))
+        }
+        let rows: [(&str, &str, &str, &str, Option<&str>); 5] = [
+            ("part.py", "x = 1\n", "python", "code python", None),
+            ("part.rst.txt", "Some *text*.\n", "rst", "code rst", None),
+            ("part.py", "x = 1\n", "Python", "code Python", None),
+            ("part.txt", "plain\n", "text", "code text", None),
+            (
+                "part.py",
+                "x = 1\n",
+                "nosuchlang",
+                "",
+                Some("Cannot analyze code. No Pygments lexer found for \"nosuchlang\"."),
+            ),
+        ];
+        for (file, text, language, classes, warning) in rows {
+            let tmp = tempfile::tempdir().unwrap();
+            write(tmp.path(), file, text);
+            let index =
+                format!("Title\n=====\n\n.. include:: {file}\n   :code: {language}\n\nAfter.\n");
+            let tree = parse_sphinx(tmp.path(), "index", &index);
+            let messages: Vec<(i64, String)> = messages_of(&tree)
+                .into_iter()
+                .map(|(level, _, _, text)| (level, text))
+                .collect();
+            let block = find_kind(&tree.root, kinds::LITERAL_BLOCK);
+            match warning {
+                None => {
+                    assert_eq!(messages, Vec::new(), "{index:?}");
+                    let block = block.unwrap_or_else(|| panic!("{index:?}: no block"));
+                    assert_eq!(block.attrs.classes.join(" "), classes, "{index:?}");
+                    assert_eq!(block.get("source"), Some(&AttrValue::Str(file.to_string())));
+                    assert_eq!(block.astext(), text.trim_end_matches('\n'), "{index:?}");
+                }
+                Some(warning) => {
+                    assert_eq!(messages, [(2, warning.to_string())], "{index:?}");
+                    assert!(block.is_none(), "{index:?}");
+                }
+            }
         }
     }
 
