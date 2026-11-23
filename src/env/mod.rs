@@ -21,9 +21,11 @@
 //! `Hash*` equivalent so that bincode bytes and [`BuildEnvironment::snapshot`]
 //! output are deterministic across runs and processes.
 
+pub mod citation;
 pub mod collectors;
 pub mod dependencies;
 pub mod genindex;
+pub mod math;
 pub mod metadata;
 pub mod numbers;
 pub mod objects;
@@ -78,7 +80,10 @@ use crate::doctree::Node;
 ///
 /// Version 5: wave 5a's image collector — the environment gains `images`
 /// (`env.images`, [`collectors::images::FilenameUniqDict`]).
-pub const ENV_VERSION: u32 = 5;
+///
+/// Version 6: wave 5a's citation and math domains — the environment gains
+/// `citation` and `math` (`env.domaindata['citation']` and `['math']`).
+pub const ENV_VERSION: u32 = 6;
 
 /// The `env.bin` filename inside a build's cache directory.
 const ENV_FILENAME: &str = "env.bin";
@@ -203,6 +208,13 @@ pub struct BuildEnvironment {
     /// documents that use it and the unique basename the builder copies it
     /// under ([`collectors::images`]).
     pub images: collectors::images::FilenameUniqDict,
+    /// The citation domain's registries (`domaindata['citation']`): the
+    /// citations, in the order they were noted, and the documents that
+    /// refer to each target ([`citation::CitationDomainData`]).
+    pub citation: citation::CitationDomainData,
+    /// The math domain's equations (`domaindata['math']`), by label
+    /// ([`math::MathDomainData`]).
+    pub math: math::MathDomainData,
 }
 
 impl BuildEnvironment {
@@ -345,7 +357,8 @@ impl BuildEnvironment {
     /// `environment/collectors/asset.py:36-37` (images),
     /// `environment/collectors/metadata.py:22` (metadata),
     /// `domains/std/__init__.py:896` (std domain), `domains/index.py:41`
-    /// (index entries).
+    /// (index entries), `domains/citation.py:49-57` (citation domain),
+    /// `domains/math.py:89-92` (math domain).
     pub fn clear_doc(&mut self, docname: &str) {
         self.all_docs.remove(docname);
         self.included.remove(docname);
@@ -391,6 +404,8 @@ impl BuildEnvironment {
         self.py.clear_doc(docname);
 
         self.index_entries.remove(docname);
+        self.citation.clear_doc(docname);
+        self.math.clear_doc(docname);
     }
 
     /// A deterministic JSON view of this environment, shaped to line up
@@ -661,6 +676,16 @@ mod tests {
             }],
         );
         env.images.add_file("index", "img/pic.png");
+        env.citation.note_citation(
+            "CIT",
+            citation::CitationEntry {
+                docname: "index".to_string(),
+                labelid: "cit".to_string(),
+                lineno: 3,
+            },
+        );
+        env.citation.note_citation_reference("CIT", "index");
+        env.math.note_equation("index", "euler", 1);
         env
     }
 
@@ -794,6 +819,8 @@ mod tests {
         assert!(env.py.modules.is_empty() && env.py.modules_index.is_empty());
         assert!(env.index_entries.is_empty());
         assert!(env.images.is_empty());
+        assert_eq!(env.citation, citation::CitationDomainData::default());
+        assert_eq!(env.math, math::MathDomainData::default());
     }
 
     #[test]

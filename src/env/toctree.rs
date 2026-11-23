@@ -850,8 +850,11 @@ pub struct ConsistencyMessage {
 /// from more than one gets an *informational* note (Sphinx uses
 /// `logger.info` there, so it must not count toward `-W`).
 ///
-/// Not ported: the `env-check-consistency` event and the per-domain
-/// `check_consistency` hooks, neither of which exists yet.
+/// The per-domain `check_consistency` hooks Sphinx runs after these, of
+/// which only the citation domain's warns, are the builder's next step
+/// ([`crate::env::citation::check_consistency`]); the
+/// `env-check-consistency` event, which no extension here listens to, is
+/// not ported.
 ///
 /// `is_sphinx_source` answers, per docname, whether the file it came from
 /// carries a suffix Sphinx's `source_suffix` covers. This crate's discovery

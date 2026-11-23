@@ -16,7 +16,7 @@ pub mod lines;
 mod punctuation;
 pub(crate) mod roles;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::doctree::ids::DupnameFixup;
 use crate::doctree::Doctree;
@@ -338,6 +338,29 @@ pub struct GlossaryTermRecord {
     pub seq: u32,
 }
 
+/// One equation label the math directive registered with the math domain
+/// (`MathDirective.add_target` → `domain.note_equation(docname, label,
+/// location=node)`, `SP/sphinx/directives/patches.py:177-194`), for stage M
+/// to replay in parse order ([`crate::env::math::process_doc`]).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct EquationRecord {
+    /// The equation's label (`node['label']`): as the `:label:` or `:name:`
+    /// option wrote it, or `<docname>:<n>` for an empty `:label:`.
+    pub label: String,
+    /// The number the domain gives the equation, `env.new_serialno('eqno')
+    /// + 1`: the document's count of labelled equations so far.
+    pub number: u32,
+    /// `location=node`: the source-table index and line `set_source_info`
+    /// stamped on the `math_block`, the directive's. Not
+    /// `#[serde(default)]` (cache-shape rule, see
+    /// [`RegistryExport::program_options`]).
+    pub source: u16,
+    pub line: u32,
+    /// The parse's record sequence number, drawn at the registration (see
+    /// [`ProgramOptionRecord::seq`]).
+    pub seq: u32,
+}
+
 /// What the parse layer hands the environment besides the doctree itself:
 /// state that lives in the parser (the docutils id/name registry, Sphinx's
 /// `env.ref_context`) and dies with it, but that env collectors need.
@@ -392,6 +415,12 @@ pub struct RegistryExport {
     /// in parse order. Not `#[serde(default)]` — see
     /// [`Self::program_options`].
     pub glossary_terms: Vec<GlossaryTermRecord>,
+    /// The equation labels the parse registered with the math domain
+    /// (`MathDomain.note_equation`), in parse order. Not
+    /// `#[serde(default)]` — see [`Self::program_options`]: a cache entry
+    /// that decoded with none would leave every `:eq:` to its equations
+    /// dangling.
+    pub equations: Vec<EquationRecord>,
     /// Diagnostics the parse raised through Sphinx's *logger* rather than
     /// into the tree, which have nowhere else to go: docutils turns a
     /// directive error into a `system_message` node, but a Sphinx directive
@@ -565,9 +594,10 @@ pub(crate) struct ParseOnlyState {
     /// and the roles that emit index entries.
     pub(crate) index_serial: u32,
     /// The other `env.new_serialno(category)` counters, keyed by the
-    /// `sphinx.util.nodes.make_id` prefix that asked for one
-    /// (`cmdoption-myprog`, `confval`, …): per document and category, from
-    /// 0, like [`Self::index_serial`].
+    /// category: the `sphinx.util.nodes.make_id` prefix that asked for one
+    /// (`cmdoption-myprog`, `confval`, …), or the math directive's `eqno`
+    /// and `sphinx.ext.math#equations`; per document and category, from 0,
+    /// like [`Self::index_serial`] ([`DocumentState::new_serialno`]).
     pub(crate) serialnos: HashMap<String, u32>,
     /// docutils `document.include_log` (`nodes.py:1802-1803`): the open
     /// inclusions as `(source display path, clip options)` pairs. Seeded
@@ -592,6 +622,12 @@ pub(crate) struct ParseOnlyState {
     pub(crate) py_object_records: Vec<PyObjectRecord>,
     pub(crate) py_module_records: Vec<PyModuleRecord>,
     pub(crate) glossary_term_records: Vec<GlossaryTermRecord>,
+    /// The math domain's equation registrations ([`EquationRecord`]).
+    pub(crate) equation_records: Vec<EquationRecord>,
+    /// The ids `document.ids` holds for an equation's target: the ones the
+    /// math directive registered first, whose `Duplicate ID` message it
+    /// can spell.
+    pub(crate) equation_ids: HashSet<String>,
     /// `logger.warning` diagnostics raised while running directives.
     pub(crate) log_warnings: Vec<ParseLogWarning>,
     /// Parse-recorded dependency paths and included docnames (see
@@ -674,6 +710,7 @@ pub(crate) mod tests {
         "py_modules":[{"name":"m","node_id":"module-m","synopsis":"","platform":"",
             "deprecated":false,"source":0,"lineno":1,"seq":3}],
         "glossary_terms":[{"term":"T","id":"term-T","source":0,"line":1,"seq":4}],
+        "equations":[{"label":"e","number":1,"source":0,"line":3,"seq":6}],
         "log_warnings":[{"message":"m","location":{"Node":{"source":0,"line":2}},"seq":5}],
         "dependencies":["part.rst"],"included":["part"]}"#;
 
@@ -728,6 +765,10 @@ pub(crate) mod tests {
             "py_modules",
             // A pre-wave-5a registry (no glossary-term stream) must MISS.
             "glossary_terms",
+            // So must one written before the math domain's equation
+            // stream (wave 5a, T13b): a defaulted empty list would leave
+            // every `:eq:` to its equations dangling on a warm rebuild.
+            "equations",
             "log_warnings",
             // A wave-4.5 pre-include registry (no dependencies/included
             // stream) must MISS: a defaulted empty list would never
@@ -755,6 +796,10 @@ pub(crate) mod tests {
         // must MISS: the duplicate-term warning reads it.
         must_miss(&["glossary_terms", "0"], "source");
         must_miss(&["glossary_terms", "0"], "line");
+        // So must an equation recorded without its location (T13b): the
+        // duplicate-label warning reads it.
+        must_miss(&["equations", "0"], "source");
+        must_miss(&["equations", "0"], "line");
         // A pre-wave-5a log record (its `source`/`line`/`doc2path_location`
         // triple, no `location`) must MISS: decoding it with a default
         // location would render the warning at the wrong path.
@@ -773,6 +818,7 @@ pub(crate) mod tests {
             "py_objects",
             "py_modules",
             "glossary_terms",
+            "equations",
             "log_warnings",
         ] {
             must_miss(&[registry, "0"], "seq");
@@ -2566,6 +2612,83 @@ pub(crate) mod tests {
                 [at(line, duplicate)],
                 "{body:?}"
             );
+        }
+    }
+
+    /// docutils reads the explicit constructs after a top-level one in a
+    /// nested machine (`Body.explicit_list`,
+    /// `SP/docutils/parsers/rst/states.py:2508-2521`) while each next line
+    /// starts another, so the top-level machine, where a message without a
+    /// located node is located, stays where the first construct's block
+    /// ended: its trailing blank lines included for a directive, a comment,
+    /// a footnote or a substitution definition, the construct's own lines
+    /// for a target or an anonymous target, whose block stops at a blank
+    /// line, and which a blank line after it ends the list at. A paragraph
+    /// or a section title ends the list too. Probed on Sphinx 9.1.0 with
+    /// `:name:` and `index` duplicates (each case's warning stream).
+    #[test]
+    fn explicit_lists_locate_at_their_first_construct() {
+        let duplicate =
+            |name: &str| format!("WARNING: Duplicate explicit target name: \"{name}\".");
+        let title = "Title\n=====\n\n";
+        let head = ".. _a:\n\nText.\n\n";
+        let note_x = |text: &str| format!(".. note:: {text}\n   :name: x\n");
+        let note_a = ".. note:: b\n   :name: a\n\nEnd.\n";
+        for (source, lines) in [
+            (
+                format!("{title}Para.\n\n{}\n{}\nEnd.\n", note_x("a"), note_x("b")),
+                vec![(8, "x")],
+            ),
+            (
+                format!(
+                    "{title}Para.\n\n{}\n\n\n{}\n\nEnd.\n",
+                    note_x("a"),
+                    note_x("b")
+                ),
+                vec![(10, "x")],
+            ),
+            (
+                format!("{title}{}\nPara.\n\n{}\nEnd.\n", note_x("a"), note_x("b")),
+                vec![(11, "x")],
+            ),
+            (
+                format!(
+                    "{title}.. _a:\n\n.. index:: x\n   :name: a\n\n.. index:: y\n   :name: a\n\n\
+                     End.\n"
+                ),
+                vec![(8, "a"), (8, "a")],
+            ),
+            (format!("{head}.. _b:\n{note_a}"), vec![(5, "a")]),
+            (format!("{head}.. _b:\n\n{note_a}"), vec![(9, "a")]),
+            (format!("{head}.. a comment\n\n{note_a}"), vec![(6, "a")]),
+            (format!("{head}..\n\n{note_a}"), vec![(9, "a")]),
+            (format!("{head}__ http://x.org\n{note_a}"), vec![(5, "a")]),
+            (
+                format!("{head}`x`__\n\n__ http://x.org\n\n{note_a}"),
+                vec![(11, "a")],
+            ),
+            (
+                format!("{head}See [1]_.\n\n.. [1] Foot.\n\n{note_a}"),
+                vec![(8, "a")],
+            ),
+            (
+                format!("{head}Use |x|.\n\n.. |x| replace:: y\n\n{note_a}"),
+                vec![(8, "a")],
+            ),
+            (
+                format!("{head}.. note:: one\n\n\n.. note:: two\n\n{note_a}"),
+                vec![(7, "a")],
+            ),
+            (
+                format!("{head}.. note:: one\n\nSub\n---\n\n{note_a}"),
+                vec![(12, "a")],
+            ),
+        ] {
+            let expected: Vec<String> = lines
+                .into_iter()
+                .map(|(line, name)| at(line, &format!("{} [docutils]", duplicate(name))))
+                .collect();
+            assert_eq!(printed_heads(&source), expected, "{source:?}");
         }
     }
 

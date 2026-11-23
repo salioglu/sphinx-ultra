@@ -39,9 +39,11 @@ use crate::diagnostics::{Category, Diagnostic, Location, OrderKey, Severity};
 use crate::doctree::messages;
 use crate::doctree::pending::PendingTransform;
 use crate::doctree::{kinds, AttrValue, Doctree, Node, Span};
+use crate::env::citation as env_citation;
 use crate::env::collectors::images;
 use crate::env::dependencies as env_dependencies;
 use crate::env::genindex as env_genindex;
+use crate::env::math as env_math;
 use crate::env::metadata as env_metadata;
 use crate::env::std_domain as env_std;
 use crate::env::toctree::{self as env_toctree, ToctreeWarningKind};
@@ -250,7 +252,8 @@ impl TransformId {
             TransformId::IndirectHyperlinks => &references::IndirectHyperlinks,
             TransformId::DoctestTransform => &sphinx::DoctestTransform,
             TransformId::GlossarySorter => &sphinx::GlossarySorter,
-            // The 619 rows' tree halves; T13b their environment half.
+            // The 619 rows' tree halves; stage M runs their environment
+            // halves ([`run_merge_transforms`]).
             TransformId::CitationDefinitionTransform => &footnotes::CitationDefinitionTransform,
             TransformId::CitationReferenceTransform => &footnotes::CitationReferenceTransform,
             TransformId::Footnotes => &footnotes::Footnotes,
@@ -750,16 +753,24 @@ fn tag_trace(tree: &mut TxTree, state: &mut DocumentState) {
 }
 
 /// Stage M for the document `docname`: the rows of the read's
-/// [`schedule`] from `SphinxDomains` (850-040) on, every one of them, in
-/// order ([DS §9]), which merge the document into `env`:
+/// [`schedule`] that merge the document into `env`, in order ([DS §9]):
 ///
-/// - 850-040 `SphinxDomains`, the domains' `process_doc`
-///   ([`sphinx_domains`]);
+/// - the environment halves of the two 619 rows, whose tree halves stage R
+///   applied: 619-016 `CitationDefinitionTransform` notes the document's
+///   citations with the citation domain, over the document's [`TxTree`],
+///   logging a duplicate's warning keyed by its row
+///   ([`env_citation::note_citations`]), and 619-017
+///   `CitationReferenceTransform` notes its citation references' targets
+///   ([`env_citation::note_citation_references`]);
+/// - 850-040 `SphinxDomains`, the domains' `process_doc` and the replay of
+///   the domain registrations the parse made ([`sphinx_domains`]);
 /// - 880-030 `DoctreeReadEvent`, the `doctree-read` collectors in the
 ///   order Sphinx registers them ([`doctree_read_event`]);
 /// - the transforms after them, over the document's [`TxTree`], re-entered
 ///   with no detached forest (stage R's arena kept it):
 ///   `FilterSystemMessages` (999-027) and the inert rest.
+///
+/// Every other row before 850-040 is stage R's alone.
 ///
 /// It returns the domains' records: the label and index records `(850,
 /// 40, seq)`, and the parse-time registrations' replayed duplicates with
@@ -770,9 +781,7 @@ fn tag_trace(tree: &mut TxTree, state: &mut DocumentState) {
 ///
 /// The environment first forgets what an earlier read of the document
 /// left (`env.clear_doc`, which `_read_serial` runs before every read) and
-/// records the read's time. Stage R applied the rows before 850-040; of
-/// those, only the 619 rows have an environment half, which T13b runs here,
-/// in their place.
+/// records the read's time.
 ///
 /// The parse's registry export and toctree records are read from `out`
 /// ([`ReadOutcome`]).
@@ -798,6 +807,31 @@ pub fn run_merge_transforms(
     };
     for (key, id) in rows {
         match id {
+            // A document without citations notes none, and is not made an
+            // arena for it.
+            TransformId::CitationDefinitionTransform if !doc.state().citation_notes.is_empty() => {
+                let (tree, state) = doc.arena();
+                state.ids.set_phase(id.python_name().to_string());
+                env_citation::note_citations(
+                    &mut TransformCx {
+                        tree,
+                        state,
+                        settings,
+                        key,
+                        docname,
+                        srcdir: inputs.source_dir,
+                    },
+                    env,
+                    inputs.doc2path,
+                );
+            }
+            TransformId::CitationReferenceTransform => {
+                env_citation::note_citation_references(
+                    env,
+                    docname,
+                    &doc.state().citation_reference_targets,
+                );
+            }
             TransformId::SphinxDomains => {
                 let output = doc.output();
                 output.state.ids.set_phase(id.python_name().to_string());
@@ -845,6 +879,11 @@ struct MergeDocument<'o> {
 }
 
 impl MergeDocument<'_> {
+    /// The document's state, whichever form its tree is held in.
+    fn state(&self) -> &DocumentState {
+        &self.output.state
+    }
+
     /// The read's output, its doctree the document's tree: the arena, if
     /// one is held, is turned back into it first.
     fn output(&mut self) -> &mut ParseOutput {
@@ -979,13 +1018,15 @@ fn has_image(node: &Node) -> bool {
 /// 850-040 `SphinxDomains`: the domains' `process_doc`, in the order
 /// `_DomainsContainer._process_doc` walks them — `c, changeset, citation,
 /// cpp, index, js, math, py, rst, std`, so `index` before `std` with `py`
-/// in between. `PythonDomain` defines no `process_doc` hook, so its slot in
-/// that walk is a no-op. The std and py registrations Sphinx makes while
-/// the document is parsed (`note_object`, `_note_term`, `note_module`)
-/// replay here, in `env_std::process_doc`, because the environment they
-/// change is the one the documents merge into in docname order; their
-/// duplicate warnings are the parse's records, keyed `(0, 0, seq)`. The
-/// index domain's records and the std domain's label records are the
+/// in between. The citation, math and python domains define no
+/// `process_doc` hook, so their slots in that walk are no-ops. The
+/// registrations Sphinx makes while the document is parsed replay here,
+/// because the environment they change is the one the documents merge into
+/// in docname order: the math domain's equation labels
+/// (`note_equation`, [`env_math::process_doc`]) and the std and py ones
+/// (`note_object`, `_note_term`, `note_module`, in `env_std::process_doc`).
+/// Their duplicate warnings are the parse's records, keyed `(0, 0, seq)`.
+/// The index domain's records and the std domain's label records are the
 /// slot's own, `(850, 40, seq)`. Warning locations come from node spans,
 /// the records and the doctree's source table, not the document text.
 fn sphinx_domains(
@@ -1005,6 +1046,19 @@ fn sphinx_domains(
         inputs.source_path,
         &mut index_warnings,
     );
+    let equation_warnings = env_math::process_doc(
+        env,
+        docname,
+        &output.registry.equations,
+        &output.doctree.sources,
+        inputs.source_dir,
+    );
+    for (seq, diagnostic) in equation_warnings {
+        records.push(LogRecord::Logger {
+            key: PARSE.order_key(seq),
+            diagnostic,
+        });
+    }
     let std_warnings = env_std::process_doc(
         env,
         &env_std::DocumentSource {

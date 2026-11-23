@@ -13,6 +13,7 @@ use crate::diagnostics::{Diagnostic, DiagnosticSink, OrderKey, WarningFilter};
 use crate::doctree::Doctree;
 use crate::document::Document;
 use crate::env;
+use crate::env::citation as env_citation;
 use crate::env::genindex as env_genindex;
 use crate::env::numbers as env_numbers;
 use crate::env::py_domain as env_py_domain;
@@ -1413,9 +1414,10 @@ impl SphinxBuilder {
     ///
     /// Runs the numbering passes (`TocTreeCollector.get_updated_docs`, which
     /// Sphinx dispatches through `env-get-updated` right after the read
-    /// phase) and Sphinx's post-read consistency checks over the finished
-    /// toctree graph (`env.check_consistency()`), then saves the environment
-    /// — Sphinx's own end-of-read-phase step (`builders/__init__.py:420`).
+    /// phase) and Sphinx's post-read consistency checks
+    /// (`env.check_consistency()`) — over the finished toctree graph, then
+    /// the citation domain's — then saves the environment — Sphinx's own
+    /// end-of-read-phase step (`builders/__init__.py:420`).
     ///
     /// Every document is resolved, not only the ones this build read: the
     /// write phase emits every page (see [`Self::write_phase`]), and a page
@@ -1469,6 +1471,20 @@ impl SphinxBuilder {
                 // so it must stay out of the warning count (and out of -W).
                 ConsistencyLevel::Info => info!("{}: {}", source.display(), message.message),
             }
+        }
+        // Then the domains' own checks (`self.domains._check_consistency()`,
+        // `environment/__init__.py:820-821`), of which only the citation
+        // domain's says anything: its citations no document refers to,
+        // located `(docname, lineno)`, whose `doc2path` is the document's
+        // source.
+        let doc2path = |docname: &str| -> PathBuf {
+            sources
+                .get(docname)
+                .map(|path| path.to_path_buf())
+                .unwrap_or_else(|| self.source_dir.join(format!("{docname}.rst")))
+        };
+        for warning in env_citation::check_consistency(env, &doc2path) {
+            push_in_order(&mut consistency, warning);
         }
         self.flush(consistency);
 

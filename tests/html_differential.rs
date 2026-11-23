@@ -2242,17 +2242,13 @@ const REPORTER_MESSAGE_FIXES: &[(&str, GapFix)] = &[("Cannot scale image!", gap_
 
 /// Logger records Ultra does not print, by message [TW §6.3, §7.3]. The
 /// unreferenced-footnote warning (`[ref.footnote]`, F6) is printed since
-/// T11, and the image collector's `image file not readable` (F3) since
-/// T13a.
+/// T11, the image collector's `image file not readable` (F3) since T13a,
+/// and the citation and math domains' `Citation [X] is not referenced.`
+/// and `citation not found` (F6) and `equation not found` (F10) since
+/// T13b.
 const MISSING_LOGGER_FIXES: &[(&str, GapFix)] = &[
     ("Configuration error!", gap_fix("F9", "5a-T3")),
-    (
-        "is not referenced. [ref.citation]",
-        gap_fix("F6", "5a-T13b"),
-    ),
-    ("citation not found: ", gap_fix("F6", "5a-T13b")),
     ("Could not obtain image size. ", gap_fix("F8", "5b")),
-    ("equation not found: ", gap_fix("F10", "5a-T13b")),
 ];
 
 /// The messages of the M1 directive and role validators
@@ -2627,17 +2623,9 @@ fn aux_gate_diff_reports_regressions_and_fixed_rows() {
 /// one line and a grep for an owner shows whole rows.
 #[rustfmt::skip]
 const KNOWN_AUX_GAPS: &[(&str, AuxComponent, &str)] = &[
-    ("core/docutils_snippets/docutils-0240", AuxComponent::Warnings, "F6: 5a-T13b"),
-    ("core/docutils_snippets/docutils-0241", AuxComponent::Warnings, "F6: 5a-T13b"),
-    ("core/docutils_snippets/docutils-0284", AuxComponent::Warnings, "F6: 5a-T13b"),
-    ("core/docutils_snippets/docutils-0286", AuxComponent::Warnings, "F6: 5a-T13b"),
-    ("core/docutils_snippets/docutils-0288", AuxComponent::Warnings, "F6: 5a-T13b"),
-    ("core/docutils_snippets/docutils-0292", AuxComponent::Warnings, "F6: 5a-T13b"),
     ("core/docutils_snippets/docutils-0447", AuxComponent::Warnings, "F8: 5b"),
     ("core/docutils_snippets/docutils-0449", AuxComponent::Warnings, "F8: 5b"),
     ("core/docutils_snippets/docutils-0450", AuxComponent::Warnings, "F8: 5b"),
-    ("core/docutils_snippets/docutils-0617", AuxComponent::Warnings, "F6: 5a-T13b"),
     ("core/environment_projects/inc_warn", AuxComponent::Warnings, "F8b: 5a-T14"),
     ("core/environment_projects/py_locations", AuxComponent::Warnings, "F8b: 5a-T14"),
-    ("core/sphinx_read_snippets/sphinx_read-0335", AuxComponent::Warnings, "F10: 5a-T13b"),
 ];

@@ -10,8 +10,9 @@
 //! backlinked, and the citation references 619 takes out of the tree still
 //! give their citation its backrefs ([DS §4.3-4.4]).
 
+use super::location;
 use super::references::replace_with_problematic;
-use super::state::{CitationNote, NodeView};
+use super::state::{CitationNote, NodeView, SourceRef};
 use super::tree::{TxId, TxNode, TxTree};
 use super::{Transform, TransformCx};
 use crate::diagnostics::Category;
@@ -25,7 +26,8 @@ use crate::doctree::{kinds, AttrValue, Uid};
 /// the transform registers with the citation domain, each citation's
 /// label, ids and node in tree order, is recorded
 /// ([`super::state::DocumentState::citation_notes`]) for the domain's
-/// stage-M half (T13b). The loop moves no node.
+/// `note_citation`, which stage M runs
+/// ([`crate::env::citation::note_citations`]). The loop moves no node.
 pub struct CitationDefinitionTransform;
 
 impl Transform for CitationDefinitionTransform {
@@ -54,12 +56,18 @@ impl Transform for CitationDefinitionTransform {
 /// its tree half: every citation reference of the tree is replaced by a
 /// `pending_xref` the write phase resolves through the citation domain,
 /// to the target its text names, holding `[target]` in an `inline`. The
-/// `pending_xref` keeps the reference's ids and classes, and its location
-/// (`copy_source_info`; here, its span). The reference leaves the tree but
-/// stays in `citation_refs`, where Footnotes (620) finds it. Each target
-/// is recorded, in tree order
+/// `pending_xref` keeps the reference's ids and classes, and takes its
+/// location (`copy_source_info`, `SP/sphinx/util/nodes.py`:
+/// `get_source_line(node)`, which docutils' parse leaves on no citation
+/// reference, so its nearest located ancestor's), as its span's source and
+/// line, where the write phase's warning about it reads it
+/// ([`crate::env::resolve`]); a location without a line leaves the span's
+/// line unknown. The reference leaves the tree but stays in
+/// `citation_refs`, where Footnotes (620) finds it. Each target is
+/// recorded, in tree order
 /// ([`super::state::DocumentState::citation_reference_targets`]), for the
-/// domain's `note_citation_reference` in stage M (T13b). Each reference
+/// domain's `note_citation_reference`, which stage M runs
+/// ([`crate::env::citation::note_citation_references`]). Each reference
 /// becomes one node, so the live loop skips nothing.
 pub struct CitationReferenceTransform;
 
@@ -69,12 +77,14 @@ impl Transform for CitationReferenceTransform {
         let is_reference = |node: &TxNode| node.kind == kinds::CITATION_REFERENCE;
         for reference in cx.tree.findall(root, is_reference) {
             let target = cx.tree.astext(reference);
+            let loc = location::get_source_line(cx.tree, reference, cx.state);
             let node = cx.tree.node(reference);
-            let (ids, classes, span) = (
-                node.attrs.ids.clone(),
-                node.attrs.classes.clone(),
-                node.span,
-            );
+            let (ids, classes) = (node.attrs.ids.clone(), node.attrs.classes.clone());
+            let mut span = node.span;
+            if let Some(SourceRef::Table(source)) = loc.source {
+                span.source = source;
+            }
+            span.line = loc.line.unwrap_or(0);
             let xref = cx.tree.new_node(kinds::PENDING_XREF);
             let inline = cx.tree.new_node("inline");
             let text = cx.tree.new_node(kinds::TEXT);
@@ -1164,9 +1174,9 @@ mod tests {
     /// each citation's `docname` and marks its label not smartquoted. The
     /// citation's backrefs come from the replaced references, which
     /// `citation_refs` still holds ([DS §4.3 (g)], `state.citation_backrefs`).
-    /// What the citation domain registers in stage M (T13b) is recorded in
-    /// tree order: each citation's label, ids and node, and each
-    /// reference's target.
+    /// What the citation domain registers in stage M is recorded in tree
+    /// order: each citation's label, ids and node, and each reference's
+    /// target.
     #[test]
     fn citation_references_become_pending_xref() {
         let rows = [

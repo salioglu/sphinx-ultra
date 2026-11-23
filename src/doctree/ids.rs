@@ -452,6 +452,21 @@ impl DocumentState {
         serial
     }
 
+    /// sphinx `env.new_serialno(category)`
+    /// (`SP/sphinx/environment/__init__.py:598-603`): the document's next
+    /// serial number of `category`, from 0 (`index` keeps its own counter,
+    /// [`Self::new_index_serialno`]).
+    pub(crate) fn new_serialno(&mut self, category: &str) -> u32 {
+        let counter = self
+            .parse
+            .serialnos
+            .entry(category.to_string())
+            .or_insert(0);
+        let serial = *counter;
+        *counter += 1;
+        serial
+    }
+
     /// sphinx `util.nodes.make_id(env, document, prefix, term)` (`:610-637`),
     /// both prefix regimes:
     ///
@@ -486,9 +501,7 @@ impl DocumentState {
                 Some(id) if !self.ids.is_taken(id) => return id.clone(),
                 _ => {}
             }
-            let counter = self.parse.serialnos.entry(prefix.to_string()).or_insert(0);
-            let serial = *counter;
-            *counter += 1;
+            let serial = self.new_serialno(prefix);
             node_id = Some(if prefix.is_empty() {
                 format!("id{serial}")
             } else {

@@ -548,7 +548,8 @@ pub struct DocumentState {
     /// How many identities the document has minted ([`Self::mint_uid`]).
     pub next_uid: u32,
     /// What the citation transforms' tree halves (619) leave the citation
-    /// domain, whose stage-M half registers it (T13b): the citations
+    /// domain, whose stage-M half registers it
+    /// ([`crate::env::citation`]): the citations
     /// `CitationDefinitionTransform` found in the tree and the target of
     /// each `pending_xref` `CitationReferenceTransform` made, both in tree
     /// order.

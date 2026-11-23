@@ -2,8 +2,16 @@
 //! read-state fixture reads one (`tools/gen_read_state_fixture.py`), and the
 //! spellings Sphinx's reads are compared in.
 
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
 use crate::config::BuildConfig;
-use crate::read::{read_standalone, ReadSettings};
+use crate::diagnostics::Diagnostic;
+use crate::doctree::Doctree;
+use crate::env::resolve::{resolve_document, NitpickConfig, Resolver};
+use crate::env::BuildEnvironment;
+use crate::intersphinx::Intersphinx;
+use crate::read::{merge_document, read_document, read_standalone, MergeInputs, ReadSettings};
 use crate::rst::ParseOptions;
 use crate::transforms::reporter::LogRecord;
 
@@ -105,6 +113,109 @@ pub(crate) fn read_snippet_with(rst: &str, settings: &ReadSettings) -> Read {
         warnings,
         trace,
         reported,
+    }
+}
+
+/// A project read the way the build reads one: each document of
+/// [`merge_project`], in the order given.
+pub(crate) struct Project {
+    /// The environment every document merged into.
+    pub(crate) env: BuildEnvironment,
+    /// Each document's read-phase records, rendered, in merge order.
+    pub(crate) records: Vec<String>,
+    /// Each document's post-read doctree, by docname, in merge order.
+    pub(crate) doctrees: Vec<(String, Doctree)>,
+}
+
+/// `documents`, `(docname, source)` pairs, each read as
+/// `<SRCDIR>/<docname>.rst` (stage R) and merged into one environment
+/// (stage M) in the order given, as the build merges a project's documents
+/// in sorted docname order.
+pub(crate) fn merge_project(documents: &[(&str, &str)]) -> Project {
+    let settings = ReadSettings::sphinx_defaults();
+    let doc2path = |docname: &str| PathBuf::from(format!("<SRCDIR>/{docname}.rst"));
+    let mut project = Project {
+        env: BuildEnvironment::default(),
+        records: Vec::new(),
+        doctrees: Vec::new(),
+    };
+    for (docname, source) in documents {
+        let path = doc2path(docname);
+        let parse = ParseOptions {
+            source_path: path.display().to_string(),
+            docname: docname.to_string(),
+            ..index_rst()
+        };
+        let mut read = read_document(source, &parse, &settings);
+        let inputs = MergeInputs {
+            source_path: &path,
+            source_dir: Path::new("<SRCDIR>"),
+            doc2path: &doc2path,
+            read_time_us: 0,
+        };
+        let records = merge_document(&mut project.env, docname, &mut read, &inputs, &settings);
+        project
+            .records
+            .extend(records.iter().map(|diagnostic| diagnostic.render(true)));
+        project
+            .doctrees
+            .push((docname.to_string(), read.output.doctree));
+    }
+    project
+}
+
+/// The write phase's view of one document of a [`Project`]
+/// ([`resolved`]).
+pub(crate) struct Resolved {
+    /// The resolved doctree's pformat, less its document line.
+    pub(crate) body: String,
+    /// The records the resolution logged, rendered.
+    pub(crate) warnings: Vec<String>,
+    /// The references into a domain the build does not resolve.
+    pub(crate) unresolvable: usize,
+}
+
+/// `docname` of `project` resolved against the project's environment the
+/// way the build resolves it: the dummy builder's `''` URIs, `numfig` off,
+/// no intersphinx, not nitpicky.
+pub(crate) fn resolved(project: &Project, docname: &str) -> Resolved {
+    let formats = BTreeMap::new();
+    let intersphinx = Intersphinx::default();
+    let resolver = Resolver {
+        env: &project.env,
+        numfig: false,
+        numfig_format: &formats,
+        doctree: &|_| None,
+        relative_uri: &|_, _| String::new(),
+        intersphinx: &intersphinx,
+    };
+    let nitpick = NitpickConfig {
+        nitpicky: false,
+        ignore: &[],
+        ignore_regex: &[],
+    };
+    let (_, doctree) = project
+        .doctrees
+        .iter()
+        .find(|(name, _)| name == docname)
+        .expect("a document of the project");
+    let mut doctree = doctree.clone();
+    let path = format!("<SRCDIR>/{docname}.rst");
+    let resolution = resolve_document(&resolver, &nitpick, docname, &mut doctree, Path::new(&path));
+    let pformat = doctree.root.pformat();
+    let document = DOC.replace("index.rst", &format!("{docname}.rst"));
+    let body = pformat
+        .strip_prefix(&document)
+        .unwrap_or_else(|| panic!("unexpected document line:\n{pformat}"))
+        .to_string();
+    Resolved {
+        body,
+        warnings: resolution
+            .warnings
+            .into_iter()
+            .map(|warning| Diagnostic::from(warning).render(true))
+            .collect(),
+        unresolvable: resolution.unresolvable_domain_refs,
     }
 }
 

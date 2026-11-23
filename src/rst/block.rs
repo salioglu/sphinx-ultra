@@ -374,8 +374,6 @@ pub(crate) struct BlockParser {
     /// (`_object.py:477-480` / `:498-503`; research spec §8 trap 14).
     py_module_key: bool,
     py_modules_key: bool,
-    /// Per-document equation counter (math domain numbering).
-    equation_serial: u32,
     /// Set while running a substitution-embedded directive (docutils
     /// SubstitutionDef state): replace/unicode/date require it, image
     /// flips its align validation, unicode's trim flags land here.
@@ -470,6 +468,37 @@ enum Ending {
     LiteralExpected,
 }
 
+/// Whether a top-level line starts an explicit-markup construct: docutils'
+/// `explicit_markup` (`\.\.( +|$)`) and `anonymous` (`__( +|$)`)
+/// transitions (`SP/docutils/parsers/rst/states.py`, `Body.patterns`).
+fn is_explicit_markup_start(text: &str) -> bool {
+    let after = |marker: &str| {
+        text.strip_prefix(marker)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with(' '))
+    };
+    after("..") || after("__")
+}
+
+/// docutils parses the explicit constructs after a top-level one in a
+/// nested state machine of their own (`Body.explicit_list`,
+/// `SP/docutils/parsers/rst/states.py:2508-2521`), which reads on while
+/// each next line starts another (`Explicit`, `:2785-2803`); a blank line
+/// it reads (`Explicit.blank`) or any other line ends it. The top-level
+/// machine stays where the first construct's block ended, so a construct
+/// of the list is not a top-level construct of its own, and a message
+/// docutils locates at the top-level machine ([`BlockParser::machine_loc`])
+/// is located there for the whole list.
+///
+/// So after a top-level construct that ended as `ending`, the next one
+/// joins the list when `explicit`, the construct just parsed, was explicit
+/// markup: right away if its block took its trailing blank lines
+/// ([`Ending::OffEnd`]), and only with no blank line between if its block
+/// stopped at one ([`Ending::BlankEnded`], which the document loop clears
+/// on a blank line). `None` when no construct can join.
+fn explicit_list_goes_on(explicit: bool, ending: Ending) -> Option<Ending> {
+    (explicit && matches!(ending, Ending::OffEnd | Ending::BlankEnded)).then_some(ending)
+}
+
 /// docutils' `reporter.get_source_and_line(None)` after the parse: the
 /// top-level state machine's final `line_offset` read against its input
 /// (`SP/docutils/statemachine.py:358-383`), given the top-level input
@@ -541,7 +570,6 @@ impl BlockParser {
             py_classes_key: false,
             py_module_key: false,
             py_modules_key: false,
-            equation_serial: 0,
             substitution_ctx: None,
             pending_splice: None,
             input: Vec::new(),
@@ -582,6 +610,7 @@ impl BlockParser {
             py_objects: parse.py_object_records,
             py_modules: parse.py_module_records,
             glossary_terms: parse.glossary_term_records,
+            equations: parse.equation_records,
             log_warnings: parse.log_warnings,
             dependencies: parse.dependency_records,
             included: parse.included_records,
@@ -1147,16 +1176,30 @@ impl BlockParser {
         // How the last top-level construct left the state machine; `None`
         // until one is parsed.
         let mut last_ending: Option<Ending> = None;
+        // How the explicit construct just parsed ended, while the next
+        // construct can still join its explicit list ([`explicit_list_goes_on`]).
+        let mut explicit_list: Option<Ending> = None;
         while pos < lines.len() {
             if lines[pos].is_blank() {
                 pos += 1;
+                // `Explicit.blank` ends the list: a blank line the last
+                // construct's block left unread.
+                if explicit_list == Some(Ending::BlankEnded) {
+                    explicit_list = None;
+                }
                 continue;
             }
             let mut out = Vec::new();
             self.open_sections = stack.len();
-            self.top_block_pending = true;
+            let line = lines[pos];
+            let explicit = line.indent() == 0
+                && is_explicit_markup_start(line.slice(&self.sources.arc(line.source)));
+            if !(explicit && explicit_list.is_some()) {
+                self.top_block_pending = true;
+            }
             let section = self.parse_element(&lines, &mut pos, true, &mut out);
             last_ending = Some(self.ending);
+            explicit_list = explicit_list_goes_on(explicit, self.ending);
             for node in out {
                 Self::container(&mut root, &mut stack).children.push(node);
             }
@@ -2546,6 +2589,9 @@ impl BlockParser {
             match hit {
                 Some((name, end)) => {
                     *pos = start + 1 + consumed;
+                    // The block it read `until_blank` leaves the machine on
+                    // its last line.
+                    self.note_top_block(lines[start + consumed]);
                     let span = self.span_of(lines, start, start + consumed);
                     // `block[0] = (block[0] + ' ')[targetmatch.end()
                     // - len(escaped) - 1:].strip()` — a NEGATIVE slice, so it
@@ -2677,8 +2723,10 @@ impl BlockParser {
             && !self.state.parse.include_log.is_empty()
         {
             self.state.parse.include_log.pop();
+            // `Body.comment` returns at once, its blank line unread, the
+            // machine on the marker line.
+            self.note_top_block(lines[*pos]);
             *pos += 1;
-            // `Body.comment` returns at once, its blank line unread.
             return Ending::BlankEnded;
         }
 
@@ -2706,6 +2754,14 @@ impl BlockParser {
             (Vec::new(), 0)
         };
         *pos = start + 1 + consumed;
+        // The machine stays on an empty comment's line; one that read its
+        // block is on the block's last line, its trailing blank lines
+        // included.
+        self.note_top_block(if consume_block {
+            lines[through_blank_lines(lines, start + consumed)]
+        } else {
+            lines[start]
+        });
         let span = self.span_of(lines, start, start + consumed);
         let mut text_lines: Vec<String> = Vec::new();
         if !rest.is_empty() {
@@ -5047,8 +5103,19 @@ impl BlockParser {
         }
     }
 
-    /// sphinx math (patches.py MathDirective + math-domain numbering).
-    /// Absent label/number are Python None -> pformat "True".
+    /// Sphinx's math directive (`MathDirective`,
+    /// `SP/sphinx/directives/patches.py:137-200`). The label is the
+    /// `:label:` option's, else the `:name:` option's; an empty one is
+    /// numbered automatically, `<docname>:<n>` (`math_number_all`, which
+    /// would number an unlabelled equation too, is off by default and not
+    /// configurable here). A label registers the equation with the math
+    /// domain, which gives it its number ([`Self::note_equation`]), and the
+    /// equation's target `equation-<label>`. Absent, the label and number
+    /// are Python `None`, which pformat prints `"True"`.
+    ///
+    /// The nodes are the post-read shape: `PropagateTargets` (260) has the
+    /// target's id moved onto the block and the target refer to it, which
+    /// the parse builds directly.
     fn run_sphinx_math(&mut self, input: DirectiveInput<'_>, out: &mut Vec<Node>) {
         let mut latex = self.join_lines(&input.content);
         if let Some(arg) = input.arguments.first() {
@@ -5058,9 +5125,10 @@ impl BlockParser {
                 format!("{arg}\n\n{latex}")
             };
         }
+        // `self.options.get('label', self.options.get('name'))`.
         let label =
             match opt_get(&input.options, "label").or_else(|| opt_get(&input.options, "name")) {
-                Some(OptVal::Str(s)) if !s.is_empty() => Some(s.clone()),
+                Some(OptVal::Str(s)) => Some(s.clone()),
                 _ => None,
             };
         let nowrap = opt_get(&input.options, "nowrap").is_some()
@@ -5080,13 +5148,22 @@ impl BlockParser {
         // equation's, which `PropagateTargets` appends (`docutils-0514`).
         let loc = self.machine_loc(directive_loc(&input));
         self.directive_add_name(&mut node, &input.options, loc);
+        // `if node['label'] == '': node['label'] = f'{docname}:{seq}'`,
+        // numbered by its own serial.
+        let label = match label {
+            Some(label) if label.is_empty() => {
+                let serial = self.state.new_serialno("sphinx.ext.math#equations");
+                Some(format!("{}:{serial}", self.docname))
+            }
+            label => label,
+        };
         match label {
             Some(label) => {
-                self.equation_serial += 1;
                 let id = ids::make_id(&format!("equation-{label}"));
+                let number = self.note_equation(&input, &label, &id, loc);
                 node.attrs.ids.push(id.clone());
                 node.set("label", AttrValue::Str(label));
-                node.set("number", AttrValue::Int(i64::from(self.equation_serial)));
+                node.set("number", AttrValue::Int(i64::from(number)));
                 let mut target = Node::elem(kinds::TARGET, input.span);
                 target.set("refid", AttrValue::Str(id));
                 out.push(target);
@@ -5098,6 +5175,57 @@ impl BlockParser {
                 out.push(node);
             }
         }
+    }
+
+    /// The registrations `MathDirective.add_target` makes for the equation
+    /// `label`, whose target's id is `id`
+    /// (`SP/sphinx/directives/patches.py:189-199`); returns the equation's
+    /// number.
+    ///
+    /// - `domain.note_equation(docname, label, location=node)`, whose
+    ///   number `get_equation_number_for` reads back: the document's
+    ///   `eqno` serial, from 1. The domain's half runs in stage M
+    ///   ([`crate::env::math::process_doc`]); the parse records the call
+    ///   ([`super::EquationRecord`]), located at the directive's line,
+    ///   where `set_source_info` put the block, and keyed by the record
+    ///   seq it draws here, before the target's.
+    /// - `document.note_explicit_target(target)` for the equation's target,
+    ///   `nodes.target('', '', ids=[id])`: `set_id`
+    ///   registers the id (the target has no names to bind). An id an
+    ///   earlier equation's target holds is docutils' `Duplicate ID` ERROR
+    ///   (`SP/docutils/nodes.py:1832-1843`), reported against the target,
+    ///   which is in no tree yet, so at `loc`, the top-level machine's
+    ///   position ([`Self::machine_loc`]), and, with no `msgnode`, placed
+    ///   nowhere. Were the id another node's, the message would print that
+    ///   node's start tag, which the parse does not keep: that message is
+    ///   not made.
+    fn note_equation(
+        &mut self,
+        input: &DirectiveInput<'_>,
+        label: &str,
+        id: &str,
+        loc: DocLoc,
+    ) -> u32 {
+        let number = self.state.new_serialno("eqno") + 1;
+        let seq = self.state.draw_seq();
+        self.state
+            .parse
+            .equation_records
+            .push(super::EquationRecord {
+                label: label.to_string(),
+                number,
+                source: input.span.source,
+                line: input.lineno,
+                seq,
+            });
+        if self.state.ids.register(id, None) {
+            self.state.parse.equation_ids.insert(id.to_string());
+        } else if self.state.parse.equation_ids.contains(id) {
+            let tag = format!("<target ids=\"{id}\">");
+            let text = format!("Duplicate ID: \"{id}\" used by {tag} and {tag}");
+            drop(self.state.report(messages::ERROR, &text, loc, Vec::new()));
+        }
+        number
     }
 
     /// sphinx index directive (`IndexDirective.run`,
@@ -8917,6 +9045,9 @@ impl BlockParser {
         {
             consumed += 1;
         }
+        // `anonymous_target` reads its block `until_blank`, which leaves
+        // the machine on the block's last line.
+        self.note_top_block(lines[start + consumed]);
         let span = self.span_of(lines, start, start + consumed);
         let mut link = rest.trim().to_string();
         for l in &lines[start + 1..start + 1 + consumed] {

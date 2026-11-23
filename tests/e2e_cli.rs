@@ -2123,49 +2123,60 @@ fn touched_document_reemits_its_records() {
     );
 }
 
-/// Review Focus 2: `-j 4` reads the documents in parallel — `d2` is long,
+/// Review Focus 2: `-j 4` reads the documents in parallel — `e` is long,
 /// so its read finishes after the others' — and still prints the stream of
-/// `-j 1`: each document's records, in sorted docname order. (Sphinx's own
-/// `-j 4` prints its read chunks in completion order; the pinned stream is
-/// its `-j 1` one.)
+/// `-j 1`: each document's records, in sorted docname order, each
+/// document's parse records first, then its transforms' and collectors'
+/// in transform order: `a`'s parse ERROR, `b`'s AnonymousHyperlinks (440)
+/// mismatch, which has no line, `c`'s unreferenced footnote (622) and `d`'s
+/// unreadable image (880), each after its document's later parse record. (Sphinx's own `-j 4` prints its
+/// read chunks in completion order; the pinned stream is its `-j 1` one,
+/// probed on Sphinx 9.1.0.)
 #[test]
 fn parallel_read_keeps_warning_order() {
-    let mut files = vec![(
-        "index.rst".to_string(),
-        format!(
-            "Index\n=====\n\n.. toctree::\n\n{}\nSee *this.\n",
-            (1..=8).map(|i| format!("   d{i}\n")).collect::<String>()
-        ),
-    )];
-    for i in 1..=8 {
-        let mut body = format!("Doc {i}\n=====\n\n");
-        if i % 2 == 1 {
-            body.push_str(&format!("Para *{i}.\n\n"));
-        }
-        if i % 3 == 0 {
-            body.push_str("Text\nmore\n   indented.\n\n");
-        }
-        if i == 2 {
-            for n in 0..4000 {
-                body.push_str(&format!("Paragraph {n} of filler text.\n\n"));
-            }
-            body.push_str("Tail *star.\n");
-        }
-        files.push((format!("d{i}.rst"), body));
-    }
-    let files: Vec<(&str, &str)> = files
-        .iter()
-        .map(|(name, body)| (name.as_str(), body.as_str()))
-        .collect();
-    let src = temp_source("t8-parallel", &files);
-    let emphasis = "WARNING: Inline emphasis start-string without end-string. [docutils]";
-    let indentation = "ERROR: Unexpected indentation. [docutils]";
-    let expected = format!(
-        "<SRCDIR>/d1.rst:4: {emphasis}\n<SRCDIR>/d2.rst:8004: {emphasis}\n\
-         <SRCDIR>/d3.rst:4: {emphasis}\n<SRCDIR>/d3.rst:8: {indentation}\n\
-         <SRCDIR>/d5.rst:4: {emphasis}\n<SRCDIR>/d6.rst:6: {indentation}\n\
-         <SRCDIR>/d7.rst:4: {emphasis}\n<SRCDIR>/index.rst:15: {emphasis}\n"
+    let long = (0..4000)
+        .map(|n| format!("Paragraph {n} of filler text.\n\n"))
+        .collect::<String>();
+    let index = format!(
+        "Index\n=====\n\n.. toctree::\n\n{}\nSee *this.\n",
+        ('a'..='h').map(|d| format!("   {d}\n")).collect::<String>()
     );
+    let e = format!("E\n=\n\n{long}Tail *e.\n");
+    let src = temp_source(
+        "t8-parallel",
+        &[
+            ("index.rst", &index),
+            ("a.rst", "A\n=\n\nText\nmore\n   indented.\n\nPara *a.\n"),
+            (
+                "b.rst",
+                "B\n=\n\nPara *b.\n\nSee `one`__ and `two`__.\n\n__ https://example.com\n",
+            ),
+            (
+                "c.rst",
+                "C\n=\n\n.. [1] An unreferenced footnote.\n\nPara *c.\n",
+            ),
+            ("d.rst", "D\n=\n\n.. image:: missing.png\n\nPara *d.\n"),
+            ("e.rst", &e),
+            ("f.rst", "F\n=\n\nClean.\n"),
+            ("g.rst", "G\n=\n\nPara *g.\n"),
+            ("h.rst", "H\n=\n\nText\nmore\n   indented.\n"),
+        ],
+    );
+    let expected = "\
+<SRCDIR>/a.rst:6: ERROR: Unexpected indentation. [docutils]
+<SRCDIR>/a.rst:8: WARNING: Inline emphasis start-string without end-string. [docutils]
+<SRCDIR>/b.rst:4: WARNING: Inline emphasis start-string without end-string. [docutils]
+<SRCDIR>/b.rst:: ERROR: Anonymous hyperlink mismatch: 2 references but 1 targets.
+See \"backrefs\" attribute for IDs. [docutils]
+<SRCDIR>/c.rst:6: WARNING: Inline emphasis start-string without end-string. [docutils]
+<SRCDIR>/c.rst:4: WARNING: Footnote [1] is not referenced. [ref.footnote]
+<SRCDIR>/d.rst:6: WARNING: Inline emphasis start-string without end-string. [docutils]
+<SRCDIR>/d.rst:4: WARNING: image file not readable: missing.png [image.not_readable]
+<SRCDIR>/e.rst:8004: WARNING: Inline emphasis start-string without end-string. [docutils]
+<SRCDIR>/g.rst:4: WARNING: Inline emphasis start-string without end-string. [docutils]
+<SRCDIR>/h.rst:6: ERROR: Unexpected indentation. [docutils]
+<SRCDIR>/index.rst:15: WARNING: Inline emphasis start-string without end-string. [docutils]
+";
 
     for jobs in ["4", "1"] {
         let (result, written) = warning_stream(
@@ -2257,6 +2268,137 @@ fn fail_on_warning_counts_reporter_records() {
     assert_eq!(
         result.status.code(),
         Some(0),
+        "stderr: {}",
+        stderr_of(&result)
+    );
+}
+
+/// The citation domain checks its citations once every document has been
+/// read (`CitationDomain.check_consistency`,
+/// `SP/sphinx/domains/citation.py:88-97`): a citation no document refers
+/// to warns after every read-phase record, and after the toctree's own
+/// consistency check, in the order the citations were noted. The location
+/// is `(docname, lineno)`: the document's path and the citation's line,
+/// which for a citation an included file holds is its line in that file.
+/// Probed on Sphinx 9.1.0 (this project's warning stream).
+#[test]
+fn unreferenced_citation_warns_in_consistency() {
+    let src = temp_source(
+        "t13b-unreferenced",
+        &[
+            (
+                "index.rst",
+                "Index\n=====\n\n.. toctree::\n\n   a\n   b\n   d\n",
+            ),
+            (
+                "a.rst",
+                "A\n=\n\n.. [Z] Unreferenced.\n\n.. [Y] Referenced from b.\n",
+            ),
+            ("b.rst", "B\n=\n\nSee [Y]_ and *this.\n"),
+            ("c.rst", "C\n=\n\nOrphan.\n"),
+            ("d.rst", "D\n=\n\nIntro.\n\n.. include:: part.inc\n"),
+            ("part.inc", "Part.\n\n.. [INC] Included, unreferenced.\n"),
+        ],
+    );
+    let (result, written) = warning_stream(&src, &out_dir("t13b-unreferenced"), &[]);
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert_eq!(
+        written,
+        "\
+<SRCDIR>/b.rst:4: WARNING: Inline emphasis start-string without end-string. [docutils]
+<SRCDIR>/c.rst: WARNING: document isn't included in any toctree [toc.not_included]
+<SRCDIR>/a.rst:4: WARNING: Citation [Z] is not referenced. [ref.citation]
+<SRCDIR>/d.rst:3: WARNING: Citation [INC] is not referenced. [ref.citation]
+"
+    );
+}
+
+/// A citation reference becomes a `pending_xref` into the citation domain
+/// (619-017), which the write phase resolves against every document's
+/// citations (`CitationDomain.resolve_xref`); one that names no citation
+/// warns `citation not found` (`dangling_warnings`,
+/// `SP/sphinx/domains/citation.py:37-39`), `[ref.ref]`, after the
+/// consistency records. It is located where `copy_source_info` put it: the
+/// reference's nearest located ancestor, the paragraph's first line for
+/// both of `b`'s, and the rubric's for the one a rubric holds, the end of
+/// the rubric's directive block. Probed on Sphinx 9.1.0 (this project's
+/// warning stream).
+#[test]
+fn citation_not_found_warns_at_resolve() {
+    let src = temp_source(
+        "t13b-not-found",
+        &[
+            ("index.rst", "Index\n=====\n\n.. toctree::\n\n   a\n   b\n"),
+            ("a.rst", "A\n=\n\n.. [Z] Unreferenced.\n"),
+            (
+                "b.rst",
+                "B\n=\n\nSee [W]_ here,\nand [Q]_ there.\n\n.. rubric:: Rubric [R]_\n\nText *b.\n",
+            ),
+        ],
+    );
+    let (result, written) = warning_stream(&src, &out_dir("t13b-not-found"), &[]);
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert_eq!(
+        written,
+        "\
+<SRCDIR>/b.rst:9: WARNING: Inline emphasis start-string without end-string. [docutils]
+<SRCDIR>/a.rst:4: WARNING: Citation [Z] is not referenced. [ref.citation]
+<SRCDIR>/b.rst:4: WARNING: citation not found: W [ref.ref]
+<SRCDIR>/b.rst:4: WARNING: citation not found: Q [ref.ref]
+<SRCDIR>/b.rst:8: WARNING: citation not found: R [ref.ref]
+"
+    );
+}
+
+/// A `:doc:` whose target is a URL names no document, and Sphinx says so
+/// like for any other missing document (`dangling_warnings`,
+/// `SP/sphinx/domains/std/__init__.py:790-796`): `unknown document`, with
+/// the target as written (decision 17 ends the M1 carve-out that kept such
+/// targets silent). Probed on Sphinx 9.1.0 (this project's warning
+/// stream).
+#[test]
+fn doc_role_url_target_warns_unknown_document() {
+    let src = temp_source(
+        "t13b-doc-url",
+        &[(
+            "index.rst",
+            "Title\n=====\n\nCall x.\nSee :doc:`https://example.com/page` and :doc:`missing`.\n",
+        )],
+    );
+    let (result, written) = warning_stream(&src, &out_dir("t13b-doc-url"), &[]);
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert_eq!(
+        written,
+        "\
+<SRCDIR>/index.rst:4: WARNING: unknown document: 'https://example.com/page' [ref.doc]
+<SRCDIR>/index.rst:4: WARNING: unknown document: 'missing' [ref.doc]
+"
+    );
+}
+
+/// Review Focus 3, for a transform's record: Sphinx counts docutils'
+/// records in its warning total whichever stage made them, so `-W` fails a
+/// build whose one record is AnonymousHyperlinks' (440) mismatch, after
+/// printing it, to stderr and to `-w` alike. Probed on Sphinx 9.1.0 (the
+/// record).
+#[test]
+fn fail_on_warning_counts_transform_records() {
+    let record = "<SRCDIR>/index.rst:: ERROR: Anonymous hyperlink mismatch: 2 references but 1 \
+                  targets.\nSee \"backrefs\" attribute for IDs. [docutils]\n";
+    let src = temp_source(
+        "t13b-fail-on-transform-record",
+        &[(
+            "index.rst",
+            "Title\n=====\n\nSee `one`__ and `two`__.\n\n__ https://example.com\n",
+        )],
+    );
+    let (result, written) =
+        warning_stream(&src, &out_dir("t13b-fail-on-transform-record"), &["-W"]);
+    assert_eq!(written, record);
+    assert_eq!(srcdir_spelled(&result.stderr, &src), record);
+    assert_eq!(
+        result.status.code(),
+        Some(1),
         "stderr: {}",
         stderr_of(&result)
     );
@@ -2517,10 +2659,14 @@ fn nitpicky_resolves_python_refs_and_counts_cross_domain_ones() {
         "stderr: {stderr}"
     );
     // (c) A `:c:func:` ref trips the cross-domain counter exactly once, and
-    // the URL-shaped `:doc:` keeps the M1 carve-out (no `unknown document`).
+    // the URL-shaped `:doc:` names no document, which Sphinx 9.1.0 says
+    // as it says for any missing document (decision 17 ended the M1
+    // carve-out that kept it silent; probed, the same line).
     assert!(
-        !stderr.contains("unknown document"),
-        "URL doc refs must stay exempt, stderr: {stderr}"
+        stderr.contains(
+            "index.rst:6: WARNING: unknown document: 'https://example.com/page' [ref.doc]"
+        ),
+        "stderr: {stderr}"
     );
     assert_eq!(
         stderr
