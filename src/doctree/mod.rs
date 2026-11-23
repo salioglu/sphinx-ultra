@@ -394,41 +394,9 @@ impl Node {
     ///
     /// Unlike [`Node::astext`], which joins every child with `""`.
     pub fn astext_docutils(&self) -> String {
-        match self.kind {
-            kinds::TEXT => self.text.clone().unwrap_or_default(),
-            kinds::IMAGE => match self.get("alt") {
-                Some(AttrValue::Str(alt)) => alt.clone(),
-                _ => String::new(),
-            },
-            kinds::OPTION_ARGUMENT => {
-                let delimiter = match self.get("delimiter") {
-                    Some(AttrValue::Str(delimiter)) => delimiter.as_str(),
-                    _ => " ",
-                };
-                format!("{delimiter}{}", self.join_children_astext(""))
-            }
-            "desc_returns" => format!(" -> {}", self.join_children_astext("")),
-            "desc_parameterlist" => format!("({})", self.join_children_astext(", ")),
-            "desc_optional" | "desc_type_parameter_list" => {
-                format!("[{}]", self.join_children_astext(", "))
-            }
-            kinds::SYSTEM_MESSAGE => {
-                let attr = |key: &'static str| match self.get(key) {
-                    Some(AttrValue::Str(value)) => value.clone(),
-                    Some(AttrValue::Int(value)) => value.to_string(),
-                    _ => String::new(),
-                };
-                format!(
-                    "{}:{}: ({}/{}) {}",
-                    attr("source"),
-                    attr("line"),
-                    attr("type"),
-                    attr("level"),
-                    self.element_astext()
-                )
-            }
-            _ => self.element_astext(),
-        }
+        let mut text = String::new();
+        push_astext(self, &mut text);
+        text
     }
 
     /// docutils `Element.astext()`: the children's `astext()` joined with
@@ -436,34 +404,117 @@ impl Node {
     /// For a `system_message` that is its body, without the location
     /// prefix: the text Sphinx's warning stream prints for it.
     pub fn element_astext(&self) -> String {
-        self.join_children_astext(self.child_text_separator())
-    }
-
-    fn join_children_astext(&self, separator: &str) -> String {
-        self.children
-            .iter()
-            .map(Node::astext_docutils)
-            .collect::<Vec<_>>()
-            .join(separator)
-    }
-
-    /// docutils / Sphinx `child_text_separator` of this element's class.
-    fn child_text_separator(&self) -> &'static str {
-        match self.kind {
-            kinds::OPTION | kinds::PENDING_XREF => "",
-            kinds::OPTION_GROUP => ", ",
-            kinds::OPTION_LIST_ITEM => "  ",
-            // A property in `addnodes.desc_signature`: `' '` when
-            // `self.get('is_multiline')` is truthy.
-            "desc_signature" if self.get("is_multiline").is_some_and(AttrValue::is_truthy) => " ",
-            kind if is_text_element(kind) => "",
-            _ => "\n\n",
-        }
+        let mut text = String::new();
+        push_children_astext(self, child_text_separator(self), &mut text);
+        text
     }
 
     /// Byte-parity pseudo-XML rendering (docutils `document.pformat()`).
     pub fn pformat(&self) -> String {
         pformat::pformat(self)
+    }
+}
+
+/// What docutils' `astext()` reads of a node: its kind, its text, its
+/// scalar attributes and its children. [`push_astext`] is written over it
+/// once, for the owned tree ([`Node::astext_docutils`]) and for the
+/// transforms' arena (`TxTree::astext`), which reads its nodes in place.
+pub(crate) trait AstextView<'a>: Copy {
+    fn kind(self) -> &'static str;
+    fn text(self) -> Option<&'a str>;
+    fn attr(self, key: &'static str) -> Option<&'a AttrValue>;
+    fn children(self) -> impl Iterator<Item = Self>;
+}
+
+impl<'a> AstextView<'a> for &'a Node {
+    fn kind(self) -> &'static str {
+        self.kind
+    }
+
+    fn text(self) -> Option<&'a str> {
+        self.text.as_deref()
+    }
+
+    fn attr(self, key: &'static str) -> Option<&'a AttrValue> {
+        self.get(key)
+    }
+
+    fn children(self) -> impl Iterator<Item = Self> {
+        self.children.iter()
+    }
+}
+
+/// [`Node::astext_docutils`] of `node`, appended to `out`.
+pub(crate) fn push_astext<'a>(node: impl AstextView<'a>, out: &mut String) {
+    match node.kind() {
+        kinds::TEXT => out.push_str(node.text().unwrap_or_default()),
+        kinds::IMAGE => {
+            if let Some(AttrValue::Str(alt)) = node.attr("alt") {
+                out.push_str(alt);
+            }
+        }
+        kinds::OPTION_ARGUMENT => {
+            let delimiter = match node.attr("delimiter") {
+                Some(AttrValue::Str(delimiter)) => delimiter.as_str(),
+                _ => " ",
+            };
+            out.push_str(delimiter);
+            push_children_astext(node, "", out);
+        }
+        "desc_returns" => {
+            out.push_str(" -> ");
+            push_children_astext(node, "", out);
+        }
+        "desc_parameterlist" => {
+            out.push('(');
+            push_children_astext(node, ", ", out);
+            out.push(')');
+        }
+        "desc_optional" | "desc_type_parameter_list" => {
+            out.push('[');
+            push_children_astext(node, ", ", out);
+            out.push(']');
+        }
+        kinds::SYSTEM_MESSAGE => {
+            let attr = |key: &'static str| match node.attr(key) {
+                Some(AttrValue::Str(value)) => value.clone(),
+                Some(AttrValue::Int(value)) => value.to_string(),
+                _ => String::new(),
+            };
+            out.push_str(&format!(
+                "{}:{}: ({}/{}) ",
+                attr("source"),
+                attr("line"),
+                attr("type"),
+                attr("level"),
+            ));
+            push_children_astext(node, child_text_separator(node), out);
+        }
+        _ => push_children_astext(node, child_text_separator(node), out),
+    }
+}
+
+/// The children's `astext()` joined with `separator`, appended to `out`.
+fn push_children_astext<'a>(node: impl AstextView<'a>, separator: &str, out: &mut String) {
+    for (at, child) in node.children().enumerate() {
+        if at > 0 {
+            out.push_str(separator);
+        }
+        push_astext(child, out);
+    }
+}
+
+/// docutils / Sphinx `child_text_separator` of the node's class.
+fn child_text_separator<'a>(node: impl AstextView<'a>) -> &'static str {
+    match node.kind() {
+        kinds::OPTION | kinds::PENDING_XREF => "",
+        kinds::OPTION_GROUP => ", ",
+        kinds::OPTION_LIST_ITEM => "  ",
+        // A property in `addnodes.desc_signature`: `' '` when
+        // `self.get('is_multiline')` is truthy.
+        "desc_signature" if node.attr("is_multiline").is_some_and(AttrValue::is_truthy) => " ",
+        kind if is_text_element(kind) => "",
+        _ => "\n\n",
     }
 }
 

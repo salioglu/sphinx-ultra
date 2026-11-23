@@ -2803,8 +2803,77 @@ pub(crate) mod tests {
             );
             let definition = first(root, "substitution_definition").expect("defined");
             assert_eq!(definition.rawsource(), Some(".. |sub| replace:: text"));
-            // The inline target an embedded alias builds is no Referential.
-            assert_eq!(first(root, kinds::TARGET).and_then(Node::rawsource), None);
+            // The inline target an embedded alias builds keeps the alias
+            // with the whitespace before it.
+            assert_eq!(
+                first(root, kinds::TARGET).and_then(Node::rawsource),
+                Some(" <target_>")
+            );
+        }
+    }
+
+    /// A hyperlink target keeps its source too, which an indirect target's
+    /// error turns into a `problematic` when the target refers to the
+    /// erring name (`references.py:292-297`): the inline target of an
+    /// embedded link its `<...>` with the whitespace before it
+    /// (`target(match.group(1), ...)`, `states.py:929`, `:941`); an
+    /// explicit target its block text, the continuation lines with their
+    /// indentation for `.. _name:` and `.. __:` (`hyperlink_target`,
+    /// `strip_indent=False`, `states.py:2055-2061`) and without it for
+    /// `__ link` (`anonymous_target`, `states.py:2530-2535`). An embedded
+    /// alias with no text before it takes the normalized alias as its text
+    /// and name (`states.py:946-949`).
+    //
+    // oracle (docutils 0.22.4, parse layer): each input parsed by
+    //   `docutils.parsers.rst.Parser` into `utils.new_document`, printing
+    //   the pformat and each target's and reference's `rawsource`.
+    #[test]
+    fn targets_keep_their_rawsource() {
+        let source = "`x <t_>`_ and `y <http://u>`_\n\n.. _t: missing_\n.. _u:\n   http://cont\n\
+                      .. __: anon_\n\n__ http://one\n   two\n";
+        for sphinx in [false, true] {
+            let out = parse_rst_full(
+                source,
+                &ParseOptions {
+                    source_path: "<snippet>".into(),
+                    sphinx,
+                    ..Default::default()
+                },
+            );
+            let mut targets = Vec::new();
+            all(&out.doctree.root, kinds::TARGET, &mut targets);
+            let rawsources: Vec<Option<&str>> =
+                targets.iter().map(|node| node.rawsource()).collect();
+            assert_eq!(
+                rawsources,
+                [
+                    Some(" <t_>"),
+                    Some(" <http://u>"),
+                    Some(".. _t: missing_"),
+                    Some(".. _u:\n   http://cont"),
+                    Some(".. __: anon_"),
+                    Some("__ http://one\ntwo"),
+                ],
+                "sphinx: {sphinx}"
+            );
+
+            let out = parse_rst_full(
+                "`<Foo Bar_>`_\n",
+                &ParseOptions {
+                    source_path: "<snippet>".into(),
+                    sphinx,
+                    ..Default::default()
+                },
+            );
+            assert_eq!(
+                out.doctree.root.pformat(),
+                "<document source=\"<snippet>\">\n    <paragraph>\n        \
+                 <reference name=\"foo bar\" refname=\"foo bar\">\n            foo bar\n        \
+                 <target ids=\"foo-bar\" names=\"foo\\ bar\" refname=\"foo bar\">\n",
+                "sphinx: {sphinx}"
+            );
+            let target = first(&out.doctree.root, kinds::TARGET).expect("a target");
+            assert_eq!(target.rawsource(), Some("<Foo Bar_>"));
         }
     }
 

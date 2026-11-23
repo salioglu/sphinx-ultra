@@ -499,47 +499,34 @@ fn duplicate_object_warning(
     .with_category(None)
 }
 
-/// docutils `document.ids` *after* the `PropagateTargets` transform
-/// (`docutils/transforms/references.py:17-95`), which is the map
-/// `process_doc` indexes.
-///
-/// Our parse layer does not run that transform — a `.. _label:` before a
-/// section stays its own `target` node instead of donating its id and name
-/// to the section — so the propagation is replayed here, read-only, over
-/// the tree we do produce. Everything Sphinx's `document.ids` would point at
-/// is therefore reachable by id; only the *serialized* doctree still shows
-/// the unpropagated shape (which is why the oracle's `resolved_pformat` for
-/// such documents is still exempted).
-///
-/// Reachability *by id* is not the whole of the transform, though: a
-/// consumer that reads `node['ids']` straight off the tree still sees the
-/// unpropagated list. [`PropagatedIds`] replays it in that direction, and
-/// is what the numbering passes and `get_fignumber` use.
+/// docutils `document.ids` as `process_doc` indexes it: each id of the
+/// post-read doctree, with the node that holds it and that node's place in
+/// a pre-order walk, the order `process_doc`'s replays merge their
+/// warnings by. The read's transforms have run, so a `.. _label:` above a
+/// section already labels the section (`PropagateTargets`, 260) and a
+/// `py:module` target that opens a section has given it its id
+/// (`MoveModuleTargets`, 210).
 pub(crate) struct DocumentIds<'a> {
     map: HashMap<&'a str, (usize, &'a Node)>,
 }
 
 impl<'a> DocumentIds<'a> {
     pub(crate) fn of(doctree: &'a Doctree) -> Self {
-        // Document (pre-order) order, exactly the sequence
-        // `Node.next_node(ascend=True)` walks.
-        let mut flat: Vec<FlatNode<'a>> = Vec::new();
-        flatten(&doctree.root, kinds::DOCUMENT, &mut flat);
-
-        let mut map: HashMap<&str, (usize, &Node)> = HashMap::new();
-        for (order, entry) in flat.iter().enumerate() {
-            for id in &entry.node.attrs.ids {
-                map.insert(id.as_str(), (order, entry.node));
+        fn walk<'a>(
+            node: &'a Node,
+            map: &mut HashMap<&'a str, (usize, &'a Node)>,
+            order: &mut usize,
+        ) {
+            for id in &node.attrs.ids {
+                map.insert(id.as_str(), (*order, node));
+            }
+            *order += 1;
+            for child in &node.children {
+                walk(child, map, order);
             }
         }
-
-        // PropagateTargets, in document order so that chained targets
-        // collapse onto the same final node.
-        for donation in propagations(&flat) {
-            for id in donation.ids {
-                map.insert(id.as_str(), (donation.order, donation.receiver));
-            }
-        }
+        let mut map = HashMap::new();
+        walk(&doctree.root, &mut map, &mut 0);
         Self { map }
     }
 
@@ -547,166 +534,10 @@ impl<'a> DocumentIds<'a> {
         self.map.get(id).copied()
     }
 
-    /// The node an id names, after propagation.
+    /// The node an id names.
     pub(crate) fn node(&self, id: &str) -> Option<&'a Node> {
         self.map.get(id).map(|(_, node)| *node)
     }
-}
-
-/// One id donation `PropagateTargets` would make: the node that receives
-/// the ids, where it sits in the pre-order walk, and the donor target's ids.
-struct Donation<'a> {
-    order: usize,
-    receiver: &'a Node,
-    ids: &'a [String],
-}
-
-/// Every donation docutils' `PropagateTargets` (`references.py:17-95`)
-/// would make over `flat`, in document order — so that chained targets
-/// collapse onto the same final node.
-fn propagations<'a>(flat: &[FlatNode<'a>]) -> Vec<Donation<'a>> {
-    let mut donations = Vec::new();
-    for (index, entry) in flat.iter().enumerate() {
-        if !is_propagating_target(entry.node, entry.parent) {
-            continue;
-        }
-        let Some((order, receiver)) = next_propagation_target(flat, index) else {
-            continue;
-        };
-        donations.push(Donation {
-            order,
-            receiver,
-            ids: entry.node.attrs.ids.as_slice(),
-        });
-    }
-    donations
-}
-
-/// `node['ids']` as docutils leaves it once `PropagateTargets` has run
-/// (`references.py:71-72` *extends* the receiving node's list), keyed by
-/// node identity inside one doctree.
-///
-/// [`DocumentIds`] replays the same transform the other way round — id to
-/// node — which is what a lookup by label needs. The numbering passes walk
-/// the tree instead, and both halves of a figure number key off the node's
-/// own id list: `register_fignumber` files the number under
-/// `fignode['ids'][0]` (`collectors/toctree.py:320-336`) and
-/// `get_fignumber` reads it back with `target_node['ids'][0]`
-/// (`domains/std/__init__.py:1395-1422`). Without this, a `.. _label:`
-/// written above a figure/table/code-block — the classic docutils spelling,
-/// as opposed to the `:name:` option — leaves the enumerable node with an
-/// empty `ids`, so it is never numbered and every `:numref:` to it fails.
-///
-/// Still missing, and out of scope here: Sphinx's `AutoNumbering` transform
-/// (`transforms/__init__.py:200-214`), which hands an *implicit* id to a
-/// captioned enumerable node carrying no label at all. Such a node is still
-/// skipped by the numbering walk, where Sphinx numbers it.
-pub(crate) struct PropagatedIds {
-    /// Receiving node's address -> the ids donated to it, in donation
-    /// order. Addresses are stable for as long as the doctree the map was
-    /// built from is borrowed, which is the only window a `PropagatedIds`
-    /// is used in.
-    donations: HashMap<usize, Vec<String>>,
-}
-
-impl PropagatedIds {
-    pub(crate) fn of(doctree: &Doctree) -> Self {
-        let mut flat: Vec<FlatNode<'_>> = Vec::new();
-        flatten(&doctree.root, kinds::DOCUMENT, &mut flat);
-
-        let mut donations: HashMap<usize, Vec<String>> = HashMap::new();
-        for donation in propagations(&flat) {
-            donations
-                .entry(node_identity(donation.receiver))
-                .or_default()
-                .extend(donation.ids.iter().cloned());
-        }
-        Self { donations }
-    }
-
-    /// The node's own ids first, then every id donated to it — the exact
-    /// list `next_node['ids'].extend(target['ids'])` leaves behind.
-    pub(crate) fn effective_ids(&self, node: &Node) -> Vec<String> {
-        let mut ids = node.attrs.ids.clone();
-        if let Some(donated) = self.donations.get(&node_identity(node)) {
-            ids.extend(donated.iter().cloned());
-        }
-        ids
-    }
-}
-
-fn node_identity(node: &Node) -> usize {
-    std::ptr::from_ref(node) as usize
-}
-
-/// One node in the pre-order walk, with what it hangs off and where its
-/// own subtree ends — the index a `descend=False` step jumps to.
-struct FlatNode<'a> {
-    node: &'a Node,
-    parent: &'static str,
-    subtree_end: usize,
-}
-
-fn flatten<'a>(node: &'a Node, parent: &'static str, out: &mut Vec<FlatNode<'a>>) {
-    let index = out.len();
-    out.push(FlatNode {
-        node,
-        parent,
-        // Patched below, once the subtree is laid out.
-        subtree_end: 0,
-    });
-    for child in &node.children {
-        flatten(child, node.kind, out);
-    }
-    out[index].subtree_end = out.len();
-}
-
-/// "Only block-level targets without reference (like `.. _target:`)"
-/// (`references.py:44-49`). `TextElement` parents mean an inline target;
-/// `refid`/`refuri`/`refname` mean the target already points somewhere.
-fn is_propagating_target(node: &Node, parent: &'static str) -> bool {
-    node.kind == kinds::TARGET
-        && !matches!(
-            parent,
-            kinds::PARAGRAPH | kinds::TITLE | kinds::TERM | kinds::FIELD_NAME | "caption"
-        )
-        // `assert len(target) == 0` — docutils only ever propagates a
-        // childless target, so an inline one (which carries its own text)
-        // is excluded whatever its parent element happens to be.
-        && node.children.is_empty()
-        && node.get("refid").is_none()
-        && node.get("refuri").is_none()
-        && node.get("refname").is_none()
-}
-
-/// The node a target donates its ids to: the next node in document order,
-/// skipping `system_message`s, and never an `Invisible`/`Targetable` other
-/// than a `target` (`references.py:50-59`).
-///
-/// The skip is `next_node(ascend=True, descend=False)` — the message's
-/// *sibling*, so its whole subtree is jumped over, not its first child. A
-/// `system_message` always has children (the problem text), so descending
-/// into one would hand the target's ids to a `paragraph` inside a warning
-/// and leave the section behind it unlabelled.
-fn next_propagation_target<'a>(flat: &[FlatNode<'a>], index: usize) -> Option<(usize, &'a Node)> {
-    let mut next = index + 1;
-    while let Some(entry) = flat.get(next) {
-        if entry.node.kind != kinds::SYSTEM_MESSAGE {
-            break;
-        }
-        next = entry.subtree_end;
-    }
-    let node = flat.get(next)?.node;
-    let blocked = matches!(
-        node.kind,
-        kinds::COMMENT
-            | "substitution_definition"
-            | "pending"
-            | kinds::FOOTNOTE
-            | kinds::CITATION
-            | kinds::TEXT
-    );
-    (!blocked).then_some((next, node))
 }
 
 /// The first descendant of `node` with the given kind, in document order.
@@ -722,10 +553,13 @@ fn find_first<'a>(node: &'a Node, kind: &str) -> Option<&'a Node> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rst::{parse_rst_full, ParseOptions};
+    use crate::read::{read_document, ReadSettings};
+    use crate::rst::ParseOptions;
 
+    /// Stage R's read of `source` ([`read_document`]): the post-read
+    /// doctree `SphinxDomains` (850) sees.
     fn parse(source: &str, docname: &str) -> crate::rst::ParseOutput {
-        parse_rst_full(
+        read_document(
             source,
             &ParseOptions {
                 source_path: format!("<{docname}>"),
@@ -737,7 +571,38 @@ mod tests {
                 srcdir: None,
                 ..Default::default()
             },
+            &ReadSettings::sphinx_defaults(),
         )
+        .output
+    }
+
+    /// CPython's chained labels (`.. _booleans:` / `.. _and:` / `.. _or:` /
+    /// `.. _not:` before a section): `PropagateTargets` (260) moves every
+    /// label's ids to the section, so each one titles it, under its own
+    /// id.
+    //
+    // oracle (Sphinx 9.1.0): the document built as `index.rst` with the
+    //   dummy builder; `env.domains.standard_domain.labels` holds
+    //   `('index', name, 'Boolean operations')` for each of the four.
+    #[test]
+    fn chained_labels_all_title_the_section() {
+        let (env, warnings) = read(&[(
+            "index",
+            ".. _booleans:\n.. _and:\n.. _or:\n.. _not:\n\nBoolean operations\n\
+             ==================\n\nSee :ref:`and`.\n",
+        )]);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        for label in ["booleans", "and", "or", "not"] {
+            assert_eq!(
+                env.std.labels.get(label),
+                Some(&(
+                    "index".to_string(),
+                    label.to_string(),
+                    "Boolean operations".to_string()
+                )),
+                "{label}"
+            );
+        }
     }
 
     /// Fold one source into a fresh environment and return the warnings.

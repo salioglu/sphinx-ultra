@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 
 use crate::doctree::{kinds, AttrValue, Doctree, Node};
 use crate::env::numbers::clean_astext;
-use crate::env::std_domain::{DocumentIds, PropagatedIds};
+use crate::env::std_domain::DocumentIds;
 use crate::env::toctree::docname_join;
 use crate::env::BuildEnvironment;
 use crate::error::{BuildWarning, WarningType};
@@ -185,9 +185,10 @@ impl Resolver<'_> {
             Some((
                 enumerable_node_type(node).map(str::to_string),
                 // `target_node['ids']`, which for a `.. _label:` written
-                // above the node holds the propagated id — the same key
-                // `assign_figure_numbers` filed the number under.
-                PropagatedIds::of(&doctree).effective_ids(node),
+                // above the node holds the label's id (`PropagateTargets`,
+                // 260) — the same key `assign_figure_numbers` filed the
+                // number under.
+                node.attrs.ids.clone(),
             ))
         }) else {
             return XrefOutcome::Missing;

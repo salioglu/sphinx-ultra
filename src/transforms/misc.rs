@@ -597,11 +597,15 @@ mod tests {
                      {tree}{stream:#?}"
                 ));
             }
-            // Each message is the transform's record: keyed by 830-014,
-            // after the parse's records.
+            // Each message that prints is the transform's record: keyed by
+            // 830-014, after the parse's records. (The INFOs
+            // `SphinxDanglingReferences`, 850-039, raises about targets
+            // nothing references never print.)
             for record in &read.outcome.state().log {
-                if let LogRecord::Reporter { key, .. } = record {
-                    assert_eq!((key.priority, key.serial), (830, 14), "{rst:?}: {record:?}");
+                if let LogRecord::Reporter { key, level, .. } = record {
+                    if *level >= crate::doctree::messages::WARNING {
+                        assert_eq!((key.priority, key.serial), (830, 14), "{rst:?}: {record:?}");
+                    }
                 }
             }
         }

@@ -987,7 +987,7 @@ pub(crate) fn collect_registrations(
 mod tests {
     use super::*;
     use crate::env::std_domain;
-    use crate::rst::{parse_rst_full, ParseOptions};
+    use crate::rst::ParseOptions;
     use std::path::PathBuf;
 
     fn entry(docname: &str, node_id: &str, objtype: &str, aliased: bool) -> PyObjectEntry {
@@ -1831,8 +1831,10 @@ mod tests {
 
     // ---- the replay through std_domain::process_doc --------------------
 
+    /// Stage R's read of `source` ([`crate::read::read_document`]): the
+    /// post-read doctree `SphinxDomains` (850) sees.
     fn parse(source: &str, docname: &str) -> crate::rst::ParseOutput {
-        parse_rst_full(
+        crate::read::read_document(
             source,
             &ParseOptions {
                 source_path: format!("<{docname}>"),
@@ -1844,7 +1846,9 @@ mod tests {
                 srcdir: None,
                 ..Default::default()
             },
+            &crate::read::ReadSettings::sphinx_defaults(),
         )
+        .output
     }
 
     /// Fold sources into a fresh environment through the real per-document

@@ -2236,11 +2236,10 @@ fn family_sort_key(family: &str) -> (bool, u32, &str) {
 /// writer, creates, by message, with that family. Every other `[docutils]`
 /// record is one the parser creates, which the reporter channel prints since
 /// T8 (F1) [TW §6.3, §7.4], or one a ported transform creates (`Transitions`'
-/// since T9c, F7): a record one side alone prints is unexplained.
+/// since T9c, F7; the hyperlink-target transforms' since T10, F4's
+/// `Unknown target name`, `Anonymous hyperlink mismatch` and `Indirect
+/// hyperlink target`): a record one side alone prints is unexplained.
 const REPORTER_MESSAGE_FIXES: &[(&str, GapFix)] = &[
-    ("Unknown target name: ", gap_fix("F4", "5a-T10")),
-    ("Anonymous hyperlink mismatch: ", gap_fix("F4", "5a-T10")),
-    ("Indirect hyperlink target ", gap_fix("F4", "5a-T10")),
     (
         "Undefined substitution referenced: ",
         gap_fix("F4", "5a-T11"),
@@ -2465,68 +2464,29 @@ impl CaseSources {
 }
 
 /// The causes of an `objects.inv` mismatch [BASE §2.8], told by each record
-/// only one side holds or holds differently.
+/// only one side holds or holds differently. The two the census knew, a
+/// title's dangling reference kept as its raw source (`INV:word_`) and a
+/// label PropagateTargets or IndirectHyperlinks changes
+/// (`INV:target-transforms`), are fixed since T10: every mismatch is now
+/// unexplained.
 fn inventory_census(diagnostics: &[Diagnostic]) -> GapCensus {
     let mut census = GapCensus::default();
-    for diagnostic in diagnostics {
-        let expected = InventoryFields::parse(&diagnostic.expected);
-        let actual = InventoryFields::parse(&diagnostic.actual);
-        let fix = match (diagnostic.category.as_str(), &expected, &actual) {
-            // A title's dangling reference stays as its problematic text, the
-            // reference's raw source (`[1]_`).
-            ("inventory-changed-record", Some(expected), Some(actual))
-                if expected.display.split_whitespace().any(|word| {
-                    word.ends_with('_') && !actual.display.split_whitespace().any(|w| w == word)
-                }) =>
-            {
-                Some(gap_fix("INV:word_", "5a-T10"))
-            }
-            // PropagateTargets gives a label its section's title, and
-            // IndirectHyperlinks makes a label external, which Sphinx skips.
-            ("inventory-extra-record" | "inventory-changed-record", _, Some(record))
-                if record.role == "std:label" =>
-            {
-                Some(gap_fix("INV:target-transforms", "5a-T10"))
-            }
-            _ => None,
-        };
-        match fix {
-            Some(fix) => {
-                census.fixes.insert(fix);
-            }
-            None => census.unexplained.push(format!(
+    census
+        .unexplained
+        .extend(diagnostics.iter().map(|diagnostic| {
+            format!(
                 "{}: expected {:?}, actual {:?}",
                 diagnostic.category, diagnostic.expected, diagnostic.actual
-            )),
-        }
-    }
+            )
+        }));
     census
 }
 
-/// The role and display name of an inventory record's text,
-/// `{name} {domain:role} {priority} {uri} {display name}`.
-struct InventoryFields {
-    role: String,
-    display: String,
-}
-
-impl InventoryFields {
-    fn parse(record: &str) -> Option<Self> {
-        use regex::Regex;
-        use std::sync::LazyLock;
-        static RECORD: LazyLock<Regex> =
-            LazyLock::new(|| Regex::new(r"^.+? (\S+:\S+) -?\d+ \S* (.*)$").expect("valid pattern"));
-        let fields = RECORD.captures(record)?;
-        Some(Self {
-            role: fields[1].to_string(),
-            display: fields[2].to_string(),
-        })
-    }
-}
-
 /// The causes of a `searchindex.js` mismatch [TW A18, BASE §2.9], told by
-/// the terms and titles that differ, the case's expected warnings and the
-/// constructs its sources use.
+/// the terms that differ, the case's expected warnings and the constructs
+/// its sources use. A section anchor the label PropagateTargets moves onto
+/// it (`SI:propagate-targets`) and a reference the 440, 460 or 850
+/// transforms keep as its raw source (`SI:word_`) are fixed since T10.
 fn searchindex_census(
     case: &CaseRecord,
     sources: &CaseSources,
@@ -2534,7 +2494,6 @@ fn searchindex_census(
 ) -> GapCensus {
     let mut expected_only_terms = BTreeSet::new();
     let mut actual_only_terms = BTreeSet::new();
-    let mut retargeted_titles = false;
     for diagnostic in diagnostics {
         let key = diagnostic.detail.split('"').nth(1).unwrap_or_default();
         let (expected, actual) = match (
@@ -2553,40 +2512,16 @@ fn searchindex_census(
                 .cloned()
                 .collect::<Vec<_>>()
         };
-        match key {
-            "terms" | "titleterms" => {
-                expected_only_terms.extend(only(&expected, &actual));
-                actual_only_terms.extend(only(&actual, &expected));
-            }
-            "alltitles" => {
-                retargeted_titles |= expected.iter().any(|(title, anchors)| {
-                    actual.get(title).is_some_and(|other| other != anchors)
-                });
-            }
-            _ => {}
+        if matches!(key, "terms" | "titleterms") {
+            expected_only_terms.extend(only(&expected, &actual));
+            actual_only_terms.extend(only(&actual, &expected));
         }
     }
     let warnings = case.warnings.as_str();
     let reference_text_terms = expected_only_terms.iter().any(|term| term.ends_with('_'));
     let causes = [
-        // A section's anchor is the label PropagateTargets moves onto it,
-        // ordered by SortIds.
-        (retargeted_titles, gap_fix("SI:propagate-targets", "5a-T10")),
-        // A reference the 440, 460 or 850 transforms turn into a problematic
-        // node keeps its raw source (`word_`) as text.
-        (
-            reference_text_terms
-                && [
-                    "Unknown target name: ",
-                    "Anonymous hyperlink mismatch: ",
-                    "Indirect hyperlink target ",
-                ]
-                .iter()
-                .any(|message| warnings.contains(message)),
-            gap_fix("SI:word_", "5a-T10"),
-        ),
-        // So does a footnote reference the Footnotes transform (620) cannot
-        // number (`[#]_`).
+        // A footnote reference the Footnotes transform (620) cannot number
+        // becomes a problematic that keeps its raw source (`[#]_`) as text.
         (
             reference_text_terms && warnings.contains(" footnote references: only "),
             gap_fix("SI:footnote-refs", "5a-T11"),
@@ -2609,7 +2544,7 @@ fn searchindex_census(
     let explains_reference_text = census
         .fixes
         .iter()
-        .any(|fix| matches!(fix.family, "SI:word_" | "SI:footnote-refs"));
+        .any(|fix| fix.family == "SI:footnote-refs");
     if census.fixes.is_empty() || (reference_text_terms && !explains_reference_text) {
         census
             .unexplained
@@ -2786,50 +2721,12 @@ fn aux_gate_diff_reports_regressions_and_fixed_rows() {
 /// one line and a grep for an owner shows whole rows.
 #[rustfmt::skip]
 const KNOWN_AUX_GAPS: &[(&str, AuxComponent, &str)] = &[
-    ("core/docutils_snippets/docutils-0115", AuxComponent::ObjectsInv, "INV:target-transforms: 5a-T10"),
-    ("core/docutils_snippets/docutils-0120", AuxComponent::Warnings, "F4: 5a-T10"),
-    ("core/docutils_snippets/docutils-0121", AuxComponent::ObjectsInv, "INV:target-transforms: 5a-T10"),
-    ("core/docutils_snippets/docutils-0122", AuxComponent::Warnings, "F4: 5a-T10"),
-    ("core/docutils_snippets/docutils-0167", AuxComponent::Warnings, "F4: 5a-T10"),
-    ("core/docutils_snippets/docutils-0212", AuxComponent::Warnings, "F4: 5a-T10"),
-    ("core/docutils_snippets/docutils-0212", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
-    ("core/docutils_snippets/docutils-0213", AuxComponent::Warnings, "F4: 5a-T10"),
-    ("core/docutils_snippets/docutils-0213", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
-    ("core/docutils_snippets/docutils-0215", AuxComponent::Warnings, "F4: 5a-T10"),
-    ("core/docutils_snippets/docutils-0215", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
-    ("core/docutils_snippets/docutils-0216", AuxComponent::Warnings, "F4: 5a-T10"),
-    ("core/docutils_snippets/docutils-0216", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
-    ("core/docutils_snippets/docutils-0217", AuxComponent::Warnings, "F4: 5a-T10"),
-    ("core/docutils_snippets/docutils-0217", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
-    ("core/docutils_snippets/docutils-0218", AuxComponent::Warnings, "F4: 5a-T10"),
-    ("core/docutils_snippets/docutils-0218", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
-    ("core/docutils_snippets/docutils-0219", AuxComponent::Warnings, "F4: 5a-T10"),
-    ("core/docutils_snippets/docutils-0219", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
-    ("core/docutils_snippets/docutils-0220", AuxComponent::Warnings, "F4: 5a-T10"),
-    ("core/docutils_snippets/docutils-0220", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
-    ("core/docutils_snippets/docutils-0224", AuxComponent::Warnings, "F4: 5a-T10"),
-    ("core/docutils_snippets/docutils-0224", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
-    ("core/docutils_snippets/docutils-0225", AuxComponent::Warnings, "F4: 5a-T10"),
-    ("core/docutils_snippets/docutils-0225", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
-    ("core/docutils_snippets/docutils-0226", AuxComponent::Warnings, "F4: 5a-T10"),
-    ("core/docutils_snippets/docutils-0226", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
     ("core/docutils_snippets/docutils-0236", AuxComponent::Warnings, "F4: 5a-T11"),
-    ("core/docutils_snippets/docutils-0236", AuxComponent::SearchIndex, "SI:footnote-refs+SI:word_: 5a-T11"),
     ("core/docutils_snippets/docutils-0237", AuxComponent::Warnings, "F4: 5a-T11"),
-    ("core/docutils_snippets/docutils-0237", AuxComponent::SearchIndex, "SI:footnote-refs+SI:word_: 5a-T11"),
-    ("core/docutils_snippets/docutils-0238", AuxComponent::Warnings, "F4: 5a-T10"),
-    ("core/docutils_snippets/docutils-0238", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
-    ("core/docutils_snippets/docutils-0239", AuxComponent::Warnings, "F4: 5a-T10"),
     ("core/docutils_snippets/docutils-0240", AuxComponent::Warnings, "F6: 5a-T13b"),
     ("core/docutils_snippets/docutils-0241", AuxComponent::Warnings, "F6: 5a-T13b"),
     ("core/docutils_snippets/docutils-0242", AuxComponent::Warnings, "F4: 5a-T11"),
-    ("core/docutils_snippets/docutils-0242", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
     ("core/docutils_snippets/docutils-0243", AuxComponent::Warnings, "F4: 5a-T11"),
-    ("core/docutils_snippets/docutils-0243", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
-    ("core/docutils_snippets/docutils-0253", AuxComponent::Warnings, "F4: 5a-T10"),
-    ("core/docutils_snippets/docutils-0253", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
-    ("core/docutils_snippets/docutils-0255", AuxComponent::Warnings, "F4: 5a-T10"),
-    ("core/docutils_snippets/docutils-0255", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
     ("core/docutils_snippets/docutils-0280", AuxComponent::Warnings, "F6: 5a-T11"),
     ("core/docutils_snippets/docutils-0281", AuxComponent::Warnings, "F6: 5a-T11"),
     ("core/docutils_snippets/docutils-0282", AuxComponent::Warnings, "F6: 5a-T11"),
@@ -2845,11 +2742,6 @@ const KNOWN_AUX_GAPS: &[(&str, AuxComponent, &str)] = &[
     ("core/docutils_snippets/docutils-0293", AuxComponent::Warnings, "F6: 5a-T11"),
     ("core/docutils_snippets/docutils-0359", AuxComponent::Warnings, "F6: 5a-T11"),
     ("core/docutils_snippets/docutils-0360", AuxComponent::Warnings, "F6: 5a-T11"),
-    ("core/docutils_snippets/docutils-0361", AuxComponent::Warnings, "F4: 5a-T10"),
-    ("core/docutils_snippets/docutils-0361", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
-    ("core/docutils_snippets/docutils-0364", AuxComponent::Warnings, "F4: 5a-T10"),
-    ("core/docutils_snippets/docutils-0364", AuxComponent::ObjectsInv, "INV:word_: 5a-T10"),
-    ("core/docutils_snippets/docutils-0364", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
     ("core/docutils_snippets/docutils-0367", AuxComponent::Warnings, "F4: 5a-T11"),
     ("core/docutils_snippets/docutils-0368", AuxComponent::Warnings, "F6: 5a-T11"),
     ("core/docutils_snippets/docutils-0372", AuxComponent::Warnings, "F6: 5a-T11"),
@@ -2862,8 +2754,6 @@ const KNOWN_AUX_GAPS: &[(&str, AuxComponent, &str)] = &[
     ("core/docutils_snippets/docutils-0435", AuxComponent::Warnings, "F3: 5a-T13a"),
     ("core/docutils_snippets/docutils-0437", AuxComponent::Warnings, "F3: 5a-T13a"),
     ("core/docutils_snippets/docutils-0438", AuxComponent::Warnings, "F3: 5a-T13a"),
-    ("core/docutils_snippets/docutils-0439", AuxComponent::Warnings, "F4: 5a-T10"),
-    ("core/docutils_snippets/docutils-0440", AuxComponent::Warnings, "F4: 5a-T10"),
     ("core/docutils_snippets/docutils-0442", AuxComponent::Warnings, "F3: 5a-T13a"),
     ("core/docutils_snippets/docutils-0443", AuxComponent::Warnings, "F3: 5a-T13a"),
     ("core/docutils_snippets/docutils-0446", AuxComponent::Warnings, "F3: 5a-T13a"),
@@ -2885,31 +2775,15 @@ const KNOWN_AUX_GAPS: &[(&str, AuxComponent, &str)] = &[
     ("core/docutils_snippets/docutils-0501", AuxComponent::Warnings, "F3: 5a-T13a"),
     ("core/docutils_snippets/docutils-0502", AuxComponent::Warnings, "F3: 5a-T13a"),
     ("core/docutils_snippets/docutils-0568", AuxComponent::SearchIndex, "SI:substitutions: 5a-T11"),
-    ("core/docutils_snippets/docutils-0573", AuxComponent::Warnings, "F4: 5a-T10"),
-    ("core/docutils_snippets/docutils-0573", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
     ("core/docutils_snippets/docutils-0575", AuxComponent::Warnings, "F4: 5a-T11"),
     ("core/docutils_snippets/docutils-0590", AuxComponent::Warnings, "F3: 5a-T13a"),
     ("core/docutils_snippets/docutils-0591", AuxComponent::Warnings, "F3: 5a-T13a"),
     ("core/docutils_snippets/docutils-0593", AuxComponent::Warnings, "F3: 5a-T13a"),
-    ("core/docutils_snippets/docutils-0603", AuxComponent::Warnings, "F4: 5a-T10"),
-    ("core/docutils_snippets/docutils-0603", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
-    ("core/docutils_snippets/docutils-0607", AuxComponent::Warnings, "F4: 5a-T10"),
-    ("core/docutils_snippets/docutils-0607", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
-    ("core/docutils_snippets/docutils-0608", AuxComponent::Warnings, "F4: 5a-T10"),
-    ("core/docutils_snippets/docutils-0608", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
     ("core/docutils_snippets/docutils-0611", AuxComponent::Warnings, "F4: 5a-T11"),
     ("core/docutils_snippets/docutils-0615", AuxComponent::Warnings, "F6: 5a-T11"),
     ("core/docutils_snippets/docutils-0616", AuxComponent::Warnings, "F6: 5a-T11"),
     ("core/docutils_snippets/docutils-0617", AuxComponent::Warnings, "F6: 5a-T13b"),
-    ("core/docutils_snippets/docutils-0638", AuxComponent::Warnings, "F4: 5a-T10"),
-    ("core/docutils_snippets/docutils-0639", AuxComponent::Warnings, "F4: 5a-T10"),
-    ("core/docutils_snippets/docutils-0669", AuxComponent::Warnings, "F4: 5a-T10"),
-    ("core/docutils_snippets/docutils-0669", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
-    ("core/docutils_snippets/docutils-0680", AuxComponent::Warnings, "F4: 5a-T10"),
-    ("core/docutils_snippets/docutils-0680", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
-    ("core/docutils_snippets/docutils-0683", AuxComponent::Warnings, "F4: 5a-T10"),
     ("core/docutils_snippets/docutils-0685", AuxComponent::Warnings, "F3: 5a-T13a"),
-    ("core/docutils_snippets/docutils-0700", AuxComponent::Warnings, "F4: 5a-T10"),
     ("core/docutils_snippets/docutils-0707", AuxComponent::Warnings, "F3: 5a-T13a"),
     ("core/docutils_snippets/docutils-0708", AuxComponent::Warnings, "F3: 5a-T13a"),
     ("core/docutils_snippets/docutils-0712", AuxComponent::SearchIndex, "SI:substitutions: 5a-T11"),
@@ -2918,8 +2792,5 @@ const KNOWN_AUX_GAPS: &[(&str, AuxComponent, &str)] = &[
     ("core/environment_projects/numfig_off_numref", AuxComponent::Warnings, "F3: 5a-T13a"),
     ("core/environment_projects/py_locations", AuxComponent::Warnings, "F8b: 5a-T14"),
     ("core/environment_projects/toctree_numbered_depth2", AuxComponent::Warnings, "F3: 5a-T13a"),
-    ("core/inventory_projects/dispname_and_header_escape", AuxComponent::SearchIndex, "SI:propagate-targets: 5a-T10"),
-    ("core/inventory_projects/std_objects_and_docs", AuxComponent::SearchIndex, "SI:propagate-targets: 5a-T10"),
-    ("core/inventory_projects/unicode_names", AuxComponent::SearchIndex, "SI:propagate-targets: 5a-T10"),
     ("core/sphinx_read_snippets/sphinx_read-0335", AuxComponent::Warnings, "F10: 5a-T13b"),
 ];

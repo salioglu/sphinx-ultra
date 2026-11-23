@@ -618,7 +618,26 @@ mod tests {
         let b_path = PathBuf::from("<SRCDIR>/b.rst");
         let mut b = read_document(b_source, &options("b"), &settings);
         let stage_r: Vec<OrderKey> = b.state().log.iter().map(LogRecord::key).collect();
-        assert_eq!(stage_r.len(), 1, "the short underline's WARNING");
+        // The short underline's WARNING, then `SphinxDanglingReferences`'
+        // (850-039) INFOs about the two targets nothing references, `dup`
+        // and the index entry's, which never print.
+        let raised: Vec<(u16, u16, u8)> = b
+            .state()
+            .log
+            .iter()
+            .map(|record| match record {
+                LogRecord::Reporter { key, level, .. } => (key.priority, key.serial, *level),
+                LogRecord::Logger { key, .. } => (key.priority, key.serial, 0),
+            })
+            .collect();
+        assert_eq!(
+            raised,
+            [
+                (0, 0, crate::doctree::messages::WARNING),
+                (850, 39, crate::doctree::messages::INFO),
+                (850, 39, crate::doctree::messages::INFO),
+            ]
+        );
         let mut merged_env = env.clone();
         let records = crate::transforms::run_merge_transforms(
             &mut b,

@@ -744,12 +744,12 @@ Leaf content for sub/c.
     },
     # -----------------------------------------------------------------------
     # Wave 4.5: py-domain projects (plan Task 14). Documents that carry a
-    # `py:module` directive are PropagateTargets-visible (plan Scope-3: the
-    # module target's ids migrate onto the following node in Sphinx's tree,
-    # a transform this crate defers to wave 5), so their resolved_pformat is
-    # gap-tabled in the consumer while every other key — registration
-    # records, modindex, tocs, warnings, xref-bearing sibling documents —
-    # compares in full.
+    # `py:module` directive are PropagateTargets-visible (the module
+    # target's ids migrate onto the following node in Sphinx's tree); the
+    # consumer gap-tabled their resolved_pformat until wave 5a ported the
+    # transform (T10), while every other key — registration records,
+    # modindex, tocs, warnings, xref-bearing sibling documents — compared
+    # in full.
     # -----------------------------------------------------------------------
     {
         # module + class + method + functions registered in NON-alphabetical
@@ -1235,11 +1235,12 @@ part para
         #
         # Layout: every reference lives in `a`, which therefore compares at
         # FULL strength; the definitions live in `b`, whose resolved tree
-        # is Scope-3 propagation-visible (the `.. _dup:` label's ids move
-        # onto its section, a KNOWN_RESOLVED_GAPS shape) — the module sits
-        # LAST in `b`, the py_dup shape, so its target has nothing to
-        # propagate onto, and the label's name differs from its section's
-        # slug so the section's FIRST id (the toc anchor) still agrees.
+        # is propagation-visible (the `.. _dup:` label's ids move onto its
+        # section, gap-tabled until wave 5a T10 ported PropagateTargets) —
+        # the module sits LAST in `b`, the py_dup shape, so its target has
+        # nothing to propagate onto, and the label's name differs from its
+        # section's slug so the section's FIRST id (the toc anchor) still
+        # agrees.
         "name": "py_any",
         "conf": {},
         "files": {

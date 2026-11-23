@@ -2472,6 +2472,16 @@ impl BlockParser {
                         link_block.push(l.clone());
                     }
                     let mut target = Node::elem(kinds::TARGET, span);
+                    // `make_target(block, blocktext, ...)`: the target's
+                    // rawsource is the block's text, the first line whole
+                    // and the continuation lines with their indentation
+                    // (`strip_indent=False`).
+                    let mut blocktext = line_text.to_string();
+                    for l in &lines[start + 1..start + 1 + consumed] {
+                        blocktext.push('\n');
+                        blocktext.push_str(self.sources.line_text(*l));
+                    }
+                    target.set_rawsource(&blocktext);
                     let anonymous = name.is_none();
                     match &name {
                         // `add_target`: `normalize_name(unescape(targetname))`.
@@ -6254,10 +6264,11 @@ impl BlockParser {
                 );
                 out.push(index);
             }
-            // NOTE §Scope-3: this is the PRE-propagation shape — the target
-            // keeps its ids; docutils PropagateTargets (a transform this
-            // parse layer deliberately does not run) is what turns it into
-            // `refid` and moves the id onto the next body node (trap 5).
+            // The parse's shape: the target keeps its ids. The read's
+            // transforms (decision 1) move them: `MoveModuleTargets` (210)
+            // to the section the target opens, else `PropagateTargets`
+            // (260) to the next body node, the target keeping a `refid`
+            // (trap 5).
             out.push(target);
         }
         out.extend(content);
@@ -8649,6 +8660,17 @@ impl BlockParser {
         }
         *pos = start + 1 + consumed;
         let mut target = Node::elem(kinds::TARGET, span);
+        // `make_target(block, blocktext, ...)` (`states.py:2530-2537`):
+        // the first line whole, then the continuation lines less their
+        // common indentation (`get_first_known_indented` strips it).
+        let continuation = &lines[start + 1..start + 1 + consumed];
+        let common = continuation.iter().map(|l| l.indent()).min().unwrap_or(0);
+        let mut blocktext = self.sources.line_text(lines[start]).to_string();
+        for l in continuation {
+            blocktext.push('\n');
+            blocktext.push_str(&self.sources.line_text(*l)[common..]);
+        }
+        target.set_rawsource(&blocktext);
         target.set("anonymous", AttrValue::Int(1));
         if !link.is_empty() {
             // `anonymous_target` (states.py:2530-2537) hands the escaped
@@ -16110,12 +16132,13 @@ mod py_desc_tests {
 
     // ---- py:module / py:currentmodule (row 9; traps 5, 6) --------------
 
-    /// Row 9 — OUR pre-propagation shape (§Scope-3 sanctioned divergence):
-    /// sphinx's recorded doctree has docutils PropagateTargets move the
-    /// module target's id onto the next body node (`<target ismod="1"
-    /// refid="module-mymod">` + desc `ids="module-mymod"`); this parse
-    /// layer runs no transforms, so the target KEEPS its ids and the desc
-    /// gains none. Everything else is the probe's bytes.
+    /// Row 9 — the parse's shape: sphinx's recorded doctree is the
+    /// post-read one, where `PropagateTargets` (260) has moved the module
+    /// target's id onto the next body node (`<target ismod="1"
+    /// refid="module-mymod">` + desc `ids="module-mymod"`, the sphinx
+    /// doctree fixture's `py.module_basic`); the parse runs no transforms,
+    /// so the target KEEPS its ids and the desc gains none. Everything else
+    /// is the probe's bytes.
     #[test]
     fn module_basic_pre_propagation_shape() {
         let out = parse_py(concat!(
@@ -16171,8 +16194,9 @@ mod py_desc_tests {
         );
     }
 
-    /// Module content stays in place (the id-propagation onto it is the
-    /// same excluded transform); `:deprecated:` reaches the record.
+    /// Module content stays in place (the read moves the target's id onto
+    /// it: the sphinx doctree fixture's `py.module_content_and_sections`);
+    /// `:deprecated:` reaches the record.
     #[test]
     fn module_content_and_deprecated() {
         let out = parse_py(".. py:module:: secmod\n\n   Module body content.\n");
@@ -16323,12 +16347,12 @@ mod py_desc_tests {
     /// `module-0` serial (`make_id` prefix fallback, `util/nodes.py:633-636`)
     /// and registers over the first — probe duplicate_modules [PY §5].
     ///
-    /// The sphinx PFORMAT of this case is propagation-dependent (docutils
-    /// PropagateTargets folds the first target's id onto the second:
-    /// `<target ids="module-0 module-dupmod">`), so it is EXCLUDED from the
-    /// sphinx doctree fixture (tools/gen_sphinx_fixture.py EXCLUDED) and the
-    /// module-0 registration is pinned here on our pre-propagation records
-    /// and ids instead. The duplicate WARNING is the env layer's job (T9).
+    /// The sphinx PFORMAT of this case is the post-read tree, where
+    /// `PropagateTargets` (260) has folded the first target's id onto the
+    /// second (`<target ids="module-0 module-dupmod">`, the sphinx doctree
+    /// fixture's `py.duplicate_modules`); the module-0 registration is
+    /// pinned here on the parse's records and ids. The duplicate WARNING
+    /// is the env layer's job (T9).
     #[test]
     fn duplicate_modules_take_the_module_0_serial() {
         let out = parse_py(".. py:module:: dupmod\n\n.. py:module:: dupmod\n");

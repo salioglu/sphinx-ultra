@@ -9,9 +9,171 @@
 
 use unicode_normalization::UnicodeNormalization;
 
-use super::tree::{TxId, TxNode, TxTree};
+use super::tree::{Findall, TxId, TxNode, TxTree};
 use super::{Transform, TransformCx};
-use crate::doctree::{kinds, AttrValue};
+use crate::doctree::{is_text_element, kinds, AttrValue};
+
+/// 010-018 `ApplySourceWorkaround` (`SP/sphinx/transforms/__init__.py:237-245`,
+/// `SP/sphinx/util/nodes.py:127-216`), its rawsource half: every
+/// `TextElement`, `image` and `topic` of the tree whose `rawsource` is
+/// empty takes its `astext()`, a `term`'s rawsource first losing each of
+/// its item's classifiers (`\s*:\s*<classifier>`, the last one first). The
+/// location half needs no pass: [`super::location::get_source_line`] reads
+/// a node's location as the workaround leaves it.
+///
+/// What docutils' parse records is the rawsource that stays: the
+/// Referential nodes', a literal block's, a target's. Where docutils
+/// records a node's markup source and the parse here records none (a
+/// paragraph, a title, inline markup, a term, an image's directive block),
+/// the node takes its text instead; no transform or writer reads those.
+/// The one the transforms read is a reference's with none of its own, an
+/// image `:target:`'s, which takes the image's `alt`: the text
+/// `DanglingReferences` (850) gives its `problematic`.
+pub struct ApplySourceWorkaround;
+
+impl Transform for ApplySourceWorkaround {
+    fn apply(&self, cx: &mut TransformCx<'_>) {
+        let tree = &mut *cx.tree;
+        let worked = |node: &TxNode| {
+            is_text_element(node.kind) || matches!(node.kind, kinds::IMAGE | "topic")
+        };
+        for node in tree.findall(tree.root(), worked) {
+            if tree.node(node).kind == kinds::TERM {
+                strip_classifiers(tree, node);
+            }
+            if tree.node(node).rawsource().is_none() {
+                let text = tree.astext(node);
+                tree.node_mut(node).set_rawsource(&text);
+            }
+        }
+    }
+}
+
+/// `apply_source_workaround`'s term branch (`SP/sphinx/util/nodes.py:165-174`):
+/// for each classifier of the term's item, the last one first,
+/// `re.sub(r'\s*:\s*%s' % re.escape(classifier.astext()), '', rawsource)`,
+/// Python's `\s` being Unicode whitespace and the four separators
+/// `\x1c`-`\x1f`. The parse records no rawsource on a term (docutils'
+/// is its whole line, classifiers included), so for now a term has none
+/// to strip and takes its text, which holds no classifier.
+fn strip_classifiers(tree: &mut TxTree, term: TxId) {
+    let Some(mut rawsource) = tree.node(term).rawsource().map(str::to_string) else {
+        return;
+    };
+    let Some(item) = tree.parent(term) else {
+        return;
+    };
+    let classifiers = tree.findall(item, |node| node.kind == kinds::CLASSIFIER);
+    for classifier in classifiers.into_iter().rev() {
+        let pattern = format!(
+            r"[\s\x1c-\x1f]*:[\s\x1c-\x1f]*{}",
+            regex::escape(&tree.astext(classifier))
+        );
+        let pattern = regex::Regex::new(&pattern).expect("an escaped classifier compiles");
+        rawsource = pattern.replace_all(&rawsource, "").into_owned();
+    }
+    tree.node_mut(term).set_rawsource(&rawsource);
+}
+
+/// 210-021 `MoveModuleTargets` (`SP/sphinx/transforms/__init__.py:153-175`):
+/// a `py:module` target (`ismod`) that stands third in a section, after
+/// the title and the module's index node, gives the section its ids ahead
+/// of the section's own and leaves the tree. docutils' `document.ids` is
+/// not updated: the ids still name the target ([DS §5.6]). The loop works
+/// through a snapshot of the targets (`list(self.document.findall(...))`).
+pub struct MoveModuleTargets;
+
+impl Transform for MoveModuleTargets {
+    fn apply(&self, cx: &mut TransformCx<'_>) {
+        let tree = &mut *cx.tree;
+        let targets = tree.findall(tree.root(), |node| node.kind == kinds::TARGET);
+        for target in targets {
+            let node = tree.node(target);
+            if node.attrs.ids.is_empty() || node.get("ismod").is_none() {
+                continue;
+            }
+            let Some(section) = tree.parent(target) else {
+                continue;
+            };
+            let at = tree
+                .node(section)
+                .children
+                .iter()
+                .position(|&child| child == target);
+            if tree.node(section).kind != kinds::SECTION || at != Some(2) {
+                continue;
+            }
+            let ids = tree.node(target).attrs.ids.clone();
+            tree.node_mut(section).attrs.ids.splice(0..0, ids);
+            tree.remove(section, target);
+        }
+    }
+}
+
+/// 220-032 `ReorderConsecutiveTargetAndIndexNodes`
+/// (`SP/sphinx/transforms/__init__.py:446-515`): from each target, the run
+/// of consecutive sibling targets and `index` nodes it starts is sorted
+/// stably, index nodes first, so that the targets stand together before
+/// the node `PropagateTargets` (260) labels with them. The loop is a live
+/// walk ([`Findall`]): after a sort it goes on from the run's place, where
+/// a target it visits again starts a run of targets, which stays as it is.
+pub struct ReorderConsecutiveTargetAndIndexNodes;
+
+impl Transform for ReorderConsecutiveTargetAndIndexNodes {
+    fn apply(&self, cx: &mut TransformCx<'_>) {
+        let tree = &mut *cx.tree;
+        let mut walk = Findall::new(tree.root());
+        while let Some(target) = walk.next(tree, |node| node.kind == kinds::TARGET) {
+            reorder_index_target_nodes(tree, target);
+        }
+    }
+}
+
+/// `_reorder_index_target_nodes` (`SP/sphinx/transforms/__init__.py:480-506`)
+/// from the target at `start`: `start` and its following siblings while
+/// they are targets or index nodes, sorted by `_sort_key` (index 0,
+/// target 1) when there are two or more.
+fn reorder_index_target_nodes(tree: &mut TxTree, start: TxId) {
+    let Some(parent) = tree.parent(start) else {
+        return;
+    };
+    let children = &tree.node(parent).children;
+    let Some(first) = children.iter().position(|&child| child == start) else {
+        return;
+    };
+    let mut run: Vec<TxId> = children[first..]
+        .iter()
+        .copied()
+        .take_while(|&node| matches!(tree.node(node).kind, kinds::TARGET | "index"))
+        .collect();
+    if run.len() < 2 {
+        return;
+    }
+    let len = run.len();
+    run.sort_by_key(|&node| u8::from(tree.node(node).kind != "index"));
+    tree.node_mut(parent)
+        .children
+        .splice(first..first + len, run);
+}
+
+/// 261-023 `SortIds` (`SP/sphinx/transforms/__init__.py:217-234`): a
+/// section with more than one id whose first starts with `id` — any id,
+/// not only an automatic one ([DS §5.6]) — takes it last. The loop is a
+/// live walk that moves no node.
+pub struct SortIds;
+
+impl Transform for SortIds {
+    fn apply(&self, cx: &mut TransformCx<'_>) {
+        let tree = &mut *cx.tree;
+        let mut walk = Findall::new(tree.root());
+        while let Some(section) = walk.next(tree, |node| node.kind == kinds::SECTION) {
+            let ids = &mut tree.node_mut(section).attrs.ids;
+            if ids.len() > 1 && ids[0].starts_with("id") {
+                ids.rotate_left(1);
+            }
+        }
+    }
+}
 
 /// 025 `TranslationProgressTotaliser` (`SP/sphinx/transforms/i18n.py:631-651`):
 /// stamps the document's `translation_progress`, the number of elements
@@ -565,6 +727,202 @@ mod tests {
             terms_of(&stage_r_with(greek, &TransformId::transform)),
             ["\u{3a3}\u{391}\u{3a3}", "\u{3c3}\u{3b1}\u{3c2}a"]
         );
+    }
+
+    /// The post-read pformat of `rst` (stage R and stage M, which removes
+    /// the reporter's messages), less the document line every read of
+    /// `<SRCDIR>/index.rst` opens with.
+    fn read_body(rst: &str) -> String {
+        const DOC: &str = "<document source=\"<SRCDIR>/index.rst\" \
+                           translation_progress=\"{'total': 0, 'translated': 0}\">\n";
+        let read =
+            crate::read::read_standalone(rst, &index_rst(), &ReadSettings::sphinx_defaults());
+        let pformat = read.outcome.doctree().root.pformat();
+        pformat
+            .strip_prefix(DOC)
+            .unwrap_or_else(|| panic!("{rst:?}: unexpected document line:\n{pformat}"))
+            .to_string()
+    }
+
+    /// `SortIds` (261-023, `SP/sphinx/transforms/__init__.py:217-234`) moves
+    /// a section's first id to the end when the section has several and
+    /// the first starts with `id` — any id, not only an automatic one
+    /// ([DS §5.6]): `Identity` behind the `mylabel` the label propagated
+    /// (`state.sortids_startswith`), and the automatic `id1` of a section
+    /// whose title's id a label took first behind that label
+    /// (`inventory_projects/std_objects_and_docs/b`). A first id that does
+    /// not start with `id`, or a lone one, stays.
+    //
+    // oracle (Sphinx 9.1.0, docutils 0.22.4): each input read as
+    //   `index.rst` through tools/gen_read_state_fixture.py's harness.
+    #[test]
+    fn sort_ids_moves_any_id_prefixed_first_id() {
+        let rows: [(&str, &str); 4] = [
+            (
+                // state.sortids_startswith.
+                ".. _mylabel:\n\nIdentity\n========\n\nText.\n",
+                "    <target refid=\"mylabel\">\n    \
+                 <section ids=\"mylabel identity\" names=\"identity mylabel\">\n        \
+                 <title>\n            Identity\n        <paragraph>\n            Text.\n",
+            ),
+            (
+                // inventory_projects/std_objects_and_docs/b.rst.
+                "B\n=\n\nSee :term:`a term` and :doc:`a`.\n\n.. _example:\n\nexample\n-------\n\n\
+                 Section whose title equals its id (dispname == fullname -> '-').\n",
+                "    <section ids=\"b\" names=\"b\">\n        <title>\n            B\n        \
+                 <paragraph>\n            See \n            <pending_xref refdoc=\"index\" \
+                 refdomain=\"std\" refexplicit=\"0\" reftarget=\"a term\" reftype=\"term\" \
+                 refwarn=\"1\">\n                <inline classes=\"xref std std-term\">\n                    \
+                 a term\n             and \n            <pending_xref refdoc=\"index\" \
+                 refdomain=\"std\" refexplicit=\"0\" reftarget=\"a\" reftype=\"doc\" \
+                 refwarn=\"1\">\n                <inline classes=\"xref std std-doc\">\n                    \
+                 a\n            .\n        <target refid=\"example\">\n        \
+                 <section dupnames=\"example\" ids=\"example id1\" names=\"example\">\n            \
+                 <title>\n                example\n            <paragraph>\n                \
+                 Section whose title equals its id (dispname == fullname -> '-').\n",
+            ),
+            (
+                ".. _target1:\n.. _target2:\n\nSection Title\n=============\n",
+                "    <target refid=\"target1\">\n    <target refid=\"target2\">\n    \
+                 <section ids=\"section-title target2 target1\" \
+                 names=\"section\\ title target2 target1\">\n        <title>\n            \
+                 Section Title\n",
+            ),
+            (
+                "Identity\n========\n\nText.\n",
+                "    <section ids=\"identity\" names=\"identity\">\n        <title>\n            \
+                 Identity\n        <paragraph>\n            Text.\n",
+            ),
+        ];
+        for (rst, body) in rows {
+            assert_eq!(read_body(rst), body, "{rst:?}");
+        }
+    }
+
+    /// `MoveModuleTargets` (210-021, `SP/sphinx/transforms/__init__.py:153-175`)
+    /// gives a `py:module` target's ids to the section it opens — the
+    /// target that stands third in the section, after the title and the
+    /// module's index node — ahead of the section's own, and takes the
+    /// target out (`py_toc/mod`, [TW A4]). A module target anywhere else
+    /// stays, and `PropagateTargets` (260) moves its id to the next node.
+    /// That includes one an empty block quote stands before at 210-021
+    /// (the quote a `.. default-domain::` indented under the title leaves,
+    /// which `HandleCodeBlocks`, 210-022, removes only afterwards).
+    //
+    // oracle (Sphinx 9.1.0): as `sort_ids_moves_any_id_prefixed_first_id`.
+    #[test]
+    fn move_module_targets_into_section() {
+        // py_toc/mod.rst, down to its first description.
+        let module = "Mod\n===\n\n.. py:module:: pkg.mymod\n\n.. py:class:: MyClass\n\n   \
+                      Class body.\n\n   .. py:method:: my_method(arg)\n\n      Method body.\n\n\
+                      .. py:function:: my_func(x)\n\n   Function body.\n";
+        let body = read_body(module);
+        assert_eq!(
+            body.split("        <desc ").next(),
+            Some(
+                "    <section ids=\"module-pkg.mymod mod\" names=\"mod\">\n        <title>\n            \
+                 Mod\n        <index entries=\"('pair',\\ 'module;\\ pkg.mymod',\\ \
+                 'module-pkg.mymod',\\ '',\\ None)\">\n        <index entries=\"('single',\\ \
+                 'MyClass\\ (class\\ in\\ pkg.mymod)',\\ 'pkg.mymod.MyClass',\\ '',\\ None)\">\n"
+            )
+        );
+        assert!(!body.contains("<target"), "{body}");
+
+        let index = "        <index entries=\"('pair',\\ 'module;\\ foo',\\ 'module-foo',\\ '',\\ \
+                     None)\">\n";
+        let rows: [(&str, String); 4] = [
+            (
+                "Title\n=====\n\n.. py:module:: foo\n\nText.\n",
+                format!(
+                    "    <section ids=\"module-foo title\" names=\"title\">\n        <title>\n            \
+                     Title\n{index}        <paragraph>\n            Text.\n"
+                ),
+            ),
+            (
+                "Title\n=====\n\n   .. default-domain:: py\n\n.. py:module:: foo\n\nText.\n",
+                format!(
+                    "    <section ids=\"title\" names=\"title\">\n        <title>\n            \
+                     Title\n{index}        <target ismod=\"1\" refid=\"module-foo\">\n        \
+                     <paragraph ids=\"module-foo\">\n            Text.\n"
+                ),
+            ),
+            (
+                "Title\n=====\n\nIntro.\n\n.. py:module:: foo\n\nText.\n",
+                format!(
+                    "    <section ids=\"title\" names=\"title\">\n        <title>\n            \
+                     Title\n        <paragraph>\n            Intro.\n{index}        \
+                     <target ismod=\"1\" refid=\"module-foo\">\n        \
+                     <paragraph ids=\"module-foo\">\n            Text.\n"
+                ),
+            ),
+            (
+                ".. py:module:: foo\n\nText.\n",
+                format!(
+                    "{}    <target ismod=\"1\" refid=\"module-foo\">\n    \
+                     <paragraph ids=\"module-foo\">\n        Text.\n",
+                    &index[4..]
+                ),
+            ),
+        ];
+        for (rst, body) in rows {
+            assert_eq!(read_body(rst), body, "{rst:?}");
+        }
+    }
+
+    /// The rawsource half of `ApplySourceWorkaround` (010-018,
+    /// `SP/sphinx/util/nodes.py:127-216`): every `TextElement`, `image`
+    /// and `topic` of the tree whose `rawsource` is empty takes its
+    /// `astext()`, a `term`'s first dropping each classifier it is
+    /// followed by. A rawsource the parse recorded stays (the reference's
+    /// own, the literal block's); an image `:target:`'s reference, which
+    /// has none, takes the image's `alt`. Sphinx 9.1.0 gives the values
+    /// below for these nodes; on the others the parse records no rawsource
+    /// where docutils records the markup source, and the fill gives their
+    /// text instead (nothing reads a paragraph's rawsource).
+    //
+    // oracle (Sphinx 9.1.0): the input read as `index.rst` through
+    //   tools/gen_read_state_fixture.py's harness, printing `rawsource` of
+    //   every TextElement, image and topic of the post-read doctree.
+    #[test]
+    fn apply_source_workaround_fills_empty_rawsources() {
+        let doctree = stage_r_with(
+            "Title\n=====\n\nSee `x <http://u>`_ here.\n\nterm : cls\n   def\n\n\
+             .. image:: x.png\n   :target: http://t\n   :alt: Alt\n\n::\n\n   code\n",
+            &TransformId::transform,
+        );
+        fn collect<'a>(node: &'a Node, kind: &str, out: &mut Vec<&'a Node>) {
+            if node.kind == kind {
+                out.push(node);
+            }
+            for child in &node.children {
+                collect(child, kind, out);
+            }
+        }
+        let rawsources = |kind: &str| {
+            let mut nodes = Vec::new();
+            collect(&doctree.root, kind, &mut nodes);
+            nodes
+                .iter()
+                .map(|node| node.rawsource().unwrap_or_default().to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(rawsources(kinds::TITLE), ["Title"]);
+        assert_eq!(rawsources(kinds::REFERENCE), ["`x <http://u>`_", "Alt"]);
+        assert_eq!(rawsources(kinds::TERM), ["term"]);
+        assert_eq!(rawsources(kinds::CLASSIFIER), ["cls"]);
+        assert_eq!(rawsources(kinds::LITERAL_BLOCK), ["code"]);
+        // Without the 010 row the image's reference keeps no rawsource.
+        let without_010 = |id: TransformId| -> &'static dyn Transform {
+            match id {
+                TransformId::ApplySourceWorkaround => &NoOp,
+                _ => id.transform(),
+            }
+        };
+        let doctree = stage_r_with(
+            ".. image:: x.png\n   :target: http://t\n   :alt: Alt\n",
+            &without_010,
+        );
+        assert_eq!(doctree.root.children[0].rawsource(), None);
     }
 
     /// `TranslationProgressTotaliser` (025) stamps the document's

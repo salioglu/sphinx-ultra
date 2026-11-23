@@ -12,17 +12,18 @@
 use anyhow::Result;
 use log::debug;
 use pulldown_cmark::{Event, Parser as MarkdownParser, Tag};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 use std::sync::Arc;
 
 use crate::config::BuildConfig;
-use crate::doctree::{kinds, Doctree, Node, Span};
+use crate::doctree::{kinds, AttrValue, Doctree, Node, Span};
 use crate::document::{
     Document, DocumentContent, LabelRecord, MarkdownContent, MarkdownNode, RstContent, TocEntry,
 };
 use crate::read::{self, ReadOutcome, ReadSettings};
 use crate::rst;
+use crate::transforms::state::NameTable;
 use crate::utils;
 
 pub struct Parser {
@@ -182,7 +183,7 @@ impl Parser {
 
             // Explicit targets for nitpicky label resolution.
             let mut labels = Vec::new();
-            collect_labels(root, &mut labels);
+            collect_labels(root, &outcome.state().names, &mut labels);
             document.labels = labels;
         }
 
@@ -293,17 +294,47 @@ fn collect_toc(node: &Node, level: usize, out: &mut Vec<TocEntry>) {
     }
 }
 
-fn collect_labels(node: &Node, out: &mut Vec<LabelRecord>) {
-    for child in &node.children {
-        if child.kind == kinds::TARGET && !child.attrs.names.is_empty() {
-            for name in &child.attrs.names {
-                out.push(LabelRecord {
-                    name: name.clone(),
-                    line: child.span.line as usize,
-                });
-            }
+/// The names of the targets under `root`, in document order, each at its
+/// target's line. A target `PropagateTargets` (260) gave its ids and names
+/// to the node after it keeps its first former id as its `refid`: its
+/// names are the explicit ones `names` binds to that id.
+fn collect_labels(root: &Node, names: &NameTable, out: &mut Vec<LabelRecord>) {
+    let mut explicit: HashMap<&str, Vec<&str>> = HashMap::new();
+    for (name, entry) in names.iter() {
+        if let Some(id) = entry.id.as_deref().filter(|_| entry.explicit) {
+            explicit.entry(id).or_default().push(name);
         }
-        collect_labels(child, out);
+    }
+    collect_target_names(root, &explicit, out);
+}
+
+/// [`collect_labels`] under `node`, with `explicit` the explicit names
+/// bound to each id.
+fn collect_target_names(
+    node: &Node,
+    explicit: &HashMap<&str, Vec<&str>>,
+    out: &mut Vec<LabelRecord>,
+) {
+    for child in &node.children {
+        if child.kind == kinds::TARGET {
+            let propagated = match child.get("refid") {
+                Some(AttrValue::Str(refid))
+                    if child.attrs.names.is_empty() && child.attrs.ids.is_empty() =>
+                {
+                    explicit.get(refid.as_str())
+                }
+                _ => None,
+            };
+            let target_names = match propagated {
+                Some(names) => names.clone(),
+                None => child.attrs.names.iter().map(String::as_str).collect(),
+            };
+            out.extend(target_names.into_iter().map(|name| LabelRecord {
+                name: name.to_string(),
+                line: child.span.line as usize,
+            }));
+        }
+        collect_target_names(child, explicit, out);
     }
 }
 
@@ -391,6 +422,30 @@ mod tests {
         assert_eq!(names, vec!["ref", "doc"]);
         assert_eq!(doc.role_records[0].target, "setup-label");
         assert_eq!(doc.role_records[0].line, 3);
+    }
+
+    /// Each target of a chain keeps its own label once `PropagateTargets`
+    /// (260) has moved the chain's names to the section; an external
+    /// target, which stays, keeps its name.
+    #[test]
+    fn labels_follow_propagated_targets() {
+        let parser = Parser::new(&BuildConfig::default()).unwrap();
+        let mut doc = Document::new("test.rst".into(), "test.html".into());
+        let read = parser.parse_rst_into(
+            ".. _a:\n.. _b:\n\nSection\n=======\n\n.. _ext: http://x\n\nText.\n",
+            Path::new("test.rst"),
+            "index",
+            None,
+            &mut doc,
+        );
+        let section = find_by_kind(&read.doctree().root, kinds::SECTION).expect("a section");
+        assert_eq!(section.attrs.names, ["section", "b", "a"]);
+        let labels: Vec<(&str, usize)> = doc
+            .labels
+            .iter()
+            .map(|label| (label.name.as_str(), label.line))
+            .collect();
+        assert_eq!(labels, [("a", 1), ("b", 2), ("ext", 7)]);
     }
 
     /// Nested docs (e.g. `guide/install.rst`) must carry their real

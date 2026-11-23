@@ -1622,6 +1622,10 @@ impl<'a> Inliner<'a> {
         r.set_rawsource(rawsource);
         match embedded {
             Some((text_part, link)) => {
+                // `match.group(1)`: the link with the whitespace before it,
+                // the rawsource of the target the link makes
+                // (`states.py:929`, `:941`).
+                let link_source = &raw[text_part.len()..];
                 let is_alias = link.ends_with('_')
                     && !link.ends_with("\u{0}_")
                     && !link
@@ -1633,12 +1637,13 @@ impl<'a> Inliner<'a> {
                     && !looks_like_uri(&link);
                 // The reference's Text is docutils' `text = escaped[:match
                 // .start(0)]` (`states.py:918`), markers kept; an empty text
-                // falls back to the alias or URI, already unescaped.
+                // falls back to the alias or URI, already unescaped — the
+                // alias normalized, as `refname` is (`states.py:946-949`).
                 let display_text;
                 if is_alias {
                     let alias = ids(&unescape(&link[..link.len() - 1], false));
                     let display_data = if text_part.is_empty() {
-                        unescape(&link[..link.len() - 1], false)
+                        alias.clone()
                     } else {
                         text_part.clone()
                     };
@@ -1654,6 +1659,7 @@ impl<'a> Inliner<'a> {
                         // reference's `refname` (`states.py:975-980`), so
                         // `refnames[alias]` lists the target first.
                         let mut t = Node::elem(kinds::TARGET, self.span);
+                        t.set_rawsource(link_source);
                         t.attrs.names.push(ids(&display_text));
                         t.set("refname", AttrValue::Str(alias));
                         self.state.note_indirect_target(&mut t);
@@ -1703,6 +1709,7 @@ impl<'a> Inliner<'a> {
                     if underscores == 1 {
                         // `nodes.target(..., refuri=alias)`, as above.
                         let mut t = Node::elem(kinds::TARGET, self.span);
+                        t.set_rawsource(link_source);
                         t.attrs.names.push(ids(&display_text));
                         t.set("refuri", AttrValue::Str(uri));
                         let msgs = self.state.note_implicit_target(&mut t, self.loc());

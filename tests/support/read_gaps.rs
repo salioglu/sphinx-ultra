@@ -7,17 +7,21 @@
 //! A gap row's reason is `"<families>: <owner>"`: every family its
 //! divergence shows, and the latest task that fixes one of them (the plan's
 //! Global Constraints). The family names are the corpus-baseline report's
-//! [BASE §3.8] (`dangling refs`, `docinfo`, `propagate targets`,
-//! `autonumber ids`, `footnotes`, `citations`, `indirect targets`,
-//! `substitutions`, and the writer-invisible `candidates`), plus, for read
-//! state the HTML oracle's inputs never show, `class attribute` and
-//! `pending`. The families fixed since are gone — the dispatch families T7
-//! fixed (`unknown role`, `code directive`, `` `class` is `py:class` ``,
-//! `pep/rfc index order` and the math directive's names), T9b's
-//! `system_message` (an INFO message `FilterSystemMessages`, 999, removes)
-//! and T9c's `doctest class` and `transitions` (`DoctestTransform`, 500,
-//! and `Transitions`, 830): a divergence of that shape now is a regression,
-//! which the census reports unexplained.
+//! [BASE §3.8] (`dangling refs`, `docinfo`, `autonumber ids`, `footnotes`,
+//! `citations`, `indirect targets`, `substitutions`, and the
+//! writer-invisible `candidates`), plus, for read state the HTML oracle's
+//! inputs never show, `class attribute` and `pending`. The families fixed
+//! since are gone — the dispatch families T7 fixed (`unknown role`, `code
+//! directive`, `` `class` is `py:class` ``, `pep/rfc index order` and the
+//! math directive's names), T9b's `system_message` (an INFO message
+//! `FilterSystemMessages`, 999, removes), T9c's `doctest class` and
+//! `transitions` (`DoctestTransform`, 500, and `Transitions`, 830) and
+//! T10's `propagate targets` (`PropagateTargets`, 260): a divergence of
+//! that shape now is a regression, which the census reports unexplained.
+//! T10's `dangling refs` and `indirect targets` stay, for what later tasks
+//! shift: a `problematic` whose ids, and the target transforms' id
+//! allocations and records, move when Footnotes (620), Substitutions (220)
+//! or AutoNumbering (210) take ids first, in rows those tasks own.
 
 use std::collections::BTreeSet;
 
@@ -64,7 +68,6 @@ pub const fn gap_fix(family: &'static str, owner: &'static str) -> GapFix {
 // The families, each with the task that ports what it lacks.
 pub const DANGLING_REFS: GapFix = gap_fix("dangling refs", "5a-T10");
 pub const INDIRECT_TARGETS: GapFix = gap_fix("indirect targets", "5a-T10");
-pub const PROPAGATE_TARGETS: GapFix = gap_fix("propagate targets", "5a-T10");
 pub const FOOTNOTES: GapFix = gap_fix("footnotes", "5a-T11");
 pub const CITATIONS: GapFix = gap_fix("citations", "5a-T11");
 pub const SUBSTITUTIONS: GapFix = gap_fix("substitutions", "5a-T11");
@@ -325,9 +328,6 @@ fn hunk_census(hunk: &Hunk<'_>, defined: &BTreeSet<String>, messages: &[Option<S
     for (at, line) in removed.iter().enumerate() {
         if line.starts_with("<problematic ") {
             problematic_fixes(&text_under(&hunk.removed, at), defined, &mut census);
-        }
-        if line.starts_with("<target ") && line.contains(" refid=") && !line.contains(" refuri=") {
-            census.add(PROPAGATE_TARGETS);
         }
         if line.starts_with("<reference ") || line.starts_with("<target ") {
             let resolved = ["refuri", "refid"].iter().any(|attribute| {

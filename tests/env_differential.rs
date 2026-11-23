@@ -585,45 +585,22 @@ const KNOWN_WARNING_GAPS: &[(&str, &str)] = &[
     ),
     (
         "state.label_order",
-        "propagate targets+label order: 5a-T13a — `b`'s two labels both \
-         label its section through `PropagateTargets`, whose chained replay \
-         registers `alpha` only (5a-T10), and the duplicates warn in \
-         `nametypes` insertion order, `zeta` before `alpha`, where the std \
-         collector sorts by name (5a-T13a)",
-    ),
-    (
-        "state.final_position_include",
-        "dangling refs: 5a-T10 — `AnonymousHyperlinks` (440) reports the \
-         unmatched `x`__ of each document with no node and no line, so \
-         docutils locates it at the final state-machine position: `index`'s \
-         is the include's padding line, `part`'s its own end",
+        "label order: 5a-T13a — `b`'s two labels both label its section, \
+         and the duplicates warn in `nametypes` insertion order, `zeta` \
+         before `alpha`, where the std collector orders the labels of one \
+         node by name",
     ),
 ];
 
 /// Projects whose oracle `std` data this task deliberately does not
 /// reproduce. Checked **strictly**, exactly like [`KNOWN_TOC_GAPS`].
-const KNOWN_STD_GAPS: &[(&str, &str)] = &[(
-    "state.label_order",
-    "propagate targets: 5a-T10 — `zeta` labels `b`'s section through a \
-     chain of two targets, which the `PropagateTargets` replay does not \
-     follow, so `zeta` is never registered",
-)];
+const KNOWN_STD_GAPS: &[(&str, &str)] = &[];
 
 /// Reasons shared by several [`KNOWN_RESOLVED_GAPS`] entries.
 const TOCTREE_RESOLUTION: &str = "the write-phase toctree resolution that turns a \
      `toctree` node into a `compact_paragraph` entry tree is not ported yet";
 const IMAGE_CANDIDATES: &str = "`ImageCollector.process_doc` stamps `candidates` onto \
      every `image`; no image collection exists yet";
-const PROPAGATE_TARGETS: &str = "docutils' `PropagateTargets` transform (which moves a \
-     block-level target's ids and names onto the node after it) is replayed for label \
-     collection but not applied to the tree itself";
-const PROPAGATE_MODULE_TARGETS: &str = "plan §Scope-3: a `py:module` target's ids \
-     migrate onto the following node in Sphinx's tree (docutils `PropagateTargets`, \
-     plus the index/target reorder around it) — the in-tree application is deferred \
-     to wave 5; the registration records (`py_objects`/`py_modules`) pin the \
-     pre-propagation node ids for these same documents, and a module registered as \
-     a document's LAST node (py_dup's `a`) compares clean because a trailing \
-     target has nothing to propagate onto";
 
 /// Per-document `resolved_pformat` divergences this task deliberately does
 /// not close, each pinned to what would close it. Checked **strictly**,
@@ -671,23 +648,12 @@ const KNOWN_RESOLVED_GAPS: &[(&str, &str, &str)] = &[
          from the doctree after reading it (`collectors/metadata.py:40`); \
          ours reads it and leaves the node in place",
     ),
-    ("labels_dups", "a", PROPAGATE_TARGETS),
-    ("labels_dups", "b", PROPAGATE_TARGETS),
-    ("index_entries", "a", PROPAGATE_TARGETS),
     // Wave 4.5 py projects: toctree-bearing index documents share the
-    // write-phase gap above; module-bearing documents are §Scope-3
-    // propagation-visible (verified: each diff is exactly the module
-    // target ids moving onto the section/following target, nothing else).
+    // write-phase gap above.
     ("py_basic", "index", TOCTREE_RESOLUTION),
     ("py_dup", "index", TOCTREE_RESOLUTION),
     ("py_toc", "index", TOCTREE_RESOLUTION),
     ("py_toc_parents", "index", TOCTREE_RESOLUTION),
-    ("py_basic", "a", PROPAGATE_MODULE_TARGETS),
-    ("py_dup", "b", PROPAGATE_MODULE_TARGETS),
-    ("py_toc", "mod", PROPAGATE_MODULE_TARGETS),
-    ("py_toc_parents", "mod", PROPAGATE_MODULE_TARGETS),
-    ("py_modindex", "index", PROPAGATE_MODULE_TARGETS),
-    ("py_modindex_prefix", "index", PROPAGATE_MODULE_TARGETS),
     // Wave 4.5 include/literalinclude projects. Only the toctree-bearing
     // index documents and the one image-bearing document are skipped
     // outright; every other document of these three projects is compared,
@@ -697,26 +663,10 @@ const KNOWN_RESOLVED_GAPS: &[(&str, &str, &str)] = &[
     ("inc_warn", "index", TOCTREE_RESOLUTION),
     ("inc_deps", "index", TOCTREE_RESOLUTION),
     // Panel fix round B: `py_any` keeps every `:any:` reference in `a`
-    // (compared at full strength) and its definitions in `b`, whose two
-    // labels sit before section titles — the PropagateTargets shape. The
-    // module is the document's LAST node, so its target propagates onto
-    // nothing (the py_dup shape) and is not part of the diff.
+    // (compared at full strength) and its definitions in `b`.
     ("py_any", "index", TOCTREE_RESOLUTION),
-    ("py_any", "b", PROPAGATE_TARGETS),
     // Wave 5a read-state projects.
     ("state.label_order", "index", "toctree resolution: 5a-T15"),
-    ("state.label_order", "a", "propagate targets: 5a-T10"),
-    ("state.label_order", "b", "propagate targets: 5a-T10"),
-    (
-        "state.final_position_include",
-        "index",
-        "dangling refs: 5a-T10",
-    ),
-    (
-        "state.final_position_include",
-        "part",
-        "dangling refs: 5a-T10",
-    ),
     (
         "inc_deps",
         "a",
@@ -1768,11 +1718,11 @@ fn resolved_doctrees_match_oracle() {
 /// Update the seven constants and the doc sites together.
 const DOCUMENTED_PROJECTS: usize = 31;
 const DOCUMENTED_DOCUMENTS: usize = 89;
-const DOCUMENTED_WHOLESALE_EXEMPT_DOCUMENTS: usize = 48;
+const DOCUMENTED_WHOLESALE_EXEMPT_DOCUMENTS: usize = 34;
 const DOCUMENTED_STAMP_EXEMPT_DOCUMENTS: usize = 6;
-const DOCUMENTED_BYTE_EXACT_DOCUMENTS: usize = 35;
-const DOCUMENTED_WARNING_EXEMPT_PROJECTS: usize = 6;
-const DOCUMENTED_BYTE_EXACT_WARNING_PROJECTS: usize = 25;
+const DOCUMENTED_BYTE_EXACT_DOCUMENTS: usize = 49;
+const DOCUMENTED_WARNING_EXEMPT_PROJECTS: usize = 5;
+const DOCUMENTED_BYTE_EXACT_WARNING_PROJECTS: usize = 26;
 
 #[test]
 fn exemption_arithmetic_matches_the_documented_numbers() {

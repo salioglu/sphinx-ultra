@@ -3027,6 +3027,24 @@
       "name": "pyconf.strip_signature_backslash_on",
       "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <index entries=\"('pair',\\ 'built-in\\ function;\\ f()',\\ 'f',\\ '',\\ None)\">\n    <desc classes=\"py function\" desctype=\"function\" domain=\"py\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"function\">\n        <desc_signature _toc_name=\"f()\" _toc_parts=\"('f',)\" class=\"\" classes=\"sig sig-object\" fullname=\"f\" ids=\"f\" module=\"True\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                f\n            <desc_parameterlist multi_line_parameter_list=\"0\" multi_line_trailing_comma=\"1\" xml:space=\"preserve\">\n                <desc_parameter xml:space=\"preserve\">\n                    <desc_sig_name classes=\"n\">\n                        a\n                <desc_parameter xml:space=\"preserve\">\n                    <desc_sig_name classes=\"n\">\n                        b\n        <desc_content>\n",
       "rst": ".. py:function:: f(a\\, b)\n"
+    },
+    {
+      "family": "py",
+      "name": "py.module_basic",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <index entries=\"('pair',\\ 'module;\\ mymod',\\ 'module-mymod',\\ '',\\ None)\">\n    <index entries=\"('single',\\ 'f()\\ (in\\ module\\ mymod)',\\ 'mymod.f',\\ '',\\ None)\">\n    <target ismod=\"1\" refid=\"module-mymod\">\n    <desc classes=\"py function\" desctype=\"function\" domain=\"py\" ids=\"module-mymod\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"function\">\n        <desc_signature _toc_name=\"f()\" _toc_parts=\"('mymod', 'f')\" class=\"\" classes=\"sig sig-object\" fullname=\"f\" ids=\"mymod.f\" module=\"mymod\">\n            <desc_addname classes=\"sig-prename descclassname\" xml:space=\"preserve\">\n                mymod.\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                f\n            <desc_parameterlist multi_line_parameter_list=\"0\" multi_line_trailing_comma=\"1\" xml:space=\"preserve\">\n                <desc_parameter xml:space=\"preserve\">\n                    <desc_sig_name classes=\"n\">\n                        x\n        <desc_content>\n            <paragraph>\n                Body.\n",
+      "rst": ".. py:module:: mymod\n   :synopsis: A module.\n   :platform: Unix\n\n.. py:function:: f(x)\n\n   Body.\n"
+    },
+    {
+      "family": "py",
+      "name": "py.module_content_and_sections",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <index entries=\"('pair',\\ 'module;\\ secmod',\\ 'module-secmod',\\ '',\\ None)\">\n    <target ismod=\"1\" refid=\"module-secmod\">\n    <paragraph ids=\"module-secmod\">\n        Module body content.\n",
+      "rst": ".. py:module:: secmod\n\n   Module body content.\n"
+    },
+    {
+      "family": "py",
+      "name": "py.duplicate_modules",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <index entries=\"('pair',\\ 'module;\\ dupmod',\\ 'module-dupmod',\\ '',\\ None)\">\n    <index entries=\"('pair',\\ 'module;\\ dupmod',\\ 'module-0',\\ '',\\ None)\">\n    <target ismod=\"1\" refid=\"module-dupmod\">\n    <target ids=\"module-0 module-dupmod\" ismod=\"1\">\n",
+      "rst": ".. py:module:: dupmod\n\n.. py:module:: dupmod\n"
     }
   ],
   "conf_semantics": "a case's optional 'conf' dict is confoverrides applied on top of the base settings above; absent = defaults. The consumer maps every key onto ParseOptions.py and errors on unmapped keys.",

@@ -16,9 +16,12 @@
 //! ([`TxTree::from_parse`]) and turns the root's tree back into a doctree
 //! when the transforms are done ([`TxTree::into_doctree`]).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use crate::doctree::{kinds, AttrValue, Attrs, Doctree, Node, NodeExt, Span, Uid};
+use crate::doctree::{
+    is_text_element, kinds, push_astext, AstextView, AttrValue, Attrs, Doctree, Node, NodeExt,
+    Span, Uid,
+};
 use crate::transforms::state::{DocumentState, OrderedMulti, SourceRef};
 
 /// A node's place in the arena of the [`TxTree`] that made it.
@@ -63,6 +66,18 @@ impl TxNode {
         self.ext.as_deref().and_then(|ext| ext.rawsource.as_deref())
     }
 
+    /// Sets docutils' `rawsource`, as [`Node::set_rawsource`] does: the
+    /// empty string, docutils' default, is stored as `None`.
+    pub fn set_rawsource(&mut self, rawsource: &str) {
+        if rawsource.is_empty() {
+            if let Some(ext) = self.ext.as_deref_mut() {
+                ext.rawsource = None;
+            }
+        } else {
+            self.ext.get_or_insert_with(Box::default).rawsource = Some(rawsource.into());
+        }
+    }
+
     /// The scalar attribute `key`, as [`Node::get`] reads it.
     pub fn get(&self, key: &'static str) -> Option<&AttrValue> {
         self.attrs
@@ -84,6 +99,94 @@ impl TxNode {
             Err(at) => self.attrs.extra.insert(at, (key, value)),
         }
     }
+
+    /// docutils `del node[key]` for the scalar attribute `key`: its value,
+    /// now removed; `None` when the node has none (where docutils raises).
+    pub fn delattr(&mut self, key: &'static str) -> Option<AttrValue> {
+        let at = self
+            .attrs
+            .extra
+            .binary_search_by(|(known, _)| known.cmp(&key))
+            .ok()?;
+        Some(self.attrs.extra.remove(at).1)
+    }
+
+    /// The string attribute `key` (`node.get(key)` for a `str` value).
+    pub fn str_attr(&self, key: &'static str) -> Option<&str> {
+        match self.get(key) {
+            Some(AttrValue::Str(value)) => Some(value),
+            _ => None,
+        }
+    }
+}
+
+/// The transient attributes docutils' reference transforms keep on node
+/// objects and never in a doctree: `Resolvable.resolved`
+/// (`SP/docutils/nodes.py:1458`), `Targetable.referenced` (`:1477`, which
+/// the parse sets on an embedded URI's target) and the
+/// `expect_referenced_by_name` / `_id` maps PropagateTargets leaves on the
+/// node it moved a target's ids and names to
+/// (`SP/docutils/transforms/references.py:63-80`). They live beside the
+/// arena, by node, for as long as the stage does ([`TxTree::resolved`],
+/// [`TxTree::referenced`], [`TxTree::note_referenced_by`]).
+#[derive(Debug, Default)]
+struct ReferenceFlags {
+    resolved: HashSet<TxId>,
+    referenced: HashSet<TxId>,
+    expect_by_name: HashMap<TxId, HashMap<String, TxId>>,
+    expect_by_id: HashMap<TxId, HashMap<String, TxId>>,
+}
+
+/// docutils' `findall` generator as a loop over it sees it
+/// (`Node._fast_findall`, `SP/docutils/nodes.py:248-253`): the node it
+/// starts from and every node under it, in pre-order, each read from the
+/// tree as it is when the walk gets there. The generator walks each child
+/// list by index, so the walk here keeps, per node it is inside, the
+/// position of the next child: a node taken out before the walk reaches it
+/// is never visited, and the node that takes the place of one taken out at
+/// or before the walk's position is skipped, as a Python list iterator
+/// skips the element after a removed one. A transform that changes the
+/// tree while it iterates, and whose loop is
+/// `for node in self.document.findall(...)`, steps through one of these.
+#[derive(Debug)]
+pub struct Findall {
+    /// Per node the walk is inside, from the start node down: the node and
+    /// the index of its next child to visit.
+    stack: Vec<(TxId, usize)>,
+    /// The start node, until the walk has looked at it.
+    start: Option<TxId>,
+}
+
+impl Findall {
+    /// The walk from `from`, which it yields first when it qualifies.
+    pub fn new(from: TxId) -> Findall {
+        Findall {
+            stack: Vec::new(),
+            start: Some(from),
+        }
+    }
+
+    /// The next node of the walk that `pred` accepts, if any.
+    pub fn next(&mut self, tree: &TxTree, pred: impl Fn(&TxNode) -> bool) -> Option<TxId> {
+        if let Some(start) = self.start.take() {
+            self.stack.push((start, 0));
+            if pred(tree.node(start)) {
+                return Some(start);
+            }
+        }
+        while let Some((node, next)) = self.stack.last_mut() {
+            let Some(&child) = tree.node(*node).children.get(*next) else {
+                self.stack.pop();
+                continue;
+            };
+            *next += 1;
+            self.stack.push((child, 0));
+            if pred(tree.node(child)) {
+                return Some(child);
+            }
+        }
+        None
+    }
 }
 
 /// One document's nodes in an arena (see the module docs).
@@ -102,6 +205,8 @@ pub struct TxTree {
     ids: HashMap<String, TxId>,
     /// docutils `document.refids` ([`Self::refids_mut`]).
     refids: OrderedMulti<TxId>,
+    /// The reference transforms' transient node attributes.
+    flags: ReferenceFlags,
 }
 
 impl TxTree {
@@ -122,6 +227,7 @@ impl TxTree {
             by_uid: HashMap::new(),
             ids: HashMap::new(),
             refids: OrderedMulti::default(),
+            flags: ReferenceFlags::default(),
         };
         tree.root = tree.place(root, None);
         for subtree in std::mem::take(&mut state.detached) {
@@ -135,6 +241,18 @@ impl TxTree {
             }
             for key in &node.attrs.ids {
                 tree.ids.entry(key.clone()).or_insert(id);
+            }
+            // The parse marks an embedded URI's target referenced
+            // (`target.referenced = 1`, `SP/docutils/parsers/rst/states.py:942`):
+            // the one target in a TextElement that has a `refuri` when the
+            // parse ends.
+            let embedded_uri = node.kind == kinds::TARGET
+                && node.get("refuri").is_some()
+                && node
+                    .parent
+                    .is_some_and(|parent| is_text_element(tree.nodes[parent.index()].kind));
+            if embedded_uri {
+                tree.flags.referenced.insert(id);
             }
         }
         tree
@@ -241,6 +359,76 @@ impl TxTree {
     /// ([DS §4.5]).
     pub fn refids_mut(&mut self) -> &mut OrderedMulti<TxId> {
         &mut self.refids
+    }
+
+    /// docutils `document.refids`, to read ([`Self::refids_mut`]).
+    pub fn refids(&self) -> &OrderedMulti<TxId> {
+        &self.refids
+    }
+
+    /// docutils `node.resolved`: whether a transform has resolved the
+    /// reference or indirect target at `id` (or given up on it). A copy
+    /// ([`Self::deepcopy`]) starts unresolved, as a new node object does.
+    pub fn resolved(&self, id: TxId) -> bool {
+        self.flags.resolved.contains(&id)
+    }
+
+    /// `node.resolved = True`.
+    pub fn set_resolved(&mut self, id: TxId) {
+        self.flags.resolved.insert(id);
+    }
+
+    /// docutils `node.referenced`: whether a reference has been resolved
+    /// to the node at `id`, the parse marked it (an embedded URI's target,
+    /// [`Self::from_parse`]), or `dupname()` moved one of its names to
+    /// `dupnames`, which marks the node referenced "even though it isn't"
+    /// (`SP/docutils/nodes.py:3036-3041`) and is all that fills `dupnames`.
+    /// Only `DanglingReferences`' INFO about targets nothing referenced
+    /// reads it.
+    pub fn referenced(&self, id: TxId) -> bool {
+        self.flags.referenced.contains(&id) || !self.node(id).attrs.dupnames.is_empty()
+    }
+
+    /// `node.referenced = True`.
+    pub fn set_referenced(&mut self, id: TxId) {
+        self.flags.referenced.insert(id);
+    }
+
+    /// docutils `node.note_referenced_by(name, id)` (`nodes.py:1202-1220`):
+    /// the node at `id` is referenced, and so is the target whose `name`
+    /// or `ref_id` PropagateTargets moved to it
+    /// ([`Self::expect_referenced_by`]).
+    pub fn note_referenced_by(&mut self, id: TxId, name: Option<&str>, ref_id: Option<&str>) {
+        self.flags.referenced.insert(id);
+        let by_name = name.and_then(|name| self.flags.expect_by_name.get(&id)?.get(name));
+        let by_id = ref_id.and_then(|key| self.flags.expect_by_id.get(&id)?.get(key));
+        let expected: Vec<TxId> = by_name.into_iter().chain(by_id).copied().collect();
+        self.flags.referenced.extend(expected);
+    }
+
+    /// PropagateTargets' bookkeeping for the target at `target`, whose
+    /// `ids` and `names` it moved to the node at `receiver`
+    /// (`references.py:62-80`): being referenced by one of them marks the
+    /// target referenced, and so does whatever marked the target itself.
+    pub fn expect_referenced_by(
+        &mut self,
+        receiver: TxId,
+        target: TxId,
+        ids: &[String],
+        names: &[String],
+    ) {
+        let inherited_ids = self.flags.expect_by_id.get(&target).cloned();
+        let inherited_names = self.flags.expect_by_name.get(&target).cloned();
+        let by_id = self.flags.expect_by_id.entry(receiver).or_default();
+        for id in ids {
+            by_id.insert(id.clone(), target);
+        }
+        by_id.extend(inherited_ids.unwrap_or_default());
+        let by_name = self.flags.expect_by_name.entry(receiver).or_default();
+        for name in names {
+            by_name.insert(name.clone(), target);
+        }
+        by_name.extend(inherited_names.unwrap_or_default());
     }
 
     /// docutils `node.parent` ([`TxNode::parent`]).
@@ -530,26 +718,40 @@ impl TxTree {
     }
 
     /// docutils `node.astext()` of the subtree at `id`
-    /// ([`Node::astext_docutils`]).
+    /// ([`Node::astext_docutils`]), read in place.
     pub fn astext(&self, id: TxId) -> String {
-        self.to_node(id).astext_docutils()
+        let mut text = String::new();
+        push_astext(TxView { tree: self, id }, &mut text);
+        text
+    }
+}
+
+/// A node of the arena as [`push_astext`] reads it.
+#[derive(Clone, Copy)]
+struct TxView<'a> {
+    tree: &'a TxTree,
+    id: TxId,
+}
+
+impl<'a> AstextView<'a> for TxView<'a> {
+    fn kind(self) -> &'static str {
+        self.tree.node(self.id).kind
     }
 
-    /// An owned copy of the subtree at `id`.
-    fn to_node(&self, id: TxId) -> Node {
-        let node = self.node(id);
-        Node {
-            kind: node.kind,
-            span: node.span,
-            text: node.text.clone(),
-            attrs: node.attrs.clone(),
-            children: node
-                .children
-                .iter()
-                .map(|&child| self.to_node(child))
-                .collect(),
-            ext: node.ext.clone(),
-        }
+    fn text(self) -> Option<&'a str> {
+        self.tree.node(self.id).text.as_deref()
+    }
+
+    fn attr(self, key: &'static str) -> Option<&'a AttrValue> {
+        self.tree.node(self.id).get(key)
+    }
+
+    fn children(self) -> impl Iterator<Item = Self> {
+        let tree = self.tree;
+        tree.node(self.id)
+            .children
+            .iter()
+            .map(move |&id| TxView { tree, id })
     }
 }
 
@@ -1184,5 +1386,56 @@ mod tests {
                 assert_eq!(walk(&paragraph), paragraphs[flags], "{label}");
             }
         }
+    }
+
+    /// [`Findall`] is docutils' live `findall` generator: a loop over the
+    /// document's paragraphs that changes the tree at `Two.` skips the
+    /// paragraph that moves into the place it has passed (`Three.` once
+    /// `One.` is gone, `X.` once two paragraphs replace `Two.`) and never
+    /// reaches one taken out ahead of it (`Four.`).
+    //
+    // oracle (docutils 0.22.4): `for p in doc.findall(nodes.paragraph)` over
+    //   the snippet's parse, doing the same at `Two.`: `doc.remove(doc[0])`
+    //   gives One, Two, Four; `p.replace_self([X, Y])` gives One, Two, Y,
+    //   Three, Four; `doc.remove(doc[3])` gives One, Two, Three.
+    #[test]
+    fn findall_walks_the_tree_as_it_changes() {
+        let paragraph = |node: &TxNode| node.kind == kinds::PARAGRAPH;
+        let at_two = |change: &dyn Fn(&mut TxTree, TxId)| {
+            let ParseOutput {
+                doctree, mut state, ..
+            } = read_parse("One.\n\nTwo.\n\nThree.\n\nFour.\n");
+            let mut tree = TxTree::from_parse(doctree, &mut state);
+            let mut walk = Findall::new(tree.root());
+            let mut seen = Vec::new();
+            while let Some(node) = walk.next(&tree, paragraph) {
+                let text = tree.astext(node);
+                if text == "Two." {
+                    change(&mut tree, node);
+                }
+                seen.push(text);
+            }
+            seen
+        };
+        let remove = |at: usize| {
+            move |tree: &mut TxTree, _: TxId| {
+                let root = tree.root();
+                let child = tree.node(root).children[at];
+                tree.remove(root, child);
+            }
+        };
+        assert_eq!(at_two(&remove(0)), ["One.", "Two.", "Four."]);
+        assert_eq!(at_two(&remove(3)), ["One.", "Two.", "Three."]);
+        let replace = |tree: &mut TxTree, two: TxId| {
+            let replacements = ["X.", "Y."].map(|text| {
+                let paragraph = tree.new_node(kinds::PARAGRAPH);
+                let data = tree.new_node(kinds::TEXT);
+                tree.node_mut(data).text = Some(text.to_string());
+                tree.append(paragraph, data);
+                paragraph
+            });
+            tree.replace_self(two, replacements.to_vec());
+        };
+        assert_eq!(at_two(&replace), ["One.", "Two.", "Y.", "Three.", "Four."]);
     }
 }

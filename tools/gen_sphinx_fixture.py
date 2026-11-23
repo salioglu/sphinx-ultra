@@ -776,8 +776,9 @@ CASES = [
     ('sx_directives', 'versionadded_argument_python_whitespace', '.. versionadded:: 1.0\x1fa b\n'),
     ('sx_directives', 'deprecated_argument_python_whitespace', '.. deprecated:: 2.0\x1fx y\n'),
     # ----- wave-4.5 task 8: py-domain object directives ([PY §1.6/1.7]) -----
-    # Propagation-visible module shapes and known-divergence signatures are
-    # in EXCLUDED above, each with its reason.
+    # Known-divergence signatures are in EXCLUDED above, each with its
+    # reason; the module shapes the read's target transforms make were
+    # excluded until wave 5a T10 and are appended at the end of CASES.
     ('py', 'function_plain_args', '.. py:function:: func(a, b)\n\n   Body.\n'),
     # round E: `:param type name:` splits with `rsplit(None, 1)` — Python
     # whitespace, so \x1f separates the type from the name.
@@ -941,6 +942,15 @@ CASES = [
     ('pyconf', 'toc_object_entries_off_envvar', '.. envvar:: MYVAR\n', {'toc_object_entries': False}),
     ('pyconf', 'add_module_names_off', '.. py:function:: f(x)\n   :module: optmod\n', {'add_module_names': False}),
     ('pyconf', 'strip_signature_backslash_on', '.. py:function:: f(a\\, b)\n', {'strip_signature_backslash': True}),
+    # ----- wave 5a T10: the module shapes the read's target transforms
+    # make, re-admitted from EXCLUDED now that the read runs them: the
+    # module target's id moves to the node after it (PropagateTargets,
+    # 260), through a following module target, which the index nodes
+    # were moved past first (ReorderConsecutiveTargetAndIndexNodes, 220)
+    # ([PY §1.6], [PY §5]) -----
+    ('py', 'module_basic', '.. py:module:: mymod\n   :synopsis: A module.\n   :platform: Unix\n\n.. py:function:: f(x)\n\n   Body.\n'),
+    ('py', 'module_content_and_sections', '.. py:module:: secmod\n\n   Module body content.\n'),
+    ('py', 'duplicate_modules', '.. py:module:: dupmod\n\n.. py:module:: dupmod\n'),
 ]
 
 
@@ -948,27 +958,6 @@ CASES = [
 # carry, each with the evidence for why. The assert in main() keeps CASES
 # disjoint from this set; removing an entry requires re-probing the reason.
 EXCLUDED = {
-    # -- PropagateTargets-visible module shapes (plan §Scope-3: docutils
-    #    PropagateTargets is a transform this crate deliberately does not run
-    #    until wave 5; the sphinx pformat moves the module target's id onto
-    #    the NEXT body node, ours keeps it on the target) --
-    "py.module_basic": (
-        "PropagateTargets folds ids='module-mymod' onto the following desc "
-        "(target keeps refid) — propagation-visible, wave 5 [PY §1.6]"
-    ),
-    "py.module_content_and_sections": (
-        "PropagateTargets moves the module id onto the first content "
-        "paragraph AND py:module content parses with "
-        "allow_section_headings=True (nested sections unrepresentable in "
-        "this parser's nested contexts, T6 deviation 4) [PY §1.6]"
-    ),
-    "py.duplicate_modules": (
-        "PropagateTargets folds the first target's id onto the second "
-        "(sphinx: <target ids='module-0 module-dupmod'>) — propagation-"
-        "visible; the module-0 serial registration is pinned by the Rust "
-        "unit test duplicate_modules_take_the_module_0_serial in "
-        "src/rst/block.rs instead [PY §5]"
-    ),
     # -- T6 documented divergence: retann ending in ')' --
     "py.function_greedy_retann": (
         "f(x) -> (int, str): py_sig_re swallows the parenthesized retann "

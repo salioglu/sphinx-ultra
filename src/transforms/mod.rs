@@ -23,6 +23,7 @@
 
 pub mod location;
 pub mod misc;
+pub mod references;
 pub mod reporter;
 pub mod sphinx;
 pub mod state;
@@ -226,11 +227,23 @@ impl TransformId {
     /// environment by stage M itself ([`run_merge_transforms`]).
     pub(crate) fn transform(self) -> &'static dyn Transform {
         match self {
+            TransformId::ApplySourceWorkaround => &sphinx::ApplySourceWorkaround,
             TransformId::TranslationProgressTotaliser => &sphinx::TranslationProgressTotaliser,
+            TransformId::MoveModuleTargets => &sphinx::MoveModuleTargets,
             TransformId::HandleCodeBlocks => &sphinx::HandleCodeBlocks,
+            TransformId::ReorderConsecutiveTargetAndIndexNodes => {
+                &sphinx::ReorderConsecutiveTargetAndIndexNodes
+            }
+            TransformId::PropagateTargets => &references::PropagateTargets,
+            TransformId::SortIds => &sphinx::SortIds,
+            TransformId::AnonymousHyperlinks => &references::AnonymousHyperlinks,
+            TransformId::IndirectHyperlinks => &references::IndirectHyperlinks,
             TransformId::DoctestTransform => &sphinx::DoctestTransform,
             TransformId::GlossarySorter => &sphinx::GlossarySorter,
+            TransformId::ExternalTargets => &references::ExternalTargets,
+            TransformId::InternalTargets => &references::InternalTargets,
             TransformId::Transitions => &misc::Transitions,
+            TransformId::SphinxDanglingReferences => &references::SphinxDanglingReferences,
             TransformId::FilterSystemMessages => &sphinx::FilterSystemMessages,
 
             // Inert with `extensions = []` and Sphinx's defaults ([TW §2.2]):
@@ -254,20 +267,7 @@ impl TransformId {
             | TransformId::UIDTransform
             | TransformId::AddTranslationClasses
             | TransformId::RemoveTranslatableInline => &NoOp,
-            // 010-018 only patches node locations, which the parse stamps
-            // and [`location::get_source_line`] reads as it leaves them.
-            TransformId::ApplySourceWorkaround => &NoOp,
 
-            // T10.
-            TransformId::MoveModuleTargets
-            | TransformId::ReorderConsecutiveTargetAndIndexNodes
-            | TransformId::PropagateTargets
-            | TransformId::SortIds
-            | TransformId::AnonymousHyperlinks
-            | TransformId::IndirectHyperlinks
-            | TransformId::ExternalTargets
-            | TransformId::InternalTargets
-            | TransformId::SphinxDanglingReferences => &NoOp,
             // T11 (the 619 rows' tree halves; T13b their environment half).
             TransformId::DefaultSubstitutions
             | TransformId::Substitutions
@@ -438,7 +438,23 @@ impl TransformCx<'_> {
     /// seq ([`TransformKey::order_key`]). The node is returned in no
     /// parent, for the transform to place or to leave out of the tree.
     pub fn report(&mut self, level: u8, text: &str, node: TxId) -> TxId {
-        let mut loc = location::get_source_line(self.tree, node, self.state);
+        self.system_message(level, text, Some(node), Vec::new())
+    }
+
+    /// [`Self::report`] with docutils' optional parts: `base_node` may be
+    /// missing (`reporter.error(text)`), which locates the message at the
+    /// parse's final position, and `children` follow the message's
+    /// paragraph, in its text too.
+    pub fn system_message(
+        &mut self,
+        level: u8,
+        text: &str,
+        base_node: Option<TxId>,
+        children: Vec<Node>,
+    ) -> TxId {
+        let mut loc = base_node.map_or_else(Default::default, |node| {
+            location::get_source_line(self.tree, node, self.state)
+        });
         if loc.source.is_none() && loc.line.is_none() {
             loc = self.state.final_position;
         }
@@ -447,7 +463,7 @@ impl TransformCx<'_> {
             text,
             self.tree.source_path(loc.source),
             loc.line,
-            Vec::new(),
+            children,
         );
         let seq = self.state.draw_seq();
         self.state.log.push(LogRecord::Reporter {
@@ -457,6 +473,30 @@ impl TransformCx<'_> {
             text: message.element_astext(),
         });
         self.tree.new_subtree(message)
+    }
+
+    /// docutils `document.set_id(node)` for a node without ids, as every
+    /// node a transform makes is (`SP/docutils/nodes.py:1844-1875`): the
+    /// next id the allocator hands out ([`state::IdAllocator::allocate`]),
+    /// which the node takes and docutils' `document.ids` maps to it.
+    pub fn set_id(&mut self, node: TxId) -> String {
+        let fresh = self.tree.node(node);
+        debug_assert!(fresh.attrs.ids.is_empty(), "set_id on a node with ids");
+        let id = self
+            .state
+            .ids
+            .allocate(fresh.kind, &fresh.attrs.names, fresh.uid());
+        self.tree.node_mut(node).attrs.ids.push(id.clone());
+        self.tree.note_id(&id, node);
+        id
+    }
+
+    /// docutils `document.note_refid(node)` (`nodes.py:2012-2013`): the
+    /// node joins `document.refids` under its `refid`.
+    pub fn note_refid(&mut self, node: TxId) {
+        if let Some(refid) = self.tree.node(node).str_attr("refid").map(str::to_string) {
+            self.tree.refids_mut().push(&refid, node);
+        }
     }
 }
 
