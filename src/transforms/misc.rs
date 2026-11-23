@@ -1284,13 +1284,17 @@ mod tests {
     ///   line 7 is `inc.rst` line 3;
     /// - docutils parses a glossary definition and a substitution
     ///   definition from lists of their own, which pass no insertion on,
-    ///   so the line stays the document's.
+    ///   so the line stays the document's;
+    /// - docutils also parses the content of a note that starts on its
+    ///   directive line or right below it from a list of its own, since
+    ///   `parse_directive_block` re-joins it (`arg_block + indented[i:]`),
+    ///   so lines 8 and 7 stay the document's.
     #[test]
     fn a_class_attribute_error_reads_its_line_against_the_input() {
         const INC: &str = "A.\n\nB.\n";
         const TAIL: &str = "Text.\n\n.. rst-class:: x\n";
         // (index.rst, inc.rst, the error's location and line, the class).
-        let rows: [(String, &str, &str, u32, &str); 6] = [
+        let rows: [(String, &str, &str, u32, &str); 8] = [
             (
                 "Line one.\n\n.. include:: inc.rst\n".to_string(),
                 "Para.\n\nMore.\n\n.. rst-class:: lonely\n",
@@ -1331,6 +1335,20 @@ mod tests {
                 INC,
                 "/index.rst:5",
                 5,
+                "x",
+            ),
+            (
+                format!(".. note::\n   Some text.\n\n   .. include:: inc.rst\n\n{TAIL}"),
+                INC,
+                "/index.rst:8",
+                8,
+                "x",
+            ),
+            (
+                format!(".. note:: Some text.\n\n   .. include:: inc.rst\n\n{TAIL}"),
+                INC,
+                "/index.rst:7",
+                7,
                 "x",
             ),
         ];

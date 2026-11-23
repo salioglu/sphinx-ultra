@@ -395,8 +395,13 @@ pub(crate) struct BlockParser {
     /// docutils, a slice of the top-level input, which `ViewList.insert`
     /// passes an insertion up to (`SP/docutils/statemachine.py:1228-1243`).
     /// They are, except in a table cell, a glossary definition, a
-    /// substitution definition and a detached parse, which docutils parses
-    /// from a list it builds or disconnects.
+    /// substitution definition, a detached parse and the content of a
+    /// directive that takes options but no arguments when that content
+    /// starts on the directive line or right below it, which docutils
+    /// parses from a list it builds or disconnects. That content is
+    /// `arg_block + indented[i:]`
+    /// (`SP/docutils/parsers/rst/states.py:2330-2332`), a list
+    /// `ViewList.__add__` gives no parent (`statemachine.py:1179-1182`).
     connected: bool,
     /// The last line of the running directive's content: docutils trims
     /// the content of its trailing blank lines (`parse_directive_block`),
@@ -3984,13 +3989,19 @@ impl BlockParser {
 
         // Leftover argument lines become content for argument-less
         // directives (probe X6), re-joined with the blank separator and
-        // everything after it (states.py:2330-2334).
+        // everything after it (states.py:2330-2334). `arg_block +
+        // indented[i:]` is a list of its own: `ViewList.__add__` gives it
+        // no parent (`SP/docutils/statemachine.py:1179-1182`), so an
+        // include in the content reaches no other input
+        // ([`Self::connected`]).
+        let mut fresh_content = false;
         if !arg_block.is_empty() && spec.required_arguments == 0 && spec.optional_arguments == 0 {
             let mut rejoined = arg_block.clone();
             rejoined.extend(indented[blank_idx.min(indented.len())..].iter().copied());
             content = rejoined;
             content_lineno = line_offset;
             arg_block.clear();
+            fresh_content = true;
         }
         while content.first().map(|l| l.is_blank()).unwrap_or(false) {
             content.remove(0);
@@ -4032,6 +4043,12 @@ impl BlockParser {
         // ([`Self::content_end`]).
         let content_end = input.content.last().map(|line| (line.source, line.lineno));
         let outer_content_end = std::mem::replace(&mut self.content_end, content_end);
+        // Re-joined content is parsed disconnected. The flag covers the
+        // whole arm: an arm of a directive with no arguments block-parses
+        // nothing but its content, and `include`, which takes an argument,
+        // is never re-joined.
+        let outer_connected = self.connected;
+        self.connected &= !fresh_content;
         match spec.kind {
             DirectiveKind::Admonition(kind) => self.run_admonition(kind, input, out),
             DirectiveKind::GenericAdmonition => self.run_generic_admonition(input, out),
@@ -4093,6 +4110,7 @@ impl BlockParser {
             }
         }
         self.content_end = outer_content_end;
+        self.connected = outer_connected;
     }
 
     /// Bank a directive's [`DirectiveOutcome`] for the enclosing
@@ -19837,7 +19855,15 @@ mod include_tests {
     /// include that ends a note's content is followed by its lines at once.
     /// A table cell, a glossary definition and a substitution definition are
     /// parsed from blocks that pass nothing up, so their includes leave the
-    /// input as it is. Each row is the `input_lines` of a Sphinx 9.1.0 read
+    /// input as it is. So is the content of a directive that takes options
+    /// but no arguments (a note here), when that content starts on the
+    /// directive line or right below it: `parse_directive_block` re-joins it
+    /// as `arg_block + indented[i:]`, a list `ViewList.__add__` gives no
+    /// parent (`SP/docutils/parsers/rst/states.py:2330-2332`,
+    /// `SP/docutils/statemachine.py:1179-1182`). That holds for a note
+    /// inside a note whose own content does pass insertions up, and not for
+    /// a note whose block below holds only options, whose content is still
+    /// a slice. Each row is the `input_lines` of a Sphinx 9.1.0 read
     /// of `index.rst` beside `inc.rst` (and `inc2.rst`), as `path:line` per
     /// offset, `<` and `>` standing for the padding lines' `internal padding
     /// before ` and `internal padding after `.
@@ -19845,7 +19871,7 @@ mod include_tests {
     fn included_lines_join_the_top_level_input_where_docutils_inserts_them() {
         const INCLUDED: &str =
             "<inc.rst:0 inc.rst:1 inc.rst:2 inc.rst:3 inc.rst:4 inc.rst:5 >inc.rst:6";
-        let rows: [(&str, &str, String); 10] = [
+        let rows: [(&str, &str, String); 15] = [
             (
                 ".. note::\n\n   .. include:: inc.rst\n\nText.\n\n.. rst-class:: x\n",
                 "A.\n\nB.\n",
@@ -19909,6 +19935,42 @@ mod include_tests {
                 ".. |x| include:: inc.rst\n\nText |x|.\n",
                 "A.\n\nB.\n",
                 "index.rst:1 index.rst:2 index.rst:3".to_string(),
+            ),
+            (
+                ".. note::\n   Some text.\n\n   .. include:: inc.rst\n\nText.\n\n.. rst-class:: x\n",
+                "A.\n\nB.\n",
+                "index.rst:1 index.rst:2 index.rst:3 index.rst:4 index.rst:5 index.rst:6 \
+                 index.rst:7 index.rst:8"
+                    .to_string(),
+            ),
+            (
+                ".. note:: Some text.\n\n   .. include:: inc.rst\n\nText.\n\n.. rst-class:: x\n",
+                "A.\n\nB.\n",
+                "index.rst:1 index.rst:2 index.rst:3 index.rst:4 index.rst:5 index.rst:6 \
+                 index.rst:7"
+                    .to_string(),
+            ),
+            (
+                ".. note::\n   .. include:: inc.rst\n\nText.\n\n.. rst-class:: x\n",
+                "A.\n\nB.\n",
+                "index.rst:1 index.rst:2 index.rst:3 index.rst:4 index.rst:5 index.rst:6"
+                    .to_string(),
+            ),
+            (
+                ".. note::\n\n   .. note:: Inner.\n\n      .. include:: inc.rst\n\nText.\n\n\
+                 .. rst-class:: x\n",
+                "A.\n\nB.\n",
+                "index.rst:1 index.rst:2 index.rst:3 index.rst:4 index.rst:5 index.rst:6 \
+                 index.rst:7 index.rst:8 index.rst:9"
+                    .to_string(),
+            ),
+            (
+                ".. note::\n   :class: c\n\n   .. include:: inc.rst\n\nText.\n\n.. rst-class:: x\n",
+                "A.\n\nB.\n",
+                format!(
+                    "index.rst:1 index.rst:2 index.rst:3 index.rst:4 {INCLUDED} index.rst:5 \
+                     index.rst:6 index.rst:7 index.rst:8"
+                ),
             ),
         ];
         for (index, inc, expected) in rows {

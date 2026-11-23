@@ -500,10 +500,13 @@ pub struct DocumentState {
     /// its lines and their padding lines in, where `ViewList.insert` passes
     /// them up to: after the last line of the include's block, trailing
     /// blank lines included unless they ended a directive's content. An
-    /// include in a table cell, a glossary definition or a substitution
-    /// definition has not, since docutils parses those from lists of their
-    /// own. What a message given a line after the parse is located against
-    /// ([`Self::source_and_line`]).
+    /// include in a table cell, a glossary definition, a substitution
+    /// definition or the content of a directive that takes options but no
+    /// arguments, when that content starts on the directive line or right
+    /// below it (a `note`'s, say, which `parse_directive_block` re-joins as
+    /// `arg_block + indented[i:]`), has not, since docutils parses those
+    /// from lists of their own. What a message given a line after the parse
+    /// is located against ([`Self::source_and_line`]).
     pub input_lines: Vec<(u16, u32)>,
     /// The docutils locations of the nodes whose location the default rule
     /// ([DS §8.2]) does not give, by identity, as docutils' parse leaves
