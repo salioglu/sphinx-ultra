@@ -1353,6 +1353,12 @@ mod tests {
             ),
         ];
         for (index, inc, location, line, class) in rows {
+            // The document's own path is absolute, joined with the
+            // platform's separator.
+            let location = match location.strip_prefix('/') {
+                Some(rest) => format!("{}{rest}", std::path::MAIN_SEPARATOR),
+                None => location.to_string(),
+            };
             let tmp = tempfile::tempdir().expect("a temporary source directory");
             std::fs::write(tmp.path().join("inc.rst"), inc).expect("inc.rst writes");
             let parse = ParseOptions {

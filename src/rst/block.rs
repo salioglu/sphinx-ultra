@@ -19978,7 +19978,7 @@ mod include_tests {
             write(tmp.path(), "inc.rst", inc);
             write(tmp.path(), "inc2.rst", "C.\n");
             let out = parse_sphinx_full(tmp.path(), "index", index);
-            let root = format!("{}/", tmp.path().display());
+            let root = format!("{}{}", tmp.path().display(), std::path::MAIN_SEPARATOR);
             let input_lines: Vec<String> = out
                 .state
                 .input_lines
