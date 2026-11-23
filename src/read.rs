@@ -17,6 +17,8 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use chrono::{DateTime, Utc};
+
 use crate::config::BuildConfig;
 use crate::diagnostics::{Category, Diagnostic, OrderKey, Severity};
 use crate::doctree::{Doctree, Node, Uid};
@@ -41,24 +43,98 @@ pub struct ReadSettings {
     /// tree: the read-state differential's `id_trace`. Tests only; it turns
     /// the trace on whatever [`ParseOptions::trace_ids`] says.
     pub trace_ids: bool,
+    /// `today` (`SP/sphinx/config.py:227`, default `''`): the text of the
+    /// `|today|` default substitution when it is set
+    /// ([`crate::transforms::sphinx::DefaultSubstitutions`]).
+    pub today: String,
+    /// `today_fmt` (`config.py:229`, default `None`): the strftime format
+    /// `|today|` gives [`Self::build_date`] when `today` is empty; `None`
+    /// is the language's own, `'%b %d, %Y'` in `en`.
+    pub today_fmt: Option<String>,
+    /// `version` and `release` (`config.py:225-226`, default `''`): the
+    /// text of the `|version|` and `|release|` default substitutions.
+    pub version: String,
+    pub release: String,
+    /// The date `|today|` formats: what Sphinx's `format_date` takes when
+    /// given none (`SP/sphinx/util/i18n.py:268-282`), `SOURCE_DATE_EPOCH`
+    /// when it is set and the current time otherwise, in UTC either way.
+    /// It is resolved once, when the settings are made ([`build_date`]):
+    /// every document of a build reads the same date, and no transform
+    /// reads the environment.
+    pub build_date: DateTime<Utc>,
 }
 
 impl ReadSettings {
-    /// Sphinx's defaults.
+    /// Sphinx's defaults, dated as a build that starts now ([`build_date`]).
     pub fn sphinx_defaults() -> Self {
         ReadSettings {
             keep_warnings: false,
             trace_ids: false,
+            today: String::new(),
+            today_fmt: None,
+            version: String::new(),
+            release: String::new(),
+            build_date: build_date(),
         }
     }
 
-    /// The read settings of a build configured by `config`.
+    /// The read settings of a build configured by `config`, dated as a
+    /// build that starts now ([`build_date`]).
     pub fn from_config(config: &BuildConfig) -> Self {
         ReadSettings {
             keep_warnings: config.keep_warnings,
+            today: config.today.clone(),
+            today_fmt: config.today_fmt.clone(),
+            version: config.version.clone().unwrap_or_default(),
+            release: config.release.clone().unwrap_or_default(),
             ..Self::sphinx_defaults()
         }
     }
+}
+
+/// The date `|today|` formats in a build that starts now
+/// ([`ReadSettings::build_date`]): `SOURCE_DATE_EPOCH`, read as Sphinx's
+/// `format_date` reads it ([`date_of_epoch`]), when it is set, and the
+/// current time otherwise. A value Sphinx cannot read crashes it where
+/// `|today|` is used; that input is not modelled (decision 13), and the
+/// build takes the current time instead.
+fn build_date() -> DateTime<Utc> {
+    std::env::var("SOURCE_DATE_EPOCH")
+        .ok()
+        .and_then(|epoch| date_of_epoch(&epoch))
+        .unwrap_or_else(Utc::now)
+}
+
+/// `datetime.fromtimestamp(float(epoch), tz=UTC)`
+/// (`SP/sphinx/util/i18n.py:274-276`): the POSIX timestamp `epoch`, which
+/// may have a fraction and surrounding whitespace, its whole seconds taken
+/// toward zero and the fraction rounded half to even to microseconds, a
+/// rounded fraction of a whole second carried into the seconds (CPython's
+/// `_fromtimestamp`). `None` for what `float()` rejects (Python's
+/// underscore-separated digits are not read) and for a date outside
+/// Python's years 1 to 9999.
+fn date_of_epoch(epoch: &str) -> Option<DateTime<Utc>> {
+    use chrono::Datelike;
+    let timestamp: f64 = epoch.trim_matches(crate::utils::py_isspace).parse().ok()?;
+    if !timestamp.is_finite() {
+        return None;
+    }
+    let mut seconds = timestamp.trunc();
+    let mut micros = ((timestamp - seconds) * 1e6).round_ties_even();
+    if micros >= 1e6 {
+        seconds += 1.0;
+        micros -= 1e6;
+    } else if micros < 0.0 {
+        seconds -= 1.0;
+        micros += 1e6;
+    }
+    // Both are whole numbers in range here: `seconds` is bounded below
+    // (more than Python's years allow), and `micros` lies in 0..1_000_000.
+    if seconds.abs() >= 1e15 {
+        return None;
+    }
+    DateTime::from_timestamp(seconds as i64, micros as u32 * 1000)
+        .filter(|date| (1..=9999).contains(&date.year()))
 }
 
 /// One document's read: the doctree and the docutils document state beside
@@ -145,7 +221,13 @@ fn read_document_with(
     };
     log_parse_warnings(&mut output, parse);
     if parse.sphinx {
-        crate::transforms::read_transforms_with(output, settings, &parse.docname, transform)
+        crate::transforms::read_transforms_with(
+            output,
+            settings,
+            &parse.docname,
+            &source_dir_of(parse),
+            transform,
+        )
     } else {
         ReadOutcome { output }
     }
@@ -378,26 +460,82 @@ mod tests {
     }
 
     /// The read settings follow the configuration, Sphinx's defaults
-    /// otherwise; the trace is a test switch no configuration sets.
+    /// otherwise (`config.py:225-229`, `:261`); the trace is a test switch
+    /// no configuration sets. The build date is the moment the settings
+    /// were made, so the comparisons carry it over.
     #[test]
     fn read_settings_follow_the_configuration() {
+        let defaults = ReadSettings::sphinx_defaults();
         assert_eq!(
-            ReadSettings::sphinx_defaults(),
+            defaults,
             ReadSettings {
                 keep_warnings: false,
                 trace_ids: false,
+                today: String::new(),
+                today_fmt: None,
+                version: String::new(),
+                release: String::new(),
+                build_date: defaults.build_date,
             }
         );
         assert_eq!(
-            ReadSettings::from_config(&BuildConfig::default()),
-            ReadSettings::sphinx_defaults()
+            ReadSettings {
+                build_date: defaults.build_date,
+                ..ReadSettings::from_config(&BuildConfig::default())
+            },
+            defaults
         );
         let config = BuildConfig {
             keep_warnings: true,
+            today: "April 1".to_string(),
+            today_fmt: Some("%Y".to_string()),
+            version: Some("1.2".to_string()),
+            release: Some("1.2.3".to_string()),
             ..BuildConfig::default()
         };
-        assert!(ReadSettings::from_config(&config).keep_warnings);
-        assert!(!ReadSettings::from_config(&config).trace_ids);
+        let settings = ReadSettings::from_config(&config);
+        assert!(settings.keep_warnings);
+        assert!(!settings.trace_ids);
+        assert_eq!(settings.today, "April 1");
+        assert_eq!(settings.today_fmt.as_deref(), Some("%Y"));
+        assert_eq!(
+            (settings.version.as_str(), settings.release.as_str()),
+            ("1.2", "1.2.3")
+        );
+    }
+
+    /// `SOURCE_DATE_EPOCH` read as `datetime.fromtimestamp(float(value),
+    /// tz=UTC)` (`SP/sphinx/util/i18n.py:274-276`): whole and fractional
+    /// seconds, Python's surrounding whitespace, the fraction rounded half
+    /// to even to microseconds and carried; what Sphinx cannot read is not
+    /// a date.
+    //
+    // oracle (CPython 3.12): `datetime.fromtimestamp(float(v), tz=UTC)`
+    //   for each value below.
+    #[test]
+    fn source_date_epoch_reads_as_python_does() {
+        let date = |epoch: &str| date_of_epoch(epoch).map(|date| date.to_rfc3339());
+        assert_eq!(date("0").as_deref(), Some("1970-01-01T00:00:00+00:00"));
+        assert_eq!(
+            date(" 1700000000\n").as_deref(),
+            Some("2023-11-14T22:13:20+00:00")
+        );
+        assert_eq!(
+            date("1700000000.25").as_deref(),
+            Some("2023-11-14T22:13:20.250+00:00")
+        );
+        assert_eq!(date("1.7e9").as_deref(), Some("2023-11-14T22:13:20+00:00"));
+        assert_eq!(
+            date("1699999999.9999996").as_deref(),
+            Some("2023-11-14T22:13:20+00:00")
+        );
+        assert_eq!(
+            date("-1.5").as_deref(),
+            Some("1969-12-31T23:59:58.500+00:00")
+        );
+        for unreadable in ["", "soon", "inf", "nan", "1e300", "1e12"] {
+            assert_eq!(date(unreadable), None, "{unreadable:?}");
+        }
     }
 
     /// A Sphinx-mode read stamps `translation_progress` on the document,
@@ -506,7 +644,12 @@ mod tests {
     /// With the trace on, a parse event is attached when the read tree
     /// carries its id, and not when only a discarded subtree does: the
     /// footnote reference inside the rejected substitution definition
-    /// ([DS §4.3]) keeps its id in the detached forest only.
+    /// ([DS §4.3]) keeps its id in the detached forest only. Nor is it when
+    /// the node the id names left the tree: Footnotes (620) numbers the
+    /// discarded reference first, and the one in the text, the reference
+    /// too many, becomes a problematic that carries its id after its own,
+    /// while `document.ids` still names the reference
+    /// (`state.rejected_subst_autofootnote`).
     #[test]
     fn read_standalone_fills_the_trace_attachment() {
         let traced = ReadSettings {
@@ -537,8 +680,20 @@ mod tests {
             trace,
             [
                 ("parse", kinds::FOOTNOTE_REFERENCE, "id1", false),
-                ("parse", kinds::FOOTNOTE_REFERENCE, "id2", true),
+                ("parse", kinds::FOOTNOTE_REFERENCE, "id2", false),
                 ("parse", kinds::FOOTNOTE, "id3", true),
+                (
+                    "docutils.transforms.references.Footnotes",
+                    kinds::SYSTEM_MESSAGE,
+                    "id4",
+                    false
+                ),
+                (
+                    "docutils.transforms.references.Footnotes",
+                    kinds::PROBLEMATIC,
+                    "id5",
+                    true
+                ),
             ]
         );
 
@@ -758,6 +913,7 @@ mod tests {
             let settings = ReadSettings {
                 keep_warnings,
                 trace_ids: true,
+                ..ReadSettings::sphinx_defaults()
             };
             let read = read_standalone_with(
                 "Title\n=====\n\n*x\n",

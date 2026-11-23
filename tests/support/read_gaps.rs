@@ -16,12 +16,17 @@
 //! math directive's names), T9b's `system_message` (an INFO message
 //! `FilterSystemMessages`, 999, removes), T9c's `doctest class` and
 //! `transitions` (`DoctestTransform`, 500, and `Transitions`, 830) and
-//! T10's `propagate targets` (`PropagateTargets`, 260): a divergence of
+//! T10's `propagate targets` (`PropagateTargets`, 260), and T11's
+//! `citations` and the tree shapes and records of `footnotes` and
+//! `substitutions` (Substitutions, 220; the citation transforms, 619;
+//! Footnotes, 620; the unreferenced-footnote warning, 622): a divergence of
 //! that shape now is a regression, which the census reports unexplained.
 //! T10's `dangling refs` and `indirect targets` stay, for what later tasks
 //! shift: a `problematic` whose ids, and the target transforms' id
-//! allocations and records, move when Footnotes (620), Substitutions (220)
-//! or AutoNumbering (210) take ids first, in rows those tasks own.
+//! allocations and records, move when AutoNumbering (210) or a pending
+//! transform takes ids first, in rows those tasks own. The read-state
+//! census keeps `footnotes` and `substitutions` for the same reason, as the
+//! families of the ids 620 and 220 allocate in such rows.
 
 use std::collections::BTreeSet;
 
@@ -68,9 +73,6 @@ pub const fn gap_fix(family: &'static str, owner: &'static str) -> GapFix {
 // The families, each with the task that ports what it lacks.
 pub const DANGLING_REFS: GapFix = gap_fix("dangling refs", "5a-T10");
 pub const INDIRECT_TARGETS: GapFix = gap_fix("indirect targets", "5a-T10");
-pub const FOOTNOTES: GapFix = gap_fix("footnotes", "5a-T11");
-pub const CITATIONS: GapFix = gap_fix("citations", "5a-T11");
-pub const SUBSTITUTIONS: GapFix = gap_fix("substitutions", "5a-T11");
 pub const AUTONUMBER_IDS: GapFix = gap_fix("autonumber ids", "5a-T12");
 pub const CLASS_ATTRIBUTE: GapFix = gap_fix("class attribute", "5a-T12");
 pub const DOCINFO: GapFix = gap_fix("docinfo", "5a-T12");
@@ -209,45 +211,21 @@ fn without_attribute(line: &str, attribute: &str) -> String {
     }
 }
 
-/// The substitution names an expected tree defines, as docutils matches
-/// them: whitespace-collapsed and lowercased.
-fn defined_substitutions(expected: &str) -> BTreeSet<String> {
-    expected
-        .lines()
-        .filter_map(|line| {
-            let rest = line
-                .trim_start()
-                .strip_prefix("<substitution_definition ")?;
-            let names = rest.split("names=\"").nth(1)?.split('"').next()?;
-            Some(normalize_name(&names.replace("\\ ", " ")))
-        })
-        .collect()
-}
-
-fn normalize_name(name: &str) -> String {
-    name.split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_lowercase()
-}
-
 /// The family of a `problematic` the expected tree has, by its text (the
 /// `rawsource` of the node a transform replaced) [DS §5.2, §5.5].
-fn problematic_fixes(text: &str, defined: &BTreeSet<String>, census: &mut Census) {
+/// Substitutions' (220, `|name|`) and Footnotes' (620, `[#]_`, `[*]_`) are
+/// ported since T11, so one of theirs that differs is not explained.
+fn problematic_fixes(text: &str, census: &mut Census) {
     let substitution = text.strip_prefix('|').and_then(|rest| rest.split_once('|'));
     match substitution {
-        // `|name|`: Substitutions (220).
-        Some((_, "")) => census.add(SUBSTITUTIONS),
-        // `|name|_` / `|name|__`: the reference is 850's or 440's; when the
-        // substitution is undefined, 220 allocated ids inside it first.
-        Some((name, "_" | "__")) => {
-            census.add(DANGLING_REFS);
-            if !defined.contains(&normalize_name(name)) {
-                census.add(SUBSTITUTIONS);
-            }
-        }
-        // `[#]_` / `[*]_` with no footnote left: Footnotes (620).
-        _ if text == "[#]_" || text == "[*]_" => census.add(FOOTNOTES),
+        // `|name|_` / `|name|__`: the reference is 850's or 440's.
+        Some((_, "_" | "__")) => census.add(DANGLING_REFS),
+        Some((_, "")) => census
+            .unexplained
+            .push(format!("problematic with text {text:?}")),
+        _ if text == "[#]_" || text == "[*]_" => census
+            .unexplained
+            .push(format!("problematic with text {text:?}")),
         // A named or anonymous reference, a `[label]_` footnote reference
         // with no footnote, or an image `:target:` reference (no text):
         // AnonymousHyperlinks (440) or SphinxDanglingReferences (850).
@@ -290,20 +268,34 @@ const PENDING_DIRECTIVE_NAMES: [&str; 3] = ["contents", "sectnum", "target-notes
 pub fn tree_census(expected: &str, actual: &str) -> Census {
     let expected_lines: Vec<&str> = expected.lines().collect();
     let actual_lines: Vec<&str> = actual.lines().collect();
-    let defined = defined_substitutions(expected);
     let messages = message_lines(&actual_lines);
+    let notes = target_notes(&expected_lines);
     let mut census = Census::default();
     for hunk in line_hunks(&expected_lines, &actual_lines) {
-        census.merge(hunk_census(&hunk, &defined, &messages));
+        census.merge(hunk_census(&hunk, &messages, &notes));
     }
     census
+}
+
+/// The ids of the footnotes TargetNotes (540) makes in the expected tree,
+/// those it names `TARGET_NOTE: <id>`: a footnote reference to one is
+/// TargetNotes' too.
+fn target_notes(expected: &[&str]) -> BTreeSet<String> {
+    expected
+        .iter()
+        .map(|line| line.trim_start())
+        .filter(|line| line.starts_with("<footnote ") && line.contains("TARGET_NOTE"))
+        .filter_map(|line| line.split(" ids=\"").nth(1)?.split('"').next())
+        .map(str::to_string)
+        .collect()
 }
 
 /// One hunk's families. `messages` is [`message_lines`] of the actual
 /// text: a `system_message` only our tree has is judged by its text,
 /// whichever of its lines the hunk holds, since the line diff can match a
-/// line inside it (a `<paragraph>`) and split it across hunks.
-fn hunk_census(hunk: &Hunk<'_>, defined: &BTreeSet<String>, messages: &[Option<String>]) -> Census {
+/// line inside it (a `<paragraph>`) and split it across hunks. `notes` are
+/// the ids of TargetNotes' footnotes ([`target_notes`]).
+fn hunk_census(hunk: &Hunk<'_>, messages: &[Option<String>], notes: &BTreeSet<String>) -> Census {
     let mut census = Census::default();
     let removed: Vec<&str> = hunk.removed.iter().map(|line| line.trim_start()).collect();
     let added: Vec<&str> = hunk.added.iter().map(|line| line.trim_start()).collect();
@@ -327,7 +319,7 @@ fn hunk_census(hunk: &Hunk<'_>, defined: &BTreeSet<String>, messages: &[Option<S
 
     for (at, line) in removed.iter().enumerate() {
         if line.starts_with("<problematic ") {
-            problematic_fixes(&text_under(&hunk.removed, at), defined, &mut census);
+            problematic_fixes(&text_under(&hunk.removed, at), &mut census);
         }
         if line.starts_with("<reference ") || line.starts_with("<target ") {
             let resolved = ["refuri", "refid"].iter().any(|attribute| {
@@ -337,18 +329,6 @@ fn hunk_census(hunk: &Hunk<'_>, defined: &BTreeSet<String>, messages: &[Option<S
             if resolved {
                 census.add(INDIRECT_TARGETS);
             }
-        }
-        if line.starts_with("<footnote ")
-            || line.starts_with("<footnote_reference ")
-            || *line == "<label>"
-        {
-            census.add(FOOTNOTES);
-        }
-        if line.starts_with("<citation ")
-            || line.starts_with("<label support_smartquotes")
-            || line.contains("refdomain=\"citation\"")
-        {
-            census.add(CITATIONS);
         }
         if line.contains(" candidates=\"") {
             census.add(CANDIDATES);
@@ -361,11 +341,18 @@ fn hunk_census(hunk: &Hunk<'_>, defined: &BTreeSet<String>, messages: &[Option<S
         if line.starts_with("<section classes=") {
             census.add(CLASS_ATTRIBUTE);
         }
+        let target_note_reference = line.starts_with("<footnote_reference ")
+            && line
+                .split(" refid=\"")
+                .nth(1)
+                .and_then(|rest| rest.split('"').next())
+                .is_some_and(|refid| notes.contains(refid));
         if line.contains("classes=\"sectnum\"")
             || line.contains("classes=\"contents\"")
             || line.contains("auto-toc")
             || line.contains("TARGET_NOTE")
             || line.starts_with("<title auto=\"1\"")
+            || target_note_reference
         {
             census.add(PENDING_TRANSFORMS);
         }
@@ -378,12 +365,6 @@ fn hunk_census(hunk: &Hunk<'_>, defined: &BTreeSet<String>, messages: &[Option<S
     }
 
     if !docinfo {
-        // A reference Sphinx made problematic inside content Substitutions
-        // (220) copied in, where ours still holds the substitution
-        // reference: 220 first, then the transform that reports it.
-        let substituted_problematic = removed.iter().enumerate().any(|(at, line)| {
-            line.starts_with("<problematic ") && !text_under(&hunk.removed, at).starts_with('|')
-        });
         let mut our_messages: Vec<&str> = Vec::new();
         for (at, line) in added.iter().enumerate() {
             if let Some(message) = messages
@@ -394,11 +375,6 @@ fn hunk_census(hunk: &Hunk<'_>, defined: &BTreeSet<String>, messages: &[Option<S
                     our_messages.push(message);
                 }
                 continue;
-            }
-            if line.starts_with("<substitution_reference ")
-                && (substituted_problematic || !starts(&removed, "<problematic "))
-            {
-                census.add(SUBSTITUTIONS);
             }
             if line.starts_with("<paragraph classes=") && !starts(&removed, "<desc ") {
                 census.add(CLASS_ATTRIBUTE);

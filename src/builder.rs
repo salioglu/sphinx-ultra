@@ -2315,6 +2315,19 @@ mod tests {
             baseline,
             "keep_warnings"
         );
+
+        // `today` and `today_fmt` are rebuild class `'env'`
+        // (`config.py:227-229`): `|today|` is substituted in the read.
+        let mut today = base.clone();
+        today.today = "April 1".to_string();
+        assert_ne!(config_fingerprint(&today).unwrap(), baseline, "today");
+        let mut today_fmt = base.clone();
+        today_fmt.today_fmt = Some("%Y".to_string());
+        assert_ne!(
+            config_fingerprint(&today_fmt).unwrap(),
+            baseline,
+            "today_fmt"
+        );
     }
 
     /// Serializing through `serde_json::Value` sorts every map, so a

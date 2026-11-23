@@ -33,6 +33,11 @@ pub struct ConfPyConfig {
     pub project: Option<String>,
     pub version: Option<String>,
     pub release: Option<String>,
+    /// `today` (`config.py:227`), `None` when conf.py said nothing.
+    pub today: Option<String>,
+    /// `today_fmt` (`config.py:229`), `None` when conf.py said nothing or
+    /// set it to `None`, both of which leave Sphinx's default.
+    pub today_fmt: Option<String>,
     pub copyright: Option<String>,
     pub author: Option<String>,
 
@@ -343,6 +348,8 @@ impl PythonConfigParser {
         config.project = extract_string("project");
         config.version = extract_string("version");
         config.release = extract_string("release");
+        config.today = extract_string("today");
+        config.today_fmt = extract_string("today_fmt");
         config.copyright = extract_string("copyright");
         config.author = extract_string("author");
 
@@ -524,6 +531,8 @@ impl PythonConfigParser {
             "project"
                 | "version"
                 | "release"
+                | "today"
+                | "today_fmt"
                 | "copyright"
                 | "author"
                 | "extensions"
@@ -1076,6 +1085,8 @@ impl Default for ConfPyConfig {
             project: None,
             version: None,
             release: None,
+            today: None,
+            today_fmt: None,
             copyright: None,
             author: None,
             extensions: Vec::new(),
@@ -1227,6 +1238,10 @@ impl ConfPyConfig {
         if let Some(release) = &self.release {
             config.release = Some(release.clone());
         }
+        if let Some(today) = &self.today {
+            config.today = today.clone();
+        }
+        config.today_fmt = self.today_fmt.clone();
         if let Some(copyright) = &self.copyright {
             config.copyright = Some(copyright.clone());
         }
@@ -1957,5 +1972,30 @@ e = 'esc\n'
         let p = parse("project = 'x'\n");
         let config = p.extract_configuration().unwrap();
         assert!(!config.to_build_config().unwrap().keep_warnings);
+    }
+
+    /// `today` and `today_fmt` are standard keys (`config.py:227-229`):
+    /// read from conf.py into the build configuration, never into
+    /// `custom_configs`; unset, or `today_fmt = None`, they keep Sphinx's
+    /// `''` and `None`.
+    #[test]
+    fn today_and_today_fmt_are_read_from_conf_py() {
+        let p = parse("today = 'April 1'\ntoday_fmt = '%Y-%m-%d'\n");
+        let config = p.extract_configuration().unwrap();
+        assert!(!config.custom_configs.contains_key("today"));
+        assert!(!config.custom_configs.contains_key("today_fmt"));
+        let build = config.to_build_config().unwrap();
+        assert_eq!(build.today, "April 1");
+        assert_eq!(build.today_fmt.as_deref(), Some("%Y-%m-%d"));
+
+        for source in ["project = 'x'\n", "today_fmt = None\n"] {
+            let build = parse(source)
+                .extract_configuration()
+                .unwrap()
+                .to_build_config()
+                .unwrap();
+            assert_eq!(build.today, "", "{source:?}");
+            assert_eq!(build.today_fmt, None, "{source:?}");
+        }
     }
 }

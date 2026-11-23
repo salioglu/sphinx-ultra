@@ -644,6 +644,11 @@ impl TxTree {
         }
     }
 
+    /// The parse's source table ([`Doctree::sources`]).
+    pub fn sources(&self) -> &[String] {
+        &self.sources
+    }
+
     /// The path of `source` in the parse's source table; for a location
     /// that names no source, the document's own, the table's first entry
     /// (docutils' `reporter.source`), as the parse's reporter spells it.

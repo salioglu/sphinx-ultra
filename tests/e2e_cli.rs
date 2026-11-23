@@ -1788,6 +1788,46 @@ fn sphinx_build_mode_runs_no_validation() {
     }
 }
 
+/// `|today|` formats the build date, which Sphinx's `format_date` takes
+/// from `SOURCE_DATE_EPOCH` when it is set, in UTC
+/// (`SP/sphinx/util/i18n.py:268-282`): the binary reads it from its own
+/// environment, once per build, and formats it with conf.py's
+/// `today_fmt`, which `-D` overrides; `-D today=` replaces the date with
+/// its text. The pages are 5b's, so the substituted text is read from the
+/// search index, which is fed from the read doctree: one term per run.
+#[test]
+fn today_follows_source_date_epoch() {
+    let src = temp_source(
+        "sb-today",
+        &[
+            ("conf.py", "project = 'Temp'\ntoday_fmt = 'on%Y%m%d'\n"),
+            ("index.rst", "Title\n=====\n\nBuilt |today|.\n"),
+        ],
+    );
+    // 1700000000 is 2023-11-14T22:13:20Z, day 318 of the year. The search
+    // index drops all-digit words, so each format leads with letters.
+    for (name, extra, term) in [
+        ("conf", &[][..], "on20231114"),
+        ("fmt", &["-D", "today_fmt=day%j%y"][..], "day31823"),
+        ("text", &["-D", "today=x19990101"][..], "x19990101"),
+    ] {
+        let out = out_dir(&format!("sb-today-{name}"));
+        let mut args = vec![src.to_str().unwrap(), out.to_str().unwrap(), "-q"];
+        args.extend_from_slice(extra);
+        let result = bin()
+            .args(&args)
+            .env("SOURCE_DATE_EPOCH", "1700000000")
+            .output()
+            .expect("binary should run");
+        assert!(result.status.success(), "{name}: {}", stderr_of(&result));
+        let terms = search_value(&out)["terms"].clone();
+        assert!(
+            terms.get(term).is_some(),
+            "{name}: no term {term:?} in {terms}"
+        );
+    }
+}
+
 /// The native subcommand keeps the validators, and `validate_directives`
 /// in its configuration file still switches them off.
 #[test]

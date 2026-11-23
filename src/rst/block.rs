@@ -13808,29 +13808,67 @@ fn dedent_by_min(block: &[LineRec]) -> Vec<LineRec> {
     block.iter().map(|l| l.dedented(min)).collect()
 }
 
-/// docutils nodes.Inline membership for the kinds this parser emits
-/// (image/target/raw are genuinely Inline in docutils' class hierarchy).
+/// `isinstance(node, nodes.Inline)` by tagname: every docutils and Sphinx
+/// (`SP/sphinx/addnodes.py`) node class that derives from `nodes.Inline`,
+/// subclasses included (image, target and raw are genuinely Inline; so are
+/// Sphinx's `pending_xref`, the `reference` subclasses `download_reference`
+/// and `number_reference`, `literal_emphasis` and `literal_strong`, `index`,
+/// `manpage` and the `desc_*` signature parts). What `Body.substitution_def`
+/// keeps in a definition (`states.py:2184-2191`).
 fn is_inline_kind(kind: &str) -> bool {
     matches!(
         kind,
-        "emphasis"
-            | "strong"
-            | "literal"
-            | "reference"
-            | "title_reference"
-            | "abbreviation"
+        "abbreviation"
             | "acronym"
-            | "subscript"
-            | "superscript"
-            | "math"
-            | "image"
-            | "problematic"
-            | "inline"
-            | "substitution_reference"
-            | "footnote_reference"
             | "citation_reference"
-            | "target"
+            | "emphasis"
+            | "footnote_reference"
+            | "generated"
+            | "image"
+            | "inline"
+            | "literal"
+            | "math"
+            | "problematic"
             | "raw"
+            | "reference"
+            | "strong"
+            | "subscript"
+            | "substitution_reference"
+            | "superscript"
+            | "target"
+            | "title_reference"
+            | "desc_addname"
+            | "desc_annotation"
+            | "desc_inline"
+            | "desc_name"
+            | "desc_optional"
+            | "desc_parameter"
+            | "desc_parameterlist"
+            | "desc_returns"
+            | "desc_sig_element"
+            | "desc_sig_keyword"
+            | "desc_sig_keyword_type"
+            | "desc_sig_literal_char"
+            | "desc_sig_literal_number"
+            | "desc_sig_literal_string"
+            | "desc_sig_name"
+            | "desc_sig_operator"
+            | "desc_sig_punctuation"
+            | "desc_sig_space"
+            | "desc_signature"
+            | "desc_signature_line"
+            | "desc_type"
+            | "desc_type_parameter"
+            | "desc_type_parameter_list"
+            | "download_reference"
+            | "index"
+            | "literal_emphasis"
+            | "literal_strong"
+            | "manpage"
+            | "number_reference"
+            | "pending_xref"
+            | "pending_xref_condition"
+            | "production"
     )
 }
 

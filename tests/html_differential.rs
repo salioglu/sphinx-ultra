@@ -2079,8 +2079,6 @@ fn cap_line(line: &str) -> String {
 #[test]
 #[ignore]
 fn html_oracle_aux_census() {
-    let profile_root =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/html_oracle/core");
     let mut counts = BTreeMap::<AuxComponent, usize>::new();
     let mut unexplained_rows = 0;
     let mut table = String::new();
@@ -2093,7 +2091,6 @@ fn html_oracle_aux_census() {
         if by_component.is_empty() {
             continue;
         }
-        let sources = CaseSources::read(&case, &profile_root);
         for (component, diagnostics) in by_component {
             let census = match component {
                 AuxComponent::Warnings => warning_census(&case, &diagnostics),
@@ -2103,7 +2100,7 @@ fn html_oracle_aux_census() {
                     }))
                 }
                 AuxComponent::ObjectsInv => inventory_census(&diagnostics),
-                AuxComponent::SearchIndex => searchindex_census(&case, &sources, &diagnostics),
+                AuxComponent::SearchIndex => searchindex_census(&diagnostics),
             };
             *counts.entry(component).or_default() += 1;
             if !census.unexplained.is_empty() {
@@ -2238,21 +2235,17 @@ fn family_sort_key(family: &str) -> (bool, u32, &str) {
 /// T8 (F1) [TW §6.3, §7.4], or one a ported transform creates (`Transitions`'
 /// since T9c, F7; the hyperlink-target transforms' since T10, F4's
 /// `Unknown target name`, `Anonymous hyperlink mismatch` and `Indirect
-/// hyperlink target`): a record one side alone prints is unexplained.
-const REPORTER_MESSAGE_FIXES: &[(&str, GapFix)] = &[
-    (
-        "Undefined substitution referenced: ",
-        gap_fix("F4", "5a-T11"),
-    ),
-    (" footnote references: only ", gap_fix("F4", "5a-T11")),
-    ("Cannot scale image!", gap_fix("F8", "5b")),
-];
+/// hyperlink target`; Substitutions' and Footnotes' since T11, F4's
+/// `Undefined substitution referenced` and `Too many … footnote
+/// references`): a record one side alone prints is unexplained.
+const REPORTER_MESSAGE_FIXES: &[(&str, GapFix)] = &[("Cannot scale image!", gap_fix("F8", "5b"))];
 
-/// Logger records Ultra does not print, by message [TW §6.3, §7.3].
+/// Logger records Ultra does not print, by message [TW §6.3, §7.3]. The
+/// unreferenced-footnote warning (`[ref.footnote]`, F6) is printed since
+/// T11.
 const MISSING_LOGGER_FIXES: &[(&str, GapFix)] = &[
     ("Configuration error!", gap_fix("F9", "5a-T3")),
     ("image file not readable: ", gap_fix("F3", "5a-T13a")),
-    ("is not referenced. [ref.footnote]", gap_fix("F6", "5a-T11")),
     (
         "is not referenced. [ref.citation]",
         gap_fix("F6", "5a-T13b"),
@@ -2436,33 +2429,6 @@ fn warning_record_message(line: &str) -> Option<&str> {
         .map(|message| message.as_str())
 }
 
-/// The text of a case's inputs besides its `conf.py`: every one that is
-/// UTF-8 text (the reStructuredText sources and the files they include).
-struct CaseSources {
-    documents: String,
-}
-
-impl CaseSources {
-    fn read(case: &CaseRecord, profile_root: &Path) -> Self {
-        let mut sources = Self {
-            documents: String::new(),
-        };
-        for record in &case.input_files {
-            if record.logical_path == "conf.py" {
-                continue;
-            }
-            let bytes = read_record(record, profile_root)
-                .unwrap_or_else(|error| panic!("{}: {error}", case_key(case)));
-            let Ok(text) = String::from_utf8(bytes) else {
-                continue;
-            };
-            sources.documents.push_str(&text);
-            sources.documents.push('\n');
-        }
-        sources
-    }
-}
-
 /// The causes of an `objects.inv` mismatch [BASE §2.8], told by each record
 /// only one side holds or holds differently. The two the census knew, a
 /// title's dangling reference kept as its raw source (`INV:word_`) and a
@@ -2482,80 +2448,20 @@ fn inventory_census(diagnostics: &[Diagnostic]) -> GapCensus {
     census
 }
 
-/// The causes of a `searchindex.js` mismatch [TW A18, BASE §2.9], told by
-/// the terms that differ, the case's expected warnings and the constructs
-/// its sources use. A section anchor the label PropagateTargets moves onto
-/// it (`SI:propagate-targets`) and a reference the 440, 460 or 850
-/// transforms keep as its raw source (`SI:word_`) are fixed since T10.
-fn searchindex_census(
-    case: &CaseRecord,
-    sources: &CaseSources,
-    diagnostics: &[Diagnostic],
-) -> GapCensus {
-    let mut expected_only_terms = BTreeSet::new();
-    let mut actual_only_terms = BTreeSet::new();
-    for diagnostic in diagnostics {
-        let key = diagnostic.detail.split('"').nth(1).unwrap_or_default();
-        let (expected, actual) = match (
-            serde_json::from_str::<serde_json::Value>(&diagnostic.expected),
-            serde_json::from_str::<serde_json::Value>(&diagnostic.actual),
-        ) {
-            (Ok(serde_json::Value::Object(expected)), Ok(serde_json::Value::Object(actual))) => {
-                (expected, actual)
-            }
-            _ => continue,
-        };
-        let only = |left: &serde_json::Map<String, serde_json::Value>,
-                    right: &serde_json::Map<String, serde_json::Value>| {
-            left.keys()
-                .filter(|key| !right.contains_key(*key))
-                .cloned()
-                .collect::<Vec<_>>()
-        };
-        if matches!(key, "terms" | "titleterms") {
-            expected_only_terms.extend(only(&expected, &actual));
-            actual_only_terms.extend(only(&actual, &expected));
-        }
-    }
-    let warnings = case.warnings.as_str();
-    let reference_text_terms = expected_only_terms.iter().any(|term| term.ends_with('_'));
-    let causes = [
-        // A footnote reference the Footnotes transform (620) cannot number
-        // becomes a problematic that keeps its raw source (`[#]_`) as text.
-        (
-            reference_text_terms && warnings.contains(" footnote references: only "),
-            gap_fix("SI:footnote-refs", "5a-T11"),
-        ),
-        // Ultra indexes a substitution reference's name, Sphinx its
-        // replacement.
-        (
-            actual_only_terms
-                .iter()
-                .any(|term| sources.documents.contains(&format!("|{term}|"))),
-            gap_fix("SI:substitutions", "5a-T11"),
-        ),
-    ];
-    let mut census = GapCensus::default();
-    census.fixes.extend(
-        causes
-            .into_iter()
-            .filter_map(|(holds, fix)| holds.then_some(fix)),
-    );
-    let explains_reference_text = census
-        .fixes
-        .iter()
-        .any(|fix| fix.family == "SI:footnote-refs");
-    if census.fixes.is_empty() || (reference_text_terms && !explains_reference_text) {
-        census
-            .unexplained
-            .extend(diagnostics.iter().map(|diagnostic| {
-                format!(
-                    "{}: {}: expected {:?}, actual {:?}",
-                    diagnostic.category, diagnostic.detail, diagnostic.expected, diagnostic.actual
-                )
-            }));
-    }
-    census
+/// The causes of a `searchindex.js` mismatch [TW A18, BASE §2.9]. The ones
+/// the census knew are fixed: a section anchor the label PropagateTargets
+/// moves onto it (`SI:propagate-targets`) and a reference the 440, 460 or
+/// 850 transforms keep as its raw source (`SI:word_`) since T10, a
+/// substitution reference indexed by its name (`SI:substitutions`) and a
+/// footnote reference kept as its raw source (`SI:footnote-refs`) since
+/// T11: every mismatch is now unexplained.
+fn searchindex_census(diagnostics: &[Diagnostic]) -> GapCensus {
+    GapCensus::unattributed(diagnostics.iter().map(|diagnostic| {
+        format!(
+            "{}: {}: expected {:?}, actual {:?}",
+            diagnostic.category, diagnostic.detail, diagnostic.expected, diagnostic.actual
+        )
+    }))
 }
 
 /// The verdict of `html_oracle_aux_gate`: the observed `(case_key, component)`
@@ -2721,31 +2627,12 @@ fn aux_gate_diff_reports_regressions_and_fixed_rows() {
 /// one line and a grep for an owner shows whole rows.
 #[rustfmt::skip]
 const KNOWN_AUX_GAPS: &[(&str, AuxComponent, &str)] = &[
-    ("core/docutils_snippets/docutils-0236", AuxComponent::Warnings, "F4: 5a-T11"),
-    ("core/docutils_snippets/docutils-0237", AuxComponent::Warnings, "F4: 5a-T11"),
     ("core/docutils_snippets/docutils-0240", AuxComponent::Warnings, "F6: 5a-T13b"),
     ("core/docutils_snippets/docutils-0241", AuxComponent::Warnings, "F6: 5a-T13b"),
-    ("core/docutils_snippets/docutils-0242", AuxComponent::Warnings, "F4: 5a-T11"),
-    ("core/docutils_snippets/docutils-0243", AuxComponent::Warnings, "F4: 5a-T11"),
-    ("core/docutils_snippets/docutils-0280", AuxComponent::Warnings, "F6: 5a-T11"),
-    ("core/docutils_snippets/docutils-0281", AuxComponent::Warnings, "F6: 5a-T11"),
-    ("core/docutils_snippets/docutils-0282", AuxComponent::Warnings, "F6: 5a-T11"),
-    ("core/docutils_snippets/docutils-0283", AuxComponent::Warnings, "F6: 5a-T11"),
     ("core/docutils_snippets/docutils-0284", AuxComponent::Warnings, "F6: 5a-T13b"),
-    ("core/docutils_snippets/docutils-0285", AuxComponent::Warnings, "F6: 5a-T11"),
     ("core/docutils_snippets/docutils-0286", AuxComponent::Warnings, "F6: 5a-T13b"),
-    ("core/docutils_snippets/docutils-0287", AuxComponent::Warnings, "F6: 5a-T11"),
     ("core/docutils_snippets/docutils-0288", AuxComponent::Warnings, "F6: 5a-T13b"),
-    ("core/docutils_snippets/docutils-0289", AuxComponent::Warnings, "F6: 5a-T11"),
-    ("core/docutils_snippets/docutils-0290", AuxComponent::Warnings, "F6: 5a-T11"),
     ("core/docutils_snippets/docutils-0292", AuxComponent::Warnings, "F6: 5a-T13b"),
-    ("core/docutils_snippets/docutils-0293", AuxComponent::Warnings, "F6: 5a-T11"),
-    ("core/docutils_snippets/docutils-0359", AuxComponent::Warnings, "F6: 5a-T11"),
-    ("core/docutils_snippets/docutils-0360", AuxComponent::Warnings, "F6: 5a-T11"),
-    ("core/docutils_snippets/docutils-0367", AuxComponent::Warnings, "F4: 5a-T11"),
-    ("core/docutils_snippets/docutils-0368", AuxComponent::Warnings, "F6: 5a-T11"),
-    ("core/docutils_snippets/docutils-0372", AuxComponent::Warnings, "F6: 5a-T11"),
-    ("core/docutils_snippets/docutils-0375", AuxComponent::Warnings, "F6: 5a-T11"),
     ("core/docutils_snippets/docutils-0425", AuxComponent::Warnings, "F3: 5a-T13a"),
     ("core/docutils_snippets/docutils-0426", AuxComponent::Warnings, "F3: 5a-T13a"),
     ("core/docutils_snippets/docutils-0427", AuxComponent::Warnings, "F3: 5a-T13a"),
@@ -2774,19 +2661,13 @@ const KNOWN_AUX_GAPS: &[(&str, AuxComponent, &str)] = &[
     ("core/docutils_snippets/docutils-0499", AuxComponent::Warnings, "F3: 5a-T13a"),
     ("core/docutils_snippets/docutils-0501", AuxComponent::Warnings, "F3: 5a-T13a"),
     ("core/docutils_snippets/docutils-0502", AuxComponent::Warnings, "F3: 5a-T13a"),
-    ("core/docutils_snippets/docutils-0568", AuxComponent::SearchIndex, "SI:substitutions: 5a-T11"),
-    ("core/docutils_snippets/docutils-0575", AuxComponent::Warnings, "F4: 5a-T11"),
     ("core/docutils_snippets/docutils-0590", AuxComponent::Warnings, "F3: 5a-T13a"),
     ("core/docutils_snippets/docutils-0591", AuxComponent::Warnings, "F3: 5a-T13a"),
     ("core/docutils_snippets/docutils-0593", AuxComponent::Warnings, "F3: 5a-T13a"),
-    ("core/docutils_snippets/docutils-0611", AuxComponent::Warnings, "F4: 5a-T11"),
-    ("core/docutils_snippets/docutils-0615", AuxComponent::Warnings, "F6: 5a-T11"),
-    ("core/docutils_snippets/docutils-0616", AuxComponent::Warnings, "F6: 5a-T11"),
     ("core/docutils_snippets/docutils-0617", AuxComponent::Warnings, "F6: 5a-T13b"),
     ("core/docutils_snippets/docutils-0685", AuxComponent::Warnings, "F3: 5a-T13a"),
     ("core/docutils_snippets/docutils-0707", AuxComponent::Warnings, "F3: 5a-T13a"),
     ("core/docutils_snippets/docutils-0708", AuxComponent::Warnings, "F3: 5a-T13a"),
-    ("core/docutils_snippets/docutils-0712", AuxComponent::SearchIndex, "SI:substitutions: 5a-T11"),
     ("core/docutils_snippets/docutils-0716", AuxComponent::Warnings, "F3: 5a-T13a"),
     ("core/environment_projects/inc_warn", AuxComponent::Warnings, "F8b: 5a-T14"),
     ("core/environment_projects/numfig_off_numref", AuxComponent::Warnings, "F3: 5a-T13a"),

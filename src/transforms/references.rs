@@ -1,17 +1,22 @@
-//! docutils' hyperlink-target transforms (`SP/docutils/transforms/references.py`)
-//! and Sphinx's `SphinxDanglingReferences`
-//! (`SP/sphinx/transforms/references.py:18-30`), ported one row of the
-//! read-transform table at a time ([`super::READ_TRANSFORMS`]).
+//! docutils' substitution and hyperlink-target transforms
+//! (`SP/docutils/transforms/references.py`) and Sphinx's
+//! `SphinxDanglingReferences` (`SP/sphinx/transforms/references.py:18-30`),
+//! ported one row of the read-transform table at a time
+//! ([`super::READ_TRANSFORMS`]).
 //!
-//! They resolve a document's references in four passes over its targets —
+//! Substitutions (220) first puts a copy of each substitution's
+//! definition in place of every reference to it. The target transforms
+//! then resolve the document's references in four passes over its targets —
 //! internal targets propagated to the node they label (260), anonymous
 //! references paired with anonymous targets (440), indirect targets
 //! followed to what they refer to (460), then the references to external
 //! (640) and internal (660) targets — and report every reference still
-//! dangling (850). A reference or target they cannot resolve becomes a
-//! `problematic` holding its rawsource, which points at the message; the
-//! message itself is written to the stream and never placed in the tree,
-//! though its id is taken for good ([DS §5.2-5.5]).
+//! dangling (850). A reference, substitution reference or target they
+//! cannot resolve becomes a `problematic` holding its rawsource, which
+//! points at the message; the message itself is written to the stream and
+//! never placed in the tree, though its id is taken for good
+//! ([DS §5.2-5.5]). The one message placed in the tree is the one about a
+//! circular substitution definition, which takes the definition's place.
 //!
 //! The registries they read are the parse's, by node identity, so a node
 //! the parse detached still resolves, errs and is replaced
@@ -23,12 +28,13 @@
 //! gone here: an external target dropped that way would give an indirect
 //! target its `refuri`, where here it gives its id.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::tree::{Findall, TxId, TxNode, TxTree};
 use super::{Transform, TransformCx};
 use crate::doctree::messages::{self, ERROR, INFO};
-use crate::doctree::{is_text_element, kinds, AttrValue};
+use crate::doctree::{is_text_element, kinds, unescape, AttrValue};
+use crate::utils::py_isspace;
 
 /// `isinstance(node, nodes.Invisible)`: docutils' `comment`,
 /// `substitution_definition`, `target` and `pending`, and Sphinx's `index`
@@ -78,7 +84,7 @@ fn refids(tree: &TxTree, id: &str) -> Vec<TxId> {
 /// `nodes.problematic(rawsource, rawsource, refid=msgid)`: a problematic
 /// holding the text `rawsource` (none when it is empty, as
 /// `TextElement` makes no Text of `''`), pointing at the message `msgid`.
-fn problematic(tree: &mut TxTree, rawsource: &str, msgid: &str) -> TxId {
+pub(super) fn problematic(tree: &mut TxTree, rawsource: &str, msgid: &str) -> TxId {
     let prb = tree.new_node(kinds::PROBLEMATIC);
     let node = tree.node_mut(prb);
     node.set("refid", AttrValue::Str(msgid.to_string()));
@@ -91,12 +97,17 @@ fn problematic(tree: &mut TxTree, rawsource: &str, msgid: &str) -> TxId {
     prb
 }
 
-/// The allocating problematic shape of AnonymousHyperlinks and
-/// IndirectHyperlinks ([DS §5.5]): the problematic for `reference` takes
-/// an id of its own (`prbid = set_id(prb)`), the message `message` a
-/// backref to it, and it replaces the reference, whose ids it takes after
-/// its own.
-fn replace_with_problematic(cx: &mut TransformCx<'_>, reference: TxId, message: TxId, msgid: &str) {
+/// The allocating problematic shape of Substitutions, AnonymousHyperlinks,
+/// IndirectHyperlinks and Footnotes ([DS §5.5]): the problematic for
+/// `reference` takes an id of its own (`prbid = set_id(prb)`), the message
+/// `message` a backref to it, and it replaces the reference, whose ids it
+/// takes after its own.
+pub(super) fn replace_with_problematic(
+    cx: &mut TransformCx<'_>,
+    reference: TxId,
+    message: TxId,
+    msgid: &str,
+) {
     let rawsource = cx
         .tree
         .node(reference)
@@ -107,6 +118,255 @@ fn replace_with_problematic(cx: &mut TransformCx<'_>, reference: TxId, message: 
     let prbid = cx.set_id(prb);
     cx.tree.node_mut(message).attrs.backrefs.push(prbid);
     cx.tree.replace_self(reference, vec![prb]);
+}
+
+/// 220-004 `Substitutions` (`SP/docutils/transforms/references.py:642-765`):
+/// each substitution reference of the tree, in a snapshot taken before the
+/// loop, and then each reference a copy brings in, is replaced by a deep
+/// copy of its definition's children ([`substitute`]). Nothing registers
+/// the copies but the transform itself: each of their top-level
+/// references that has a `refname` is noted under it (`note_refname`),
+/// after the definition's own, which the parse noted
+/// ([`TxTree::deepcopy`]).
+pub struct Substitutions;
+
+/// docutils' `line_length_limit` setting (`SP/docutils/frontend.py`, default
+/// 10000), which Sphinx leaves as it is: the longest definition text a
+/// reference may copy.
+const LINE_LENGTH_LIMIT: usize = 10_000;
+
+/// What one Substitutions run keeps across its references.
+#[derive(Default)]
+struct SubstitutionRun {
+    /// `subreflist`: the references to substitute, the tree's and then
+    /// those the copies bring in, in the order they are found.
+    references: Vec<TxId>,
+    /// `nested`: per substitution, the definitions whose copies referred
+    /// to it, which tells a definition that refers back to itself.
+    nested: HashMap<String, Vec<String>>,
+    /// `nested_ref['ref-origin']`: the reference whose copy brought each
+    /// nested reference in, which a circular one is reported at.
+    origin: HashMap<TxId, TxId>,
+    /// The copies a circular reference stopped before they were placed:
+    /// docutils drops them with the nested references it had found in them
+    /// so far, which the loop still reaches.
+    dropped: HashSet<TxId>,
+}
+
+impl Transform for Substitutions {
+    fn apply(&self, cx: &mut TransformCx<'_>) {
+        let root = cx.tree.root();
+        let mut run = SubstitutionRun {
+            references: cx
+                .tree
+                .findall(root, |node| node.kind == kinds::SUBSTITUTION_REFERENCE),
+            ..SubstitutionRun::default()
+        };
+        let mut next = 0;
+        while let Some(&reference) = run.references.get(next) {
+            next += 1;
+            substitute(cx, reference, &mut run);
+        }
+    }
+}
+
+/// One turn of Substitutions' loop, for `reference`.
+///
+/// The definition is the one the reference names (`document.substitution_defs`,
+/// the last of that name), or the one its name lowercased normalizes to
+/// (`substitution_names`). An undefined name, or a definition whose text
+/// passes [`LINE_LENGTH_LIMIT`] (reported with no node, at the parse's
+/// final position), is an ERROR, and the reference becomes a problematic
+/// ([`replace_with_problematic`]). Otherwise `ltrim` and `rtrim` strip the
+/// Text before and after the reference ([`strip_text`]), the definition is
+/// deep-copied, and each reference in the copy is noted for the loop
+/// ([`SubstitutionRun`]), until one names a definition whose copies it was
+/// found in, a circular definition ([`circular_definition`]). The copy's
+/// children then take the reference's place, and its top-level references
+/// with a `refname` are noted (`note_refname`).
+fn substitute(cx: &mut TransformCx<'_>, reference: TxId, run: &mut SubstitutionRun) {
+    let refname = cx
+        .tree
+        .node(reference)
+        .str_attr("refname")
+        .unwrap_or_default()
+        .to_string();
+    let registries = &cx.state.registries;
+    let key = if registries.has_substitution_def(&refname) {
+        Some(refname.clone())
+    } else {
+        registries
+            .substitution_names
+            .get(&refname.to_lowercase())
+            .cloned()
+    };
+    let definition = key.as_deref().and_then(|key| substitution_def(cx, key));
+    let message = match (&key, definition) {
+        (Some(key), Some(definition)) => {
+            let length = cx.tree.astext(definition).chars().count();
+            (length > LINE_LENGTH_LIMIT).then(|| {
+                let text =
+                    format!("Substitution definition \"{key}\" exceeds the line-length-limit.");
+                cx.system_message(ERROR, &text, None, Vec::new())
+            })
+        }
+        _ => {
+            let text = format!("Undefined substitution referenced: \"{refname}\".");
+            Some(cx.system_message(ERROR, &text, Some(reference), Vec::new()))
+        }
+    };
+    let (Some(key), Some(definition), None) = (key, definition, message) else {
+        if let Some(message) = message {
+            let msgid = cx.set_id(message);
+            replace_with_problematic(cx, reference, message, &msgid);
+        }
+        return;
+    };
+
+    if let Some(parent) = cx.tree.parent(reference) {
+        let siblings = &cx.tree.node(parent).children;
+        if let Some(index) = siblings.iter().position(|&child| child == reference) {
+            let has = |attribute| cx.tree.node(definition).get(attribute).is_some();
+            let (ltrim, rtrim, trim) = (has("ltrim"), has("rtrim"), has("trim"));
+            let before = index.checked_sub(1).map(|at| siblings[at]);
+            let after = siblings.get(index + 1).copied();
+            if ltrim || trim {
+                if let Some(text) = before.filter(|&node| cx.tree.node(node).kind == kinds::TEXT) {
+                    strip_text(cx.tree, text, |data| data.trim_end_matches(py_isspace));
+                }
+            }
+            if rtrim || trim {
+                if let Some(text) = after.filter(|&node| cx.tree.node(node).kind == kinds::TEXT) {
+                    strip_text(cx.tree, text, |data| data.trim_start_matches(py_isspace));
+                }
+            }
+        }
+    }
+
+    let copy = cx.tree.deepcopy(definition, cx.state);
+    let is_reference = |node: &TxNode| node.kind == kinds::SUBSTITUTION_REFERENCE;
+    for nested in cx.tree.findall(copy, is_reference) {
+        let nested_refname = cx.tree.node(nested).str_attr("refname").unwrap_or_default();
+        // `normed[nested_ref['refname'].lower()]` raises `KeyError` for a
+        // name no definition has, which crashes Sphinx (decision 13: not
+        // modelled); here the reference is substituted in its turn, as
+        // undefined.
+        let nested_name = cx
+            .state
+            .registries
+            .substitution_names
+            .get(&nested_refname.to_lowercase())
+            .cloned();
+        if let Some(nested_name) = nested_name {
+            let referrers = run.nested.entry(nested_name).or_default();
+            if referrers.contains(&key) {
+                run.dropped.insert(copy);
+                circular_definition(cx, reference, &refname, run);
+                return;
+            }
+            referrers.push(key.clone());
+        }
+        run.origin.insert(nested, reference);
+        run.references.push(nested);
+    }
+    let children = cx.tree.node(copy).children.clone();
+    cx.tree.replace_self(reference, children.clone());
+    for child in children {
+        let node = cx.tree.node(child);
+        let referential = matches!(
+            node.kind,
+            kinds::REFERENCE
+                | kinds::FOOTNOTE_REFERENCE
+                | kinds::CITATION_REFERENCE
+                | "download_reference"
+                | "number_reference"
+        );
+        if let Some(refname) = node.str_attr("refname").filter(|_| referential) {
+            let refname = refname.to_string();
+            let uid = cx.tree.assign_uid(child, cx.state);
+            cx.state.registries.refnames.push(&refname, uid);
+        }
+    }
+}
+
+/// `document.substitution_defs[key]`: the last definition registered
+/// under the name `key`, wherever it is now.
+fn substitution_def(cx: &TransformCx<'_>, key: &str) -> Option<TxId> {
+    let (_, uid) = cx
+        .state
+        .registries
+        .substitution_defs
+        .iter()
+        .rev()
+        .find(|(name, _)| name == key)?;
+    cx.tree.by_uid(*uid)
+}
+
+/// The `except CircularSubstitutionDefinitionError` branch of
+/// Substitutions: a reference that stands in a substitution definition
+/// reports the definition (`Circular substitution definition detected:`,
+/// with its block, at its location), and the message takes its place and
+/// its names, with no id; any other reports the reference the chain of
+/// copies started from (`Circular substitution definition referenced`)
+/// and becomes a problematic. A definition docutils dropped as a copy has
+/// no place to give the message, which crashes Sphinx (decision 13: not
+/// modelled); it is reported and left where it is.
+fn circular_definition(
+    cx: &mut TransformCx<'_>,
+    reference: TxId,
+    refname: &str,
+    run: &SubstitutionRun,
+) {
+    let parent = cx.tree.parent(reference);
+    if let Some(definition) =
+        parent.filter(|&parent| cx.tree.node(parent).kind == "substitution_definition")
+    {
+        let rawsource = cx
+            .tree
+            .node(definition)
+            .rawsource()
+            .unwrap_or_default()
+            .to_string();
+        let message = cx.system_message(
+            ERROR,
+            "Circular substitution definition detected:",
+            Some(definition),
+            vec![messages::literal_block(&rawsource)],
+        );
+        if !run.dropped.contains(&definition) {
+            cx.tree.replace_self(definition, vec![message]);
+        }
+        return;
+    }
+    let mut origin = reference;
+    while let Some(&from) = run.origin.get(&origin) {
+        origin = from;
+    }
+    let text = format!("Circular substitution definition referenced: \"{refname}\".");
+    let message = cx.system_message(ERROR, &text, Some(origin), Vec::new());
+    let msgid = cx.set_id(message);
+    replace_with_problematic(cx, reference, message, &msgid);
+}
+
+/// `parent[index] = parent[index].rstrip()` (or `.lstrip()`) for the Text
+/// at `id`: docutils strips the Text's data, the inliner's null-escaped
+/// form, of Python's whitespace (`strip`), so an escaped space stays
+/// unless it ends the text, and the text is the data unescaped.
+fn strip_text(tree: &mut TxTree, id: TxId, strip: fn(&str) -> &str) {
+    let node = tree.node_mut(id);
+    match node.ext.as_deref_mut().and_then(|ext| ext.raw.as_mut()) {
+        Some(raw) => {
+            let stripped = strip(raw).to_string();
+            node.text = Some(unescape(&stripped, false));
+            if let Some(ext) = node.ext.as_deref_mut() {
+                ext.raw = stripped.contains('\0').then(|| stripped.into());
+            }
+        }
+        None => {
+            let stripped = node.text.as_deref().map(|text| strip(text).to_string());
+            node.text = stripped;
+        }
+    }
 }
 
 /// 260-005 `PropagateTargets` (`SP/docutils/transforms/references.py:17-95`):
@@ -544,18 +804,15 @@ impl Transform for InternalTargets {
 /// 850-039 `SphinxDanglingReferences` (`SP/sphinx/transforms/references.py:18-30`,
 /// docutils' `DanglingReferences`, `references.py:878-990`): walks the
 /// tree (`document.walk`, which visits a node and then a copy of its
-/// child list) and resolves each unresolved `reference` and
-/// `footnote_reference` with a `refname` through `document.nameids`
-/// ([`visit_reference`]). Then every target nothing referenced, but an
-/// anonymous one, is reported as an INFO, which Sphinx keeps out of the
-/// stream by raising the reporter's level for the duration (the stream
-/// prints no INFO here at any time, [`super::reporter::render_records`]).
-///
-/// docutils visits a `citation_reference` the same way, but in Sphinx's
-/// read none is left in the tree by then: `CitationReferenceTransform`
-/// (619-017) has replaced every one by a `pending_xref`, which the write
-/// phase resolves. Until that row is ported (T11), the walk leaves the
-/// citation references alone rather than report what Sphinx never does.
+/// child list) and resolves each unresolved `reference`,
+/// `footnote_reference` and `citation_reference` with a `refname` through
+/// `document.nameids` ([`visit_reference`]). Then every target nothing
+/// referenced, but an anonymous one, is reported as an INFO, which Sphinx
+/// keeps out of the stream by raising the reporter's level for the
+/// duration (the stream prints no INFO here at any time,
+/// [`super::reporter::render_records`]). In Sphinx's read no citation
+/// reference is left in the tree by then: `CitationReferenceTransform`
+/// (619-017) has replaced each by a `pending_xref`.
 pub struct SphinxDanglingReferences;
 
 impl Transform for SphinxDanglingReferences {
@@ -565,7 +822,7 @@ impl Transform for SphinxDanglingReferences {
         while let Some(node) = walk.pop() {
             if matches!(
                 cx.tree.node(node).kind,
-                kinds::REFERENCE | kinds::FOOTNOTE_REFERENCE
+                kinds::REFERENCE | kinds::FOOTNOTE_REFERENCE | kinds::CITATION_REFERENCE
             ) {
                 visit_reference(cx, node);
             }
@@ -679,120 +936,8 @@ fn embedding_hint(refname: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use crate::config::BuildConfig;
     use crate::doctree::messages::{ERROR, INFO, WARNING};
-    use crate::read::{read_standalone, ReadSettings};
-    use crate::rst::ParseOptions;
-    use crate::transforms::reporter::LogRecord;
-
-    /// The document line every post-read pformat of `<SRCDIR>/index.rst`
-    /// opens with.
-    const DOC: &str = "<document source=\"<SRCDIR>/index.rst\" \
-                       translation_progress=\"{'total': 0, 'translated': 0}\">\n";
-
-    /// One read of a snippet as the read-state harness reads it.
-    struct Read {
-        /// The post-read pformat, less [`DOC`].
-        body: String,
-        /// The warning stream, one entry per line.
-        warnings: Vec<String>,
-        /// The id trace: `[phase, kind, id, attached]`, the phase's Python
-        /// name shortened to its class.
-        trace: Vec<(String, &'static str, String, bool)>,
-        /// The reporter's records of every level, `(level, text)`.
-        reported: Vec<(u8, String)>,
-    }
-
-    /// Our read of `rst` as `<SRCDIR>/index.rst`, the way the read-state
-    /// fixture reads a snippet (`tools/gen_read_state_fixture.py`: M1's
-    /// validation off, smart quotes off, the id trace on), with
-    /// `keep_warnings` as given.
-    fn read_snippet_with(rst: &str, keep_warnings: bool) -> Read {
-        let settings = ReadSettings {
-            trace_ids: true,
-            ..ReadSettings::from_config(&BuildConfig {
-                validate_directives: false,
-                keep_warnings,
-                ..BuildConfig::default()
-            })
-        };
-        let parse = ParseOptions {
-            source_path: "<SRCDIR>/index.rst".to_string(),
-            sphinx: true,
-            docname: "index".to_string(),
-            ..ParseOptions::default()
-        };
-        let read = read_standalone(rst, &parse, &settings);
-        let pformat = read.outcome.doctree().root.pformat();
-        let body = pformat
-            .strip_prefix(DOC)
-            .unwrap_or_else(|| panic!("{rst:?}: unexpected document line:\n{pformat}"))
-            .to_string();
-        let warnings = read
-            .diagnostics
-            .iter()
-            .flat_map(|diagnostic| {
-                diagnostic
-                    .render(true)
-                    .split('\n')
-                    .map(str::to_string)
-                    .collect::<Vec<_>>()
-            })
-            .collect();
-        let state = read.outcome.state();
-        let trace = state
-            .ids
-            .trace()
-            .iter()
-            .map(|event| {
-                let phase = event.phase.rsplit('.').next().unwrap_or_default();
-                (
-                    phase.to_string(),
-                    event.kind,
-                    event.id.clone(),
-                    event.attached,
-                )
-            })
-            .collect();
-        let reported = state
-            .log
-            .iter()
-            .filter_map(|record| match record {
-                LogRecord::Reporter { level, text, .. } => Some((*level, text.clone())),
-                LogRecord::Logger { .. } => None,
-            })
-            .collect();
-        Read {
-            body,
-            warnings,
-            trace,
-            reported,
-        }
-    }
-
-    /// [`read_snippet_with`] under the read-state fixture's `keep_warnings =
-    /// True`.
-    fn read_snippet(rst: &str) -> Read {
-        read_snippet_with(rst, true)
-    }
-
-    fn event(
-        phase: &str,
-        kind: &'static str,
-        id: &str,
-        attached: bool,
-    ) -> (String, &'static str, String, bool) {
-        (phase.to_string(), kind, id.to_string(), attached)
-    }
-
-    /// `<SRCDIR>/index.rst:<line>: ERROR: <text> [docutils]`, as the
-    /// stream's lines.
-    fn error(line: &str, text: &str) -> Vec<String> {
-        format!("<SRCDIR>/index.rst:{line}: ERROR: {text} [docutils]")
-            .split('\n')
-            .map(str::to_string)
-            .collect()
-    }
+    use crate::transforms::test_support::{differences, error, event, read_snippet, SphinxRead};
 
     /// `PropagateTargets` (260-005, `SP/docutils/transforms/references.py:17-95`)
     /// moves the ids and names of a block-level target that refers to
@@ -859,27 +1004,19 @@ mod tests {
             (
                 ".. _x:\n\n.. a comment\n\nPara.\n\n.. _y:\n\n.. [1] note\n",
                 "    <target ids=\"x\" names=\"x\">\n    <comment xml:space=\"preserve\">\n        \
-                 a comment\n    <paragraph>\n        Para.\n    <target ids=\"y\" names=\"y\">\n",
-                &[],
+                 a comment\n    <paragraph>\n        Para.\n    <target ids=\"y\" names=\"y\">\n    \
+                 <footnote docname=\"index\" ids=\"id1\" names=\"1\">\n        <label>\n            \
+                 1\n        <paragraph>\n            note\n",
+                &["<SRCDIR>/index.rst:9: WARNING: Footnote [1] is not referenced. [ref.footnote]"],
             ),
         ];
         let mut mismatches = Vec::new();
         for (rst, body, warnings) in rows {
-            let read = read_snippet(rst);
-            // The footnote's own shape is the footnote transforms' (T11).
-            let ours = match read.body.find("    <footnote ") {
-                Some(at) => &read.body[..at],
-                None => &read.body,
-            };
-            let stream: Vec<&str> = read
-                .warnings
-                .iter()
-                .map(String::as_str)
-                .filter(|line| !line.ends_with("[ref.footnote]"))
-                .collect();
-            if ours != body || stream != warnings {
+            let read = read_snippet(rst, true);
+            if read.body != body || read.warnings != warnings {
                 mismatches.push(format!(
-                    "{rst:?}\n--- sphinx 9.1.0 ---\n{body}{warnings:#?}\n--- ours ---\n{ours}{stream:#?}"
+                    "{rst:?}\n--- sphinx 9.1.0 ---\n{body}{warnings:#?}\n--- ours ---\n{}{:#?}",
+                    read.body, read.warnings
                 ));
             }
         }
@@ -901,7 +1038,10 @@ mod tests {
     //   oracle's.
     #[test]
     fn anonymous_mismatch_is_line_less() {
-        let read = read_snippet(".. __: https://example.com/1\n\n__ https://example.com/2\n");
+        let read = read_snippet(
+            ".. __: https://example.com/1\n\n__ https://example.com/2\n",
+            true,
+        );
         assert_eq!(
             read.body,
             "    <target anonymous=\"1\" ids=\"id1\" refuri=\"https://example.com/1\">\n    \
@@ -926,7 +1066,7 @@ mod tests {
 
         // docutils-0167: the final position is the line after the last
         // paragraph.
-        let read = read_snippet("__ https://x/\npara after\n");
+        let read = read_snippet("__ https://x/\npara after\n", true);
         assert_eq!(
             read.warnings[1..],
             error(
@@ -936,7 +1076,7 @@ mod tests {
             )
         );
 
-        let read = read_snippet("See `a`__ and `b`__.\n\n__ http://a\n");
+        let read = read_snippet("See `a`__ and `b`__.\n\n__ http://a\n", true);
         assert_eq!(
             read.body,
             "    <paragraph>\n        See \n        <problematic ids=\"id3\" refid=\"id2\">\n            \
@@ -969,7 +1109,7 @@ mod tests {
     // oracle (Sphinx 9.1.0): as `propagate_targets_chain`.
     #[test]
     fn indirect_target_to_missing_name() {
-        let read = read_snippet(".. _a: `phrase ref`_\n");
+        let read = read_snippet(".. _a: `phrase ref`_\n", true);
         assert_eq!(
             read.body,
             "    <target ids=\"a\" names=\"a\" refname=\"phrase ref\">\n"
@@ -1071,7 +1211,7 @@ mod tests {
         ];
         let mut mismatches = Vec::new();
         for (rst, body, warnings) in rows {
-            let read = read_snippet(rst);
+            let read = read_snippet(rst, true);
             if read.body != body || read.warnings != warnings {
                 mismatches.push(format!(
                     "{rst:?}\n--- sphinx 9.1.0 ---\n{body}{warnings:#?}\n--- ours ---\n{}{:#?}",
@@ -1098,7 +1238,7 @@ mod tests {
     //   wrapper over the same reads, which prints every level.
     #[test]
     fn dangling_reference_becomes_problematic() {
-        let read = read_snippet("See word_ here.\n");
+        let read = read_snippet("See word_ here.\n", true);
         assert_eq!(
             read.body,
             "    <paragraph>\n        See \n        <problematic ids=\"id2\" refid=\"id1\">\n            \
@@ -1113,7 +1253,7 @@ mod tests {
             ]
         );
 
-        let read = read_snippet("See word_ here.\n\n.. _unused:\n\nPara.\n");
+        let read = read_snippet("See word_ here.\n\n.. _unused:\n\nPara.\n", true);
         assert_eq!(read.warnings, error("1", "Unknown target name: \"word\"."));
         assert_eq!(
             read.reported,
@@ -1131,6 +1271,7 @@ mod tests {
         // embedded URI's target (`states.py:942`).
         let read = read_snippet(
             ".. _x: http://1\n.. _x: http://2\n\nPara `y <http://u>`_.\n\n.. _unused:\n\nText.\n",
+            true,
         );
         assert_eq!(
             read.reported,
@@ -1153,7 +1294,7 @@ mod tests {
             ),
             (".. image:: x.png\n   :target: missing_\n", ""),
         ] {
-            let read = read_snippet(rst);
+            let read = read_snippet(rst, true);
             assert_eq!(
                 read.body,
                 format!("    <problematic ids=\"id2\" refid=\"id1\">{text}\n"),
@@ -1178,7 +1319,7 @@ mod tests {
     //   renders the problematic as `<a href="#id2">`.
     #[test]
     fn loose_messages_consume_ids() {
-        let read = read_snippet("Title [1]_ Here\n===============\n\nbody\n");
+        let read = read_snippet("Title [1]_ Here\n===============\n\nbody\n", true);
         assert_eq!(
             read.body,
             "    <section ids=\"title-1-here\" names=\"title\\ 1\\ here\">\n        <title>\n            \
@@ -1207,7 +1348,7 @@ mod tests {
     // oracle: the read-state fixture's case of that name.
     #[test]
     fn alias_target_before_reference() {
-        let read = read_snippet("See `text <alias_>`_ and alias_ and text_.\n");
+        let read = read_snippet("See `text <alias_>`_ and alias_ and text_.\n", true);
         assert_eq!(
             read.body,
             "    <paragraph>\n        See \n        <problematic ids=\"id4\" refid=\"id3\">\n            \
@@ -1246,7 +1387,7 @@ mod tests {
     // oracle (Sphinx 9.1.0): as `propagate_targets_chain`.
     #[test]
     fn loose_messages_print_but_stay_out_of_the_tree() {
-        let read = read_snippet("See word_ here.\n\n*x\n");
+        let read = read_snippet("See word_ here.\n\n*x\n", true);
         assert_eq!(
             read.body,
             "    <paragraph>\n        See \n        <problematic ids=\"id4\" refid=\"id3\">\n            \
@@ -1273,7 +1414,7 @@ mod tests {
         );
         // Without `keep_warnings` the parse's message goes too (999), and
         // the stream is the same.
-        let read = read_snippet_with("See word_ here.\n\n*x\n", false);
+        let read = read_snippet("See word_ here.\n\n*x\n", false);
         assert!(!read.body.contains("<system_message"), "{}", read.body);
         assert_eq!(read.warnings, warnings);
     }
@@ -1290,6 +1431,7 @@ mod tests {
         let read = read_snippet(
             ".. table:: Cap\n\n   .. image:: x.png\n      :name: pic\n\nSee pic_.\n\n\
              .. _alias: pic_\n\nAnd alias_.\n",
+            true,
         );
         let body = read
             .body
@@ -1314,7 +1456,7 @@ mod tests {
     // oracle (Sphinx 9.1.0): as `propagate_targets_chain`.
     #[test]
     fn embedded_alias_without_text_resolves_by_its_normalized_name() {
-        let read = read_snippet("`<Foo Bar_>`_\n\n.. _foo bar: http://x\n");
+        let read = read_snippet("`<Foo Bar_>`_\n\n.. _foo bar: http://x\n", true);
         assert_eq!(
             read.body,
             "    <paragraph>\n        <reference name=\"foo bar\" refuri=\"http://x\">\n            \
@@ -1322,5 +1464,280 @@ mod tests {
              <target ids=\"id1\" names=\"foo\\ bar\" refuri=\"http://x\">\n"
         );
         assert!(read.warnings.is_empty(), "{:#?}", read.warnings);
+    }
+    /// `Substitutions` (220-004, `SP/docutils/transforms/references.py:642-765`)
+    /// replaces each substitution reference of the tree by a deep copy of
+    /// its definition's children (`docutils-0568`), finding the definition
+    /// by its name, or by the name lowercased among the normalized names,
+    /// where the last definition of a name wins. An undefined one is
+    /// reported at the reference and becomes a problematic holding its
+    /// rawsource (`docutils-0242` = `state.loose_ids_chain`: the three
+    /// ERRORs at 220 precede 440's and 850's, and of the ten ids its
+    /// messages and problematics take, three stay; `docutils-0243`).
+    /// References in a copy are substituted in turn, the definitions' own
+    /// included; a definition that refers to itself, directly or through
+    /// another, is reported where it stands (`detected`, the message taking
+    /// the definition's place and names) or at the reference the chain
+    /// started from (`referenced`). `ltrim` and `rtrim` strip the
+    /// whitespace before and after the reference. A role's `pending_xref`
+    /// stays in its definition (`Body.substitution_def` keeps `Inline`
+    /// nodes), so the copy has it too. A copied reference keeps
+    /// its location rule: an image `:target:`'s is located at the paragraph
+    /// the copy stands in, the definition's at the definition. 220 walks the
+    /// tree before `GlossarySorter` (500) sorts it
+    /// (`state.glossary_sorted_anonymous_refs`).
+    #[test]
+    fn substitutions_replace_and_report_undefined() {
+        let rows = [
+        SphinxRead {
+            rst: ".. |sub| replace:: replacement text\n\nUse |sub| here.\n",
+            body: "    <substitution_definition names=\"sub\">\n        replacement text\n    \
+                <paragraph>\n        Use \n        replacement text\n         here.\n",
+            warnings: &[],
+            trace: &[],
+        },
+        SphinxRead {
+            rst: "A |sub| B |sub2|_ C |sub3|__ D.\n",
+            body: "    <paragraph>\n        A \n        <problematic ids=\"id2\" \
+                refid=\"id1\">\n            |sub|\n         B \n        <problematic ids=\"id10\" \
+                refid=\"id9\">\n            |sub2|_\n         C \n        <problematic ids=\"id8\" \
+                refid=\"id7\">\n            |sub3|__\n         D.\n",
+            warnings: &[
+                "<SRCDIR>/index.rst:1: ERROR: Undefined substitution referenced: \"sub\". \
+                    [docutils]",
+                "<SRCDIR>/index.rst:1: ERROR: Undefined substitution referenced: \"sub2\". \
+                    [docutils]",
+                "<SRCDIR>/index.rst:1: ERROR: Undefined substitution referenced: \"sub3\". \
+                    [docutils]",
+                "<SRCDIR>/index.rst:2: ERROR: Anonymous hyperlink mismatch: 1 references but 0 \
+                    targets.",
+                "See \"backrefs\" attribute for IDs. [docutils]",
+                "<SRCDIR>/index.rst:1: ERROR: Unknown target name: \"sub2\". [docutils]",
+            ],
+            trace: &[
+                ("Substitutions", "system_message", "id1", false),
+                ("Substitutions", "problematic", "id2", true),
+                ("Substitutions", "system_message", "id3", false),
+                ("Substitutions", "problematic", "id4", false),
+                ("Substitutions", "system_message", "id5", false),
+                ("Substitutions", "problematic", "id6", false),
+                ("AnonymousHyperlinks", "system_message", "id7", false),
+                ("AnonymousHyperlinks", "problematic", "id8", true),
+                ("SphinxDanglingReferences", "system_message", "id9", false),
+                ("SphinxDanglingReferences", "problematic", "id10", true),
+            ],
+        },
+        SphinxRead {
+            rst: "A |Sub Name|_ B.\n",
+            body: "    <paragraph>\n        A \n        <problematic ids=\"id4\" \
+                refid=\"id3\">\n            |Sub Name|_\n         B.\n",
+            warnings: &[
+                "<SRCDIR>/index.rst:1: ERROR: Undefined substitution referenced: \"Sub Name\". \
+                    [docutils]",
+                "<SRCDIR>/index.rst:1: ERROR: Unknown target name: \"sub name\". [docutils]",
+            ],
+            trace: &[
+                ("Substitutions", "system_message", "id1", false),
+                ("Substitutions", "problematic", "id2", false),
+                ("SphinxDanglingReferences", "system_message", "id3", false),
+                ("SphinxDanglingReferences", "problematic", "id4", true),
+            ],
+        },
+        SphinxRead {
+            rst: "Use |a| here.\n\n.. |a| replace:: x |b| y\n.. |b| replace:: *B* ref_\n",
+            body: "    <paragraph>\n        Use \n        x \n        <emphasis>\n            \
+                B\n         \n        <problematic ids=\"id2\" refid=\"id1\">\n            \
+                ref_\n         y\n         here.\n    <substitution_definition \
+                names=\"a\">\n        x \n        <emphasis>\n            B\n         \n        \
+                <problematic ids=\"id4\" refid=\"id3\">\n            ref_\n         y\n    \
+                <substitution_definition names=\"b\">\n        <emphasis>\n            \
+                B\n         \n        <problematic ids=\"id6\" refid=\"id5\">\n            ref_\n",
+            warnings: &[
+                "<SRCDIR>/index.rst:1: ERROR: Unknown target name: \"ref\". [docutils]",
+                "<SRCDIR>/index.rst:3: ERROR: Unknown target name: \"ref\". [docutils]",
+                "<SRCDIR>/index.rst:4: ERROR: Unknown target name: \"ref\". [docutils]",
+            ],
+            trace: &[
+                ("SphinxDanglingReferences", "system_message", "id1", false),
+                ("SphinxDanglingReferences", "problematic", "id2", true),
+                ("SphinxDanglingReferences", "system_message", "id3", false),
+                ("SphinxDanglingReferences", "problematic", "id4", true),
+                ("SphinxDanglingReferences", "system_message", "id5", false),
+                ("SphinxDanglingReferences", "problematic", "id6", true),
+            ],
+        },
+        SphinxRead {
+            rst: "Use |a| here.\n\n.. |a| replace:: x |a| y\n",
+            body: "    <paragraph>\n        Use \n        x \n        <problematic ids=\"id2\" \
+                refid=\"id1\">\n            |a|\n         y\n         here.\n    <system_message \
+                level=\"3\" line=\"3\" names=\"a\" source=\"<SRCDIR>/index.rst\" \
+                type=\"ERROR\">\n        <paragraph>\n            Circular substitution definition \
+                detected:\n        <literal_block xml:space=\"preserve\">\n            .. |a| \
+                replace:: x |a| y\n",
+            warnings: &[
+                "<SRCDIR>/index.rst:3: ERROR: Circular substitution definition detected:",
+                "",
+                ".. |a| replace:: x |a| y [docutils]",
+                "<SRCDIR>/index.rst:1: ERROR: Circular substitution definition referenced: \"a\". \
+                    [docutils]",
+            ],
+            trace: &[
+                ("Substitutions", "system_message", "id1", false),
+                ("Substitutions", "problematic", "id2", true),
+            ],
+        },
+        SphinxRead {
+            rst: "Use |a| here.\n\n.. |a| replace:: x |b| y\n.. |b| replace:: z |a| w\n",
+            body: "    <paragraph>\n        Use \n        x \n        <problematic ids=\"id2\" \
+                refid=\"id1\">\n            |b|\n         y\n         here.\n    <system_message \
+                level=\"3\" line=\"3\" names=\"a\" source=\"<SRCDIR>/index.rst\" \
+                type=\"ERROR\">\n        <paragraph>\n            Circular substitution definition \
+                detected:\n        <literal_block xml:space=\"preserve\">\n            .. |a| \
+                replace:: x |b| y\n    <system_message level=\"3\" line=\"4\" names=\"b\" source=\"\
+                <SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Circular \
+                substitution definition detected:\n        <literal_block \
+                xml:space=\"preserve\">\n            .. |b| replace:: z |a| w\n",
+            warnings: &[
+                "<SRCDIR>/index.rst:1: ERROR: Circular substitution definition referenced: \"b\". \
+                    [docutils]",
+                "<SRCDIR>/index.rst:3: ERROR: Circular substitution definition detected:",
+                "",
+                ".. |a| replace:: x |b| y [docutils]",
+                "<SRCDIR>/index.rst:4: ERROR: Circular substitution definition detected:",
+                "",
+                ".. |b| replace:: z |a| w [docutils]",
+            ],
+            trace: &[
+                ("Substitutions", "system_message", "id1", false),
+                ("Substitutions", "problematic", "id2", true),
+            ],
+        },
+        SphinxRead {
+            rst: "A |tm| B |tm2|.\n\n.. |tm| unicode:: U+2122\n   :ltrim:\n.. |tm2| unicode:: \
+                U+2122\n   :trim:\n",
+            body: "    <paragraph>\n        A\n        ™\n         B\n        ™\n        \
+                .\n    <substitution_definition ltrim=\"1\" names=\"tm\">\n        ™\n    \
+                <substitution_definition ltrim=\"1\" names=\"tm2\" rtrim=\"1\">\n        ™\n",
+            warnings: &[],
+            trace: &[],
+        },
+        SphinxRead {
+            rst: "A |Sub  NAME| B.\n\n.. |sub name| replace:: x\n.. |Sub Name| replace:: y\n",
+            body: "    <paragraph>\n        A \n        y\n         B.\n    \
+                <substitution_definition names=\"sub\\ name\">\n        x\n    \
+                <substitution_definition names=\"Sub\\ Name\">\n        y\n",
+            warnings: &[],
+            trace: &[],
+        },
+        SphinxRead {
+            rst: "Title\n=====\n\nPara |i| x.\n\n.. |i| image:: p.png\n   :target: nope_\n",
+            body: "    <section ids=\"title\" names=\"title\">\n        <title>\n            \
+                Title\n        <paragraph>\n            Para \n            <problematic \
+                ids=\"id2\" refid=\"id1\">\n                i\n             x.\n        \
+                <substitution_definition names=\"i\">\n            <problematic ids=\"id4\" \
+                refid=\"id3\">\n                i\n",
+            warnings: &[
+                "<SRCDIR>/index.rst:4: ERROR: Unknown target name: \"nope\". [docutils]",
+                "<SRCDIR>/index.rst:6: ERROR: Unknown target name: \"nope\". [docutils]",
+            ],
+            trace: &[
+                ("parse", "section", "title", true),
+                ("SphinxDanglingReferences", "system_message", "id1", false),
+                ("SphinxDanglingReferences", "problematic", "id2", true),
+                ("SphinxDanglingReferences", "system_message", "id3", false),
+                ("SphinxDanglingReferences", "problematic", "id4", true),
+            ],
+        },
+        SphinxRead {
+            rst: ".. glossary::\n   :sorted:\n\n   zeta\n      Last |zsub| and `x`__.\n\n   \
+                alpha\n      First |asub| and `y`__.\n\n__ https://x.example/\n__ \
+                https://y.example/\n",
+            body: "    <glossary sorted=\"1\">\n        <definition_list \
+                classes=\"glossary\">\n            <definition_list_item>\n                <term \
+                ids=\"term-alpha\">\n                    alpha\n                    <index \
+                entries=\"('single',\\ 'alpha',\\ 'term-alpha',\\ 'main',\\ \
+                None)\">\n                <definition>\n                    \
+                <paragraph>\n                        First \n                        <problematic \
+                ids=\"id6\" refid=\"id5\">\n                            \
+                |asub|\n                         and \n                        <reference \
+                anonymous=\"1\" name=\"y\" \
+                refuri=\"https://y.example/\">\n                            \
+                y\n                        .\n            <definition_list_item>\n                \
+                <term ids=\"term-zeta\">\n                    zeta\n                    <index \
+                entries=\"('single',\\ 'zeta',\\ 'term-zeta',\\ 'main',\\ \
+                None)\">\n                <definition>\n                    \
+                <paragraph>\n                        Last \n                        <problematic \
+                ids=\"id4\" refid=\"id3\">\n                            \
+                |zsub|\n                         and \n                        <reference \
+                anonymous=\"1\" name=\"x\" \
+                refuri=\"https://x.example/\">\n                            \
+                x\n                        .\n    <target anonymous=\"1\" ids=\"id1\" \
+                refuri=\"https://x.example/\">\n    <target anonymous=\"1\" ids=\"id2\" \
+                refuri=\"https://y.example/\">\n",
+            warnings: &[
+                "<SRCDIR>/index.rst:5: ERROR: Undefined substitution referenced: \"zsub\". \
+                    [docutils]",
+                "<SRCDIR>/index.rst:8: ERROR: Undefined substitution referenced: \"asub\". \
+                    [docutils]",
+            ],
+            trace: &[
+                ("parse", "target", "id1", true),
+                ("parse", "target", "id2", true),
+                ("Substitutions", "system_message", "id3", false),
+                ("Substitutions", "problematic", "id4", true),
+                ("Substitutions", "system_message", "id5", false),
+                ("Substitutions", "problematic", "id6", true),
+            ],
+        },
+        SphinxRead {
+            rst: "Use |y| here.\n\n.. |y| replace:: :ref:`T <nolabel>` and x\n",
+            body: "    <paragraph>\n        Use \n        <pending_xref refdoc=\"index\" \
+                refdomain=\"std\" refexplicit=\"1\" reftarget=\"nolabel\" reftype=\"ref\" \
+                refwarn=\"1\">\n            <inline classes=\"xref std std-ref\">\n                \
+                T\n         and x\n         here.\n    <substitution_definition \
+                names=\"y\">\n        <pending_xref refdoc=\"index\" refdomain=\"std\" \
+                refexplicit=\"1\" reftarget=\"nolabel\" reftype=\"ref\" \
+                refwarn=\"1\">\n            <inline classes=\"xref std std-ref\">\n                \
+                T\n         and x\n",
+            warnings: &[],
+            trace: &[],
+        },
+        ];
+        let differences = differences(&rows);
+        assert!(differences.is_empty(), "{}", differences.join("\n\n"));
+    }
+
+    /// A substitution's copy notes each top-level reference that has a
+    /// `refname` (`note_refname`), after the definition's own, which the
+    /// parse noted, so `refnames['indirect']` lists the definition's
+    /// reference first and then the copies in the order 220 made them
+    /// (`state.subst_copy_refnames_order`, [DS §4.3 (f)]): when
+    /// `IndirectHyperlinks` (460) turns them into problematics, the
+    /// definition's takes `id2`, then the two copies `id3` and `id4`.
+    #[test]
+    fn subst_copies_allocate_ids_in_docutils_order() {
+        let rows = [SphinxRead {
+            rst: "One |s| two |s|.\n\n.. _indirect: missing_\n\n.. |s| replace:: indirect_\n",
+            body: "    <paragraph>\n        One \n        <problematic ids=\"id3\" \
+                refid=\"id1\">\n            indirect_\n         two \n        <problematic \
+                ids=\"id4\" refid=\"id1\">\n            indirect_\n        .\n    <target \
+                ids=\"indirect\" names=\"indirect\" refname=\"missing\">\n    \
+                <substitution_definition names=\"s\">\n        <problematic ids=\"id2\" \
+                refid=\"id1\">\n            indirect_\n",
+            warnings: &[
+                "<SRCDIR>/index.rst:3: ERROR: Indirect hyperlink target \"indirect\" \
+                    (id=\"indirect\") refers to target \"missing\", which does not exist. \
+                    [docutils]",
+            ],
+            trace: &[
+                ("parse", "target", "indirect", true),
+                ("IndirectHyperlinks", "system_message", "id1", false),
+                ("IndirectHyperlinks", "problematic", "id2", true),
+                ("IndirectHyperlinks", "problematic", "id3", true),
+                ("IndirectHyperlinks", "problematic", "id4", true),
+            ],
+        }];
+        let differences = differences(&rows);
+        assert!(differences.is_empty(), "{}", differences.join("\n\n"));
     }
 }

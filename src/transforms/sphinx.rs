@@ -7,6 +7,7 @@
 //! live walk that reads each child list as it is when it gets there
 //! ([`TxTree::next_node`] from the node it is at).
 
+use chrono::{DateTime, Datelike, NaiveDate, Timelike, Utc};
 use unicode_normalization::UnicodeNormalization;
 
 use super::tree::{Findall, TxId, TxNode, TxTree};
@@ -393,6 +394,339 @@ impl Transform for FilterSystemMessages {
     }
 }
 
+/// 210-020 `DefaultSubstitutions` (`SP/sphinx/transforms/__init__.py:111-150`):
+/// each reference to one of the four default substitutions — `|today|`,
+/// `|version|`, `|release|` and `|translation progress|` — that no
+/// definition of that exact name overrides (`_DEFAULT_SUBSTITUTIONS -
+/// set(self.document.substitution_defs)`, names as defined, case kept)
+/// is replaced by a Text ([`default_substitution`]). It runs before
+/// Substitutions (220), so the references in a definition are replaced
+/// in the definition, whose copies then carry the text.
+///
+/// The loop is a live walk; each reference becomes one Text, so it skips
+/// nothing.
+pub struct DefaultSubstitutions;
+
+/// `_DEFAULT_SUBSTITUTIONS` (`SP/sphinx/transforms/__init__.py:47-52`).
+const DEFAULT_SUBSTITUTIONS: [&str; 4] = ["version", "release", "today", "translation progress"];
+
+impl Transform for DefaultSubstitutions {
+    fn apply(&self, cx: &mut TransformCx<'_>) {
+        let registries = &cx.state.registries;
+        let to_handle: Vec<&str> = DEFAULT_SUBSTITUTIONS
+            .into_iter()
+            .filter(|name| !registries.has_substitution_def(name))
+            .collect();
+        if to_handle.is_empty() {
+            return;
+        }
+        let is_reference = |node: &TxNode| node.kind == kinds::SUBSTITUTION_REFERENCE;
+        let mut walk = Findall::new(cx.tree.root());
+        while let Some(reference) = walk.next(cx.tree, is_reference) {
+            let name = cx.tree.node(reference).str_attr("refname");
+            let Some(name) = name.filter(|name| to_handle.contains(name)) else {
+                continue;
+            };
+            let text = default_substitution(cx, name);
+            let node = cx.tree.new_node(kinds::TEXT);
+            cx.tree.node_mut(node).text = Some(text);
+            cx.tree.replace_self(reference, vec![node]);
+        }
+    }
+}
+
+/// `DefaultSubstitutions._handle_default_substitution`: the text of the
+/// default substitution `name`. `|today|` is the `today` setting when it
+/// is set, otherwise the build date as `format_date` formats it with
+/// `today_fmt`, or with `en`'s `'%b %d, %Y'` when that is unset or empty
+/// ([`format_date`]); `|version|` and `|release|` are the settings, empty
+/// by default; `|translation progress|` is calculated from the stamp 025
+/// left on the document ([`translation_progress`]).
+fn default_substitution(cx: &TransformCx<'_>, name: &str) -> String {
+    let settings = cx.settings;
+    match name {
+        "translation progress" => {
+            let root = cx.tree.node(cx.tree.root());
+            translation_progress(root.str_attr("translation_progress"))
+        }
+        "today" if !settings.today.is_empty() => settings.today.clone(),
+        "today" => {
+            let format = settings
+                .today_fmt
+                .as_deref()
+                .filter(|format| !format.is_empty())
+                .unwrap_or("%b %d, %Y");
+            format_date(format, settings.build_date)
+        }
+        "version" => settings.version.clone(),
+        _ => settings.release.clone(),
+    }
+}
+
+/// `_calculate_translation_progress` (`SP/sphinx/transforms/__init__.py:140-150`)
+/// over the document's `translation_progress`, the repr of the dict 025
+/// stamps (`{'total': T, 'translated': N}`): the share translated, as
+/// Python's `f'{translated / total:.2%}'`, or `no translated elements!`
+/// when nothing is translatable, as in every build here (020 is inert).
+fn translation_progress(stamp: Option<&str>) -> String {
+    let Some(stamp) = stamp else {
+        return "could not calculate translation progress!".to_string();
+    };
+    let count = |key: &str| -> Option<i64> {
+        let rest = stamp.split(&format!("'{key}': ")).nth(1)?;
+        let digits = rest
+            .split(|c: char| !c.is_ascii_digit() && c != '-')
+            .next()?;
+        digits.parse().ok()
+    };
+    match (count("total"), count("translated")) {
+        (Some(total), Some(translated)) if total > 0 => {
+            format!("{:.2}%", translated as f64 / total as f64 * 100.0)
+        }
+        _ => "no translated elements!".to_string(),
+    }
+}
+
+/// Sphinx's `format_date(format, date=date, language='en')`
+/// (`SP/sphinx/util/i18n.py:177-313`): `format` split on the strftime
+/// tokens of `date_format_mappings`, in that table's order, each token
+/// replaced by `date` formatted with the babel pattern it maps to, under
+/// babel 2.18.0's `en` data, and every other piece kept as it is.
+///
+/// Only `en` is ported; another `language` formats as `en` (a documented
+/// divergence, T19a). Two tokens map to the pattern `WW`, which babel
+/// rejects, so Sphinx crashes on `%U` and `%W`; such inputs are not
+/// modelled (decision 13), and the two stay as written.
+pub(crate) fn format_date(format: &str, date: DateTime<Utc>) -> String {
+    let mut formatted = String::new();
+    let mut rest = format;
+    while let Some(first) = rest.chars().next() {
+        let token = DATE_TOKENS
+            .iter()
+            .find(|(token, _)| rest.starts_with(*token));
+        match token {
+            Some(&(token, field)) => {
+                formatted.push_str(&babel_en(field, date).unwrap_or_else(|| token.to_string()));
+                rest = &rest[token.len()..];
+            }
+            None => {
+                formatted.push(first);
+                rest = &rest[first.len_utf8()..];
+            }
+        }
+    }
+    formatted
+}
+
+/// What one strftime token of `date_format_mappings` formats in `en`.
+#[derive(Debug, Clone, Copy)]
+enum DateField {
+    WeekdayShort,
+    WeekdayLong,
+    MonthShort,
+    MonthLong,
+    /// babel's `medium` datetime, date and time.
+    MediumDateTime,
+    MediumDate,
+    MediumTime,
+    /// A number, zero-padded to the width.
+    Day(usize),
+    Hour24(usize),
+    Hour12(usize),
+    DayOfYear(usize),
+    Month(usize),
+    Minute(usize),
+    Second(usize),
+    Period,
+    /// `e`, the local day of the week.
+    LocalWeekday,
+    /// `W`, the week of the month.
+    WeekOfMonth,
+    /// `WW`, which babel rejects.
+    Rejected,
+    /// `YY`, the week-based year's last two digits.
+    WeekYear,
+    Year,
+    ZoneName,
+    ZoneOffset,
+    Percent,
+}
+
+/// `date_format_mappings` (`SP/sphinx/util/i18n.py:177-219`), in its order,
+/// which is the order the split's alternation tries them in.
+const DATE_TOKENS: [(&str, DateField); 31] = [
+    ("%a", DateField::WeekdayShort),
+    ("%A", DateField::WeekdayLong),
+    ("%b", DateField::MonthShort),
+    ("%B", DateField::MonthLong),
+    ("%c", DateField::MediumDateTime),
+    ("%-d", DateField::Day(1)),
+    ("%d", DateField::Day(2)),
+    ("%-H", DateField::Hour24(1)),
+    ("%H", DateField::Hour24(2)),
+    ("%-I", DateField::Hour12(1)),
+    ("%I", DateField::Hour12(2)),
+    ("%-j", DateField::DayOfYear(1)),
+    ("%j", DateField::DayOfYear(3)),
+    ("%-m", DateField::Month(1)),
+    ("%m", DateField::Month(2)),
+    ("%-M", DateField::Minute(1)),
+    ("%M", DateField::Minute(2)),
+    ("%p", DateField::Period),
+    ("%-S", DateField::Second(1)),
+    ("%S", DateField::Second(2)),
+    ("%U", DateField::Rejected),
+    ("%w", DateField::LocalWeekday),
+    ("%-W", DateField::WeekOfMonth),
+    ("%W", DateField::Rejected),
+    ("%x", DateField::MediumDate),
+    ("%X", DateField::MediumTime),
+    ("%y", DateField::WeekYear),
+    ("%Y", DateField::Year),
+    ("%Z", DateField::ZoneName),
+    ("%z", DateField::ZoneOffset),
+    ("%%", DateField::Percent),
+];
+
+/// babel's `en` weekday names, Monday first (`get_day_names`, format
+/// context).
+const WEEKDAYS: [&str; 7] = [
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+];
+
+/// babel's `en` month names (`get_month_names`, format context).
+const MONTHS: [&str; 12] = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+];
+
+/// `field` of `date` as babel's `DateTimeFormat` formats it under `en`
+/// (`SP/babel/dates.py`): names from `WEEKDAYS` and `MONTHS`, whose
+/// abbreviations are their first three letters, numbers zero-padded to
+/// the pattern's width (`'%0*d'`), the medium formats `MMM d, y`,
+/// `h:mm:ss a` and `{1}, {0}` with a narrow no-break space before the
+/// period, and the UTC zone's `UTC` and `+0000`. `None` for a pattern
+/// babel rejects.
+fn babel_en(field: DateField, date: DateTime<Utc>) -> Option<String> {
+    let weekday = date.weekday().num_days_from_monday() as usize;
+    let month = date.month0() as usize;
+    let hour12 = match date.hour() % 12 {
+        0 => 12,
+        hour => hour,
+    };
+    let medium_date = format!("{} {}, {}", &MONTHS[month][..3], date.day(), date.year());
+    let medium_time = format!(
+        "{hour12}:{:02}:{:02}\u{202f}{}",
+        date.minute(),
+        date.second(),
+        period(date)
+    );
+    Some(match field {
+        DateField::WeekdayShort => WEEKDAYS[weekday][..3].to_string(),
+        DateField::WeekdayLong => WEEKDAYS[weekday].to_string(),
+        DateField::MonthShort => MONTHS[month][..3].to_string(),
+        DateField::MonthLong => MONTHS[month].to_string(),
+        DateField::MediumDateTime => format!("{medium_date}, {medium_time}"),
+        DateField::MediumDate => medium_date,
+        DateField::MediumTime => medium_time,
+        DateField::Day(width) => format!("{:0width$}", date.day()),
+        DateField::Hour24(width) => format!("{:0width$}", date.hour()),
+        DateField::Hour12(width) => format!("{hour12:0width$}"),
+        DateField::DayOfYear(width) => format!("{:0width$}", date.ordinal()),
+        DateField::Month(width) => format!("{:0width$}", date.month()),
+        DateField::Minute(width) => format!("{:0width$}", date.minute()),
+        DateField::Second(width) => format!("{:0width$}", date.second()),
+        DateField::Period => period(date).to_string(),
+        // `value % 7 + 1` with `en`'s first week day, Monday.
+        DateField::LocalWeekday => (weekday + 1).to_string(),
+        DateField::WeekOfMonth => week_number(date.day(), weekday).to_string(),
+        DateField::Rejected => return None,
+        DateField::WeekYear => {
+            let year = week_based_year(date);
+            let digits = format!("{year:02}");
+            digits[digits.len() - 2..].to_string()
+        }
+        DateField::Year => format!("{:04}", date.year()),
+        DateField::ZoneName => "UTC".to_string(),
+        DateField::ZoneOffset => "+0000".to_string(),
+        DateField::Percent => "%".to_string(),
+    })
+}
+
+/// babel's `a`: `en`'s `AM` or `PM`.
+fn period(date: DateTime<Utc>) -> &'static str {
+    if date.hour() >= 12 {
+        "PM"
+    } else {
+        "AM"
+    }
+}
+
+/// babel's `DateTimeFormat.get_week_number(day_of_period, day_of_week)`
+/// under `en`, whose weeks start on Monday (`first_week_day = 0`) and
+/// whose first week needs one day (`min_week_days = 1`): the week of the
+/// period, a month or a year, holding its day `day_of_period` (1-based),
+/// a `day_of_week` (Monday 0).
+fn week_number(day_of_period: u32, day_of_week: usize) -> i64 {
+    let day_of_period = i64::from(day_of_period);
+    let first_day = (day_of_week as i64 - day_of_period + 1).rem_euclid(7);
+    // `7 - first_day >= min_week_days` always holds with one day.
+    (day_of_period + first_day - 1).div_euclid(7) + 1
+}
+
+/// babel's `format_year` for `Y` (`SP/babel/dates.py:1517-1528`): the
+/// calendar year, less one for a day of early January in the previous
+/// year's last week, plus one for a day of late December in the next
+/// year's first week (`get_week_of_year`).
+fn week_based_year(date: DateTime<Utc>) -> i32 {
+    let weekday = date.weekday().num_days_from_monday() as usize;
+    let year = date.year();
+    // `get_week_of_year`.
+    let mut week = week_number(date.ordinal(), weekday);
+    if week == 0 {
+        let last = NaiveDate::from_ymd_opt(year - 1, 12, 31);
+        if let Some(last) = last {
+            week = week_number(
+                last.ordinal(),
+                last.weekday().num_days_from_monday() as usize,
+            );
+        }
+    } else if week > 52 {
+        let next = NaiveDate::from_ymd_opt(year + 1, 1, 1);
+        if let Some(next) = next {
+            let next_weekday = next.weekday().num_days_from_monday() as i64;
+            if week_number(1, next_weekday as usize) == 1
+                && 32 - next_weekday.rem_euclid(7) <= i64::from(date.day())
+            {
+                week = 1;
+            }
+        }
+    }
+    if date.month() == 1 && date.day() < 7 && week >= 52 {
+        year - 1
+    } else if date.month() == 12 && date.day() > 25 && week <= 2 {
+        year + 1
+    } else {
+        year
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -401,18 +735,12 @@ mod tests {
     use crate::read::ReadSettings;
     use crate::rst::ParseOptions;
     use crate::transforms::state::DocumentState;
+    use crate::transforms::test_support::{
+        harness_settings, index_rst, read_snippet, read_snippet_with, DOC,
+    };
     use crate::transforms::tree::TxTree;
     use crate::transforms::{read_transforms_with, NoOp, TransformId, TransformKey};
-
-    /// How Sphinx parses `<SRCDIR>/index.rst`.
-    fn index_rst() -> ParseOptions {
-        ParseOptions {
-            source_path: "<SRCDIR>/index.rst".to_string(),
-            sphinx: true,
-            docname: "index".to_string(),
-            ..ParseOptions::default()
-        }
-    }
+    use std::path::Path;
 
     /// The doctree stage R leaves for `rst`, each row run by `transform`.
     fn stage_r_with(
@@ -421,7 +749,7 @@ mod tests {
     ) -> Doctree {
         let parsed = crate::rst::parse_rst_full(rst, &index_rst());
         let settings = ReadSettings::sphinx_defaults();
-        read_transforms_with(parsed, &settings, "index", transform)
+        read_transforms_with(parsed, &settings, "index", Path::new("<SRCDIR>"), transform)
             .doctree()
             .clone()
     }
@@ -446,6 +774,7 @@ mod tests {
             settings: &ReadSettings::sphinx_defaults(),
             key,
             docname: "index",
+            srcdir: Path::new("<SRCDIR>"),
         });
         tree.into_doctree()
     }
@@ -476,8 +805,6 @@ mod tests {
     /// An empty quote with a class, which crashes Sphinx, stays.
     #[test]
     fn handle_code_blocks_unwraps_doctest_only_block_quotes() {
-        const DOC: &str = "<document source=\"<SRCDIR>/index.rst\" \
-                           translation_progress=\"{'total': 0, 'translated': 0}\">\n";
         let rows: [(&str, &str); 7] = [
             (
                 // docutils-0147.
@@ -643,8 +970,6 @@ mod tests {
     /// is a Sphinx 9.1.0 read of the input as `index.rst`.
     #[test]
     fn doctest_blocks_get_the_doctest_class() {
-        const DOC: &str = "<document source=\"<SRCDIR>/index.rst\" \
-                           translation_progress=\"{'total': 0, 'translated': 0}\">\n";
         let rows: [(&str, &str); 3] = [
             (
                 // docutils-0099.
@@ -747,15 +1072,7 @@ mod tests {
     /// the reporter's messages), less the document line every read of
     /// `<SRCDIR>/index.rst` opens with.
     fn read_body(rst: &str) -> String {
-        const DOC: &str = "<document source=\"<SRCDIR>/index.rst\" \
-                           translation_progress=\"{'total': 0, 'translated': 0}\">\n";
-        let read =
-            crate::read::read_standalone(rst, &index_rst(), &ReadSettings::sphinx_defaults());
-        let pformat = read.outcome.doctree().root.pformat();
-        pformat
-            .strip_prefix(DOC)
-            .unwrap_or_else(|| panic!("{rst:?}: unexpected document line:\n{pformat}"))
-            .to_string()
+        read_snippet(rst, false).body
     }
 
     /// `SortIds` (261-023, `SP/sphinx/transforms/__init__.py:217-234`) moves
@@ -939,6 +1256,229 @@ mod tests {
         assert_eq!(doctree.root.children[0].rawsource(), None);
     }
 
+    /// `DefaultSubstitutions` (210-020, `SP/sphinx/transforms/__init__.py:111-150`)
+    /// replaces each reference to `|today|`, `|version|`, `|release|` or
+    /// `|translation progress|` that no definition of that exact name
+    /// overrides by a Text: `today` when it is set, otherwise the build
+    /// date formatted with `today_fmt` or `'%b %d, %Y'`; `version` and
+    /// `release` as configured, empty by default (an empty Text prints
+    /// nothing); and, from 025's stamp, `no translated elements!`. It runs
+    /// before Substitutions (220), so a definition's `|today|` is replaced
+    /// before the definition is copied.
+    //
+    // oracle (Sphinx 9.1.0): each input read through
+    //   tools/gen_read_state_fixture.py's harness, with `today`, `version`
+    //   and `release`, or `today_fmt`, set in the configuration and
+    //   `SOURCE_DATE_EPOCH=1700000000` (2023-11-14T22:13:20Z).
+    #[test]
+    fn default_substitutions_fill_today_version_release() {
+        let dated =
+            |today: &str, today_fmt: Option<&str>, version: &str, release: &str| ReadSettings {
+                today: today.to_string(),
+                today_fmt: today_fmt.map(str::to_string),
+                version: version.to_string(),
+                release: release.to_string(),
+                build_date: chrono::DateTime::from_timestamp(1_700_000_000, 0)
+                    .expect("a representable date"),
+                ..harness_settings(true)
+            };
+        let rows: [(&str, ReadSettings, &str); 4] = [
+            (
+                "Built |today|, version |version|, release |release|.\n",
+                dated("April 1, 2026", Some("%Y"), "1.2", "1.2.3"),
+                "    <paragraph>\n        Built \n        April 1, 2026\n        , version \n        \
+                 1.2\n        , release \n        1.2.3\n        .\n",
+            ),
+            (
+                "Built |today|.\n",
+                dated("", Some("%B %d, %Y (%A)"), "", ""),
+                "    <paragraph>\n        Built \n        November 14, 2023 (Tuesday)\n        .\n",
+            ),
+            (
+                "Built |today| and |translation progress|; |version| is mine.\n\n\
+                 .. |version| replace:: mine\n.. |d| replace:: on |today|\n\nCopy |d|.\n",
+                dated("", None, "1.2", ""),
+                "    <paragraph>\n        Built \n        Nov 14, 2023\n         and \n        \
+                 no translated elements!\n        ; \n        mine\n         is mine.\n    \
+                 <substitution_definition names=\"version\">\n        mine\n    \
+                 <substitution_definition names=\"d\">\n        on \n        Nov 14, 2023\n    \
+                 <paragraph>\n        Copy \n        on \n        Nov 14, 2023\n        .\n",
+            ),
+            (
+                "Use |x| and |version| and |release|.\n\n.. |x| replace:: v |version| e\n",
+                dated("", None, "", ""),
+                "    <paragraph>\n        Use \n        v \n         e\n         and \n         \
+                 and \n        .\n    <substitution_definition names=\"x\">\n        v \n         \
+                 e\n",
+            ),
+        ];
+        for (rst, settings, body) in rows {
+            let read = read_snippet_with(rst, &settings);
+            assert_eq!(read.body, body, "{rst:?}");
+            assert!(read.warnings.is_empty(), "{rst:?}: {:#?}", read.warnings);
+        }
+        // Without 025's stamp the progress cannot be calculated.
+        assert_eq!(
+            translation_progress(None),
+            "could not calculate translation progress!"
+        );
+        assert_eq!(
+            translation_progress(Some("{'total': 0, 'translated': 0}")),
+            "no translated elements!"
+        );
+        assert_eq!(
+            translation_progress(Some("{'total': 8, 'translated': 1}")),
+            "12.50%"
+        );
+    }
+
+    /// The `en` port of Sphinx's `format_date` (`SP/sphinx/util/i18n.py:177-313`):
+    /// each strftime token maps to a babel pattern, formatted with babel's
+    /// `en` data (weeks start on Monday, the first week has one day), and
+    /// everything else stays as it is.
+    //
+    // oracle (Sphinx 9.1.0, babel 2.18.0):
+    //   `format_date(fmt, date=d, language='en')` for each `d` and `fmt`.
+    #[test]
+    fn format_date_ports_babel_en() {
+        let at = |y, m, d, h, min, s| {
+            chrono::NaiveDate::from_ymd_opt(y, m, d)
+                .and_then(|date| date.and_hms_opt(h, min, s))
+                .expect("a valid date")
+                .and_utc()
+        };
+        let sunday = at(2026, 1, 4, 15, 7, 9);
+        for (format, formatted) in [
+            ("%a", "Sun"),
+            ("%A", "Sunday"),
+            ("%b", "Jan"),
+            ("%B", "January"),
+            ("%c", "Jan 4, 2026, 3:07:09\u{202f}PM"),
+            ("%-d", "4"),
+            ("%d", "04"),
+            ("%-H", "15"),
+            ("%H", "15"),
+            ("%-I", "3"),
+            ("%I", "03"),
+            ("%-j", "4"),
+            ("%j", "004"),
+            ("%-m", "1"),
+            ("%m", "01"),
+            ("%-M", "7"),
+            ("%M", "07"),
+            ("%p", "PM"),
+            ("%-S", "9"),
+            ("%S", "09"),
+            ("%w", "7"),
+            ("%-W", "1"),
+            ("%x", "Jan 4, 2026"),
+            ("%X", "3:07:09\u{202f}PM"),
+            ("%y", "26"),
+            ("%Y", "2026"),
+            ("%Z", "UTC"),
+            ("%z", "+0000"),
+            ("%%", "%"),
+            ("%e", "%e"),
+            ("%b %d, %Y", "Jan 04, 2026"),
+            ("%%a", "%a"),
+            ("%-", "%-"),
+            ("%", "%"),
+            ("x%", "x%"),
+            ("%B %-d, %Y", "January 4, 2026"),
+            ("Built %A", "Built Sunday"),
+        ] {
+            assert_eq!(format_date(format, sunday), formatted, "{format:?}");
+        }
+        // `%w`: Monday 1 to Sunday 7, across a week.
+        let weekdays: Vec<String> = (4..=11)
+            .map(|day| format_date("%a %w", at(2026, 1, day, 0, 0, 0)))
+            .collect();
+        assert_eq!(
+            weekdays,
+            ["Sun 7", "Mon 1", "Tue 2", "Wed 3", "Thu 4", "Fri 5", "Sat 6", "Sun 7"]
+        );
+        // `%-W`, the week of the month, weeks starting on Monday.
+        let weeks: Vec<String> = (1..=31)
+            .map(|day| format_date("%-W", at(2026, 3, day, 0, 0, 0)))
+            .collect();
+        let expected = "1 2 2 2 2 2 2 2 3 3 3 3 3 3 3 4 4 4 4 4 4 4 5 5 5 5 5 5 5 6 6";
+        assert_eq!(weeks.join(" "), expected);
+        // `%y` is the week-based year's last two digits; `%-j`, `%j` the
+        // day of the year.
+        for ((y, m, d), formatted) in [
+            ((2020, 12, 26), "20 2020 361 361 Sat"),
+            ((2020, 12, 31), "21 2020 366 366 Thu"),
+            ((2021, 1, 1), "21 2021 1 001 Fri"),
+            ((2021, 1, 4), "21 2021 4 004 Mon"),
+            ((2024, 12, 30), "25 2024 365 365 Mon"),
+            ((2016, 1, 1), "16 2016 1 001 Fri"),
+            ((2026, 12, 31), "27 2026 365 365 Thu"),
+            ((2032, 12, 26), "32 2032 361 361 Sun"),
+            ((2032, 12, 31), "33 2032 366 366 Fri"),
+            ((2033, 1, 1), "33 2033 1 001 Sat"),
+        ] {
+            assert_eq!(
+                format_date("%y %Y %-j %j %a", at(y, m, d, 0, 0, 0)),
+                formatted,
+                "{y}-{m}-{d}"
+            );
+        }
+        // The 12-hour clock and the period, around midnight and noon.
+        for (hour, formatted) in [
+            (
+                0,
+                "Nov 23, 2026, 12:05:06\u{202f}AM|Nov 23, 2026|12:05:06\u{202f}AM|AM|12|12|00|0",
+            ),
+            (
+                1,
+                "Nov 23, 2026, 1:05:06\u{202f}AM|Nov 23, 2026|1:05:06\u{202f}AM|AM|01|1|01|1",
+            ),
+            (
+                12,
+                "Nov 23, 2026, 12:05:06\u{202f}PM|Nov 23, 2026|12:05:06\u{202f}PM|PM|12|12|12|12",
+            ),
+            (
+                13,
+                "Nov 23, 2026, 1:05:06\u{202f}PM|Nov 23, 2026|1:05:06\u{202f}PM|PM|01|1|13|13",
+            ),
+            (
+                23,
+                "Nov 23, 2026, 11:05:06\u{202f}PM|Nov 23, 2026|11:05:06\u{202f}PM|PM|11|11|23|23",
+            ),
+        ] {
+            assert_eq!(
+                format_date("%c|%x|%X|%p|%I|%-I|%H|%-H", at(2026, 11, 23, hour, 5, 6)),
+                formatted,
+                "{hour}h"
+            );
+        }
+        let months: Vec<String> = (1..=12)
+            .map(|month| format_date("%b %B", at(2026, month, 1, 0, 0, 0)))
+            .collect();
+        assert_eq!(
+            months,
+            [
+                "Jan January",
+                "Feb February",
+                "Mar March",
+                "Apr April",
+                "May May",
+                "Jun June",
+                "Jul July",
+                "Aug August",
+                "Sep September",
+                "Oct October",
+                "Nov November",
+                "Dec December"
+            ]
+        );
+        // Year 5: `%Y` pads to four digits, the medium formats' `y` does not.
+        assert_eq!(
+            format_date("%Y-%m-%d|%c", at(5, 1, 1, 0, 0, 0)),
+            "0005-01-01|Jan 1, 5, 12:00:00\u{202f}AM"
+        );
+    }
+
     /// `TranslationProgressTotaliser` (025) stamps the document's
     /// translation progress, `{'total': 0, 'translated': 0}` in a build
     /// with no message catalogs: the stamp T6's read made itself, which the
@@ -955,7 +1495,8 @@ mod tests {
         let stage_r = |transform: &dyn Fn(TransformId) -> &'static dyn Transform| {
             let parsed = crate::rst::parse_rst_full("Text.\n", &parse);
             let settings = ReadSettings::sphinx_defaults();
-            let read = read_transforms_with(parsed, &settings, "index", transform);
+            let read =
+                read_transforms_with(parsed, &settings, "index", Path::new("<SRCDIR>"), transform);
             read.doctree().root.pformat()
         };
         assert_eq!(
@@ -1017,6 +1558,7 @@ mod tests {
                     serial: 27,
                 },
                 docname: "index",
+                srcdir: Path::new("<SRCDIR>"),
             });
             tree.into_doctree().root
         };

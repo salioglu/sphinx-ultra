@@ -532,6 +532,13 @@ pub struct DocumentState {
     pub detached: Vec<Node>,
     /// How many identities the document has minted ([`Self::mint_uid`]).
     pub next_uid: u32,
+    /// What the citation transforms' tree halves (619) leave the citation
+    /// domain, whose stage-M half registers it (T13b): the citations
+    /// `CitationDefinitionTransform` found in the tree and the target of
+    /// each `pending_xref` `CitationReferenceTransform` made, both in tree
+    /// order.
+    pub citation_notes: Vec<CitationNote>,
+    pub citation_reference_targets: Vec<String>,
     /// What only the parse reads ([`ParseOnlyState`]); empty once the
     /// parse has ended.
     pub(crate) parse: ParseOnlyState,
@@ -606,6 +613,17 @@ impl Registries {
         uids.extend(self.substitution_defs.iter().map(|(_, uid)| *uid));
         uids
     }
+}
+
+/// One citation `CitationDefinitionTransform` (619-016) hands the citation
+/// domain's `note_citation` (`SP/sphinx/domains/citation.py:69-82`): its
+/// label (`node[0].astext()`), its ids and the node itself, whose
+/// location the domain's duplicate warning and its record take.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CitationNote {
+    pub label: String,
+    pub ids: Vec<String>,
+    pub node: Uid,
 }
 
 /// One `document.note_pending` call: the transform a `pending` node

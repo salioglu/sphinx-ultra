@@ -1028,6 +1028,40 @@ pub(crate) mod tests {
         assert_eq!(d["names"], json!([["1", "id3", true], ["b", "b", true]]));
     }
 
+    /// `Body.substitution_def` keeps every child of the definition that is
+    /// `nodes.Inline` or Text and hoists the rest to its parent
+    /// (`SP/docutils/parsers/rst/states.py:2184-2191`). Sphinx's
+    /// `pending_xref` is `Inline` (`SP/sphinx/addnodes.py:493`), so the
+    /// `:ref:` of a `replace::` stays inside its definition, the content
+    /// Substitutions (220) copies ([SQ §4.3]).
+    //
+    // oracle (Sphinx 9.1.0): the input read as `index.rst` through
+    //   tools/gen_read_state_fixture.py's harness; no transform touches a
+    //   definition without substitution references, so its post-read
+    //   definitions are the parse's.
+    #[test]
+    fn substitution_definition_keeps_its_pending_xref() {
+        let out = parse_rst_full(
+            ".. |x| replace:: \"plain\" -- x\n\
+             .. |y| replace:: :ref:`\"T\" -- t <nolabel>` and \"plain\"\n",
+            &ParseOptions {
+                source_path: "<SRCDIR>/index.rst".into(),
+                sphinx: true,
+                docname: "index".into(),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            out.doctree.root.pformat(),
+            "<document source=\"<SRCDIR>/index.rst\">\n    \
+             <substitution_definition names=\"x\">\n        \"plain\" -- x\n    \
+             <substitution_definition names=\"y\">\n        <pending_xref refdoc=\"index\" \
+             refdomain=\"std\" refexplicit=\"1\" reftarget=\"nolabel\" reftype=\"ref\" \
+             refwarn=\"1\">\n            <inline classes=\"xref std std-ref\">\n                \
+             \"T\" -- t\n         and \"plain\"\n"
+        );
+    }
+
     /// Every `Uid` stamped on a node in the subtree.
     fn uids_in(node: &Node, out: &mut Vec<Uid>) {
         out.extend(node.uid());

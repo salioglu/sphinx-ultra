@@ -197,9 +197,11 @@ mod tests {
 
     use super::*;
     use crate::doctree::{kinds, AttrValue};
+    use crate::read::ReadSettings;
     use crate::rst::{parse_rst_full, ParseOptions, ParseOutput};
     use crate::transforms::state::SourceRef;
     use crate::transforms::tree::TxNode;
+    use crate::transforms::{TransformCx, TransformId, TransformKey};
 
     /// `node[key]` for a string attribute.
     fn attr<'a>(node: &'a TxNode, key: &str) -> Option<&'a str> {
@@ -213,26 +215,23 @@ mod tests {
             })
     }
 
-    /// What Substitutions (220) does to a defined reference: it is
-    /// replaced by a deep copy of its definition's children.
+    /// Substitutions (220) over the parse of `index.rst`: each defined
+    /// reference replaced by a deep copy of its definition's children.
     fn substitute(tree: &mut TxTree, state: &mut DocumentState) {
-        let references = tree.findall(tree.root(), |node| {
-            node.kind == kinds::SUBSTITUTION_REFERENCE
-        });
-        for reference in references {
-            let refname = attr(tree.node(reference), "refname").expect("a refname");
-            let (_, definition) = state
-                .registries
-                .substitution_defs
-                .iter()
-                .rev()
-                .find(|(name, _)| name == refname)
-                .expect("defined");
-            let definition = tree.by_uid(*definition).expect("registered");
-            let copy = tree.deepcopy(definition, state);
-            let children = tree.node(copy).children.clone();
-            tree.replace_self(reference, children);
-        }
+        let settings = ReadSettings::sphinx_defaults();
+        TransformId::Substitutions
+            .transform()
+            .apply(&mut TransformCx {
+                tree,
+                state,
+                settings: &settings,
+                key: TransformKey {
+                    priority: 220,
+                    serial: 4,
+                },
+                docname: "index",
+                srcdir: std::path::Path::new("<SRCDIR>"),
+            });
     }
 
     /// A location as Sphinx's warning stream prints it: `path:line`, or
@@ -393,7 +392,7 @@ mod tests {
     // oracle (Sphinx 9.1.0, docutils 0.22.4): each snippet built as
     //   `index.rst` with the HTML oracle's `conf.py`, its `-w` stream; a
     //   substituted reference reported in the paragraph and again in the
-    //   definition (Substitutions, 220, is T11's, so the copy is made here).
+    //   definition (the copy Substitutions, 220, makes).
     #[test]
     fn workaround_locations_match_sphinx() {
         // A one-cell grid table holding `content`'s lines.

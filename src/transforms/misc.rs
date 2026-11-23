@@ -391,10 +391,9 @@ fn is_body(kind: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use crate::config::BuildConfig;
-    use crate::read::{read_standalone, ReadSettings};
-    use crate::rst::ParseOptions;
+    use crate::read::read_standalone;
     use crate::transforms::reporter::LogRecord;
+    use crate::transforms::test_support::{harness_settings, index_rst, DOC};
 
     /// `Transitions` (830-014, `SP/docutils/transforms/misc.py:64-143`):
     /// the four transition cases of [TW §6.3] (`docutils-0030` to `-0033`),
@@ -421,8 +420,6 @@ mod tests {
     /// their aux-gate references.
     #[test]
     fn transitions_match_docutils() {
-        const DOC: &str = "<document source=\"<SRCDIR>/index.rst\" \
-                           translation_progress=\"{'total': 0, 'translated': 0}\">\n";
         const BEGIN: &str = "Document or section may not begin with a transition.";
         const END: &str = "Document may not end with a transition.";
         const ADJACENT: &str = "At least one body element must separate transitions; \
@@ -571,17 +568,8 @@ mod tests {
                 vec![record(8, CHILD)],
             ),
         ];
-        let settings = ReadSettings::from_config(&BuildConfig {
-            validate_directives: false,
-            keep_warnings: true,
-            ..BuildConfig::default()
-        });
-        let parse = ParseOptions {
-            source_path: "<SRCDIR>/index.rst".to_string(),
-            sphinx: true,
-            docname: "index".to_string(),
-            ..ParseOptions::default()
-        };
+        let settings = harness_settings(true);
+        let parse = index_rst();
         let mut mismatches = Vec::new();
         for (rst, body, warnings) in rows {
             let read = read_standalone(rst, &parse, &settings);

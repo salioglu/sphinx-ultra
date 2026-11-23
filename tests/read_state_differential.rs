@@ -212,58 +212,22 @@ fn mismatches(fixture: &Fixture) -> BTreeMap<(String, &'static str), (Value, Val
 /// owner shows whole rows.
 #[rustfmt::skip]
 const KNOWN_READ_STATE_GAPS: &[(&str, &str, &str)] = &[
-    ("state.citation_backrefs", "id_trace", "citations: 5a-T11"),
-    ("state.citation_backrefs", "pseudo_xml", "citations: 5a-T11"),
-    ("state.docfields_footnote_order", "pseudo_xml", "footnotes: 5a-T11"),
-    ("state.docinfo_abstract_footnote_order", "id_trace", "docinfo+footnotes: 5a-T12"),
-    ("state.docinfo_abstract_footnote_order", "pseudo_xml", "docinfo+footnotes: 5a-T12"),
-    ("state.final_position.citation", "pseudo_xml", "citations: 5a-T11"),
-    ("state.final_position.footnote", "pseudo_xml", "footnotes: 5a-T11"),
-    ("state.final_position.footnote", "warnings", "footnotes: 5a-T11"),
+    ("state.docinfo_abstract_footnote_order", "id_trace", "docinfo: 5a-T12"),
+    ("state.docinfo_abstract_footnote_order", "pseudo_xml", "docinfo: 5a-T12"),
     ("state.final_position.image", "pseudo_xml", "candidates: 5a-T13a"),
     ("state.final_position.image", "warnings", "candidates: 5a-T13a"),
-    ("state.footnote_ref_kinds", "pseudo_xml", "footnotes: 5a-T11"),
-    ("state.glossary_sorted_anonymous_refs", "id_trace", "substitutions: 5a-T11"),
-    ("state.glossary_sorted_anonymous_refs", "pseudo_xml", "substitutions: 5a-T11"),
-    ("state.glossary_sorted_anonymous_refs", "warnings", "substitutions: 5a-T11"),
-    ("state.glossary_sorted_footnote_order", "pseudo_xml", "footnotes: 5a-T11"),
-    ("state.location.citation_body", "id_trace", "citations+dangling refs: 5a-T11"),
-    ("state.location.citation_body", "pseudo_xml", "citations: 5a-T11"),
     ("state.location.field_body", "id_trace", "dangling refs+docinfo: 5a-T12"),
     ("state.location.field_body", "pseudo_xml", "docinfo: 5a-T12"),
     ("state.location.figure_caption", "id_trace", "autonumber ids+dangling refs: 5a-T12"),
     ("state.location.figure_caption", "pseudo_xml", "autonumber ids+candidates+dangling refs: 5a-T13a"),
     ("state.location.figure_caption", "warnings", "candidates: 5a-T13a"),
-    ("state.location.footnote_body", "pseudo_xml", "footnotes: 5a-T11"),
-    ("state.location.substitution_definition", "id_trace", "dangling refs+substitutions: 5a-T11"),
-    ("state.location.substitution_definition", "pseudo_xml", "dangling refs+substitutions: 5a-T11"),
-    ("state.location.substitution_definition", "warnings", "dangling refs+substitutions: 5a-T11"),
     ("state.location.table_title", "id_trace", "autonumber ids+dangling refs: 5a-T12"),
     ("state.location.table_title", "pseudo_xml", "autonumber ids+dangling refs: 5a-T12"),
-    ("state.loose_ids_chain", "id_trace", "dangling refs+substitutions: 5a-T11"),
-    ("state.loose_ids_chain", "pseudo_xml", "dangling refs+substitutions: 5a-T11"),
-    ("state.loose_ids_chain", "warnings", "substitutions: 5a-T11"),
     ("state.pending_serials", "id_trace", "pending: 5a-T18b"),
-    ("state.pending_serials", "pseudo_xml", "class attribute+footnotes+pending: 5a-T18b"),
+    ("state.pending_serials", "pseudo_xml", "class attribute+pending: 5a-T18b"),
     ("state.pending_serials", "registries_post_parse", "pending: 5a-T18a"),
     ("state.pending_serials", "warnings", "pending: 5a-T18a"),
-    ("state.problematic_id_shapes", "id_trace", "dangling refs+footnotes: 5a-T11"),
-    ("state.problematic_id_shapes", "pseudo_xml", "dangling refs+footnotes: 5a-T11"),
-    ("state.problematic_id_shapes", "warnings", "footnotes: 5a-T11"),
-    ("state.rejected_list_table_refs", "id_trace", "footnotes: 5a-T11"),
-    ("state.rejected_list_table_refs", "pseudo_xml", "footnotes: 5a-T11"),
-    ("state.rejected_list_table_refs", "warnings", "footnotes: 5a-T11"),
-    ("state.rejected_subst_autofootnote", "id_trace", "footnotes: 5a-T11"),
-    ("state.rejected_subst_autofootnote", "pseudo_xml", "footnotes: 5a-T11"),
-    ("state.rejected_subst_autofootnote", "warnings", "footnotes: 5a-T11"),
-    ("state.rejected_table_refs", "id_trace", "footnotes: 5a-T11"),
-    ("state.rejected_table_refs", "pseudo_xml", "footnotes: 5a-T11"),
-    ("state.rejected_table_refs", "warnings", "footnotes: 5a-T11"),
     ("state.rst_class_before_section", "pseudo_xml", "class attribute: 5a-T12"),
-    ("state.subst_copy_refnames_order", "id_trace", "indirect targets+substitutions: 5a-T11"),
-    ("state.subst_copy_refnames_order", "pseudo_xml", "dangling refs+substitutions: 5a-T11"),
-    ("state.unreferenced_order", "pseudo_xml", "footnotes: 5a-T11"),
-    ("state.unreferenced_order", "warnings", "footnotes: 5a-T11"),
 ];
 
 /// Holds every key of every read-state case to the oracle, strictly, against
@@ -343,7 +307,7 @@ fn read_state_census() {
             });
         let census = match *key {
             "pseudo_xml" => tree.unwrap_or_default(),
-            "warnings" => warning_census(expected, actual, tree.as_ref()),
+            "warnings" => warning_census(expected, actual),
             "id_trace" => trace_census(expected, actual, tree.as_ref()),
             "registries_post_parse" => registries_census(expected, actual),
             _ => Census {
@@ -395,17 +359,12 @@ fn records(lines: &Value) -> Vec<String> {
 }
 
 /// Records only Sphinx prints, by message, with the transform or collector
-/// that raises them [TW §6.3].
+/// that raises them [TW §6.3]. Substitutions' (220), Footnotes' (620) and
+/// the unreferenced-footnote warning (622) print since T11.
 const SPHINX_ONLY_RECORDS: &[(&str, GapFix)] = &[
     ("Unknown target name: ", read_gaps::DANGLING_REFS),
     ("Anonymous hyperlink mismatch: ", read_gaps::DANGLING_REFS),
     ("Indirect hyperlink target ", read_gaps::INDIRECT_TARGETS),
-    (
-        "Undefined substitution referenced: ",
-        read_gaps::SUBSTITUTIONS,
-    ),
-    (" footnote references: only ", read_gaps::FOOTNOTES),
-    ("is not referenced. [ref.footnote]", read_gaps::FOOTNOTES),
     ("image file not readable: ", read_gaps::CANDIDATES),
 ];
 
@@ -418,11 +377,8 @@ fn tree_families(tree: Option<&Census>, families: &[GapFix]) -> Vec<GapFix> {
         .collect()
 }
 
-/// The families of a `warnings` divergence, record by record. AnonymousHyperlinks
-/// and SphinxDanglingReferences report per reference, so where the case's
-/// tree divergence (`tree`) shows Substitutions (220) copying references
-/// in, their records need 220 as well.
-fn warning_census(expected: &Value, actual: &Value, tree: Option<&Census>) -> Census {
+/// The families of a `warnings` divergence, record by record.
+fn warning_census(expected: &Value, actual: &Value) -> Census {
     let expected = records(expected);
     let actual = records(actual);
     let expected: Vec<&str> = expected.iter().map(String::as_str).collect();
@@ -455,20 +411,21 @@ fn warning_census(expected: &Value, actual: &Value, tree: Option<&Census>) -> Ce
             }
         }
     }
-    if census.fixes.contains(&read_gaps::DANGLING_REFS) {
-        for fix in tree_families(tree, &[read_gaps::SUBSTITUTIONS]) {
-            census.add(fix);
-        }
-    }
     census
 }
+
+/// Substitutions' (220) and Footnotes' (620) families, ported in T11. Like
+/// T10's (`dangling refs`, `indirect targets`), they stay for the ids those
+/// transforms allocate, which later tasks' rows can shift.
+const SUBSTITUTIONS: GapFix = read_gaps::gap_fix("substitutions", "5a-T11");
+const FOOTNOTES: GapFix = read_gaps::gap_fix("footnotes", "5a-T11");
 
 /// The transforms that allocate ids in the corpus, by `python_name`, with
 /// the task that ports each [DS §5.2].
 const ALLOCATING_TRANSFORMS: &[(&str, GapFix)] = &[
     (
         "docutils.transforms.references.Substitutions",
-        read_gaps::SUBSTITUTIONS,
+        SUBSTITUTIONS,
     ),
     (
         "docutils.transforms.references.AnonymousHyperlinks",
@@ -482,10 +439,7 @@ const ALLOCATING_TRANSFORMS: &[(&str, GapFix)] = &[
         "sphinx.transforms.references.SphinxDanglingReferences",
         read_gaps::DANGLING_REFS,
     ),
-    (
-        "docutils.transforms.references.Footnotes",
-        read_gaps::FOOTNOTES,
-    ),
+    ("docutils.transforms.references.Footnotes", FOOTNOTES),
     (
         "docutils.transforms.references.TargetNotes",
         read_gaps::PENDING_TRANSFORMS,
@@ -500,10 +454,8 @@ const ALLOCATING_TRANSFORMS: &[(&str, GapFix)] = &[
 /// The families of an `id_trace` divergence. Each transform-phase event is
 /// owned by the task that ports its transform. Parse events must match in
 /// order; one whose node left the tree (`attached` differs) is explained by
-/// the case's tree divergence, `tree`. Whatever the phase, the ids a
-/// transform allocates in content Substitutions (220) copied in, and
-/// whether a node survives the docinfo pop (340, 880), need those families
-/// too.
+/// the case's tree divergence, `tree`. Whatever the phase, whether a node
+/// survives the docinfo pop (340, 880) needs that family too.
 fn trace_census(expected: &Value, actual: &Value, tree: Option<&Census>) -> Census {
     let events = |trace: &Value| -> Vec<(String, String, String, bool)> {
         trace
@@ -523,7 +475,7 @@ fn trace_census(expected: &Value, actual: &Value, tree: Option<&Census>) -> Cens
     let expected = events(expected);
     let actual = events(actual);
     let mut census = Census::default();
-    for fix in tree_families(tree, &[read_gaps::SUBSTITUTIONS, read_gaps::DOCINFO]) {
+    for fix in tree_families(tree, &[read_gaps::DOCINFO]) {
         census.add(fix);
     }
     for (phase, kind, id, _) in expected.iter().filter(|event| event.0 != "parse") {

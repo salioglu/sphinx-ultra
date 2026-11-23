@@ -21,17 +21,21 @@
 //! A row nothing ports yet runs as an explicit no-op
 //! ([`TransformId::transform`]).
 
+pub mod footnotes;
 pub mod location;
 pub mod misc;
 pub mod references;
 pub mod reporter;
 pub mod sphinx;
 pub mod state;
+#[cfg(test)]
+pub(crate) mod test_support;
 pub mod tree;
 
 use std::collections::{BTreeSet, HashSet};
+use std::path::Path;
 
-use crate::diagnostics::{Diagnostic, OrderKey};
+use crate::diagnostics::{Category, Diagnostic, Location, OrderKey, Severity};
 use crate::doctree::messages;
 use crate::doctree::pending::PendingTransform;
 use crate::doctree::{kinds, Doctree, Node, Span};
@@ -42,9 +46,9 @@ use crate::env::std_domain as env_std;
 use crate::env::toctree::{self as env_toctree, ToctreeWarningKind};
 use crate::env::BuildEnvironment;
 use crate::read::{MergeInputs, ReadOutcome, ReadSettings};
-use crate::rst::ParseOutput;
+use crate::rst::{LogLocation, ParseOutput};
 use reporter::LogRecord;
-use state::DocumentState;
+use state::{DocumentState, SourceRef};
 use tree::{TxId, TxTree};
 
 /// A transform's place in the read: docutils' priority string
@@ -229,8 +233,10 @@ impl TransformId {
         match self {
             TransformId::ApplySourceWorkaround => &sphinx::ApplySourceWorkaround,
             TransformId::TranslationProgressTotaliser => &sphinx::TranslationProgressTotaliser,
+            TransformId::DefaultSubstitutions => &sphinx::DefaultSubstitutions,
             TransformId::MoveModuleTargets => &sphinx::MoveModuleTargets,
             TransformId::HandleCodeBlocks => &sphinx::HandleCodeBlocks,
+            TransformId::Substitutions => &references::Substitutions,
             TransformId::ReorderConsecutiveTargetAndIndexNodes => {
                 &sphinx::ReorderConsecutiveTargetAndIndexNodes
             }
@@ -240,8 +246,14 @@ impl TransformId {
             TransformId::IndirectHyperlinks => &references::IndirectHyperlinks,
             TransformId::DoctestTransform => &sphinx::DoctestTransform,
             TransformId::GlossarySorter => &sphinx::GlossarySorter,
+            // The 619 rows' tree halves; T13b their environment half.
+            TransformId::CitationDefinitionTransform => &footnotes::CitationDefinitionTransform,
+            TransformId::CitationReferenceTransform => &footnotes::CitationReferenceTransform,
+            TransformId::Footnotes => &footnotes::Footnotes,
+            TransformId::UnreferencedFootnotesDetector => &footnotes::UnreferencedFootnotesDetector,
             TransformId::ExternalTargets => &references::ExternalTargets,
             TransformId::InternalTargets => &references::InternalTargets,
+            TransformId::FootnoteDocnameUpdater => &footnotes::FootnoteDocnameUpdater,
             TransformId::Transitions => &misc::Transitions,
             TransformId::SphinxDanglingReferences => &references::SphinxDanglingReferences,
             TransformId::FilterSystemMessages => &sphinx::FilterSystemMessages,
@@ -268,14 +280,6 @@ impl TransformId {
             | TransformId::AddTranslationClasses
             | TransformId::RemoveTranslatableInline => &NoOp,
 
-            // T11 (the 619 rows' tree halves; T13b their environment half).
-            TransformId::DefaultSubstitutions
-            | TransformId::Substitutions
-            | TransformId::CitationDefinitionTransform
-            | TransformId::CitationReferenceTransform
-            | TransformId::Footnotes
-            | TransformId::UnreferencedFootnotesDetector
-            | TransformId::FootnoteDocnameUpdater => &NoOp,
             // T12.
             TransformId::AutoNumbering | TransformId::DocInfo | TransformId::ClassAttribute => {
                 &NoOp
@@ -422,6 +426,9 @@ pub struct TransformCx<'a> {
     /// `note_pending` record it applies to ([`schedule`]).
     pub key: TransformKey,
     pub docname: &'a str,
+    /// The project's source directory (`env.srcdir`), which the logger
+    /// records' locations render against ([`Self::warn`]).
+    pub srcdir: &'a Path,
 }
 
 impl TransformCx<'_> {
@@ -475,6 +482,40 @@ impl TransformCx<'_> {
         self.tree.new_subtree(message)
     }
 
+    /// Sphinx's `logger.warning(message, type=…, subtype=…, location=node)`
+    /// while this transform applies: a WARNING record with `category`,
+    /// keyed by this transform's row and the next seq
+    /// ([`TransformKey::order_key`]), and located where Sphinx's
+    /// `get_node_location` (`SP/sphinx/util/logging.py:554-562`) locates
+    /// `node`: docutils' location for it ([`location::get_source_line`]),
+    /// printed `abspath(source):line` ([`LogLocation::Node`]), or
+    /// `abspath(source):` when the line is missing or 0, which is falsy
+    /// there (not the reporter's `source:0`); `<unknown>:line` with a line
+    /// and no source; and nowhere, a bare record, with neither.
+    pub fn warn(&mut self, node: TxId, message: String, category: Category) {
+        let loc = location::get_source_line(self.tree, node, self.state);
+        let line = loc.line.unwrap_or(0);
+        let location = match loc.source {
+            Some(SourceRef::Table(source)) => LogLocation::Node { source, line }.render(
+                self.tree.sources(),
+                self.srcdir,
+                self.docname,
+            ),
+            None if line != 0 => Location::Verbatim(format!("<unknown>:{line}")),
+            None => Location::None,
+        };
+        let seq = self.state.draw_seq();
+        self.state.log.push(LogRecord::Logger {
+            key: self.key.order_key(seq),
+            diagnostic: Diagnostic {
+                location,
+                severity: Severity::Warning,
+                message,
+                category,
+            },
+        });
+    }
+
     /// docutils `document.set_id(node)` for a node without ids, as every
     /// node a transform makes is (`SP/docutils/nodes.py:1844-1875`): the
     /// next id the allocator hands out ([`state::IdAllocator::allocate`]),
@@ -514,14 +555,15 @@ impl Transform for NoOp {
     fn apply(&self, _cx: &mut TransformCx<'_>) {}
 }
 
-/// Applies row `(key, id)`'s transform, `transform`, after setting the id
-/// allocator's phase to the row's [`TransformId::python_name`], so that
-/// every id it allocates is traced as its own.
+/// Applies row `(key, id)`'s transform, `transform`, to the document
+/// `docname` of the project at `srcdir`, after setting the id allocator's
+/// phase to the row's [`TransformId::python_name`], so that every id it
+/// allocates is traced as its own.
 fn apply(
     tree: &mut TxTree,
     state: &mut DocumentState,
     settings: &ReadSettings,
-    docname: &str,
+    (docname, srcdir): (&str, &Path),
     (key, id): (TransformKey, TransformId),
     transform: &dyn Transform,
 ) {
@@ -532,6 +574,7 @@ fn apply(
         settings,
         key,
         docname,
+        srcdir,
     });
 }
 
@@ -548,12 +591,16 @@ fn apply(
 /// With the id trace on, the stage ends by tagging the trace's events
 /// ([`tag_trace`]): stage M can still take a node out of the tree, so
 /// whether an event's node stays is known only when the read is over.
+///
+/// `srcdir` is the project's source directory, which the stage's logger
+/// records render their locations against ([`TransformCx::warn`]).
 pub fn run_read_transforms(
     parsed: ParseOutput,
     settings: &ReadSettings,
     docname: &str,
+    srcdir: &Path,
 ) -> ReadOutcome {
-    read_transforms_with(parsed, settings, docname, &TransformId::transform)
+    read_transforms_with(parsed, settings, docname, srcdir, &TransformId::transform)
 }
 
 /// [`run_read_transforms`], with each row run by the transform `transform`
@@ -563,6 +610,7 @@ pub(crate) fn read_transforms_with(
     parsed: ParseOutput,
     settings: &ReadSettings,
     docname: &str,
+    srcdir: &Path,
     transform: &dyn Fn(TransformId) -> &'static dyn Transform,
 ) -> ReadOutcome {
     let ParseOutput {
@@ -582,7 +630,7 @@ pub(crate) fn read_transforms_with(
             &mut tree,
             &mut state,
             settings,
-            docname,
+            (docname, srcdir),
             (key, id),
             transform(id),
         );
@@ -674,7 +722,7 @@ pub fn run_merge_transforms(
                 &mut tree,
                 state,
                 settings,
-                docname,
+                (docname, inputs.source_dir),
                 (key, id),
                 id.transform(),
             );
@@ -816,6 +864,83 @@ mod tests {
             .iter()
             .map(|(key, id)| format!("{:03}-{:03} {}", key.priority, key.serial, id.python_name()))
             .collect()
+    }
+
+    /// A transform's logger warning about a node ([`TransformCx::warn`]) is
+    /// located the way Sphinx's `get_node_location` locates the node
+    /// (`SP/sphinx/util/logging.py:554-562`), not the way docutils' reporter
+    /// does: `path:line`; `path:` for a node at line 0, which is falsy
+    /// there and which the reporter prints `path:0`; the path of a source
+    /// the table spells relative to the project (an included file) made
+    /// absolute against it; `<unknown>:line` for a line without a source;
+    /// and a bare record for neither. Each record is keyed by the
+    /// transform's row and the next seq.
+    #[test]
+    fn logger_warnings_locate_as_get_node_location() {
+        let locations = [
+            state::DocLoc::at(0, 3),
+            state::DocLoc::at(0, 0),
+            state::DocLoc::at(1, 2),
+            state::DocLoc {
+                source: None,
+                line: Some(5),
+            },
+            state::DocLoc::default(),
+        ];
+        let mut state = DocumentState::default();
+        let mut root = Node::elem(kinds::DOCUMENT, Span::ZERO);
+        for loc in locations {
+            let mut footnote = Node::elem(kinds::FOOTNOTE, Span::ZERO);
+            let uid = state.mint_uid();
+            footnote.set_uid(uid);
+            state.loc_overrides.insert(uid, loc);
+            root.children.push(footnote);
+        }
+        let doctree = Doctree {
+            root,
+            sources: vec!["<SRCDIR>/index.rst".to_string(), "part.rst".to_string()],
+        };
+        let mut tree = TxTree::from_parse(doctree, &mut state);
+        let footnotes = tree.node(tree.root()).children.clone();
+        let settings = ReadSettings::sphinx_defaults();
+        let mut cx = TransformCx {
+            tree: &mut tree,
+            state: &mut state,
+            settings: &settings,
+            key: TransformKey::at(622, 28),
+            docname: "index",
+            srcdir: Path::new("<SRCDIR>"),
+        };
+        for footnote in footnotes {
+            cx.warn(
+                footnote,
+                "Footnote [1] is not referenced.".to_string(),
+                Category::from_parts(Some("ref"), Some("footnote")),
+            );
+        }
+        let printed: Vec<(OrderKey, String)> = state
+            .log
+            .iter()
+            .map(|record| match record {
+                LogRecord::Logger { key, diagnostic } => (*key, diagnostic.render(true)),
+                LogRecord::Reporter { .. } => panic!("a logger record was expected"),
+            })
+            .collect();
+        let message = "WARNING: Footnote [1] is not referenced. [ref.footnote]";
+        assert_eq!(
+            printed,
+            [
+                format!("<SRCDIR>/index.rst:3: {message}"),
+                format!("<SRCDIR>/index.rst:: {message}"),
+                format!("<SRCDIR>/part.rst:2: {message}"),
+                format!("<unknown>:5: {message}"),
+                message.to_string(),
+            ]
+            .into_iter()
+            .enumerate()
+            .map(|(seq, line)| (TransformKey::at(622, 28).order_key(seq as u32), line))
+            .collect::<Vec<_>>()
+        );
     }
 
     /// The table is the 42 transforms Sphinx 9.1.0 applies to every

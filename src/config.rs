@@ -44,6 +44,17 @@ pub struct BuildConfig {
     /// Project release
     pub release: Option<String>,
 
+    /// `today`, default `''` (`config.py:227`, rebuild class `'env'`): the
+    /// text of the `|today|` default substitution when it is set
+    /// ([`crate::read::ReadSettings::today`]).
+    pub today: String,
+
+    /// `today_fmt`, default `None` (`config.py:229`, rebuild class
+    /// `'env'`): the strftime format `|today|` gives the build date when
+    /// `today` is empty; unset, the language's own, `'%b %d, %Y'` in `en`
+    /// ([`crate::read::ReadSettings::today_fmt`]).
+    pub today_fmt: Option<String>,
+
     /// Copyright notice
     pub copyright: Option<String>,
 
@@ -460,6 +471,8 @@ impl Default for BuildConfig {
             // that same default while explicit conf.py values remain intact.
             version: None,
             release: None,
+            today: String::new(),
+            today_fmt: None,
             copyright: Some("2024, Sphinx Ultra".to_string()),
             language: Some("en".to_string()),
             root_doc: Some("index".to_string()),
@@ -1505,6 +1518,41 @@ output:
                 format!("'keep_warnings' must be '0' or '1', got '{value}'")
             );
             assert!(!config.keep_warnings, "{value}: the setting is unchanged");
+        }
+    }
+
+    /// `today` (`config.py:227`, default `''`) and `today_fmt` (`:229`,
+    /// default `None`) are strings, which a `-D` override sets verbatim
+    /// (`convert_overrides`: a `str` or `None` default returns the value,
+    /// `config.py:393-394`), a number-looking one included. The override
+    /// reaches `conf_values` like any other.
+    #[test]
+    fn today_and_today_fmt_take_string_overrides() {
+        let mut config = BuildConfig::default();
+        assert_eq!(
+            (config.today.as_str(), config.today_fmt.as_deref()),
+            ("", None)
+        );
+        for (key, value) in [
+            ("today", "April 1, 2026"),
+            ("today", "2026"),
+            ("today_fmt", "%B %-d, %Y"),
+            ("today_fmt", "2026"),
+        ] {
+            assert!(
+                config.apply_override(key, value).unwrap().is_none(),
+                "{key}={value}"
+            );
+            let set = match key {
+                "today" => Some(config.today.as_str()),
+                _ => config.today_fmt.as_deref(),
+            };
+            assert_eq!(set, Some(value), "{key}={value}");
+            assert_eq!(
+                config.conf_values.get(key),
+                Some(&serde_json::Value::String(value.to_string())),
+                "{key}={value}"
+            );
         }
     }
 
