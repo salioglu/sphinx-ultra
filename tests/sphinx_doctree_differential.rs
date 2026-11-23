@@ -391,10 +391,6 @@ fn post_read_mismatches(fixture: &DocutilsFixture) -> BTreeMap<String, (String, 
 /// editing one line and a grep for an owner shows whole rows.
 #[rustfmt::skip]
 const KNOWN_POST_READ_GAPS: &[(&str, &str)] = &[
-    ("docutils-0099", "doctest class: 5a-T9c"),
-    ("docutils-0100", "doctest class: 5a-T9c"),
-    ("docutils-0101", "doctest class: 5a-T9c"),
-    ("docutils-0102", "doctest class: 5a-T9c"),
     ("docutils-0114", "propagate targets: 5a-T10"),
     ("docutils-0115", "indirect targets: 5a-T10"),
     ("docutils-0121", "propagate targets: 5a-T10"),
@@ -402,7 +398,6 @@ const KNOWN_POST_READ_GAPS: &[(&str, &str)] = &[
     ("docutils-0125", "propagate targets: 5a-T10"),
     ("docutils-0140", "propagate targets: 5a-T10"),
     ("docutils-0145", "propagate targets: 5a-T10"),
-    ("docutils-0147", "doctest class: 5a-T9c"),
     ("docutils-0157", "propagate targets: 5a-T10"),
     ("docutils-0171", "propagate targets: 5a-T10"),
     ("docutils-0212", "dangling refs: 5a-T10"),
@@ -512,7 +507,6 @@ const KNOWN_POST_READ_GAPS: &[(&str, &str)] = &[
     ("docutils-0615", "footnotes: 5a-T11"),
     ("docutils-0616", "footnotes: 5a-T11"),
     ("docutils-0617", "citations: 5a-T11"),
-    ("docutils-0633", "doctest class: 5a-T9c"),
     ("docutils-0638", "propagate targets: 5a-T10"),
     ("docutils-0669", "dangling refs: 5a-T10"),
     ("docutils-0675", "propagate targets: 5a-T10"),

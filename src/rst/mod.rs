@@ -925,7 +925,9 @@ pub(crate) mod tests {
         assert_eq!(footnote_ref_tree_order(&out), ["id1", "id3", "id2"]);
 
         // (b) a `:sorted:` glossary: zeta's reference registers first
-        // (id1), alpha's second (id2), and the tree puts alpha first.
+        // (id1), alpha's second (id2). The parse keeps the source order;
+        // the read puts alpha first (`GlossarySorter`, 500), so the
+        // post-read tree has them the other way round.
         let source = ".. glossary::\n   :sorted:\n\n   zeta\n      Last letter [#]_.\n\n   \
                       alpha\n      First letter [#]_.\n\n.. [#] z\n.. [#] a\n";
         let out = sphinx_parse(source);
@@ -934,7 +936,7 @@ pub(crate) mod tests {
             d["autofootnote_refs"],
             json!([auto_ref("id1", true), auto_ref("id2", true)])
         );
-        assert_eq!(footnote_ref_tree_order(&out), ["id2", "id1"]);
+        assert_eq!(footnote_ref_tree_order(&out), ["id1", "id2"]);
 
         // (c) the abstract's reference registers before the author's.
         let d = dump(

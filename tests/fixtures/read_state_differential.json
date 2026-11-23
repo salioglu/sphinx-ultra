@@ -5495,6 +5495,72 @@
       "warnings": [
         "<SRCDIR>/index.rst:4: ERROR: Unknown target name: \"bad\". [docutils]"
       ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "target",
+          "id1",
+          true
+        ],
+        [
+          "parse",
+          "target",
+          "id2",
+          true
+        ],
+        [
+          "docutils.transforms.references.Substitutions",
+          "system_message",
+          "id3",
+          false
+        ],
+        [
+          "docutils.transforms.references.Substitutions",
+          "problematic",
+          "id4",
+          true
+        ],
+        [
+          "docutils.transforms.references.Substitutions",
+          "system_message",
+          "id5",
+          false
+        ],
+        [
+          "docutils.transforms.references.Substitutions",
+          "problematic",
+          "id6",
+          true
+        ]
+      ],
+      "name": "state.glossary_sorted_anonymous_refs",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <glossary sorted=\"1\">\n        <definition_list classes=\"glossary\">\n            <definition_list_item>\n                <term ids=\"term-alpha\">\n                    alpha\n                    <index entries=\"('single',\\ 'alpha',\\ 'term-alpha',\\ 'main',\\ None)\">\n                <definition>\n                    <paragraph>\n                        First \n                        <problematic ids=\"id6\" refid=\"id5\">\n                            |asub|\n                         and \n                        <reference anonymous=\"1\" name=\"y\" refuri=\"https://y.example/\">\n                            y\n                        .\n            <definition_list_item>\n                <term ids=\"term-zeta\">\n                    zeta\n                    <index entries=\"('single',\\ 'zeta',\\ 'term-zeta',\\ 'main',\\ None)\">\n                <definition>\n                    <paragraph>\n                        Last \n                        <problematic ids=\"id4\" refid=\"id3\">\n                            |zsub|\n                         and \n                        <reference anonymous=\"1\" name=\"x\" refuri=\"https://x.example/\">\n                            x\n                        .\n    <target anonymous=\"1\" ids=\"id1\" refuri=\"https://x.example/\">\n    <target anonymous=\"1\" ids=\"id2\" refuri=\"https://y.example/\">\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": ".. glossary::\n   :sorted:\n\n   zeta\n      Last |zsub| and `x`__.\n\n   alpha\n      First |asub| and `y`__.\n\n__ https://x.example/\n__ https://y.example/\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:5: ERROR: Undefined substitution referenced: \"zsub\". [docutils]",
+        "<SRCDIR>/index.rst:8: ERROR: Undefined substitution referenced: \"asub\". [docutils]"
+      ]
     }
   ],
   "docutils_version": "0.22.4",

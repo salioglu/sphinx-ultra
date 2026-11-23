@@ -469,7 +469,7 @@ impl Node {
 
 impl AttrValue {
     /// Python truthiness of the attribute value.
-    fn is_truthy(&self) -> bool {
+    pub(crate) fn is_truthy(&self) -> bool {
         match self {
             AttrValue::Int(n) => *n != 0,
             AttrValue::Str(s) => !s.is_empty(),

@@ -250,7 +250,7 @@ const KNOWN_READ_STATE_GAPS: &[(&str, &str, &str)] = &[
     ("state.final_position.directive_then_target", "pseudo_xml", "dangling refs: 5a-T10"),
     ("state.final_position.directive_then_target", "warnings", "dangling refs: 5a-T10"),
     ("state.final_position.doctest_block", "id_trace", "dangling refs: 5a-T10"),
-    ("state.final_position.doctest_block", "pseudo_xml", "dangling refs+doctest class: 5a-T10"),
+    ("state.final_position.doctest_block", "pseudo_xml", "dangling refs: 5a-T10"),
     ("state.final_position.doctest_block", "warnings", "dangling refs: 5a-T10"),
     ("state.final_position.empty_comment", "id_trace", "dangling refs: 5a-T10"),
     ("state.final_position.empty_comment", "pseudo_xml", "dangling refs: 5a-T10"),
@@ -346,9 +346,12 @@ const KNOWN_READ_STATE_GAPS: &[(&str, &str, &str)] = &[
     ("state.final_position.title_then_directive", "pseudo_xml", "dangling refs: 5a-T10"),
     ("state.final_position.title_then_directive", "warnings", "dangling refs: 5a-T10"),
     ("state.final_position.transition", "id_trace", "dangling refs: 5a-T10"),
-    ("state.final_position.transition", "pseudo_xml", "dangling refs+transitions: 5a-T10"),
-    ("state.final_position.transition", "warnings", "dangling refs+transitions: 5a-T10"),
+    ("state.final_position.transition", "pseudo_xml", "dangling refs: 5a-T10"),
+    ("state.final_position.transition", "warnings", "dangling refs: 5a-T10"),
     ("state.footnote_ref_kinds", "pseudo_xml", "footnotes: 5a-T11"),
+    ("state.glossary_sorted_anonymous_refs", "id_trace", "substitutions: 5a-T11"),
+    ("state.glossary_sorted_anonymous_refs", "pseudo_xml", "indirect targets+substitutions: 5a-T11"),
+    ("state.glossary_sorted_anonymous_refs", "warnings", "substitutions: 5a-T11"),
     ("state.glossary_sorted_footnote_order", "pseudo_xml", "footnotes: 5a-T11"),
     ("state.location.admonition_title", "id_trace", "dangling refs: 5a-T10"),
     ("state.location.admonition_title", "pseudo_xml", "dangling refs: 5a-T10"),
@@ -603,7 +606,6 @@ const SPHINX_ONLY_RECORDS: &[(&str, GapFix)] = &[
     (" footnote references: only ", read_gaps::FOOTNOTES),
     ("is not referenced. [ref.footnote]", read_gaps::FOOTNOTES),
     ("image file not readable: ", read_gaps::CANDIDATES),
-    (" a transition.", read_gaps::TRANSITIONS),
 ];
 
 /// The tree families of the case, among `families`, that a key beside

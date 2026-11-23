@@ -2232,10 +2232,11 @@ fn family_sort_key(family: &str) -> (bool, u32, &str) {
     }
 }
 
-/// `[docutils]` records that only a transform or the HTML writer creates, by
-/// message, with that family. Every other `[docutils]` record is one the
-/// parser creates, which the reporter channel prints since T8 (F1) [TW §6.3,
-/// §7.4]: a parse-time record one side alone prints is unexplained.
+/// `[docutils]` records that only a transform not ported yet, or the HTML
+/// writer, creates, by message, with that family. Every other `[docutils]`
+/// record is one the parser creates, which the reporter channel prints since
+/// T8 (F1) [TW §6.3, §7.4], or one a ported transform creates (`Transitions`'
+/// since T9c, F7): a record one side alone prints is unexplained.
 const REPORTER_MESSAGE_FIXES: &[(&str, GapFix)] = &[
     ("Unknown target name: ", gap_fix("F4", "5a-T10")),
     ("Anonymous hyperlink mismatch: ", gap_fix("F4", "5a-T10")),
@@ -2245,9 +2246,6 @@ const REPORTER_MESSAGE_FIXES: &[(&str, GapFix)] = &[
         gap_fix("F4", "5a-T11"),
     ),
     (" footnote references: only ", gap_fix("F4", "5a-T11")),
-    (" must separate transitions;", gap_fix("F7", "5a-T9c")),
-    (" may not begin with a transition.", gap_fix("F7", "5a-T9c")),
-    (" may not end with a transition.", gap_fix("F7", "5a-T9c")),
     ("Cannot scale image!", gap_fix("F8", "5b")),
 ];
 
@@ -2788,10 +2786,6 @@ fn aux_gate_diff_reports_regressions_and_fixed_rows() {
 /// one line and a grep for an owner shows whole rows.
 #[rustfmt::skip]
 const KNOWN_AUX_GAPS: &[(&str, AuxComponent, &str)] = &[
-    ("core/docutils_snippets/docutils-0030", AuxComponent::Warnings, "F7: 5a-T9c"),
-    ("core/docutils_snippets/docutils-0031", AuxComponent::Warnings, "F7: 5a-T9c"),
-    ("core/docutils_snippets/docutils-0032", AuxComponent::Warnings, "F7: 5a-T9c"),
-    ("core/docutils_snippets/docutils-0033", AuxComponent::Warnings, "F7: 5a-T9c"),
     ("core/docutils_snippets/docutils-0115", AuxComponent::ObjectsInv, "INV:target-transforms: 5a-T10"),
     ("core/docutils_snippets/docutils-0120", AuxComponent::Warnings, "F4: 5a-T10"),
     ("core/docutils_snippets/docutils-0121", AuxComponent::ObjectsInv, "INV:target-transforms: 5a-T10"),

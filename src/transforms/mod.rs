@@ -22,6 +22,7 @@
 //! ([`TransformId::transform`]).
 
 pub mod location;
+pub mod misc;
 pub mod reporter;
 pub mod sphinx;
 pub mod state;
@@ -30,6 +31,7 @@ pub mod tree;
 use std::collections::{BTreeSet, HashSet};
 
 use crate::diagnostics::{Diagnostic, OrderKey};
+use crate::doctree::messages;
 use crate::doctree::pending::PendingTransform;
 use crate::doctree::{kinds, Doctree, Node, Span};
 use crate::env::dependencies as env_dependencies;
@@ -225,6 +227,10 @@ impl TransformId {
     pub(crate) fn transform(self) -> &'static dyn Transform {
         match self {
             TransformId::TranslationProgressTotaliser => &sphinx::TranslationProgressTotaliser,
+            TransformId::HandleCodeBlocks => &sphinx::HandleCodeBlocks,
+            TransformId::DoctestTransform => &sphinx::DoctestTransform,
+            TransformId::GlossarySorter => &sphinx::GlossarySorter,
+            TransformId::Transitions => &misc::Transitions,
             TransformId::FilterSystemMessages => &sphinx::FilterSystemMessages,
 
             // Inert with `extensions = []` and Sphinx's defaults ([TW §2.2]):
@@ -252,11 +258,6 @@ impl TransformId {
             // and [`location::get_source_line`] reads as it leaves them.
             TransformId::ApplySourceWorkaround => &NoOp,
 
-            // T9c (GlossarySorter is done at parse time until then).
-            TransformId::HandleCodeBlocks
-            | TransformId::DoctestTransform
-            | TransformId::GlossarySorter
-            | TransformId::Transitions => &NoOp,
             // T10.
             TransformId::MoveModuleTargets
             | TransformId::ReorderConsecutiveTargetAndIndexNodes
@@ -421,6 +422,42 @@ pub struct TransformCx<'a> {
     /// `note_pending` record it applies to ([`schedule`]).
     pub key: TransformKey,
     pub docname: &'a str,
+}
+
+impl TransformCx<'_> {
+    /// docutils `document.reporter.system_message(level, text,
+    /// base_node=node)` while this transform applies
+    /// (`SP/docutils/utils/__init__.py:171-221`). The `system_message` is
+    /// located where docutils locates `node` ([`location::get_source_line`])
+    /// or, when that has neither a source nor a line, at the parse's final
+    /// position ([`DocumentState::final_position`], [DS §6.2]); its
+    /// `source` is the location's, the document's own when it names none
+    /// (`reporter.source`). Docutils writes the message to the warning
+    /// stream as it makes it, so it is logged here, with its text as it is
+    /// now: a reporter record keyed by this transform's row and the next
+    /// seq ([`TransformKey::order_key`]). The node is returned in no
+    /// parent, for the transform to place or to leave out of the tree.
+    pub fn report(&mut self, level: u8, text: &str, node: TxId) -> TxId {
+        let mut loc = location::get_source_line(self.tree, node, self.state);
+        if loc.source.is_none() && loc.line.is_none() {
+            loc = self.state.final_position;
+        }
+        let message = messages::system_message(
+            level,
+            text,
+            self.tree.source_path(loc.source),
+            loc.line,
+            Vec::new(),
+        );
+        let seq = self.state.draw_seq();
+        self.state.log.push(LogRecord::Reporter {
+            key: self.key.order_key(seq),
+            level,
+            loc,
+            text: message.element_astext(),
+        });
+        self.tree.new_subtree(message)
+    }
 }
 
 /// One read transform: docutils' `Transform.apply` over the document's

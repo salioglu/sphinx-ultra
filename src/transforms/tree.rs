@@ -19,7 +19,7 @@
 use std::collections::HashMap;
 
 use crate::doctree::{kinds, AttrValue, Attrs, Doctree, Node, NodeExt, Span, Uid};
-use crate::transforms::state::{DocumentState, OrderedMulti};
+use crate::transforms::state::{DocumentState, OrderedMulti, SourceRef};
 
 /// A node's place in the arena of the [`TxTree`] that made it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -123,9 +123,9 @@ impl TxTree {
             ids: HashMap::new(),
             refids: OrderedMulti::default(),
         };
-        tree.root = tree.insert(root, None);
+        tree.root = tree.place(root, None);
         for subtree in std::mem::take(&mut state.detached) {
-            let id = tree.insert(subtree, None);
+            let id = tree.place(subtree, None);
             tree.detached.push(id);
         }
         for (index, node) in tree.nodes.iter().enumerate() {
@@ -142,7 +142,7 @@ impl TxTree {
 
     /// Places `node` and its subtree in the arena, in pre-order, linked to
     /// `parent`.
-    fn insert(&mut self, node: Node, parent: Option<TxId>) -> TxId {
+    fn place(&mut self, node: Node, parent: Option<TxId>) -> TxId {
         let Node {
             kind,
             span,
@@ -161,7 +161,7 @@ impl TxTree {
             ext,
         });
         for child in children {
-            let child = self.insert(child, Some(id));
+            let child = self.place(child, Some(id));
             self.nodes[id.index()].children.push(child);
         }
         id
@@ -422,11 +422,49 @@ impl TxTree {
         })
     }
 
+    /// The owned subtree `node`, placed in the arena in no parent, as a
+    /// node a transform builds whole is (a reporter's `system_message`).
+    /// Its nodes have no identity and register no id.
+    pub fn new_subtree(&mut self, node: Node) -> TxId {
+        self.place(node, None)
+    }
+
     /// docutils `parent.append(child)` (`parent += child`): `child` goes
     /// last among `parent`'s children and links to it.
     pub fn append(&mut self, parent: TxId, child: TxId) {
         self.node_mut(child).parent = Some(parent);
         self.node_mut(parent).children.push(child);
+    }
+
+    /// docutils `parent.insert(index, child)` for a node: `child` goes in
+    /// at `index` among `parent`'s children and links to it.
+    pub fn insert(&mut self, parent: TxId, index: usize, child: TxId) {
+        self.node_mut(child).parent = Some(parent);
+        self.node_mut(parent).children.insert(index, child);
+    }
+
+    /// docutils `parent.remove(child)`: `child` leaves `parent`'s
+    /// children, keeping its parent link, as in docutils. Removing a node
+    /// that is not among them, which raises in Python, does nothing.
+    pub fn remove(&mut self, parent: TxId, child: TxId) {
+        let children = &mut self.node_mut(parent).children;
+        match children.iter().position(|&node| node == child) {
+            Some(index) => {
+                children.remove(index);
+            }
+            None => debug_assert!(false, "remove: the node is not among the children"),
+        }
+    }
+
+    /// The path of `source` in the parse's source table; for a location
+    /// that names no source, the document's own, the table's first entry
+    /// (docutils' `reporter.source`), as the parse's reporter spells it.
+    pub fn source_path(&self, source: Option<SourceRef>) -> &str {
+        let index = source.map_or(0, |SourceRef::Table(index)| usize::from(index));
+        self.sources
+            .get(index)
+            .or_else(|| self.sources.first())
+            .map_or("<string>", String::as_str)
     }
 
     /// The identity of the node at `id`, minted from `state` when it has

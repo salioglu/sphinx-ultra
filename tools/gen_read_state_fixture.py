@@ -281,6 +281,19 @@ CASES += [
     for name, ending in FINAL_POSITION_ENDINGS
 ]
 CASES += [(f"state.location.{context}", rst) for context, rst in LOCATION_CONTEXTS]
+# [DS §2.2]: GlossarySorter (500) sorts a `:sorted:` glossary only after
+# Substitutions (220) and AnonymousHyperlinks (440) have walked it in source
+# order: zeta's undefined substitution takes the first loose ids, and its
+# anonymous reference the first anonymous target.
+CASES += [
+    (
+        "state.glossary_sorted_anonymous_refs",
+        ".. glossary::\n   :sorted:\n\n"
+        "   zeta\n      Last |zsub| and `x`__.\n\n"
+        "   alpha\n      First |asub| and `y`__.\n\n"
+        "__ https://x.example/\n__ https://y.example/\n",
+    ),
+]
 
 
 # ---------------------------------------------------------------------------

@@ -8,15 +8,16 @@
 //! divergence shows, and the latest task that fixes one of them (the plan's
 //! Global Constraints). The family names are the corpus-baseline report's
 //! [BASE §3.8] (`dangling refs`, `docinfo`, `propagate targets`,
-//! `autonumber ids`, `doctest class`, `footnotes`, `citations`, `indirect
-//! targets`, `substitutions`, and the writer-invisible `candidates`), plus,
-//! for read state the HTML oracle's inputs never show, `class attribute`,
-//! `transitions` and `pending`. The families fixed since are gone — the
-//! dispatch families T7 fixed (`unknown role`, `code directive`, `` `class`
-//! is `py:class` ``, `pep/rfc index order` and the math directive's names)
-//! and T9b's `system_message` (an INFO message `FilterSystemMessages`, 999,
-//! removes): a divergence of that shape now is a regression, which the
-//! census reports unexplained.
+//! `autonumber ids`, `footnotes`, `citations`, `indirect targets`,
+//! `substitutions`, and the writer-invisible `candidates`), plus, for read
+//! state the HTML oracle's inputs never show, `class attribute` and
+//! `pending`. The families fixed since are gone — the dispatch families T7
+//! fixed (`unknown role`, `code directive`, `` `class` is `py:class` ``,
+//! `pep/rfc index order` and the math directive's names), T9b's
+//! `system_message` (an INFO message `FilterSystemMessages`, 999, removes)
+//! and T9c's `doctest class` and `transitions` (`DoctestTransform`, 500,
+//! and `Transitions`, 830): a divergence of that shape now is a regression,
+//! which the census reports unexplained.
 
 use std::collections::BTreeSet;
 
@@ -64,8 +65,6 @@ pub const fn gap_fix(family: &'static str, owner: &'static str) -> GapFix {
 pub const DANGLING_REFS: GapFix = gap_fix("dangling refs", "5a-T10");
 pub const INDIRECT_TARGETS: GapFix = gap_fix("indirect targets", "5a-T10");
 pub const PROPAGATE_TARGETS: GapFix = gap_fix("propagate targets", "5a-T10");
-pub const DOCTEST_CLASS: GapFix = gap_fix("doctest class", "5a-T9c");
-pub const TRANSITIONS: GapFix = gap_fix("transitions", "5a-T9c");
 pub const FOOTNOTES: GapFix = gap_fix("footnotes", "5a-T11");
 pub const CITATIONS: GapFix = gap_fix("citations", "5a-T11");
 pub const SUBSTITUTIONS: GapFix = gap_fix("substitutions", "5a-T11");
@@ -327,9 +326,6 @@ fn hunk_census(hunk: &Hunk<'_>, defined: &BTreeSet<String>, messages: &[Option<S
         if line.starts_with("<problematic ") {
             problematic_fixes(&text_under(&hunk.removed, at), defined, &mut census);
         }
-        if line.starts_with("<doctest_block classes=\"doctest\"") {
-            census.add(DOCTEST_CLASS);
-        }
         if line.starts_with("<target ") && line.contains(" refid=") && !line.contains(" refuri=") {
             census.add(PROPAGATE_TARGETS);
         }
@@ -375,13 +371,9 @@ fn hunk_census(hunk: &Hunk<'_>, defined: &BTreeSet<String>, messages: &[Option<S
         }
         if line.starts_with("<system_message ") {
             let message = text_under(&hunk.removed, at + 1);
-            if message.contains("transition") {
-                census.add(TRANSITIONS);
-            } else {
-                census
-                    .unexplained
-                    .push(format!("a message only Sphinx's tree has: {message:?}"));
-            }
+            census
+                .unexplained
+                .push(format!("a message only Sphinx's tree has: {message:?}"));
         }
     }
 

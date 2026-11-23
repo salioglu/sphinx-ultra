@@ -19,7 +19,6 @@ use crate::doctree::pending::{Pending, PendingTransform, PyValue};
 use crate::doctree::{kinds, messages, AttrValue, Node, NodeExt, Span};
 use crate::transforms::state::{DocLoc, DocumentState, SourceRef};
 use crate::utils::py_splitlines;
-use unicode_normalization::UnicodeNormalization;
 
 use std::sync::Arc;
 
@@ -5251,43 +5250,13 @@ impl BlockParser {
             item.children.push(definition);
             dl.children.push(item);
         }
-        // `GlossarySorter` (`transforms/__init__.py:426-442`), a read-phase
-        // transform at priority 500, so the STORED doctree is already
-        // sorted:
-        //
-        //     definition_list[:] = sorted(
-        //         definition_list,
-        //         key=lambda item: unicodedata.normalize(
-        //             'NFD', cast('nodes.term', item)[0].astext().lower()))
-        //
-        // Running it here rather than as a transform is equivalent: the
-        // list is complete, `sorted` is stable, and the ids/index entries
-        // were already allocated in SOURCE order by the loop above — which
-        // is what sphinx does too, since the directive runs long before the
-        // transform. (Sphinx defers it only so i18n can substitute the
-        // terms first; this crate has no i18n phase.)
-        if opt_get(&input.options, "sorted").is_some() {
-            dl.children.sort_by_key(Self::glossary_sort_key);
-        }
+        // A `:sorted:` glossary stays in source order here: the read sorts
+        // it, `GlossarySorter` at 500 (`crate::transforms::sphinx`), after
+        // the transforms that walk it in source order.
         glossary.children.push(dl);
         // `return [*messages, node]` (`domains/std/__init__.py:555`).
         out.extend(msgs);
         out.push(glossary);
-    }
-
-    /// `GlossarySorter`'s key: the NFD-normalized, lowercased `astext()` of
-    /// the item's FIRST `term` child. The `index` node `make_glossary_term`
-    /// appends to that term contributes nothing to `astext()` (an empty
-    /// `Element` under a `TextElement`'s empty child separator), so the key
-    /// is the rendered term text. Python compares strings by code point,
-    /// which is the same order as Rust's UTF-8 byte comparison.
-    fn glossary_sort_key(item: &Node) -> String {
-        let text = item
-            .children
-            .first()
-            .map(|term| term.astext())
-            .unwrap_or_default();
-        text.to_lowercase().nfd().collect()
     }
 
     /// One of `Glossary.run`'s three misformat warnings, anchored the way

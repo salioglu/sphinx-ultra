@@ -1,6 +1,15 @@
 //! Sphinx's own read transforms (`SP/sphinx/transforms/`), ported one row
 //! of the read-transform table at a time ([`super::READ_TRANSFORMS`]).
+//!
+//! A transform that walks the tree walks it the way its Python loop does:
+//! over `list(document.findall(...))`, a snapshot taken before the loop
+//! changes anything ([`TxTree::findall`]), or over the generator itself, a
+//! live walk that reads each child list as it is when it gets there
+//! ([`TxTree::next_node`] from the node it is at).
 
+use unicode_normalization::UnicodeNormalization;
+
+use super::tree::{TxId, TxNode, TxTree};
 use super::{Transform, TransformCx};
 use crate::doctree::{kinds, AttrValue};
 
@@ -21,6 +30,140 @@ impl Transform for TranslationProgressTotaliser {
             AttrValue::Str("{'total': 0, 'translated': 0}".to_string()),
         );
     }
+}
+
+/// 210-022 `HandleCodeBlocks` (`SP/sphinx/transforms/__init__.py:178-197`):
+/// replaces every block quote whose children are all doctest blocks by
+/// those blocks (`node.replace_self(node.children)`), so that a doctest
+/// indented under a paragraph stands on its own rather than in a quote.
+/// The first block takes the quote's ids, classes and names
+/// ([`TxTree::replace_self`]). An empty quote qualifies too (`all()` of
+/// nothing is true) and is removed.
+///
+/// The loop is `for node in self.document.findall(nodes.block_quote)`, a
+/// live walk, which goes on from where the quote was, as the generator
+/// does over the parent's child list by index ([`next_after`]): after the
+/// last block that replaced it (doctest blocks hold only text), and after
+/// an empty quote it skips the node that took the quote's place, subtree
+/// and all, as a Python list iterator skips the element after a removed
+/// one.
+pub struct HandleCodeBlocks;
+
+impl Transform for HandleCodeBlocks {
+    fn apply(&self, cx: &mut TransformCx<'_>) {
+        let tree = &mut *cx.tree;
+        let is_quote = |node: &TxNode| node.kind == kinds::BLOCK_QUOTE;
+        let mut next = tree.next_node(tree.root(), is_quote, false, true, false, false);
+        while let Some(quote) = next {
+            let blocks = tree.node(quote).children.clone();
+            let doctest_only = blocks
+                .iter()
+                .all(|&block| tree.node(block).kind == kinds::DOCTEST_BLOCK);
+            if !doctest_only {
+                next = tree.next_node(quote, is_quote, false, true, true, true);
+                continue;
+            }
+            let parent = tree
+                .parent(quote)
+                .expect("a block quote under the root has a parent");
+            let index = tree
+                .node(parent)
+                .children
+                .iter()
+                .position(|&child| child == quote)
+                .expect("a node the walk reaches is among its parent's children");
+            tree.replace_self(quote, blocks.clone());
+            let walked = match blocks.last() {
+                Some(&last) => last,
+                None => match tree.node(parent).children.get(index) {
+                    Some(&skipped) => skipped,
+                    None => parent,
+                },
+            };
+            next = next_after(tree, walked, is_quote);
+        }
+    }
+}
+
+/// The first node `pred` accepts after the subtree at `id` in pre-order,
+/// read from the tree as it is now: where a live `findall` walk goes on
+/// once it is done with that subtree, `id`'s following siblings and then
+/// its ancestors' ([`TxTree::next_node`] from the subtree's last node).
+fn next_after(tree: &TxTree, id: TxId, pred: impl Fn(&TxNode) -> bool) -> Option<TxId> {
+    let mut last = id;
+    while let Some(&child) = tree.node(last).children.last() {
+        last = child;
+    }
+    tree.next_node(last, pred, false, true, true, true)
+}
+
+/// 500-024 `DoctestTransform` (`SP/sphinx/transforms/__init__.py:327-334`):
+/// appends the class `doctest` to every doctest block in the tree, even to
+/// one that has it already (`node['classes'].append('doctest')`). The loop
+/// is a live walk that moves no node.
+pub struct DoctestTransform;
+
+impl Transform for DoctestTransform {
+    fn apply(&self, cx: &mut TransformCx<'_>) {
+        let tree = &mut *cx.tree;
+        let is_doctest = |node: &TxNode| node.kind == kinds::DOCTEST_BLOCK;
+        let mut next = tree.next_node(tree.root(), is_doctest, false, true, false, false);
+        while let Some(block) = next {
+            tree.node_mut(block)
+                .attrs
+                .classes
+                .push("doctest".to_string());
+            next = tree.next_node(block, is_doctest, false, true, true, true);
+        }
+    }
+}
+
+/// 500-031 `GlossarySorter` (`SP/sphinx/transforms/__init__.py:427-443`):
+/// sorts the definition list of every glossary whose `sorted` is true (the
+/// directive's `:sorted:`) by `unicodedata.normalize('NFD',
+/// item[0].astext().lower())`: each item's first term, its `astext()`
+/// lowercased (Python's `str.lower`, as Rust's `to_lowercase`, final sigma
+/// included) and then NFD-normalized. `sorted` is stable and compares code
+/// points, as Rust's string order does. Sphinx sorts in the read rather
+/// than in the directive, after the i18n transforms, so Substitutions
+/// (220) and AnonymousHyperlinks (440) walk the glossary in source order.
+///
+/// The loop is a live walk: a glossary is sorted before the walk descends
+/// into it, so a glossary in one of its definitions is reached in sorted
+/// order.
+pub struct GlossarySorter;
+
+impl Transform for GlossarySorter {
+    fn apply(&self, cx: &mut TransformCx<'_>) {
+        let tree = &mut *cx.tree;
+        let is_glossary = |node: &TxNode| node.kind == "glossary";
+        let mut next = tree.next_node(tree.root(), is_glossary, false, true, false, false);
+        while let Some(glossary) = next {
+            let node = tree.node(glossary);
+            let sorted = node.get("sorted").is_some_and(AttrValue::is_truthy);
+            // `glossary[0]`, the definition list the directive made.
+            let list = node.children.first().copied();
+            if let (true, Some(list)) = (sorted, list) {
+                let mut items = tree.node(list).children.clone();
+                items.sort_by_cached_key(|&item| glossary_sort_key(tree, item));
+                tree.node_mut(list).children = items;
+            }
+            next = tree.next_node(glossary, is_glossary, false, true, true, true);
+        }
+    }
+}
+
+/// `GlossarySorter`'s key for a definition list item: the NFD form of its
+/// first child's, the first term's, `astext()` lowercased. The `index`
+/// node `make_glossary_term` appends to the term adds nothing to it.
+fn glossary_sort_key(tree: &TxTree, item: TxId) -> String {
+    let text = tree
+        .node(item)
+        .children
+        .first()
+        .map(|&term| tree.astext(term))
+        .unwrap_or_default();
+    text.to_lowercase().nfd().collect()
 }
 
 /// 999-027 `FilterSystemMessages` (`SP/sphinx/transforms/__init__.py:337-347`,
@@ -69,6 +212,313 @@ mod tests {
     use crate::transforms::state::DocumentState;
     use crate::transforms::tree::TxTree;
     use crate::transforms::{read_transforms_with, NoOp, TransformId, TransformKey};
+
+    /// How Sphinx parses `<SRCDIR>/index.rst`.
+    fn index_rst() -> ParseOptions {
+        ParseOptions {
+            source_path: "<SRCDIR>/index.rst".to_string(),
+            sphinx: true,
+            docname: "index".to_string(),
+            ..ParseOptions::default()
+        }
+    }
+
+    /// The doctree stage R leaves for `rst`, each row run by `transform`.
+    fn stage_r_with(
+        rst: &str,
+        transform: &dyn Fn(TransformId) -> &'static dyn Transform,
+    ) -> Doctree {
+        let parsed = crate::rst::parse_rst_full(rst, &index_rst());
+        let settings = ReadSettings::sphinx_defaults();
+        read_transforms_with(parsed, &settings, "index", transform)
+            .doctree()
+            .clone()
+    }
+
+    /// The pformat of the doctree stage R leaves for `rst`.
+    fn stage_r(rst: &str) -> String {
+        stage_r_with(rst, &TransformId::transform).root.pformat()
+    }
+
+    /// `doctree` with the transform of row `id` applied to it alone, at
+    /// the row's key.
+    fn apply_row(doctree: Doctree, id: TransformId) -> Doctree {
+        let (key, _) = *crate::transforms::READ_TRANSFORMS
+            .iter()
+            .find(|(_, row)| *row == id)
+            .expect("a row of the table");
+        let mut state = DocumentState::default();
+        let mut tree = TxTree::from_parse(doctree, &mut state);
+        id.transform().apply(&mut TransformCx {
+            tree: &mut tree,
+            state: &mut state,
+            settings: &ReadSettings::sphinx_defaults(),
+            key,
+            docname: "index",
+        });
+        tree.into_doctree()
+    }
+
+    /// `HandleCodeBlocks` (210-022, `SP/sphinx/transforms/__init__.py:178-197`)
+    /// replaces every block quote whose children are all doctest blocks by
+    /// those blocks, and leaves one with anything else in it.
+    /// `docutils-0147` is the oracle's own post-read doctree; the other
+    /// rows are Sphinx 9.1.0 reads of each input as `index.rst` (the
+    /// read-state harness, `keep_warnings = True`). The first block takes
+    /// the quote's classes (`replace_self`'s `update_basic_atts`), before
+    /// `DoctestTransform` (500) appends its own. A doctest-only quote
+    /// nested in a quote that also holds a doctest block is unwrapped
+    /// after the outer quote was judged, so the outer one stays.
+    ///
+    /// The walk is docutils' live `findall`, a generator over the tree's
+    /// child lists by index, and the hand-built trees pin where it goes on
+    /// after a replacement. Replaced by its blocks, a quote's place is
+    /// walked on from after them. An empty quote (`all()` of nothing is
+    /// true) is removed, and the walk, a Python list iterator, skips the
+    /// node that took its place, subtree and all: a doctest-only quote
+    /// right after an empty one stays. An empty last child ends its
+    /// parent's walk. (docutils 0.22.4: each tree built with
+    /// `docutils.nodes` and `HandleCodeBlocks(document).apply()`.)
+    #[test]
+    fn handle_code_blocks_unwraps_doctest_only_block_quotes() {
+        const DOC: &str = "<document source=\"<SRCDIR>/index.rst\" \
+                           translation_progress=\"{'total': 0, 'translated': 0}\">\n";
+        let rows: [(&str, &str); 5] = [
+            (
+                // docutils-0147.
+                "Para.\n\n    >>> quoted_code()\n    output\n",
+                "    <paragraph>\n        Para.\n    \
+                 <doctest_block classes=\"doctest\" xml:space=\"preserve\">\n        \
+                 >>> quoted_code()\n        output\n",
+            ),
+            (
+                "Para.\n\n    >>> a\n\n    >>> b\n",
+                "    <paragraph>\n        Para.\n    \
+                 <doctest_block classes=\"doctest\" xml:space=\"preserve\">\n        >>> a\n    \
+                 <doctest_block classes=\"doctest\" xml:space=\"preserve\">\n        >>> b\n",
+            ),
+            (
+                "Para.\n\n    >>> a\n\n    text\n",
+                "    <paragraph>\n        Para.\n    <block_quote>\n        \
+                 <doctest_block classes=\"doctest\" xml:space=\"preserve\">\n            >>> a\n        \
+                 <paragraph>\n            text\n",
+            ),
+            (
+                "Para.\n\n    >>> outer\n\n        >>> inner\n",
+                "    <paragraph>\n        Para.\n    <block_quote>\n        \
+                 <doctest_block classes=\"doctest\" xml:space=\"preserve\">\n            >>> outer\n        \
+                 <doctest_block classes=\"doctest\" xml:space=\"preserve\">\n            >>> inner\n",
+            ),
+            (
+                ".. epigraph::\n\n   >>> 1\n",
+                "    <doctest_block classes=\"epigraph doctest\" xml:space=\"preserve\">\n        \
+                 >>> 1\n",
+            ),
+        ];
+        for (rst, body) in rows {
+            assert_eq!(stage_r(rst), format!("{DOC}{body}"), "{rst:?}");
+        }
+
+        fn element(kind: &'static str, children: Vec<Node>) -> Node {
+            let mut node = Node::elem(kind, Span::ZERO);
+            node.children = children;
+            node
+        }
+        fn text(kind: &'static str, text: &str) -> Node {
+            element(kind, vec![Node::text_node(text, Span::ZERO)])
+        }
+        fn doctest(code: &str) -> Node {
+            let mut node = text(kinds::DOCTEST_BLOCK, code);
+            node.set("xml:space", AttrValue::Str("preserve".to_string()));
+            node
+        }
+        let quote = |children| element(kinds::BLOCK_QUOTE, children);
+        let handled = |children: Vec<Node>| {
+            let mut root = element(kinds::DOCUMENT, children);
+            root.set("source", AttrValue::Str("<test>".to_string()));
+            let doctree = Doctree {
+                root,
+                sources: vec!["<test>".to_string()],
+            };
+            apply_row(doctree, TransformId::HandleCodeBlocks)
+                .root
+                .pformat()
+        };
+        const TEST: &str = "<document source=\"<test>\">\n";
+        let block = |code: &str, depth: usize| {
+            let indent = "    ".repeat(depth);
+            format!("{indent}<doctest_block xml:space=\"preserve\">\n{indent}    {code}\n")
+        };
+        assert_eq!(
+            handled(vec![
+                text(kinds::PARAGRAPH, "Para."),
+                quote(Vec::new()),
+                quote(vec![doctest(">>> 1")]),
+            ]),
+            format!(
+                "{TEST}    <paragraph>\n        Para.\n    <block_quote>\n{}",
+                block(">>> 1", 2)
+            )
+        );
+        assert_eq!(
+            handled(vec![
+                text(kinds::PARAGRAPH, "Para."),
+                quote(Vec::new()),
+                text(kinds::PARAGRAPH, "Two."),
+                quote(vec![doctest(">>> 1")]),
+            ]),
+            format!(
+                "{TEST}    <paragraph>\n        Para.\n    <paragraph>\n        Two.\n{}",
+                block(">>> 1", 1)
+            )
+        );
+        assert_eq!(
+            handled(vec![
+                quote(Vec::new()),
+                quote(vec![
+                    quote(vec![doctest(">>> 1")]),
+                    text(kinds::PARAGRAPH, "x"),
+                ]),
+            ]),
+            format!(
+                "{TEST}    <block_quote>\n        <block_quote>\n{}        <paragraph>\n            x\n",
+                block(">>> 1", 3)
+            )
+        );
+        assert_eq!(
+            handled(vec![
+                element(
+                    kinds::SECTION,
+                    vec![text(kinds::TITLE, "T"), quote(Vec::new())]
+                ),
+                quote(vec![doctest(">>> 1")]),
+            ]),
+            format!(
+                "{TEST}    <section>\n        <title>\n            T\n{}",
+                block(">>> 1", 1)
+            )
+        );
+        assert_eq!(
+            handled(vec![
+                quote(vec![doctest(">>> 1"), doctest(">>> 2")]),
+                quote(vec![doctest(">>> 3")]),
+            ]),
+            format!(
+                "{TEST}{}{}{}",
+                block(">>> 1", 1),
+                block(">>> 2", 1),
+                block(">>> 3", 1)
+            )
+        );
+    }
+
+    /// `DoctestTransform` (500-024, `SP/sphinx/transforms/__init__.py:327-334`)
+    /// appends the class `doctest` to every doctest block in the tree, one
+    /// in a list item included, and appends it again to a block that has it
+    /// already (`.. rst-class:: doctest`). `docutils-0099` and
+    /// `docutils-0102` are the oracle's own post-read doctrees; the last row
+    /// is a Sphinx 9.1.0 read of the input as `index.rst`.
+    #[test]
+    fn doctest_blocks_get_the_doctest_class() {
+        const DOC: &str = "<document source=\"<SRCDIR>/index.rst\" \
+                           translation_progress=\"{'total': 0, 'translated': 0}\">\n";
+        let rows: [(&str, &str); 3] = [
+            (
+                // docutils-0099.
+                ">>> print(\"hello\")\nhello\n>>> 1 + 1\n2\n",
+                "    <doctest_block classes=\"doctest\" xml:space=\"preserve\">\n        \
+                 >>> print(\"hello\")\n        hello\n        >>> 1 + 1\n        2\n",
+            ),
+            (
+                // docutils-0102.
+                "- item\n\n  >>> code()\n  result\n",
+                "    <bullet_list bullet=\"-\">\n        <list_item>\n            \
+                 <paragraph>\n                item\n            \
+                 <doctest_block classes=\"doctest\" xml:space=\"preserve\">\n                \
+                 >>> code()\n                result\n",
+            ),
+            (
+                ".. rst-class:: doctest\n\n>>> x\n",
+                "    <doctest_block classes=\"doctest doctest\" xml:space=\"preserve\">\n        \
+                 >>> x\n",
+            ),
+        ];
+        for (rst, body) in rows {
+            assert_eq!(stage_r(rst), format!("{DOC}{body}"), "{rst:?}");
+        }
+    }
+
+    /// `GlossarySorter` (500-031, `SP/sphinx/transforms/__init__.py:427-443`)
+    /// sorts a `:sorted:` glossary in the read, not in the parse: the parse
+    /// leaves the terms in source order, stage R sorts them, and stage R
+    /// with its 500-031 row run as a no-op does not. The key is the first
+    /// term's `astext()`, lowercased (Python's `str.lower`, final sigma
+    /// included: `ΣΑΣ` keys as `σας`, before `σαςa`), then NFD-normalized
+    /// (`éclair` sorts as `e` + U+0301). A glossary without `:sorted:`
+    /// keeps its order. Oracle: `sx_directives.glossary_sorted_reorders_terms`
+    /// and `glossary_unsorted_keeps_source_order` of the Sphinx snippet
+    /// fixture, and a Sphinx 9.1.0 read of the Greek glossary as
+    /// `index.rst`.
+    #[test]
+    fn glossary_sorter_runs_at_500() {
+        fn terms(node: &Node, out: &mut Vec<String>) {
+            if node.kind == kinds::TERM {
+                out.push(node.astext_docutils());
+            }
+            for child in &node.children {
+                terms(child, out);
+            }
+        }
+        let terms_of = |doctree: &Doctree| {
+            let mut out = Vec::new();
+            terms(&doctree.root, &mut out);
+            out
+        };
+        let without_500 = |id: TransformId| -> &'static dyn Transform {
+            match id {
+                TransformId::GlossarySorter => &NoOp,
+                _ => id.transform(),
+            }
+        };
+        let rows: [(&str, [&str; 4], [&str; 4]); 2] = [
+            (
+                ".. glossary::\n   :sorted:\n\n   zeta\n      Z def.\n\n   Alpha\n      A def.\n\n   \
+                 \u{e9}clair\n      E def.\n\n   beta\n      B def.\n",
+                ["zeta", "Alpha", "\u{e9}clair", "beta"],
+                ["Alpha", "beta", "\u{e9}clair", "zeta"],
+            ),
+            (
+                ".. glossary::\n\n   zeta\n      Z def.\n\n   Alpha\n      A def.\n\n   \
+                 \u{e9}clair\n      E def.\n\n   beta\n      B def.\n",
+                ["zeta", "Alpha", "\u{e9}clair", "beta"],
+                ["zeta", "Alpha", "\u{e9}clair", "beta"],
+            ),
+        ];
+        for (rst, source_order, read_order) in rows {
+            let parsed = crate::rst::parse_rst_full(rst, &index_rst());
+            assert_eq!(
+                terms_of(&parsed.doctree),
+                source_order,
+                "the parse: {rst:?}"
+            );
+            assert_eq!(
+                terms_of(&stage_r_with(rst, &TransformId::transform)),
+                read_order,
+                "stage R: {rst:?}"
+            );
+            assert_eq!(
+                terms_of(&stage_r_with(rst, &without_500)),
+                source_order,
+                "stage R without 500-031: {rst:?}"
+            );
+        }
+        let greek = ".. glossary::\n   :sorted:\n\n   \u{3c3}\u{3b1}\u{3c2}a\n      t.\n\n   \
+                     \u{3a3}\u{391}\u{3a3}\n      s.\n";
+        assert_eq!(
+            terms_of(&stage_r_with(greek, &TransformId::transform)),
+            ["\u{3a3}\u{391}\u{3a3}", "\u{3c3}\u{3b1}\u{3c2}a"]
+        );
+    }
 
     /// `TranslationProgressTotaliser` (025) stamps the document's
     /// translation progress, `{'total': 0, 'translated': 0}` in a build
