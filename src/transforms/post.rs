@@ -548,6 +548,47 @@ mod tests {
         assert!(records.is_empty(), "{records:?}");
     }
 
+    /// A `highlight` whose `:linenothreshold:` is not positive is the
+    /// option ERROR in place of the directive (`positive_int`,
+    /// `SP/sphinx/directives/code.py:39-42`): no `highlightlang` node, so
+    /// the literal block takes the configuration's language, unnumbered.
+    /// Probed on Sphinx 9.1.0 (dummy builder).
+    #[test]
+    fn a_rejected_highlight_sets_nothing() {
+        for threshold in ["0", "-3"] {
+            let rst = format!(
+                ".. highlight:: python\n   :linenothreshold: {threshold}\n\nText::\n\n   a\n"
+            );
+            let read = read_standalone(&rst, &index_rst(), &settings(true));
+            let (doctree, _) = resolve_standalone(&read, &settings(true), BuilderKind::Dummy);
+            let pformat = doctree.root.pformat();
+            assert_eq!(
+                pformat.split_once('\n').map(|(_, body)| body),
+                Some(
+                    "    <paragraph>\n        Text:\n    \
+                     <literal_block force=\"0\" language=\"default\" linenos=\"0\" \
+                     xml:space=\"preserve\">\n        a\n"
+                ),
+                "{rst:?}"
+            );
+            let records: Vec<String> = read
+                .diagnostics
+                .iter()
+                .map(|record| record.render(true))
+                .collect();
+            assert_eq!(
+                records,
+                [format!(
+                    "<SRCDIR>/index.rst:1: ERROR: Error in \"highlight\" directive:\n\
+                     invalid option value: (option: \"linenothreshold\"; value: '{threshold}')\n\
+                     negative or zero value; must be positive.\n\n\
+                     .. highlight:: python\n   :linenothreshold: {threshold} [docutils]"
+                )],
+                "{rst:?}"
+            );
+        }
+    }
+
     /// The stamp follows the document's text across an include, a
     /// `literalinclude` without `:language:` loses its own `:force:` to the
     /// setting's, a threshold of 1 numbers every block, and

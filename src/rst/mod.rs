@@ -3926,6 +3926,135 @@ pub(crate) mod tests {
         ]);
     }
 
+    /// Sphinx 9.1.0's option converters and `CodeBlock.run`
+    /// (`SP/sphinx/directives/code.py:30-56`, `:58-75`, `:108-183`;
+    /// `SP/sphinx/directives/other.py:36-39`): `code-block` and
+    /// `sourcecode` type `:dedent:` `optional_int`, so a bare one runs
+    /// `textwrap.dedent` and a negative one is the option ERROR in place
+    /// of the block, and dedent the content by `dedent_lines`, which warns
+    /// `non-whitespace stripped by dedent` at the `(source, line)` tuple
+    /// (`<srcdir>/index.rst.rst:N`); `:lineno-start:` turns `linenos` on
+    /// and lands in `highlight_args` after `hl_lines`. `highlight` types
+    /// `:linenothreshold:` `positive_int` and the toctree's `:numbered:`
+    /// is `int_or_nothing`, whose bad values are the option ERROR too.
+    /// Trees and records probed on Sphinx 9.1.0 (`-w`, post-read trees).
+    #[test]
+    fn code_block_options_convert_and_apply_as_sphinx_does() {
+        const HEAD: &str = "<document source=\"<SRC>/index.rst\">\n    <section ids=\"title\" \
+                            names=\"title\">\n        <title>\n            Title\n";
+        let block = |attrs: &str, text: &str| {
+            format!(
+                "        <literal_block force=\"0\" highlight_args=\"{attrs}\" \
+                 language=\"python\"{}xml:space=\"preserve\">\n{text}",
+                if attrs == "{}" {
+                    " "
+                } else {
+                    " linenos=\"1\" "
+                }
+            )
+        };
+        let after = "        <paragraph>\n            After.\n";
+        let dedented = format!("{HEAD}{}{after}", block("{}", "            x = 1\n"));
+        let rows: Vec<(&str, String, Vec<&str>)> = vec![
+            (
+                "Title\n=====\n\n.. code-block:: python\n   :dedent: 2\n\n     x = 1\n\n\
+                 Para.\n\n.. code-block:: python\n   :lineno-start: 10\n\n   y = 2\n",
+                format!(
+                    "{HEAD}{}        <paragraph>\n            Para.\n{}",
+                    block("{}", "            x = 1\n"),
+                    block("{'linenostart': 10}", "            y = 2\n")
+                ),
+                vec![],
+            ),
+            (
+                "Title\n=====\n\n.. code-block:: python\n   :dedent:\n\n      x = 1\n\nAfter.\n",
+                dedented.clone(),
+                vec![],
+            ),
+            (
+                "Title\n=====\n\n.. sourcecode:: python\n   :dedent:\n\n      x = 1\n\nAfter.\n",
+                dedented,
+                vec![],
+            ),
+            (
+                "Title\n=====\n\n.. code-block:: python\n   :emphasize-lines: 1\n   \
+                 :lineno-start: -3\n   :dedent:\n\n      x = 1\n        y\n\n\
+                 .. sourcecode:: python\n   :lineno-start: 5\n   :linenos:\n\n   z\n",
+                format!(
+                    "{HEAD}{}{}",
+                    block(
+                        "{'hl_lines': [1], 'linenostart': -3}",
+                        "            x = 1\n              y\n"
+                    ),
+                    block("{'linenostart': 5}", "            z\n")
+                ),
+                vec![],
+            ),
+            (
+                "Title\n=====\n\n.. code-block:: python\n   :dedent: 8\n\n   x = 1\n",
+                format!("{HEAD}{}", block("{}", "")),
+                vec!["<SRC>/index.rst.rst:4: WARNING: non-whitespace stripped by dedent"],
+            ),
+        ];
+        for (source, tree, records) in rows {
+            let out = read_parse(source, ReadConfig::default());
+            assert_eq!(read_tree(source, ReadConfig::default()), tree, "{source}");
+            assert_eq!(printed(&out), records, "{source}");
+        }
+        // The option ERRORs, each in place of its directive.
+        for (source, option, value, reason) in [
+            (
+                "Title\n=====\n\n.. code-block:: python\n   :dedent: -1\n\n   x = 1\n",
+                "dedent",
+                "'-1'",
+                "negative value; must be positive or zero.",
+            ),
+            (
+                "Title\n=====\n\n.. highlight:: python\n   :linenothreshold: 0\n",
+                "linenothreshold",
+                "'0'",
+                "negative or zero value; must be positive.",
+            ),
+            (
+                "Title\n=====\n\n.. highlight:: python\n   :linenothreshold: -3\n",
+                "linenothreshold",
+                "'-3'",
+                "negative or zero value; must be positive.",
+            ),
+            (
+                "Title\n=====\n\n.. toctree::\n   :numbered: x\n",
+                "numbered",
+                "'x'",
+                "invalid literal for int() with base 10: 'x'.",
+            ),
+        ] {
+            let out = read_parse(source, ReadConfig::default());
+            let directive = source[16..].split("::").next().unwrap_or_default();
+            let block = source[13..].trim_end();
+            assert_eq!(
+                printed(&out),
+                [format!(
+                    "<SRC>/index.rst:4: ERROR: Error in \"{directive}\" directive:\n\
+                     invalid option value: (option: \"{option}\"; value: {value})\n\
+                     {reason}\n\n{block} [docutils]"
+                )],
+                "{source}"
+            );
+        }
+        // `int_or_nothing`: a bare `:numbered:` is 999, a number itself.
+        for (source, numbered) in [
+            ("Title\n=====\n\n.. toctree::\n   :numbered:\n", "999"),
+            ("Title\n=====\n\n.. toctree::\n   :numbered: -1\n", "-1"),
+            ("Title\n=====\n\n.. toctree::\n   :numbered: 2\n", "2"),
+        ] {
+            let tree = read_tree(source, ReadConfig::default());
+            assert!(
+                tree.contains(&format!(" numbered=\"{numbered}\" ")),
+                "{source}: {tree}"
+            );
+        }
+    }
+
     /// `CodeBlock.run`'s caption goes through `container_wrapper`
     /// (`SP/sphinx/directives/code.py:78-96`, `:172-183`): a nested parse
     /// of the caption numbered from the content line (`offset =

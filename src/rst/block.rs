@@ -6718,17 +6718,50 @@ impl BlockParser {
                 }
             }
         }
-        let highlight_args = match hl_lines {
-            None => "{}".to_string(),
-            Some(hl_lines) => format!(
-                "{{'hl_lines': [{}]}}",
+        let mut code = self.join_lines(&input.content);
+        // `dedent_lines(code.splitlines(True), ...)` (`code.py:145-148`):
+        // a bare `:dedent:` is `textwrap.dedent`, a number cuts that many
+        // columns, warning at the `(source, line)` tuple when it cuts
+        // anything but whitespace.
+        if let Some(dedent) = opt_get(&input.options, "dedent") {
+            let dedent = match dedent {
+                OptVal::Int(n) => Some(*n),
+                // An int past i64 cuts every column.
+                OptVal::Str(_) => Some(i64::MAX),
+                _ => None,
+            };
+            let mut warnings = Vec::new();
+            code = dedent_lines(py_splitlines_keepends(&code), dedent, &mut warnings).concat();
+            for warning in warnings {
+                self.log_warning(
+                    warning,
+                    super::LogLocation::Tuple {
+                        source: input.span.source,
+                        line: input.lineno,
+                    },
+                );
+            }
+        }
+        // `extra_args = literal['highlight_args'] = {}`, `hl_lines` then
+        // `linenostart` (`code.py:162-167`).
+        let mut extra_args = Vec::new();
+        if let Some(hl_lines) = hl_lines {
+            extra_args.push(format!(
+                "'hl_lines': [{}]",
                 hl_lines
                     .iter()
                     .map(|n| n.to_string())
                     .collect::<Vec<_>>()
                     .join(", ")
-            ),
-        };
+            ));
+        }
+        let lineno_start = opt_get(&input.options, "lineno-start");
+        match lineno_start {
+            Some(OptVal::Int(start)) => extra_args.push(format!("'linenostart': {start}")),
+            Some(OptVal::Str(start)) => extra_args.push(format!("'linenostart': {start}")),
+            _ => {}
+        }
+        let highlight_args = format!("{{{}}}", extra_args.join(", "));
         let mut lb = Node::elem(kinds::LITERAL_BLOCK, input.span);
         lb.set(
             "force",
@@ -6736,14 +6769,13 @@ impl BlockParser {
         );
         lb.set("highlight_args", AttrValue::Str(highlight_args));
         lb.set("language", AttrValue::Str(language));
-        if opt_get(&input.options, "linenos").is_some() {
+        if opt_get(&input.options, "linenos").is_some() || lineno_start.is_some() {
             lb.set("linenos", AttrValue::Int(1));
         }
         lb.set("xml:space", AttrValue::Str("preserve".to_string()));
         if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
             lb.attrs.classes.extend(classes.iter().cloned());
         }
-        let code = self.join_lines(&input.content);
         // `nodes.literal_block(code, code)` (`code.py:151`).
         lb.set_rawsource(&code);
         lb.children.push(Node::text_node(code, input.span));
@@ -6993,10 +7025,12 @@ impl BlockParser {
         };
         toctree.set("maxdepth", AttrValue::Int(maxdepth));
         // sphinx `int_or_nothing` (directives/other.py:36): a bare
-        // `:numbered:` is depth 999, not 999_999.
+        // `:numbered:` is depth 999, not 999_999 ([`Conv::IntOrNothing`]).
         let numbered = match opt_get(&input.options, "numbered") {
-            Some(OptVal::Str(s)) if s.is_empty() => 999,
-            Some(OptVal::Str(s)) => py_int(s).unwrap_or(0),
+            Some(OptVal::Int(n)) => *n,
+            // An int past i64: as deep as a depth goes.
+            Some(OptVal::Str(big)) if big.starts_with('-') => i64::MIN,
+            Some(OptVal::Str(_)) => i64::MAX,
             _ => 0,
         };
         toctree.set("numbered", AttrValue::Int(numbered));
@@ -9807,7 +9841,7 @@ const TOCTREE_OPTS: &[(&str, Conv)] = &[
     ("glob", Conv::Flag),
     ("hidden", Conv::Flag),
     ("includehidden", Conv::Flag),
-    ("numbered", Conv::Unchanged),
+    ("numbered", Conv::IntOrNothing),
     ("titlesonly", Conv::Flag),
     ("reversed", Conv::Flag),
 ];
@@ -9820,7 +9854,7 @@ const VERSIONREMOVED: (&str, &str, &str) = ("versionremoved", "removed", "Remove
 const CODE_BLOCK_OPTS: &[(&str, Conv)] = &[
     ("force", Conv::Flag),
     ("linenos", Conv::Flag),
-    ("dedent", Conv::PyIntAny),
+    ("dedent", Conv::OptionalInt),
     ("lineno-start", Conv::PyIntAny),
     ("emphasize-lines", Conv::UnchangedRequired),
     ("caption", Conv::UnchangedRequired),
@@ -9837,8 +9871,10 @@ const SPHINX_CODE_OPTS: &[(&str, Conv)] = &[
     ("number-lines", Conv::OptionalInt),
 ];
 
-const HIGHLIGHT_OPTS: &[(&str, Conv)] =
-    &[("linenothreshold", Conv::PyIntAny), ("force", Conv::Flag)];
+const HIGHLIGHT_OPTS: &[(&str, Conv)] = &[
+    ("linenothreshold", Conv::PositiveInt),
+    ("force", Conv::Flag),
+];
 
 /// The literalinclude option spec (`SP/directives/code.py:423-445`).
 /// `caption` is `unchanged` — the EMPTY value is meaningful; `lineno-start`
@@ -11696,8 +11732,17 @@ enum Conv {
     PyIntAny,
     /// sphinx `optional_int` (`SP/directives/__init__.py:32-41`): a bare
     /// option is Python None, else a non-negative int — the
-    /// literalinclude `:dedent:`.
+    /// literalinclude and code-block `:dedent:`.
     OptionalInt,
+    /// docutils `positive_int` (`SP/docutils/parsers/rst/directives/__init__.py`):
+    /// Python `int(argument)`, which fails on a bare option with `int()`'s
+    /// TypeError, then `negative or zero value; must be positive` below 1 —
+    /// the highlight `:linenothreshold:`.
+    PositiveInt,
+    /// sphinx `int_or_nothing` (`SP/sphinx/directives/other.py:36-39`): a
+    /// bare or empty option is 999, anything else Python `int(argument)` —
+    /// the toctree `:numbered:`.
+    IntOrNothing,
     SingleCharOrUnicode,
     SingleCharOrWhitespaceOrUnicode,
     /// value_or(('auto', 'grid'), positive_int_list) — the table :widths:.
@@ -13607,6 +13652,26 @@ fn convert_option(conv: Conv, value: Option<&str>) -> Result<OptVal, String> {
                 )),
             }
         }
+        Conv::PositiveInt => {
+            let Some(v) = value else {
+                return Err(
+                    "int() argument must be a string, a bytes-like object or a real number, not 'NoneType'"
+                        .to_string(),
+                );
+            };
+            match py_int_canonical(v) {
+                Some((false, digits)) if digits != "0" => Ok(int_optval(false, &digits)),
+                Some(_) => Err("negative or zero value; must be positive".to_string()),
+                None => Err(format!(
+                    "invalid literal for int() with base 10: {}",
+                    py_repr(Some(v))
+                )),
+            }
+        }
+        Conv::IntOrNothing => match value {
+            None | Some("") => Ok(OptVal::Int(999)),
+            Some(v) => convert_option(Conv::PyIntAny, Some(v)),
+        },
         Conv::NonnegativeInt => {
             let Some(v) = value else {
                 return Err(
