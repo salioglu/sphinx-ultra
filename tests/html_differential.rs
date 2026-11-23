@@ -2439,31 +2439,28 @@ fn warning_record_message(line: &str) -> Option<&str> {
         .map(|message| message.as_str())
 }
 
-/// The text of a case's inputs: its `conf.py`, and every other input that
-/// is UTF-8 text (the reStructuredText sources and the files they include).
+/// The text of a case's inputs besides its `conf.py`: every one that is
+/// UTF-8 text (the reStructuredText sources and the files they include).
 struct CaseSources {
-    conf: String,
     documents: String,
 }
 
 impl CaseSources {
     fn read(case: &CaseRecord, profile_root: &Path) -> Self {
         let mut sources = Self {
-            conf: String::new(),
             documents: String::new(),
         };
         for record in &case.input_files {
+            if record.logical_path == "conf.py" {
+                continue;
+            }
             let bytes = read_record(record, profile_root)
                 .unwrap_or_else(|error| panic!("{}: {error}", case_key(case)));
             let Ok(text) = String::from_utf8(bytes) else {
                 continue;
             };
-            if record.logical_path == "conf.py" {
-                sources.conf = text;
-            } else {
-                sources.documents.push_str(&text);
-                sources.documents.push('\n');
-            }
+            sources.documents.push_str(&text);
+            sources.documents.push('\n');
         }
         sources
     }
@@ -2574,15 +2571,6 @@ fn searchindex_census(
     let warnings = case.warnings.as_str();
     let reference_text_terms = expected_only_terms.iter().any(|term| term.ends_with('_'));
     let causes = [
-        // `keep_warnings = True` keeps the system messages, whose words Sphinx
-        // indexes.
-        (
-            sources
-                .conf
-                .lines()
-                .any(|line| line.replace(' ', "") == "keep_warnings=True"),
-            gap_fix("SI:keep-warnings", "5a-T9b"),
-        ),
         // A section's anchor is the label PropagateTargets moves onto it,
         // ordered by SortIds.
         (retargeted_titles, gap_fix("SI:propagate-targets", "5a-T10")),
@@ -2932,7 +2920,6 @@ const KNOWN_AUX_GAPS: &[(&str, AuxComponent, &str)] = &[
     ("core/docutils_snippets/docutils-0708", AuxComponent::Warnings, "F3: 5a-T13a"),
     ("core/docutils_snippets/docutils-0712", AuxComponent::SearchIndex, "SI:substitutions: 5a-T11"),
     ("core/docutils_snippets/docutils-0716", AuxComponent::Warnings, "F3: 5a-T13a"),
-    ("core/environment_projects/inc_basic", AuxComponent::SearchIndex, "SI:keep-warnings: 5a-T9b"),
     ("core/environment_projects/inc_warn", AuxComponent::Warnings, "F8b: 5a-T14"),
     ("core/environment_projects/numfig_off_numref", AuxComponent::Warnings, "F3: 5a-T13a"),
     ("core/environment_projects/py_locations", AuxComponent::Warnings, "F8b: 5a-T14"),

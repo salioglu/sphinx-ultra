@@ -54,7 +54,10 @@ pub struct Parser {
 /// docutils document state beside it). The build's read phase keeps both —
 /// the doctree is what the environment layer (tocs, titles, domains) reads,
 /// and what gets persisted per document; the state is what the merge's
-/// stage M reads beside it.
+/// stage M reads beside it. The parse's toctree, directive and role records
+/// and its registry export move on to the `Document`, which the incremental
+/// cache persists, so `outcome` holds empty stand-ins for them (see
+/// [`ReadOutcome`]).
 pub struct ParsedFile {
     pub document: Document,
     pub outcome: ReadOutcome,

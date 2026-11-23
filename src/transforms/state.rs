@@ -59,6 +59,9 @@ pub struct IdAllocator {
     trace: Option<Vec<IdEvent>>,
     /// The phase new events record; `None` is the parse.
     phase: Option<String>,
+    /// By trace event, the identity of the node its id named at the end of
+    /// stage R, when that node was in the tree ([`Self::tag_event`]).
+    tags: Vec<Option<Uid>>,
 }
 
 impl IdAllocator {
@@ -151,6 +154,26 @@ impl IdAllocator {
     /// The recorded events, for the read to fill in [`IdEvent::attached`].
     pub fn trace_mut(&mut self) -> &mut [IdEvent] {
         self.trace.as_deref_mut().unwrap_or_default()
+    }
+
+    /// Tags trace event `event` (its index in [`Self::trace`]) with `uid`,
+    /// the identity of the node its id names: stage R tags every event
+    /// whose node is in the tree when the stage ends, so that once the
+    /// tree is final the read can tell whether that node is still in it
+    /// ([`IdEvent::attached`]).
+    pub fn tag_event(&mut self, event: usize, uid: Uid) {
+        debug_assert!(event < self.trace().len(), "no trace event {event}");
+        if self.tags.len() <= event {
+            self.tags.resize(event + 1, None);
+        }
+        self.tags[event] = Some(uid);
+    }
+
+    /// The identity [`Self::tag_event`] tagged trace event `event` with;
+    /// `None` for an event whose node was out of the tree, or nowhere, when
+    /// stage R ended.
+    pub fn event_tag(&self, event: usize) -> Option<Uid> {
+        self.tags.get(event).copied().flatten()
     }
 }
 
@@ -687,6 +710,12 @@ impl DocumentState {
     ///
     /// The pending transforms ([`Self::pending`]) are not a registry and
     /// are not dumped.
+    ///
+    /// The dump is a parse's: a read's stage R hands the detached forest to
+    /// its arena ([`crate::transforms::tree::TxTree::from_parse`]), after
+    /// which the state holds none of it and a detached node dumps as
+    /// `null`, so the read-state differential dumps the state
+    /// `parse_rst_full` returns.
     pub fn registries_dump(&self, root: &Node) -> serde_json::Value {
         use serde_json::{json, Value};
         let reached = Reached::of(root, &self.detached);
@@ -756,7 +785,9 @@ impl DocumentState {
     /// (the registries' and the pending records') is reachable exactly
     /// once from `root` or from [`Self::detached`]. Returns each one that
     /// is not, with how many times it was reached (0: the parse dropped a
-    /// registered node; 2 or more: it copied one), in minting order.
+    /// registered node; 2 or more: it copied one), in minting order. Like
+    /// [`Self::registries_dump`], it checks a parse's state: the parse runs
+    /// it before handing the state on, ahead of any read transform.
     pub fn misplaced_registrations(&self, root: &Node) -> Vec<(Uid, usize)> {
         let reached = Reached::of(root, &self.detached);
         let mut seen = HashSet::new();

@@ -389,8 +389,8 @@ pub(crate) fn parse(source: &str, read: ReadConfig) -> ParseOutput {
 }
 
 /// The pformat of [`parse`]'s tree as the probes print it: they read with
-/// `keep_warnings = True`, under which `FilterSystemMessages` (999, T9b)
-/// removes the INFO messages.
+/// `keep_warnings = True`, under which `FilterSystemMessages` (999)
+/// removes the INFO messages, which this parse-level helper drops itself.
 pub(crate) fn read_tree(source: &str, read: ReadConfig) -> String {
     fn drop_info(node: &mut Node) {
         node.children.retain(|child| {

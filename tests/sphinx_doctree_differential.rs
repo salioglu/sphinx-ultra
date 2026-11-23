@@ -18,9 +18,7 @@
 //! Both read through [`read_standalone`] with the [`ReadSettings`] the
 //! fixture's recorded settings give through a [`BuildConfig`] (M1's
 //! directive and role validation off, wave 5a decision 7), never Sphinx's
-//! bare defaults. Until `FilterSystemMessages` (999) runs in the read
-//! (T9b), both comparisons drop the `system_message`s of our tree that it
-//! would remove ([`filter_system_messages`]): the one normalization here.
+//! bare defaults, and compare its post-read doctree as it is.
 //!
 //! Clones the tests/doctree_differential.rs shape: committed JSON, version
 //! assertions (BOTH sphinx and docutils are recorded), floor guard against
@@ -43,7 +41,6 @@ mod support {
 use std::collections::{BTreeMap, BTreeSet};
 
 use sphinx_ultra::config::BuildConfig;
-use sphinx_ultra::doctree::{kinds, AttrValue, Node};
 use sphinx_ultra::py::PySigConfig;
 use sphinx_ultra::read::{read_standalone, ReadSettings};
 use sphinx_ultra::rst::ParseOptions;
@@ -200,29 +197,14 @@ fn read_settings_of(settings: &FixtureSettings) -> ReadSettings {
     })
 }
 
-/// The one normalization of these comparisons, until `FilterSystemMessages`
-/// (999) runs in the read (T9b, which deletes it): drop the
-/// `system_message`s of our tree that it removes, every one under
-/// `keep_warnings = False` and those below WARNING (level 2) under `True`
-/// (`SP/sphinx/transforms/__init__.py:337-347`, [TW A11]).
-fn filter_system_messages(node: &mut Node, keep_warnings: bool) {
-    let filter_level = if keep_warnings { 2 } else { 5 };
-    node.children.retain(|child| {
-        child.kind != kinds::SYSTEM_MESSAGE
-            || matches!(child.get("level"), Some(AttrValue::Int(level)) if *level >= filter_level)
-    });
-    for child in &mut node.children {
-        filter_system_messages(child, keep_warnings);
-    }
-}
-
 /// The pformat of our post-read doctree for `rst`, read standalone as the
-/// oracle harness reads it, after [`filter_system_messages`].
+/// oracle harness reads it.
 fn read_pformat(rst: &str, parse: &ParseOptions, settings: &ReadSettings) -> String {
-    let mut read = read_standalone(rst, parse, settings);
-    let root = &mut read.outcome.doctree_mut().root;
-    filter_system_messages(root, settings.keep_warnings);
-    root.pformat()
+    read_standalone(rst, parse, settings)
+        .outcome
+        .doctree()
+        .root
+        .pformat()
 }
 
 #[test]
@@ -401,13 +383,12 @@ fn post_read_mismatches(fixture: &DocutilsFixture) -> BTreeMap<String, (String, 
 }
 
 /// The docutils snippets whose post-read doctree is not Sphinx's yet, each
-/// with the fix families its divergence shows ([BASE §3.8], plus
-/// `system_message`) and the latest task that fixes one of them. Checked
-/// strictly: a listed case that matches fails the test, and so does an
-/// unlisted case that differs. Rows are printed by
-/// [`docutils_snippets_post_read_census`], one per line as the census prints
-/// them, so a task deletes or re-attributes a row by editing one line and a
-/// grep for an owner shows whole rows.
+/// with the fix families its divergence shows ([BASE §3.8]) and the latest
+/// task that fixes one of them. Checked strictly: a listed case that
+/// matches fails the test, and so does an unlisted case that differs. Rows
+/// are printed by [`docutils_snippets_post_read_census`], one per line as
+/// the census prints them, so a task deletes or re-attributes a row by
+/// editing one line and a grep for an owner shows whole rows.
 #[rustfmt::skip]
 const KNOWN_POST_READ_GAPS: &[(&str, &str)] = &[
     ("docutils-0099", "doctest class: 5a-T9c"),

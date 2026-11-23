@@ -16,8 +16,8 @@
 //! - `id_trace`: every id the read allocated, `[phase, kind, id, attached]`
 //!   (the parse's [`IdAllocator`](sphinx_ultra::transforms::state::IdAllocator)
 //!   trace, with `attached` filled in by the read). The fixture's whole
-//!   trace is compared: until the read transforms land (T9b), ours holds
-//!   parse events only;
+//!   trace is compared: ours holds the parse's events and those of the
+//!   transforms ported so far;
 //! - `registries_post_parse`: docutils' node registries and name table as
 //!   the parse leaves them
 //!   ([`registries_dump`](sphinx_ultra::transforms::state::DocumentState::registries_dump)
@@ -223,7 +223,7 @@ const KNOWN_READ_STATE_GAPS: &[(&str, &str, &str)] = &[
     ("state.docfields_footnote_order", "pseudo_xml", "footnotes: 5a-T11"),
     ("state.docinfo_abstract_footnote_order", "id_trace", "docinfo+footnotes: 5a-T12"),
     ("state.docinfo_abstract_footnote_order", "pseudo_xml", "docinfo+footnotes: 5a-T12"),
-    ("state.dup_indirect_same_refname", "pseudo_xml", "indirect targets+system_message: 5a-T10"),
+    ("state.dup_indirect_same_refname", "pseudo_xml", "indirect targets: 5a-T10"),
     ("state.final_position.anonymous_target", "pseudo_xml", "indirect targets: 5a-T10"),
     ("state.final_position.block_quote", "id_trace", "dangling refs: 5a-T10"),
     ("state.final_position.block_quote", "pseudo_xml", "dangling refs: 5a-T10"),
@@ -435,7 +435,7 @@ const KNOWN_READ_STATE_GAPS: &[(&str, &str, &str)] = &[
     ("state.loose_ids_chain", "pseudo_xml", "dangling refs+substitutions: 5a-T11"),
     ("state.loose_ids_chain", "warnings", "dangling refs+substitutions: 5a-T11"),
     ("state.pending_serials", "id_trace", "pending: 5a-T18b"),
-    ("state.pending_serials", "pseudo_xml", "class attribute+footnotes+indirect targets+pending+system_message: 5a-T18b"),
+    ("state.pending_serials", "pseudo_xml", "class attribute+footnotes+indirect targets+pending: 5a-T18b"),
     ("state.pending_serials", "registries_post_parse", "pending: 5a-T18a"),
     ("state.pending_serials", "warnings", "pending: 5a-T18a"),
     ("state.problematic_id_shapes", "id_trace", "dangling refs+footnotes: 5a-T11"),

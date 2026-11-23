@@ -9,13 +9,14 @@
 //! Global Constraints). The family names are the corpus-baseline report's
 //! [BASE §3.8] (`dangling refs`, `docinfo`, `propagate targets`,
 //! `autonumber ids`, `doctest class`, `footnotes`, `citations`, `indirect
-//! targets`, `substitutions`, and the writer-invisible `candidates`), plus
-//! `system_message` and, for read state the HTML oracle's inputs never
-//! show, `class attribute`, `transitions` and `pending`. The dispatch
-//! families T7 fixed (`unknown role`, `code directive`, `` `class` is
-//! `py:class` ``, `pep/rfc index order` and the math directive's names) are
-//! gone: a divergence of that shape now is a regression, which the census
-//! reports unexplained.
+//! targets`, `substitutions`, and the writer-invisible `candidates`), plus,
+//! for read state the HTML oracle's inputs never show, `class attribute`,
+//! `transitions` and `pending`. The families fixed since are gone — the
+//! dispatch families T7 fixed (`unknown role`, `code directive`, `` `class`
+//! is `py:class` ``, `pep/rfc index order` and the math directive's names)
+//! and T9b's `system_message` (an INFO message `FilterSystemMessages`, 999,
+//! removes): a divergence of that shape now is a regression, which the
+//! census reports unexplained.
 
 use std::collections::BTreeSet;
 
@@ -63,7 +64,6 @@ pub const fn gap_fix(family: &'static str, owner: &'static str) -> GapFix {
 pub const DANGLING_REFS: GapFix = gap_fix("dangling refs", "5a-T10");
 pub const INDIRECT_TARGETS: GapFix = gap_fix("indirect targets", "5a-T10");
 pub const PROPAGATE_TARGETS: GapFix = gap_fix("propagate targets", "5a-T10");
-pub const SYSTEM_MESSAGE: GapFix = gap_fix("system_message", "5a-T9b");
 pub const DOCTEST_CLASS: GapFix = gap_fix("doctest class", "5a-T9c");
 pub const TRANSITIONS: GapFix = gap_fix("transitions", "5a-T9c");
 pub const FOOTNOTES: GapFix = gap_fix("footnotes", "5a-T11");
@@ -126,6 +126,8 @@ impl Census {
 pub struct Hunk<'a> {
     pub removed: Vec<&'a str>,
     pub added: Vec<&'a str>,
+    /// Where `added` starts in the actual text.
+    pub added_from: usize,
 }
 
 /// The line diff of two texts (a longest common subsequence), as hunks.
@@ -152,12 +154,17 @@ pub fn line_hunks<'a>(expected: &'a [&'a str], actual: &'a [&'a str]) -> Vec<Hun
             }
             i += 1;
             j += 1;
-        } else if j == m || (i < n && lcs[i + 1][j] >= lcs[i][j + 1]) {
-            hunk.removed.push(expected[i]);
-            i += 1;
         } else {
-            hunk.added.push(actual[j]);
-            j += 1;
+            if hunk.removed.is_empty() && hunk.added.is_empty() {
+                hunk.added_from = j;
+            }
+            if j == m || (i < n && lcs[i + 1][j] >= lcs[i][j + 1]) {
+                hunk.removed.push(expected[i]);
+                i += 1;
+            } else {
+                hunk.added.push(actual[j]);
+                j += 1;
+            }
         }
     }
     if !hunk.removed.is_empty() || !hunk.added.is_empty() {
@@ -249,14 +256,27 @@ fn problematic_fixes(text: &str, defined: &BTreeSet<String>, census: &mut Census
     }
 }
 
-/// The level of a `<system_message …>` start tag.
-fn message_level(line: &str) -> Option<u8> {
-    line.split("level=\"")
-        .nth(1)?
-        .split('"')
-        .next()?
-        .parse()
-        .ok()
+/// For each line of a pformat, the message of the `system_message` it
+/// lies in, when it lies in one: the text of the message's paragraph.
+fn message_lines(lines: &[&str]) -> Vec<Option<String>> {
+    let mut messages = vec![None; lines.len()];
+    let mut at = 0;
+    while at < lines.len() {
+        if !lines[at].trim_start().starts_with("<system_message ") {
+            at += 1;
+            continue;
+        }
+        let depth = indent(lines[at]);
+        let end = (at + 1..lines.len())
+            .find(|&line| indent(lines[line]) <= depth)
+            .unwrap_or(lines.len());
+        let message = text_under(lines, at + 1);
+        for slot in &mut messages[at..end] {
+            *slot = Some(message.clone());
+        }
+        at = end;
+    }
+    messages
 }
 
 /// The structure directives whose parse halves T18a ports.
@@ -269,14 +289,19 @@ pub fn tree_census(expected: &str, actual: &str) -> Census {
     let expected_lines: Vec<&str> = expected.lines().collect();
     let actual_lines: Vec<&str> = actual.lines().collect();
     let defined = defined_substitutions(expected);
+    let messages = message_lines(&actual_lines);
     let mut census = Census::default();
     for hunk in line_hunks(&expected_lines, &actual_lines) {
-        census.merge(hunk_census(&hunk, &defined));
+        census.merge(hunk_census(&hunk, &defined, &messages));
     }
     census
 }
 
-fn hunk_census(hunk: &Hunk<'_>, defined: &BTreeSet<String>) -> Census {
+/// One hunk's families. `messages` is [`message_lines`] of the actual
+/// text: a `system_message` only our tree has is judged by its text,
+/// whichever of its lines the hunk holds, since the line diff can match a
+/// line inside it (a `<paragraph>`) and split it across hunks.
+fn hunk_census(hunk: &Hunk<'_>, defined: &BTreeSet<String>, messages: &[Option<String>]) -> Census {
     let mut census = Census::default();
     let removed: Vec<&str> = hunk.removed.iter().map(|line| line.trim_start()).collect();
     let added: Vec<&str> = hunk.added.iter().map(|line| line.trim_start()).collect();
@@ -367,7 +392,17 @@ fn hunk_census(hunk: &Hunk<'_>, defined: &BTreeSet<String>) -> Census {
         let substituted_problematic = removed.iter().enumerate().any(|(at, line)| {
             line.starts_with("<problematic ") && !text_under(&hunk.removed, at).starts_with('|')
         });
+        let mut our_messages: Vec<&str> = Vec::new();
         for (at, line) in added.iter().enumerate() {
+            if let Some(message) = messages
+                .get(hunk.added_from + at)
+                .and_then(Option::as_deref)
+            {
+                if !our_messages.contains(&message) {
+                    our_messages.push(message);
+                }
+                continue;
+            }
             if line.starts_with("<substitution_reference ")
                 && (substituted_problematic || !starts(&removed, "<problematic "))
             {
@@ -376,22 +411,17 @@ fn hunk_census(hunk: &Hunk<'_>, defined: &BTreeSet<String>) -> Census {
             if line.starts_with("<paragraph classes=") && !starts(&removed, "<desc ") {
                 census.add(CLASS_ATTRIBUTE);
             }
-            if line.starts_with("<system_message ") {
-                let message = text_under(&hunk.added, at + 1);
-                let pending = PENDING_DIRECTIVE_NAMES
-                    .iter()
-                    .any(|name| message.contains(&format!("\"{name}\"")));
-                if pending {
-                    census.add(PENDING_DIRECTIVES);
-                } else if message_level(line) == Some(1) {
-                    // An INFO message `FilterSystemMessages` (999) removes
-                    // under `keep_warnings = True`.
-                    census.add(SYSTEM_MESSAGE);
-                } else {
-                    census
-                        .unexplained
-                        .push(format!("a message only our tree has: {message:?}"));
-                }
+        }
+        for message in our_messages {
+            let pending = PENDING_DIRECTIVE_NAMES
+                .iter()
+                .any(|name| message.contains(&format!("\"{name}\"")));
+            if pending {
+                census.add(PENDING_DIRECTIVES);
+            } else {
+                census
+                    .unexplained
+                    .push(format!("a message only our tree has: {message:?}"));
             }
         }
     }

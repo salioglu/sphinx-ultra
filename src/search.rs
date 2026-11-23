@@ -553,12 +553,12 @@ fn collect_words(doctree: &Doctree, docname: &str, env: &BuildEnvironment) -> Wo
 }
 
 /// `_feed_visit_nodes` (`search/__init__.py:592-636`) over the resolved
-/// doctree, with the two things Sphinx's write phase did to that tree
-/// before the collector saw it folded in: a `toctree` node is visited as
-/// the tree [`crate::env::toctree::resolve_toctree`] replaces it with
-/// (`get_and_resolve_doctree`), and a `system_message` not at all
-/// (`FilterSystemMessages` removes every one at the default
-/// `keep_warnings = False`).
+/// doctree, with what Sphinx's write phase did to that tree before the
+/// collector saw it folded in: a `toctree` node is visited as the tree
+/// [`crate::env::toctree::resolve_toctree`] replaces it with
+/// (`get_and_resolve_doctree`). The `system_message`s the read kept
+/// (`keep_warnings = True` keeps those of level WARNING and up) are
+/// indexed like any other text.
 fn feed_visit_nodes(
     node: &Node,
     parent_ids: &[String],
@@ -566,7 +566,7 @@ fn feed_visit_nodes(
     docname: &str,
     env: &BuildEnvironment,
 ) {
-    if node.kind == kinds::COMMENT || node.kind == kinds::SYSTEM_MESSAGE {
+    if node.kind == kinds::COMMENT {
         return;
     }
     if node.attrs.classes.iter().any(|class| class == "no-search") {

@@ -18,7 +18,7 @@
 
 use std::collections::HashMap;
 
-use crate::doctree::{kinds, Attrs, Doctree, Node, NodeExt, Span, Uid};
+use crate::doctree::{kinds, AttrValue, Attrs, Doctree, Node, NodeExt, Span, Uid};
 use crate::transforms::state::{DocumentState, OrderedMulti};
 
 /// A node's place in the arena of the [`TxTree`] that made it.
@@ -61,6 +61,28 @@ impl TxNode {
     /// docutils `node.rawsource` ([`NodeExt::rawsource`]); `None` is `''`.
     pub fn rawsource(&self) -> Option<&str> {
         self.ext.as_deref().and_then(|ext| ext.rawsource.as_deref())
+    }
+
+    /// The scalar attribute `key`, as [`Node::get`] reads it.
+    pub fn get(&self, key: &'static str) -> Option<&AttrValue> {
+        self.attrs
+            .extra
+            .binary_search_by(|(known, _)| known.cmp(&key))
+            .ok()
+            .map(|at| &self.attrs.extra[at].1)
+    }
+
+    /// Sets the scalar attribute `key`, as [`Node::set`] does: `extra`
+    /// stays sorted by key, and an existing value is overwritten.
+    pub fn set(&mut self, key: &'static str, value: AttrValue) {
+        match self
+            .attrs
+            .extra
+            .binary_search_by(|(known, _)| known.cmp(&key))
+        {
+            Ok(at) => self.attrs.extra[at].1 = value,
+            Err(at) => self.attrs.extra.insert(at, (key, value)),
+        }
     }
 }
 

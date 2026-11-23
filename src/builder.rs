@@ -13,15 +13,12 @@ use crate::diagnostics::{Diagnostic, DiagnosticSink, OrderKey, WarningFilter};
 use crate::doctree::Doctree;
 use crate::document::Document;
 use crate::env;
-use crate::env::dependencies as env_dependencies;
 use crate::env::genindex as env_genindex;
-use crate::env::metadata as env_metadata;
 use crate::env::numbers as env_numbers;
 use crate::env::py_domain as env_py_domain;
 use crate::env::resolve as env_resolve;
-use crate::env::std_domain as env_std;
 use crate::env::toctree as env_toctree;
-use crate::env::toctree::{ConsistencyLevel, ToctreeWarningKind};
+use crate::env::toctree::ConsistencyLevel;
 use crate::env::BuildEnvironment;
 use crate::error::{BuildErrorReport, BuildWarning, ErrorType, WarningType};
 use crate::extensions::{ExtensionLoader, SphinxApp};
@@ -29,8 +26,7 @@ use crate::intersphinx::{self, HttpConfig, Intersphinx, LoadRequest, UreqFetcher
 use crate::inventory::InventoryFile;
 use crate::matching;
 use crate::parser::Parser;
-use crate::read::ReadOutcome;
-use crate::transforms::reporter::render_records;
+use crate::read::{merge_document, MergeInputs, ReadOutcome, ReadSettings};
 use crate::utils;
 use crate::utils::py_repr_str;
 
@@ -69,7 +65,14 @@ const DOCTREE_MAGIC: &[u8; 4] = b"SUDT";
 /// Version 3: wave 5a's node side-car — `Node` gained `ext`
 /// (`NodeExt`, persisting a node's `rawsource` and a `pending` node's
 /// transform and details), so version-2 blobs no longer decode as written.
-const DOCTREE_FORMAT_VERSION: u32 = 3;
+///
+/// Version 4: wave 5a's read transforms — the persisted doctree is the
+/// post-read tree, which `FilterSystemMessages` (999) has rid of the
+/// reporter's `system_message`s (every one under the default
+/// `keep_warnings = False`), and its consumers no longer skip them: a
+/// version-3 blob still holds them, and the search index of a document
+/// recovered from it would index their words.
+const DOCTREE_FORMAT_VERSION: u32 = 4;
 
 /// Bytes of the [`DOCTREE_MAGIC`] + [`DOCTREE_FORMAT_VERSION`] header.
 const DOCTREE_HEADER_LEN: usize = DOCTREE_MAGIC.len() + std::mem::size_of::<u32>();
@@ -78,14 +81,15 @@ const DOCTREE_HEADER_LEN: usize = DOCTREE_MAGIC.len() + std::mem::size_of::<u32>
 /// leaves it unset.
 const DEFAULT_ROOT_DOC: &str = "index";
 
-/// One document's read-phase output.
+/// One document's read-phase output: the pipeline's [`Document`] and the
+/// read it was derived from.
 ///
-/// This is the brief's `ReadResult { document, doctree, registry }` with the
-/// registry riding `document.registry` instead of sitting beside it: a
-/// cache hit skips parsing, so the only honest source for that document's
-/// registry is the one persisted with the cached `Document` (see
-/// [`Document::registry`]). Splitting it out would mean either a second
-/// copy or an empty stand-in on every cache hit.
+/// The parse's toctree, directive and role records and its registry
+/// export ride the `Document`, not the read: a cache hit skips parsing, so
+/// the only honest source for them is what was persisted with the cached
+/// `Document` (see [`Document::registry`]). The read holds empty stand-ins
+/// for them, and the merge lends the registry export and the toctree
+/// records back to it while stage M runs ([`SphinxBuilder::merge_phase`]).
 struct ReadResult {
     /// Root-relative docname (`docname_of_path`).
     docname: String,
@@ -1238,10 +1242,11 @@ impl SphinxBuilder {
         );
         document.html = rendered_html;
 
-        // The doctree is *not* persisted here: the domain hooks the merge
-        // phase runs still mutate it (the index domain removes a node whose
-        // entries do not validate), and what a later build loads has to be
-        // the tree this build resolved. See [`Self::merge_phase`].
+        // The doctree is *not* persisted here: the merge phase's stage M
+        // still changes it (the index domain removes a node whose entries
+        // do not validate, `FilterSystemMessages` the reporter's messages),
+        // and what a later build loads has to be the tree this build
+        // resolved. See [`Self::merge_phase`].
 
         // Cache the document
         if self.incremental {
@@ -1259,9 +1264,12 @@ impl SphinxBuilder {
     /// Merge phase: fold the read phase's per-document output into the
     /// environment, in docname order.
     ///
-    /// Sequential and deterministic, mirroring Sphinx's `merge_info_from`
-    /// (`environment/__init__.py:421`) and the collectors it dispatches to:
-    /// `all_docs`, the title collector, and the toctree collector.
+    /// Sequential and deterministic, mirroring Sphinx's `_read_serial`
+    /// (`builders/__init__.py:578-589`): each document's stage M
+    /// ([`merge_document`]) runs the read transforms that touch the
+    /// environment — the domains' `process_doc`, the `doctree-read`
+    /// collectors — and the rest of the read-transform table after them,
+    /// `FilterSystemMessages` (999) included.
     ///
     /// Only documents this build actually **read** are merged. Sphinx's
     /// `Builder._read_serial` clears a document immediately before reading
@@ -1270,14 +1278,17 @@ impl SphinxBuilder {
     /// point of the environment being persistent.
     ///
     /// This phase also **persists** each re-read document's doctree, at the
-    /// end of its merge: the domain hooks below mutate the tree, and a
-    /// later build must load what they left, not what the parser produced.
+    /// end of its merge: stage M changes the tree (the index domain removes
+    /// an `index` node whose entries do not validate, 999 the reporter's
+    /// messages), and a later build must load what it left, not what the
+    /// parser produced.
     ///
-    /// And it prints each re-read document's read-phase records — its
-    /// log's (the parse's reporter and logger records, in creation order),
-    /// then the domains' — one document at a time in sorted docname order,
-    /// whatever order the parallel reads finished in. A document recovered
-    /// from the cache prints none (decision 6).
+    /// And it prints each re-read document's read-phase records, in the
+    /// order stage M returns them — stage R's (the parse's reporter and
+    /// logger records, in creation order), then stage M's — one document at
+    /// a time in sorted docname order, whatever order the parallel reads
+    /// finished in. A document recovered from the cache prints none
+    /// (decision 6).
     fn merge_phase(&self, env: &mut BuildEnvironment, results: &mut [ReadResult]) {
         env.root_doc = self
             .config
@@ -1310,8 +1321,7 @@ impl SphinxBuilder {
         // from `source_suffix`.
         //
         // Owned rather than borrowed from `results`, which this loop holds
-        // mutably: the index domain *removes* an `index` node whose entries
-        // do not validate.
+        // mutably: stage M changes each document's read.
         let paths: HashMap<String, PathBuf> = results
             .iter()
             .map(|result| (result.docname.clone(), result.document.source_path.clone()))
@@ -1322,6 +1332,7 @@ impl SphinxBuilder {
                 .cloned()
                 .unwrap_or_else(|| self.source_dir.join(format!("{docname}.rst")))
         };
+        let settings = ReadSettings::from_config(&self.config);
 
         for index in ordered {
             let result = &mut results[index];
@@ -1333,139 +1344,47 @@ impl SphinxBuilder {
             };
             let docname = result.docname.clone();
             let docname = docname.as_str();
-            // A re-read replaces this document's state wholesale — without
-            // the clear, the `extend`-shaped fields (toctree_includes)
-            // would accumulate duplicates across rebuilds.
-            env.clear_doc(docname);
 
-            env.all_docs.insert(docname.to_string(), read_time_us);
+            // Stage M reads the parse's registry export and toctree records
+            // from the read, where a standalone read keeps them; the read
+            // phase moved them on to the `Document`, which the incremental
+            // cache persists, so they are lent back for the merge.
+            let output = &mut result.outcome.output;
+            output.registry = std::mem::take(&mut result.document.registry);
+            output.toctrees = std::mem::take(&mut result.document.toctrees);
+            let inputs = MergeInputs {
+                source_path: &result.document.source_path,
+                source_dir: &self.source_dir,
+                doc2path: &doc2path,
+                read_time_us,
+            };
+            let records = merge_document(env, docname, &mut result.outcome, &inputs, &settings);
+            let output = &mut result.outcome.output;
+            result.document.registry = std::mem::take(&mut output.registry);
+            result.document.toctrees = std::mem::take(&mut output.toctrees);
 
-            let title = env_toctree::document_title(result.outcome.doctree());
-            // Sphinx's longtitle differs from the title only for documents
-            // carrying an explicit `title` attribute, which nothing produces
-            // yet (`collectors/title.py:27`).
-            env.longtitles.insert(docname.to_string(), title.clone());
-            env.titles.insert(docname.to_string(), title);
-
-            env.metadata.insert(
-                docname.to_string(),
-                env_metadata::document_metadata(result.outcome.doctree()),
-            );
-
-            // The files this document pulls in, which is what makes it
-            // outdated when one of *them* changes: image uris from the
-            // doctree walk plus the parse-recorded include targets.
-            env_dependencies::process_doc(
-                env,
-                docname,
-                result.outcome.doctree(),
-                &self.source_dir,
-                &result.document.registry.dependencies,
-            );
-
-            // The docnames it textually includes (`env.note_included`
-            // replayed from the parse records): the orphan check in
-            // `check_consistency` is the one consumer.
-            let included: std::collections::BTreeSet<String> =
-                result.document.registry.included.iter().cloned().collect();
-            if !included.is_empty() {
-                env.included.insert(docname.to_string(), included);
-            }
-
-            let (toc, num_entries) = env_toctree::build_toc(result.outcome.doctree(), docname);
-            // Each toctree node copied into the toc is noted, in the order
-            // it was copied (which is the order Sphinx notes them in).
-            for toctree in env_toctree::toctree_copies(&toc) {
-                env_toctree::note_toctree(env, docname, toctree);
-            }
-            env.tocs.insert(docname.to_string(), toc);
-            env.toc_num_entries.insert(docname.to_string(), num_entries);
-
-            // `TocTree.parse_content` calls `env.note_reread()` for every
-            // entry that names a document the project does not have
-            // (`directives/other.py`): such a document is re-read on every
-            // build, so that the day the missing target appears its toctree
-            // takes it up — and stops warning about it. `clear_doc` above
-            // dropped the previous read's claim, so a document that no
-            // longer has a dangling entry is no longer re-read either.
-            if result.document.toctrees.iter().any(|toctree| {
-                toctree
-                    .warnings
-                    .iter()
-                    .any(|warning| warning.kind == ToctreeWarningKind::MissingDocument)
-            }) {
-                env.reread_always.insert(docname.to_string());
-            }
-
-            // The document's read-phase records, flushed below once its
-            // domain hooks have run. Sphinx reads documents in this same
-            // sorted order, so the read sinks flush in it too.
+            // The document's read-phase records, already in the order
+            // Sphinx prints them: keyed in that order, the sink keeps it
+            // and drops what `suppress_warnings` names. Sphinx reads
+            // documents in this same sorted order, so the read sinks flush
+            // in it too.
             let mut sink = DiagnosticSink::default();
-
-            // The parse's records — the reporter's, its toctree warnings
-            // and its other logger warnings — rendered from the document's
-            // log with their `(0, 0, seq)` keys, which order them as the
-            // parse created them. A reporter record names its source the
-            // way docutils' reporter does, `reporter.source` (the
-            // document's path) when the message names none.
-            let source_path = result.document.source_path.display().to_string();
-            let log = std::mem::take(&mut result.outcome.state_mut().log);
-            for (key, diagnostic) in
-                render_records(log, &result.outcome.doctree().sources, &source_path)
-            {
-                sink.push(key, diagnostic);
-            }
-
-            // The domains' read-phase hooks, dispatched in the order
-            // `_DomainsContainer._process_doc` walks them — `c, changeset,
-            // citation, cpp, index, js, math, py, rst, std`, so `index`
-            // before `std` with `py` in between — from `SphinxDomains`,
-            // whose key sorts their records after the parse's.
-            // `PythonDomain` defines no `process_doc` hook, so its slot in
-            // that walk is a no-op: the py registrations (and their
-            // duplicate warnings, which are parse-time in Sphinx and
-            // interleave with std's in document order) replay inside
-            // `env_std::process_doc`'s parse-time pass below, and stay
-            // after the parse's records until stage M keys the replays
-            // (T13a). Warning locations come from node spans and the
-            // doctree's source table, not the document text.
-            let mut index_warnings = Vec::new();
-            env_genindex::process_doc(
-                env,
-                docname,
-                result.outcome.doctree_mut(),
-                &result.document.source_path,
-                &mut index_warnings,
-            );
-            for warning in index_warnings {
-                push_domain_record(&mut sink, warning);
-            }
-
-            let mut std_warnings = Vec::new();
-            env_std::process_doc(
-                env,
-                &env_std::DocumentSource {
-                    docname,
-                    doctree: result.outcome.doctree(),
-                    registry: &result.document.registry,
-                    path: &result.document.source_path,
-                },
-                &doc2path,
-                &mut std_warnings,
-            );
-            for warning in std_warnings {
-                push_domain_record(&mut sink, warning);
+            for record in records {
+                let key = OrderKey {
+                    priority: 0,
+                    serial: 0,
+                    seq: sink.next_seq(),
+                };
+                sink.push(key, record);
             }
             self.flush(sink);
 
-            // Persist the doctree *after* the hooks above have had it, the
-            // way Sphinx writes its pickle after the read's transforms and
-            // `doctree-read` handlers run (`builders/__init__.py:632-671`;
-            // `IndexDomain.process_doc` at `domains/index.py:47-60` is the
-            // one that mutates here, removing an `index` node whose entries
-            // did not validate). Persisting the parser's tree instead would
-            // hand the next build a document this build already rejected
-            // part of — and the two builds would resolve different trees.
+            // Persist the doctree *after* stage M has had it, the way Sphinx
+            // writes its pickle after the read's transforms and
+            // `doctree-read` handlers run (`builders/__init__.py:632-671`).
+            // Persisting the parser's tree instead would hand the next build
+            // a document this build already rejected part of — and the two
+            // builds would resolve different trees.
             //
             // Failing to write it is reported like any other per-document
             // failure, but the file is removed first: a stale doctree left
@@ -2188,19 +2107,6 @@ fn push_in_order(sink: &mut DiagnosticSink, warning: BuildWarning) {
     let key = OrderKey {
         priority: 0,
         serial: 0,
-        seq: sink.next_seq(),
-    };
-    sink.push(key, Diagnostic::from(warning));
-}
-
-/// Pushes a domain's read-phase record into a document's read sink, keyed
-/// at `SphinxDomains`' slot (850-040, [DS §9]): after the parse's records,
-/// which [`SphinxBuilder::merge_phase`] keys `(0, 0, seq)` from the
-/// document's log, and in push order among the domains'.
-fn push_domain_record(sink: &mut DiagnosticSink, warning: BuildWarning) {
-    let key = OrderKey {
-        priority: 850,
-        serial: 40,
         seq: sink.next_seq(),
     };
     sink.push(key, Diagnostic::from(warning));
