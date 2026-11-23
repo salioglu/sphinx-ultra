@@ -481,10 +481,9 @@ impl LogLocation {
     ///   table path is absolute, prints `<srcdir>/index.rst.rst:N`, and an
     ///   included file, whose table path is srcdir-relative, prints
     ///   `<srcdir>/part.rst.rst:N` ([INC §3.4]);
-    /// - `Node` is `get_node_location`'s `abspath(source)`: Sphinx resolves
-    ///   the included file's cwd-relative spelling against the cwd, which
-    ///   the oracle runs in the source directory, so `<srcdir>/part.rst:N`
-    ///   (`SP/sphinx/util/logging.py:554-562`); a node without a line
+    /// - `Node` is `get_node_location`'s `abspath(source)`
+    ///   ([`node_source_path`]), so `<srcdir>/part.rst:N` for an included
+    ///   file (`SP/sphinx/util/logging.py:554-562`); a node without a line
     ///   prints `path:`;
     /// - `None` prints nothing.
     ///
@@ -524,7 +523,7 @@ impl LogLocation {
             LogLocation::DocLine(line) => path_line(doc2path(docname), line),
             LogLocation::Tuple { source, line } => path_line(doc2path(table_path(source)), line),
             LogLocation::Node { source, line } => {
-                let path = under_srcdir(table_path(source));
+                let path = node_source_path(table_path(source), srcdir);
                 match line {
                     0 => Location::Verbatim(format!("{path}:")),
                     line => path_line(path, line),
@@ -532,6 +531,49 @@ impl LogLocation {
             }
         }
     }
+}
+
+/// `os.path.abspath(source)`: the path Sphinx's `get_node_location`
+/// prints for the source of a node a logger warning is about
+/// (`SP/sphinx/util/logging.py:554-562`), whichever phase warns. An
+/// included file's table path is relative to the source directory, as
+/// docutils' is to the cwd, which the oracle runs in: `abspath` gives the
+/// file's absolute path either way, so a warning about a node of
+/// `part.rst` prints `<srcdir>/part.rst` whatever the cwd. `abspath`
+/// also collapses `.` and `..` (`normpath`), so a file included from
+/// outside the source directory prints as `<root>/outside.inc`, not
+/// `<root>/src/../outside.inc` (probed on Sphinx 9.1.0).
+///
+/// A path already under `srcdir` stands alone, as a rooted one does
+/// ([`LogLocation::render`]).
+pub(crate) fn node_source_path(table_path: &str, srcdir: &std::path::Path) -> String {
+    use std::path::{Component, Path, PathBuf};
+    if Path::new(table_path).starts_with(srcdir) {
+        return table_path.to_string();
+    }
+    let joined = srcdir.join(table_path);
+    let dotted = table_path
+        .split(['/', '\\'])
+        .any(|segment| matches!(segment, "." | ".."));
+    if !dotted {
+        return joined.display().to_string();
+    }
+    let mut normal = PathBuf::new();
+    for component in joined.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => match normal.components().next_back() {
+                Some(Component::Normal(_)) => {
+                    normal.pop();
+                }
+                // `normpath('/..')` is `/`.
+                Some(Component::RootDir | Component::Prefix(_)) => {}
+                _ => normal.push(".."),
+            },
+            other => normal.push(other.as_os_str()),
+        }
+    }
+    normal.display().to_string()
 }
 
 /// One `logger.warning` a directive raised during the parse.
@@ -2191,6 +2233,38 @@ pub(crate) mod tests {
                 under("part.rst.rst")
             )
         );
+    }
+
+    /// A node location is the source made absolute as `os.path.abspath`
+    /// makes it ([`node_source_path`]): joined under the source directory,
+    /// with `.` and `..` collapsed lexically.
+    #[test]
+    fn node_locations_collapse_dot_segments_like_abspath() {
+        let root = std::env::temp_dir().join("sphinx-ultra-abspath");
+        let srcdir = root.join("src");
+        let spelled = |path: std::path::PathBuf| path.display().to_string();
+        // Probed on Sphinx 9.1.0: `.. include:: ../outside.inc` and an
+        // undefined label on its line 3 warn `<root>/outside.inc:3`.
+        assert_eq!(
+            node_source_path("../outside.inc", &srcdir),
+            spelled(root.join("outside.inc"))
+        );
+        assert_eq!(
+            node_source_path("sub/./../part.rst", &srcdir),
+            spelled(srcdir.join("part.rst"))
+        );
+        assert_eq!(
+            node_source_path("./part.rst", &srcdir),
+            spelled(srcdir.join("part.rst"))
+        );
+        // Without a dot segment the path is the plain join, and a path
+        // already under the source directory keeps its spelling.
+        assert_eq!(
+            node_source_path("sub/part.rst", &srcdir),
+            spelled(srcdir.join("sub/part.rst"))
+        );
+        let own = spelled(srcdir.join("index.rst"));
+        assert_eq!(node_source_path(&own, &srcdir), own);
     }
 
     /// A read with no project renders against a stand-in source directory

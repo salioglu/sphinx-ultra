@@ -83,6 +83,7 @@ pub fn process_doc(
     docname: &str,
     doctree: &mut Doctree,
     path: &Path,
+    source_dir: &Path,
     warnings: &mut Vec<BuildWarning>,
 ) {
     let mut collected: Vec<IndexEntryRecord> = Vec::new();
@@ -94,9 +95,12 @@ pub fn process_doc(
         docname,
         &mut collected,
         &mut |message, node| {
+            // `location=node`: the node's source made absolute
+            // (`get_node_location`), the document's own for an id the table
+            // doesn't know.
             let source_path = sources
                 .get(node.span.source as usize)
-                .map(PathBuf::from)
+                .map(|source| PathBuf::from(crate::rst::node_source_path(source, source_dir)))
                 .unwrap_or_else(|| path.to_path_buf());
             warnings.push(
                 BuildWarning::new(
@@ -798,6 +802,7 @@ mod tests {
             "a",
             &mut doctree,
             Path::new("a.rst"),
+            Path::new(""),
             &mut warnings,
         );
 

@@ -116,7 +116,7 @@ struct SphinxBuildCli {
     #[arg(short = 'A', value_name = "name=value", value_parser = parse_key_val, action = ArgAction::Append)]
     html_define: Vec<(String, String)>,
 
-    /// Define a tag (consumed by only/ifconfig once M2 lands)
+    /// Define a tag, which `.. only::` reads
     #[arg(short = 't', long = "tag", value_name = "TAG", action = ArgAction::Append)]
     tags: Vec<String>,
 

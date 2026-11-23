@@ -12,20 +12,29 @@
 //!
 //! [`read_standalone`] reads one snippet the way the oracle harnesses do,
 //! with no project around it: the doctree differentials and the read-state
-//! differential compare its output with Sphinx's.
+//! differential compare its output with Sphinx's. [`resolve_standalone`]
+//! then writes it as Sphinx's dummy builder does, for the resolved
+//! comparison.
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
 
+use crate::builder::BuilderKind;
 use crate::config::BuildConfig;
 use crate::diagnostics::{Category, Diagnostic, OrderKey, Severity};
 use crate::doctree::{Doctree, Node, Uid};
+use crate::env::numbers as env_numbers;
+use crate::env::resolve::{NitpickConfig, Resolver};
 use crate::env::BuildEnvironment;
-use crate::rst::{LogLocation, ParseOptions, ParseOutput, RegistryExport};
+use crate::intersphinx::Intersphinx;
+use crate::rst::{LogLocation, ParseOptions, ParseOutput, ReadConfig, RegistryExport};
+use crate::transforms::post::{apply_post_transforms, PostTransformConfig};
 use crate::transforms::reporter::{render_records, LogRecord};
 use crate::transforms::state::DocumentState;
+use crate::transforms::tags::Tags;
 use crate::transforms::{Transform, TransformId};
 
 /// The configuration the read consumes. Every field holds Sphinx's default
@@ -66,6 +75,11 @@ pub struct ReadSettings {
     /// whose variant of an image the image collector prefers
     /// ([`crate::env::collectors::images`]).
     pub language: String,
+    /// `trim_doctest_flags` (`SP/sphinx/config.py:267`, default `True`):
+    /// whether the resolve pass's `TrimDoctestFlagsTransform` strips doctest
+    /// flags ([`crate::transforms::post`]), which [`resolve_standalone`]
+    /// reads here.
+    pub trim_doctest_flags: bool,
 }
 
 impl ReadSettings {
@@ -80,6 +94,7 @@ impl ReadSettings {
             release: String::new(),
             build_date: build_date(),
             language: "en".to_string(),
+            trim_doctest_flags: true,
         }
     }
 
@@ -95,6 +110,7 @@ impl ReadSettings {
             // Sphinx reads a `language` of `None` as `'en'`
             // (`SP/sphinx/config.py:573-581`).
             language: config.language.clone().unwrap_or_else(|| "en".to_string()),
+            trim_doctest_flags: config.trim_doctest_flags,
             ..Self::sphinx_defaults()
         }
     }
@@ -355,6 +371,16 @@ pub struct StandaloneRead {
     pub env: BuildEnvironment,
     /// The read's warning-stream records, in the order Sphinx prints them.
     pub diagnostics: Vec<Diagnostic>,
+    /// The document's name ([`ParseOptions::docname`]).
+    pub docname: String,
+    /// The document's source file ([`ParseOptions::source_path`]).
+    pub source_path: PathBuf,
+    /// The project's source directory, or the one the source path implies
+    /// for a read with none ([`source_dir_of`]).
+    pub source_dir: PathBuf,
+    /// The configuration the read consumed ([`ParseOptions::read`]), which
+    /// the resolve pass reads too ([`resolve_standalone`]).
+    pub read_config: ReadConfig,
 }
 
 /// Stage R and a one-document stage M ([`merge_document`]) against a fresh
@@ -392,32 +418,117 @@ fn read_standalone_with(
     let mut outcome = read_document_with(source, parse, settings, transform);
     let mut env = BuildEnvironment::default();
     let source_path = Path::new(&parse.source_path);
-    if !parse.sphinx {
-        let log = outcome.state().log.clone();
-        let diagnostics = in_key_order(log, &outcome.doctree().sources, source_path);
-        return StandaloneRead {
-            outcome,
-            env,
-            diagnostics,
-        };
-    }
     let source_dir = source_dir_of(parse);
-    let doc2path = |docname: &str| source_dir.join(format!("{docname}.rst"));
-    let inputs = MergeInputs {
-        source_path,
-        source_dir: &source_dir,
-        doc2path: &doc2path,
-        read_time_us: 0,
+    let diagnostics = if parse.sphinx {
+        let doc2path = |docname: &str| source_dir.join(format!("{docname}.rst"));
+        let inputs = MergeInputs {
+            source_path,
+            source_dir: &source_dir,
+            doc2path: &doc2path,
+            read_time_us: 0,
+        };
+        let diagnostics = merge_document(&mut env, &parse.docname, &mut outcome, &inputs, settings);
+        if !outcome.state().ids.trace().is_empty() {
+            fill_attached(&mut outcome.output);
+        }
+        diagnostics
+    } else {
+        let log = outcome.state().log.clone();
+        in_key_order(log, &outcome.doctree().sources, source_path)
     };
-    let diagnostics = merge_document(&mut env, &parse.docname, &mut outcome, &inputs, settings);
-    if !outcome.state().ids.trace().is_empty() {
-        fill_attached(&mut outcome.output);
-    }
     StandaloneRead {
         outcome,
         env,
         diagnostics,
+        docname: parse.docname.clone(),
+        source_path: source_path.to_path_buf(),
+        source_dir,
+        read_config: parse.read.clone(),
     }
+}
+
+/// The write of a standalone read as Sphinx's dummy build does it, the
+/// way the doctree oracles take it (`env.get_and_resolve_doctree(docname,
+/// builder)`, `tools/gen_sphinx_fixture.py`): first the numbering
+/// `env-get-updated` runs once every document is read, section numbers
+/// then figure numbers, over a copy of the read's environment (stage M is
+/// never re-run); then the post-transforms over a copy of the post-read
+/// doctree, in priority order ([`apply_post_transforms`]): the references
+/// resolved against that environment with the dummy builder's `''` URIs,
+/// the numbering settings the snippets' `conf.py` leaves at Sphinx's
+/// defaults (`numfig = False`, `numfig_secnum_depth = 1`, the default
+/// `numfig_format`) and no intersphinx, and the `only` nodes evaluated
+/// against `kind`'s tags. The resolved doctree, and the records the
+/// numbering and the post-transforms logged, in the order Sphinx prints
+/// them.
+pub fn resolve_standalone(
+    read: &StandaloneRead,
+    settings: &ReadSettings,
+    kind: BuilderKind,
+) -> (Doctree, Vec<Diagnostic>) {
+    let mut env = read.env.clone();
+    let post_read = read.outcome.doctree();
+    let load_doctree =
+        |docname: &str| (docname == read.docname).then_some(Cow::Borrowed(post_read));
+    // `location=toctreenode`: the toctree's own source and line.
+    let sections = env_numbers::assign_section_numbers(&mut env, &load_doctree);
+    let mut records: Vec<Diagnostic> = sections
+        .warnings
+        .iter()
+        .map(|warning| {
+            let location = match read.outcome.output.toctrees.get(warning.toctree_index) {
+                Some(toctree) => LogLocation::Node {
+                    source: toctree.source,
+                    line: toctree.line,
+                },
+                None => LogLocation::Doc,
+            };
+            Diagnostic {
+                location: location.render(&post_read.sources, &read.source_dir, &read.docname),
+                severity: Severity::Warning,
+                message: warning.message.clone(),
+                category: warning
+                    .category
+                    .as_deref()
+                    .map_or(Category::None, Category::parse),
+            }
+        })
+        .collect();
+    env_numbers::assign_figure_numbers(&mut env, false, 1, &load_doctree);
+
+    let numfig_format = crate::config::default_numfig_format();
+    let intersphinx = Intersphinx::default();
+    let resolver = Resolver {
+        env: &env,
+        numfig: false,
+        numfig_format: &numfig_format,
+        doctree: &load_doctree,
+        relative_uri: &|_, _| String::new(),
+        intersphinx: &intersphinx,
+    };
+    let nitpick = NitpickConfig {
+        nitpicky: false,
+        ignore: &[],
+        ignore_regex: &[],
+    };
+    let tags = Tags::new(kind.tags().iter().map(|tag| tag.to_string()));
+    let config = PostTransformConfig {
+        tags: &tags,
+        highlight_language: &read.read_config.highlight_language,
+        trim_doctest_flags: settings.trim_doctest_flags,
+        source_dir: &read.source_dir,
+    };
+    let mut doctree = post_read.clone();
+    let post = apply_post_transforms(
+        &resolver,
+        &nitpick,
+        &config,
+        &read.docname,
+        &read.source_path,
+        &mut doctree,
+    );
+    records.extend(post.records);
+    (doctree, records)
 }
 
 /// `records` rendered by [`render_records`], stable-sorted by key, keys
@@ -470,8 +581,8 @@ mod tests {
     }
 
     /// The read settings follow the configuration, Sphinx's defaults
-    /// otherwise (`config.py:225-230`, `:261`); the trace is a test switch
-    /// no configuration sets. The build date is the moment the settings
+    /// otherwise (`config.py:225-230`, `:261`, `:267`); the trace is a test
+    /// switch no configuration sets. The build date is the moment the settings
     /// were made, so the comparisons carry it over.
     #[test]
     fn read_settings_follow_the_configuration() {
@@ -487,6 +598,7 @@ mod tests {
                 release: String::new(),
                 build_date: defaults.build_date,
                 language: "en".to_string(),
+                trim_doctest_flags: true,
             }
         );
         assert_eq!(
@@ -503,9 +615,11 @@ mod tests {
             version: Some("1.2".to_string()),
             release: Some("1.2.3".to_string()),
             language: Some("de".to_string()),
+            trim_doctest_flags: false,
             ..BuildConfig::default()
         };
         let settings = ReadSettings::from_config(&config);
+        assert!(!settings.trim_doctest_flags);
         assert!(settings.keep_warnings);
         assert!(!settings.trace_ids);
         assert_eq!(settings.today, "April 1");

@@ -1,8 +1,10 @@
 //! The census vocabulary of the read differentials (wave 5a, T6): the fix
 //! families a read divergence can show, the task that fixes each, and the
-//! doctree classifier both the post-read census
+//! doctree classifier the post-read and resolved censuses
 //! (`tests/sphinx_doctree_differential.rs`) and the read-state census
-//! (`tests/read_state_differential.rs`) print their gap rows with.
+//! (`tests/read_state_differential.rs`) print their gap rows with. The
+//! resolved census has no family of its own: the post-transforms T14 ported
+//! leave no resolved divergence in the corpus, so one now is unexplained.
 //!
 //! A gap row's reason is `"<families>: <owner>"`: every family its
 //! divergence shows, and the latest task that fixes one of them (the plan's

@@ -148,16 +148,21 @@ pub struct DocumentSource<'a> {
     /// were first bound ([`NameTable`]).
     pub names: &'a NameTable,
     pub path: &'a Path,
+    /// The project's source directory (`env.srcdir`), against which a
+    /// warning about a node names the node's source.
+    pub source_dir: &'a Path,
 }
 
-/// The path a warning about source-table entry `source` should name —
-/// resolved through the doctree's table, falling back to the document's
-/// own path for an id the table doesn't know.
+/// The path a warning about a node of source-table entry `source` names
+/// (`location=node`, `get_node_location`): the table's path made absolute
+/// against the source directory ([`crate::rst::node_source_path`]), so an
+/// included file's node names `<srcdir>/part.rst`; the document's own
+/// path for an id the table doesn't know.
 pub(crate) fn source_path_of(doc: &DocumentSource<'_>, source: u16) -> PathBuf {
     doc.doctree
         .sources
         .get(source as usize)
-        .map(PathBuf::from)
+        .map(|path| PathBuf::from(crate::rst::node_source_path(path, doc.source_dir)))
         .unwrap_or_else(|| doc.path.to_path_buf())
 }
 
@@ -238,11 +243,10 @@ fn collect_labels(
             continue;
         }
         if let Some((other, _, _)) = env.std.labels.get(name) {
-            let (source_path, line) = doc.doctree.source_and_line(node.span);
             warnings.push(
                 BuildWarning::new(
-                    PathBuf::from(source_path),
-                    Some(line as usize),
+                    source_path_of(doc, node.span.source),
+                    Some(node.span.line as usize),
                     format!(
                         "duplicate label {name}, other instance in {}",
                         doc2path(other).display()
@@ -558,6 +562,7 @@ pub(crate) mod tests {
                     registry: &parsed.registry,
                     names: &parsed.state.names,
                     path: &path,
+                    source_dir: Path::new(""),
                 },
                 &doc2path,
             );

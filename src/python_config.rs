@@ -154,6 +154,9 @@ pub struct ConfPyConfig {
     pub show_warning_types: Option<bool>,
     /// `keep_warnings` (`config.py:261`), `None` when conf.py said nothing.
     pub keep_warnings: Option<bool>,
+    /// `trim_doctest_flags` (`config.py:267`), `None` when conf.py said
+    /// nothing.
+    pub trim_doctest_flags: Option<bool>,
 
     // The read-side keys (`config.py:257`, `:268`).
     /// `primary_domain`: `None` when conf.py said nothing, `Some(None)` for
@@ -435,6 +438,7 @@ impl PythonConfigParser {
         config.suppress_warnings = extract_string_list("suppress_warnings");
         config.show_warning_types = extract_bool("show_warning_types");
         config.keep_warnings = extract_bool("keep_warnings");
+        config.trim_doctest_flags = extract_bool("trim_doctest_flags");
         config.primary_domain = match self.conf_namespace.get("primary_domain") {
             Some(serde_json::Value::Null) => Some(None),
             Some(value) => value.as_str().map(|name| Some(name.to_string())),
@@ -605,6 +609,7 @@ impl PythonConfigParser {
                 | "suppress_warnings"
                 | "show_warning_types"
                 | "keep_warnings"
+                | "trim_doctest_flags"
                 | "primary_domain"
                 | "highlight_language"
                 | "intersphinx_mapping"
@@ -1185,6 +1190,7 @@ impl Default for ConfPyConfig {
             suppress_warnings: Vec::new(),
             show_warning_types: None,
             keep_warnings: None,
+            trim_doctest_flags: None,
             primary_domain: None,
             highlight_language: None,
             // `None` = "conf.py said nothing", which leaves
@@ -1411,6 +1417,9 @@ impl ConfPyConfig {
         }
         if let Some(keep_warnings) = self.keep_warnings {
             config.keep_warnings = keep_warnings;
+        }
+        if let Some(trim_doctest_flags) = self.trim_doctest_flags {
+            config.trim_doctest_flags = trim_doctest_flags;
         }
 
         config.conf_values = self.raw_values.clone();
@@ -1972,6 +1981,25 @@ e = 'esc\n'
         let p = parse("project = 'x'\n");
         let config = p.extract_configuration().unwrap();
         assert!(!config.to_build_config().unwrap().keep_warnings);
+    }
+
+    /// `trim_doctest_flags` is a standard key (`config.py:267`): read from
+    /// conf.py into the build configuration, never into `custom_configs`;
+    /// unset, it keeps Sphinx's `True`.
+    #[test]
+    fn trim_doctest_flags_is_read_from_conf_py() {
+        let p = parse("trim_doctest_flags = False\n");
+        let config = p.extract_configuration().unwrap();
+        assert!(!config.custom_configs.contains_key("trim_doctest_flags"));
+        assert!(!config.to_build_config().unwrap().trim_doctest_flags);
+
+        let p = parse("trim_doctest_flags = True\n");
+        let config = p.extract_configuration().unwrap();
+        assert!(config.to_build_config().unwrap().trim_doctest_flags);
+
+        let p = parse("project = 'x'\n");
+        let config = p.extract_configuration().unwrap();
+        assert!(config.to_build_config().unwrap().trim_doctest_flags);
     }
 
     /// `today` and `today_fmt` are standard keys (`config.py:227-229`):

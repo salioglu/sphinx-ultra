@@ -28,6 +28,8 @@ use crate::inventory::InventoryFile;
 use crate::matching;
 use crate::parser::Parser;
 use crate::read::{merge_document, MergeInputs, ReadOutcome, ReadSettings};
+use crate::transforms::post;
+use crate::transforms::tags::Tags;
 use crate::utils;
 use crate::utils::py_repr_str;
 
@@ -87,6 +89,35 @@ const DOCTREE_HEADER_LEN: usize = DOCTREE_MAGIC.len() + std::mem::size_of::<u32>
 /// leaves it unset.
 const DEFAULT_ROOT_DOC: &str = "index";
 
+/// The Sphinx builder a build's resolve pass stands for. In wave 5a it
+/// only picks the tags `.. only::` is evaluated against ([`Self::tags`],
+/// decision 12): every resolve pass gives the dummy builder's `''` URIs,
+/// until 5b adds `DirHtml` and the URI policy.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum BuilderKind {
+    /// `-b html`, `StandaloneHTMLBuilder`: the CLI's builder.
+    #[default]
+    Html,
+    /// `-b dummy`, `DummyBuilder`: the builder the environment oracle and
+    /// the doctree oracles build with.
+    Dummy,
+}
+
+impl BuilderKind {
+    /// The tags the builder adds to the build's when it is made
+    /// (`SP/sphinx/builders/__init__.py:120-124`): its `format`, its
+    /// `name`, `format_<format>` and `builder_<name>`. The HTML builder's
+    /// format and name are both `html`. The dummy builder's format is `''`
+    /// (`SP/sphinx/builders/dummy.py:17-18`), so it adds the empty tag,
+    /// which no condition can name, and `format_`.
+    pub fn tags(self) -> &'static [&'static str] {
+        match self {
+            BuilderKind::Html => &["html", "format_html", "builder_html"],
+            BuilderKind::Dummy => &["", "dummy", "format_", "builder_dummy"],
+        }
+    }
+}
+
 /// One document's read-phase output: the pipeline's [`Document`] and the
 /// read it was derived from.
 ///
@@ -144,6 +175,9 @@ pub struct SphinxBuilder {
     parser: Parser,
     parallel_jobs: usize,
     incremental: bool,
+    /// The builder the resolve pass stands for ([`BuilderKind`]): the CLI
+    /// builds as `html`, the environment oracle's harness as `dummy`.
+    builder_kind: BuilderKind,
     /// The warning stream so far: every flushed sink's records, minus the
     /// ones [`Self::filter`] suppresses.
     records: Mutex<Vec<Diagnostic>>,
@@ -211,7 +245,7 @@ pub struct SphinxBuilder {
 /// merely adding `-W` would force a cold read that re-emits every
 /// read-phase warning and fails, while the *next* identical `-W` run would
 /// be warm, emit nothing, and pass. Everything else stays in, `tags`
-/// included: tags select `only::` branches and therefore change parse
+/// included: tags select `only::` branches and therefore change the
 /// output.
 const EXCLUDED_FROM_FINGERPRINT: [&str; 2] = ["fail_on_warning", "nitpicky"];
 
@@ -269,9 +303,12 @@ fn config_fingerprint(config: &BuildConfig) -> Result<String> {
 pub(crate) fn sphinx_build_info_contents(config: &BuildConfig, tags: &[String]) -> Result<String> {
     let config_value = sphinx_html_config(config);
     let config_hash = stable_hash(&config_value);
-    let mut sphinx_tags = ["builder_html", "format_html", "html"]
-        .into_iter()
-        .map(str::to_string)
+    // `BuildInfo(app.config, app.tags, {'html'})`: the build's tags, the
+    // HTML builder's own among them.
+    let mut sphinx_tags = BuilderKind::Html
+        .tags()
+        .iter()
+        .map(|tag| tag.to_string())
         .collect::<Vec<_>>();
     sphinx_tags.extend(tags.iter().cloned());
     sphinx_tags.sort();
@@ -611,6 +648,7 @@ impl SphinxBuilder {
             parser,
             parallel_jobs,
             incremental: false,
+            builder_kind: BuilderKind::default(),
             records: Mutex::new(Vec::new()),
             filter,
             errors: Arc::new(Mutex::new(Vec::new())),
@@ -700,6 +738,11 @@ impl SphinxBuilder {
 
     pub fn enable_incremental(&mut self) {
         self.incremental = true;
+    }
+
+    /// Resolve as `kind` builds ([`BuilderKind`]); `html` unless set.
+    pub fn set_builder_kind(&mut self, kind: BuilderKind) {
+        self.builder_kind = kind;
     }
 
     /// Discard the saved environment before building (sphinx-build `-E`).
@@ -1543,8 +1586,12 @@ impl SphinxBuilder {
             env_py_domain::generate_modindex(&env.py, &self.config.modindex_common_prefix);
     }
 
-    /// Cross-reference resolution (`ReferencesResolver`, run per document as
-    /// Sphinx writes it — after numbering, which `:numref:` reads).
+    /// The post-transforms, run per document as Sphinx writes it — after
+    /// numbering, which `:numref:` reads: `ReferencesResolver` (10), then
+    /// `OnlyNodeTransform` (50), `PropagateDescDomain` (200),
+    /// `HighlightLanguageTransform` (400) and `TrimDoctestFlagsTransform`
+    /// (401) ([`post::apply_post_transforms`]), the `only` nodes evaluated
+    /// against the `-t` tags and the builder's own ([`BuilderKind::tags`]).
     ///
     /// Each document is resolved over a *copy* of its doctree, exactly like
     /// Sphinx's `get_and_resolve_doctree`, and the result is kept as
@@ -1580,6 +1627,19 @@ impl SphinxBuilder {
             ignore: &self.config.nitpick_ignore,
             ignore_regex: &self.config.nitpick_ignore_regex,
         };
+        let tags = Tags::new(
+            self.config
+                .tags
+                .iter()
+                .cloned()
+                .chain(self.builder_kind.tags().iter().map(|tag| tag.to_string())),
+        );
+        let config = post::PostTransformConfig {
+            tags: &tags,
+            highlight_language: &self.config.highlight_language,
+            trim_doctest_flags: self.config.trim_doctest_flags,
+            source_dir: &self.source_dir,
+        };
 
         let mut ordered: Vec<&ReadResult> = results.iter().collect();
         ordered.sort_by(|a, b| a.docname.cmp(&b.docname));
@@ -1591,18 +1651,25 @@ impl SphinxBuilder {
         let mut unresolvable_domain_refs = 0usize;
         for result in ordered {
             let mut doctree = result.outcome.doctree().clone();
-            let resolution = env_resolve::resolve_document(
+            let post = post::apply_post_transforms(
                 &resolver,
                 &nitpick,
+                &config,
                 &result.docname,
-                &mut doctree,
                 &result.document.source_path,
+                &mut doctree,
             );
-            unresolvable_domain_refs += resolution.unresolvable_domain_refs;
-            // One resolve sink per document, flushed in this sorted order.
+            unresolvable_domain_refs += post.unresolvable_domain_refs;
+            // One resolve sink per document, flushed in this sorted order,
+            // its records in the order the post-transforms logged them.
             let mut sink = DiagnosticSink::default();
-            for warning in resolution.warnings {
-                push_in_order(&mut sink, warning);
+            for record in post.records {
+                let key = OrderKey {
+                    priority: 0,
+                    serial: 0,
+                    seq: sink.next_seq(),
+                };
+                sink.push(key, record);
             }
             self.flush(sink);
 
@@ -1695,7 +1762,9 @@ impl SphinxBuilder {
     /// the `(source, line)` of the `toctree` node it names
     /// (`location=toctreenode`), which the parse record for that
     /// document's Nth toctree carries; a toctree spliced in from an
-    /// included file names that file through the doctree's source table.
+    /// included file names that file through the doctree's source table,
+    /// made absolute as `get_node_location` makes it
+    /// ([`crate::rst::node_source_path`]).
     fn report_numbering_warning(
         &self,
         warning: &env_numbers::NumberingWarning,
@@ -1715,7 +1784,9 @@ impl SphinxBuilder {
                     .doctree()
                     .sources
                     .get(toctree.source as usize)
-                    .map(PathBuf::from)
+                    .map(|source| {
+                        PathBuf::from(crate::rst::node_source_path(source, &self.source_dir))
+                    })
             })
             .or_else(|| document.map(|document| document.source_path.clone()))
             .unwrap_or_else(|| PathBuf::from(&warning.docname));
@@ -2266,7 +2337,7 @@ mod tests {
     }
 
     /// The filter is exactly two keys wide. Everything else — `tags`
-    /// included, because tags select `only::` branches and so change parse
+    /// included, because tags select `only::` branches and so change the
     /// output — still invalidates.
     #[test]
     fn content_bearing_config_still_changes_the_fingerprint() {
@@ -2335,6 +2406,17 @@ mod tests {
             config_fingerprint(&kept).unwrap(),
             baseline,
             "keep_warnings"
+        );
+
+        // `trim_doctest_flags` is rebuild class `'env'` (`config.py:267`),
+        // though the post-transform that reads it runs in the resolve
+        // pass.
+        let mut untrimmed = base.clone();
+        untrimmed.trim_doctest_flags = false;
+        assert_ne!(
+            config_fingerprint(&untrimmed).unwrap(),
+            baseline,
+            "trim_doctest_flags"
         );
 
         // `today` and `today_fmt` are rebuild class `'env'`

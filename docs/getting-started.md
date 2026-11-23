@@ -107,7 +107,7 @@ sphinx-ultra -M clean SOURCEDIR OUTPUTDIR     # empties OUTPUTDIR
 | `-d PATH` | Cache ("doctree") directory. Default: `OUTPUTDIR/.sphinx-ultra-cache` |
 | `-D key=value` | Override a configuration value. Repeatable. See [configuration.md](configuration.md#overrides-on-the-command-line) |
 | `-A name=value` | Set an `html_context` value. Repeatable |
-| `-t TAG` | Define a tag (hashed into `.buildinfo`; `only::` evaluation is not implemented yet) |
+| `-t TAG` | Define a tag (hashed into `.buildinfo`); `.. only::` expressions are evaluated against it and the builder's `html`, `format_html` and `builder_html` |
 | `-n` | Nitpicky: warn about every unresolved reference |
 | `-q` | Quiet: no progress output |
 | `-E` | Discard the saved environment and re-read every document |

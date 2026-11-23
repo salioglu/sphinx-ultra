@@ -2275,8 +2275,9 @@ const M1_VALIDATION_MESSAGES: &[&str] = &[
 
 /// The families of a `Warnings` mismatch, record by record: each record only
 /// one side prints is matched against the message families of [TW §6.3,
-/// §7.3]. An expected record whose only difference is a relative location
-/// (`part.rst:6` for `<SRCDIR>/part.rst:6`) is F8b.
+/// §7.3]. A node-located record printed with its included file's relative
+/// path (`part.rst:6` for `<SRCDIR>/part.rst:6`, F8b) is fixed since T14, so
+/// one now is unexplained.
 fn warning_census(case: &CaseRecord, diagnostics: &[Diagnostic]) -> GapCensus {
     use regex::Regex;
     use std::sync::LazyLock;
@@ -2284,22 +2285,11 @@ fn warning_census(case: &CaseRecord, diagnostics: &[Diagnostic]) -> GapCensus {
         Regex::new(&format!("^({})$", M1_VALIDATION_MESSAGES.join("|"))).expect("valid pattern")
     });
 
-    let (mut expected_only, mut actual_only) = match warning_record_diff(case, diagnostics) {
+    let (expected_only, actual_only) = match warning_record_diff(case, diagnostics) {
         Ok(records) => records,
         Err(note) => return GapCensus::unattributed([note]),
     };
     let mut census = GapCensus::default();
-    expected_only.retain(|record| {
-        let relative = record.strip_prefix("<SRCDIR>/");
-        match relative.and_then(|relative| actual_only.iter().position(|other| other == relative)) {
-            Some(index) => {
-                actual_only.remove(index);
-                census.fixes.insert(gap_fix("F8b", "5a-T14"));
-                false
-            }
-            None => true,
-        }
-    });
     for record in &expected_only {
         let message = warning_record_message(record).unwrap_or(record);
         let fixes = if let Some((_, fix)) = REPORTER_MESSAGE_FIXES
@@ -2626,6 +2616,4 @@ const KNOWN_AUX_GAPS: &[(&str, AuxComponent, &str)] = &[
     ("core/docutils_snippets/docutils-0447", AuxComponent::Warnings, "F8: 5b"),
     ("core/docutils_snippets/docutils-0449", AuxComponent::Warnings, "F8: 5b"),
     ("core/docutils_snippets/docutils-0450", AuxComponent::Warnings, "F8: 5b"),
-    ("core/environment_projects/inc_warn", AuxComponent::Warnings, "F8b: 5a-T14"),
-    ("core/environment_projects/py_locations", AuxComponent::Warnings, "F8b: 5a-T14"),
 ];

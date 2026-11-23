@@ -34,6 +34,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::OnceLock;
 
+use sphinx_ultra::builder::BuilderKind;
 use sphinx_ultra::diagnostics::Diagnostic;
 use sphinx_ultra::{BuildConfig, SphinxBuilder};
 
@@ -400,6 +401,9 @@ fn build_project(project: &Project) -> Built {
     let config = config_of(project);
     let mut builder = SphinxBuilder::new(config, source_dir.clone(), output_dir)
         .unwrap_or_else(|e| panic!("project {}: builder setup failed: {e:#}", project.name));
+    // The oracle builds with Sphinx's dummy builder, whose tags `.. only::`
+    // reads in the resolve pass.
+    builder.set_builder_kind(BuilderKind::Dummy);
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -606,25 +610,15 @@ const KNOWN_RESOLVED_GAPS: &[(&str, &str, &str)] = &[
     ("index_entries", "index", TOCTREE_RESOLUTION),
     ("doc_refs", "index", TOCTREE_RESOLUTION),
     ("std_objects", "index", TOCTREE_RESOLUTION),
-    // Read-phase gaps of other subsystems, each already tracked by the
-    // task that owns it.
-    (
-        "numfig_on",
-        "a",
-        "highlight stamp: 5a-T14 — the `linenos` flag `HighlightLanguageTransform` \
-         stamps onto the captioned `code-block`'s `literal_block`",
-    ),
     // Wave 4.5 py projects: toctree-bearing index documents share the
     // write-phase gap above.
     ("py_basic", "index", TOCTREE_RESOLUTION),
     ("py_dup", "index", TOCTREE_RESOLUTION),
     ("py_toc", "index", TOCTREE_RESOLUTION),
     ("py_toc_parents", "index", TOCTREE_RESOLUTION),
-    // Wave 4.5 include/literalinclude projects. Only the toctree-bearing
-    // index documents and `inc_deps/a` (below) are skipped outright; every
-    // other document of these three projects is compared, six of them
-    // through the narrow [`KNOWN_HIGHLIGHT_STAMP_GAPS`] exemption rather
-    // than being dropped.
+    // Wave 4.5 include/literalinclude projects: only the toctree-bearing
+    // index documents are skipped; every other document of these three
+    // projects is compared.
     ("inc_basic", "index", TOCTREE_RESOLUTION),
     ("inc_warn", "index", TOCTREE_RESOLUTION),
     ("inc_deps", "index", TOCTREE_RESOLUTION),
@@ -633,125 +627,7 @@ const KNOWN_RESOLVED_GAPS: &[(&str, &str, &str)] = &[
     ("py_any", "index", TOCTREE_RESOLUTION),
     // Wave 5a read-state projects.
     ("state.label_order", "index", "toctree resolution: 5a-T15"),
-    (
-        "inc_deps",
-        "a",
-        "highlight stamp: 5a-T14 — the `literal_block`'s highlight stamp (see \
-         KNOWN_HIGHLIGHT_STAMP_GAPS), exempted wholesale until \
-         `HighlightLanguageTransform` is ported",
-    ),
 ];
-
-/// The attributes Sphinx's `HighlightLanguageTransform`
-/// (`transforms/post_transforms/code.py`, priority 400) stamps onto a
-/// `literal_block` that does not already carry them: `language` (+ `force`)
-/// from the `highlight_language` setting in scope, and `linenos` from the
-/// `.. highlight::` line-number threshold.
-const HIGHLIGHT_STAMP_ATTRS: [&str; 3] = ["language", "force", "linenos"];
-
-/// Documents whose ONLY `resolved_pformat` divergence is that transform.
-///
-/// Unlike [`KNOWN_RESOLVED_GAPS`], which skips a document wholesale, an
-/// entry here still compares the entire tree — every node, every other
-/// attribute, every character of text — and exempts nothing but the
-/// *presence* of a [`HIGHLIGHT_STAMP_ATTRS`] attribute the oracle's
-/// `literal_block` carries and ours does not have at all. A value both
-/// sides do carry still has to agree. That keeps these projects doing the
-/// job they exist for (they are the oracle venue for the file-inserting
-/// directives' node shapes — see tools/gen_env_fixture.py) instead of
-/// dropping out of the comparison over three stamped attributes.
-///
-/// The transform belongs to wave 5 (docs/plans/
-/// 2026-08-07-m2-wave-map.md lists it among the exemptions that wave is
-/// expected to delete, as "the `linenos` flag a captioned `code-block`
-/// stamps onto its `literal_block`" — the same pass, met there through
-/// `numfig_on`/`a`). Checked **strictly** in both directions: a listed
-/// document that starts matching outright fails, and one that diverges by
-/// anything beyond the stamp is reported as a real divergence.
-///
-/// BOUNDARY, stated so the next reader does not have to derive it: the
-/// forgiveness is keyed on OUR side lacking the attribute entirely
-/// ([`drop_unstamped_highlight_attrs`] skips any attribute we do carry).
-/// On these six documents that means a `language`/`force` value set
-/// explicitly BY A DIRECTIVE would be forgiven if we failed to emit it at
-/// all — e.g. a `:language:` added to `inc_basic/a`, where the whole
-/// attribute going missing on our side would read as an unstamped
-/// attribute rather than as the bug it is. (Panel fix round B, [21]: the
-/// earlier claim that none of the six carries a directive-set value was
-/// false — `inc_basic/b`'s `:lineno-match:` literalinclude carries
-/// `linenos="1"`, set by the directive, `code.py:476-481`.) `linenos` is
-/// therefore held to a tighter rule: the transform only ever stamps
-/// `linenos` from the `linenothreshold` comparison, which this corpus
-/// never lowers below its `sys.maxsize` default, so a stamped value is
-/// always `"0"` and an oracle `linenos="1"` is by construction
-/// directive-set — [`drop_unstamped_highlight_attrs`] refuses to drop it.
-/// A `language`/`force` value set by a directive on one of these six
-/// documents still belongs in a document outside this table, or the
-/// table shrinks. The full-strength venue for all three attributes is
-/// `inc_highlight/index` (two literalincludes with `:language:` plus
-/// `:linenos:`/`:lineno-start:`, one with `:force:`, and a `:linenos:`
-/// code-block), which is in neither table; every other `literal_block`
-/// in the corpus lives in a document one of the two tables covers.
-const KNOWN_HIGHLIGHT_STAMP_GAPS: &[(&str, &str)] = &[
-    ("inc_basic", "a"),
-    ("inc_basic", "b"),
-    ("inc_basic", "circ_a"),
-    ("inc_basic", "circ_b"),
-    ("inc_basic", "shared/frag"),
-    ("inc_warn", "a"),
-];
-
-fn known_highlight_stamp_gap(project: &str, docname: &str) -> bool {
-    KNOWN_HIGHLIGHT_STAMP_GAPS
-        .iter()
-        .any(|(p, d)| *p == project && *d == docname)
-}
-
-/// `expected` with every [`HIGHLIGHT_STAMP_ATTRS`] attribute dropped from a
-/// `literal_block` open tag whose counterpart in `actual` does not carry
-/// that attribute at all — i.e. exactly the stamping
-/// `HighlightLanguageTransform` performs, undone.
-///
-/// The two texts are walked line by line, which is sound because a
-/// `pformat` renders one node per line: if the trees differ structurally
-/// the paired lines stop being the same node and the comparison fails,
-/// which is the outcome we want. A line is only touched when BOTH sides
-/// open a `literal_block` there, so a stray `<literal_block ` inside
-/// literal *text* would have to appear at the same position on both sides
-/// AND carry a stamped attribute on the oracle side alone to be misread.
-fn drop_unstamped_highlight_attrs(expected: &str, actual: &str) -> String {
-    let mut ours = actual.lines();
-    let mut out = String::with_capacity(expected.len());
-    for oracle_line in expected.lines() {
-        let our_line = ours.next().unwrap_or_default();
-        let mut oracle_line = oracle_line.to_string();
-        if oracle_line.trim_start().starts_with("<literal_block ")
-            && our_line.trim_start().starts_with("<literal_block ")
-        {
-            for attr in HIGHLIGHT_STAMP_ATTRS {
-                let needle = format!(" {attr}=\"");
-                if our_line.contains(&needle) {
-                    continue;
-                }
-                // A `linenos="1"` cannot be the transform's doing in this
-                // corpus (see the table's BOUNDARY note): never forgive it.
-                if attr == "linenos" && oracle_line.contains(" linenos=\"1\"") {
-                    continue;
-                }
-                let Some(start) = oracle_line.find(&needle) else {
-                    continue;
-                };
-                let value = start + needle.len();
-                if let Some(offset) = oracle_line[value..].find('"') {
-                    oracle_line.replace_range(start..value + offset + 1, "");
-                }
-            }
-        }
-        out.push_str(&oracle_line);
-        out.push('\n');
-    }
-    out
-}
 
 fn known_resolved_gap(project: &str, docname: &str) -> Option<&'static str> {
     KNOWN_RESOLVED_GAPS
@@ -1010,71 +886,6 @@ fn scalar_override_spells_booleans_like_sphinx() {
     }
     assert!(config.numfig && config.keep_warnings && !config.nitpicky);
     assert!(config.apply_override("keep_warnings", "true").is_err());
-}
-
-/// [`drop_unstamped_highlight_attrs`] removes an oracle-only highlight
-/// stamp and nothing else: a value both sides carry stays (and keeps
-/// diverging if it differs), a non-`literal_block` line is untouched, and
-/// the surrounding tree text is preserved byte for byte.
-#[test]
-fn only_oracle_only_highlight_stamps_are_dropped() {
-    let oracle = concat!(
-        "<document source=\"a.rst\">\n",
-        "    <literal_block force=\"0\" language=\"default\" linenos=\"0\" ",
-        "source=\"x.inc\" xml:space=\"preserve\">\n",
-        "        text\n",
-        "    <paragraph language=\"default\">\n",
-        "        not a literal block\n",
-    );
-    // Ours carries `force`; `language`/`linenos` it has never heard of.
-    let ours = concat!(
-        "<document source=\"a.rst\">\n",
-        "    <literal_block force=\"0\" source=\"x.inc\" xml:space=\"preserve\">\n",
-        "        text\n",
-        "    <paragraph language=\"default\">\n",
-        "        not a literal block\n",
-    );
-    assert_eq!(drop_unstamped_highlight_attrs(oracle, ours), ours);
-
-    // A stamped attribute BOTH sides carry is left in place, so a wrong
-    // value still diverges.
-    let ours_wrong_force = ours.replace("force=\"0\"", "force=\"1\"");
-    assert_eq!(
-        drop_unstamped_highlight_attrs(oracle, &ours_wrong_force),
-        ours,
-        "only `language` and `linenos` come off when ours carries `force`"
-    );
-    assert_ne!(
-        drop_unstamped_highlight_attrs(oracle, &ours_wrong_force),
-        ours_wrong_force,
-        "a `force` value we disagree on still diverges"
-    );
-
-    // Any other divergence survives: the text of the block still has to
-    // match.
-    let ours_wrong_text = ours.replace("        text\n", "        other\n");
-    assert_ne!(
-        drop_unstamped_highlight_attrs(oracle, &ours_wrong_text),
-        ours_wrong_text
-    );
-
-    // A `linenos="1"` is never forgiven, even when ours carries no
-    // `linenos` at all: the transform only ever stamps `"0"` in this
-    // corpus, so an oracle `"1"` we fail to emit is a directive-set value
-    // going missing — a real divergence, which the BOUNDARY refusal keeps
-    // (panel round C pin for [21]). `language` still comes off beside it.
-    let oracle_directive_linenos = oracle.replace("linenos=\"0\"", "linenos=\"1\"");
-    let kept = drop_unstamped_highlight_attrs(&oracle_directive_linenos, ours);
-    let block = kept
-        .lines()
-        .find(|line| line.trim_start().starts_with("<literal_block "))
-        .expect("the literal_block line survives");
-    assert!(block.contains(" linenos=\"1\""), "{kept}");
-    assert!(!block.contains(" language="), "{kept}");
-    assert_ne!(
-        kept, ours,
-        "a directive-set `linenos` we do not emit still diverges"
-    );
 }
 
 #[test]
@@ -1576,17 +1387,16 @@ fn dependencies_and_included_match_oracle() {
 /// document's doctree after cross-reference resolution.
 ///
 /// Compared per document, because only part of that pass exists: the
-/// `pending_xref` resolution this task ports is live, while the write-phase
-/// *toctree* resolution (`adapters/toctree.py`) that turns a `toctree` node
-/// into a `compact_paragraph` tree is not — so every document carrying a
-/// toctree, plus the handful with read-phase gaps of their own, is pinned in
-/// [`KNOWN_RESOLVED_GAPS`] rather than compared.
+/// post-transforms are live (the build resolves as the dummy builder, as
+/// the oracle does), while the write-phase *toctree* resolution
+/// (`adapters/toctree.py`) that turns a `toctree` node into a
+/// `compact_paragraph` tree is not — so every document carrying a toctree
+/// is pinned in [`KNOWN_RESOLVED_GAPS`] rather than compared.
 #[test]
 fn resolved_doctrees_match_oracle() {
     let fixture = load_fixture();
     let mut divergences = Vec::new();
     let mut visited_gaps: Vec<(&str, &str)> = Vec::new();
-    let mut visited_stamps: Vec<(&str, &str)> = Vec::new();
 
     for project in &fixture.projects {
         let env = env_of(project);
@@ -1605,17 +1415,9 @@ fn resolved_doctrees_match_oracle() {
             let expected = canon_scope8(expected);
             let actual = canon_scope8(&resolved[docname]);
             let matches = actual == expected;
-            let stamp_exempt = known_highlight_stamp_gap(&project.name, docname);
 
             match known_resolved_gap(&project.name, docname) {
                 Some(why) => {
-                    assert!(
-                        !stamp_exempt,
-                        "[{}] {docname} is in both KNOWN_RESOLVED_GAPS ({why}) and \
-                         KNOWN_HIGHLIGHT_STAMP_GAPS — a skipped document cannot also \
-                         be compared modulo the highlight stamp; keep one",
-                        project.name
-                    );
                     visited_gaps.push((project.name.as_str(), docname.as_str()));
                     assert!(
                         !matches,
@@ -1624,25 +1426,6 @@ fn resolved_doctrees_match_oracle() {
                          exemption",
                         project.name
                     );
-                }
-                None if stamp_exempt => {
-                    visited_stamps.push((project.name.as_str(), docname.as_str()));
-                    assert!(
-                        !matches,
-                        "[{}] {docname}: listed in KNOWN_HIGHLIGHT_STAMP_GAPS but the \
-                         resolved doctree now matches the oracle outright — delete the \
-                         exemption",
-                        project.name
-                    );
-                    let unstamped = drop_unstamped_highlight_attrs(&expected, &actual);
-                    if actual != unstamped {
-                        divergences.push(format!(
-                            "[{}] {docname} (beyond the HighlightLanguageTransform \
-                             stamp)\n--- oracle, unstamped ---\n{unstamped}\
-                             --- ours ---\n{actual}",
-                            project.name
-                        ));
-                    }
                 }
                 None if !matches => divergences.push(format!(
                     "[{}] {docname}\n--- oracle ---\n{expected}--- ours ---\n{actual}",
@@ -1660,13 +1443,6 @@ fn resolved_doctrees_match_oracle() {
              never visited: no such project/document in the fixture. Delete it."
         );
     }
-    for (project, docname) in KNOWN_HIGHLIGHT_STAMP_GAPS {
-        assert!(
-            visited_stamps.contains(&(*project, *docname)),
-            "KNOWN_HIGHLIGHT_STAMP_GAPS entry ({project}, {docname}) was never \
-             visited: no such project/document in the fixture. Delete it."
-        );
-    }
 
     report(&divergences, "resolved_pformat");
 }
@@ -1675,17 +1451,15 @@ fn resolved_doctrees_match_oracle() {
 /// docs/ROADMAP.md, CHANGELOG.md, README.md), computed from the tables and the
 /// fixture rather than by hand (panel fix round B, [29]): how many
 /// documents' resolved doctrees and how many projects' warning streams are
-/// compared byte-for-byte, how many documents are skipped wholesale, and
-/// how many are compared modulo the highlight stamp. The subtraction is
-/// sound on its own terms — the test first proves that each table names a
-/// fixture document (or project) exactly once and that the two document
-/// tables are disjoint — so the table lengths ARE the exemption counts.
-/// Update the seven constants and the doc sites together.
+/// compared byte-for-byte, and how many documents are skipped wholesale.
+/// The subtraction is sound on its own terms — the test first proves that
+/// each table names a fixture document (or project) exactly once — so the
+/// table lengths ARE the exemption counts. Update the six constants and
+/// the doc sites together.
 const DOCUMENTED_PROJECTS: usize = 31;
 const DOCUMENTED_DOCUMENTS: usize = 89;
-const DOCUMENTED_WHOLESALE_EXEMPT_DOCUMENTS: usize = 31;
-const DOCUMENTED_STAMP_EXEMPT_DOCUMENTS: usize = 6;
-const DOCUMENTED_BYTE_EXACT_DOCUMENTS: usize = 52;
+const DOCUMENTED_WHOLESALE_EXEMPT_DOCUMENTS: usize = 29;
+const DOCUMENTED_BYTE_EXACT_DOCUMENTS: usize = 60;
 const DOCUMENTED_WARNING_EXEMPT_PROJECTS: usize = 1;
 const DOCUMENTED_BYTE_EXACT_WARNING_PROJECTS: usize = 30;
 
@@ -1714,7 +1488,6 @@ fn exemption_arithmetic_matches_the_documented_numbers() {
         .iter()
         .map(|(project, docname, _)| (*project, *docname))
         .collect();
-    let stamp: BTreeSet<(&str, &str)> = KNOWN_HIGHLIGHT_STAMP_GAPS.iter().copied().collect();
     let warning_exempt: BTreeSet<&str> = KNOWN_WARNING_GAPS.iter().map(|(p, _)| *p).collect();
     assert_eq!(
         wholesale.len(),
@@ -1722,37 +1495,26 @@ fn exemption_arithmetic_matches_the_documented_numbers() {
         "KNOWN_RESOLVED_GAPS lists a document twice"
     );
     assert_eq!(
-        stamp.len(),
-        KNOWN_HIGHLIGHT_STAMP_GAPS.len(),
-        "KNOWN_HIGHLIGHT_STAMP_GAPS lists a document twice"
-    );
-    assert_eq!(
         warning_exempt.len(),
         KNOWN_WARNING_GAPS.len(),
         "KNOWN_WARNING_GAPS lists a project twice"
     );
     assert!(
-        wholesale.is_disjoint(&stamp),
-        "a document is in both document tables: {:?}",
-        wholesale.intersection(&stamp).collect::<Vec<_>>()
-    );
-    assert!(
-        wholesale.is_subset(&documents) && stamp.is_subset(&documents),
-        "a document table names a document the fixture does not have"
+        wholesale.is_subset(&documents),
+        "KNOWN_RESOLVED_GAPS names a document the fixture does not have"
     );
     assert!(
         warning_exempt.is_subset(&projects),
         "KNOWN_WARNING_GAPS names a project the fixture does not have"
     );
 
-    let byte_exact_documents = documents.len() - wholesale.len() - stamp.len();
+    let byte_exact_documents = documents.len() - wholesale.len();
     let byte_exact_warning_projects = projects.len() - warning_exempt.len();
     assert_eq!(
         (
             projects.len(),
             documents.len(),
             wholesale.len(),
-            stamp.len(),
             byte_exact_documents,
             warning_exempt.len(),
             byte_exact_warning_projects,
@@ -1761,20 +1523,18 @@ fn exemption_arithmetic_matches_the_documented_numbers() {
             DOCUMENTED_PROJECTS,
             DOCUMENTED_DOCUMENTS,
             DOCUMENTED_WHOLESALE_EXEMPT_DOCUMENTS,
-            DOCUMENTED_STAMP_EXEMPT_DOCUMENTS,
             DOCUMENTED_BYTE_EXACT_DOCUMENTS,
             DOCUMENTED_WARNING_EXEMPT_PROJECTS,
             DOCUMENTED_BYTE_EXACT_WARNING_PROJECTS,
         ),
-        "the corpus or a table changed: {} projects, {} documents, {} wholesale-exempt, \
-         {} stamp-exempt ({byte_exact_documents} documents byte-for-byte), {} \
-         warning-exempt projects ({byte_exact_warning_projects} warning streams \
-         byte-for-byte) — update the constants AND the doc sites \
-         (docs/IMPLEMENTATION_STATUS.md, docs/ROADMAP.md, CHANGELOG.md, README.md)",
+        "the corpus or a table changed: {} projects, {} documents, {} wholesale-exempt \
+         ({byte_exact_documents} documents byte-for-byte), {} warning-exempt projects \
+         ({byte_exact_warning_projects} warning streams byte-for-byte) — update the \
+         constants AND the doc sites (docs/IMPLEMENTATION_STATUS.md, docs/ROADMAP.md, \
+         CHANGELOG.md, README.md)",
         projects.len(),
         documents.len(),
         wholesale.len(),
-        stamp.len(),
         warning_exempt.len(),
     );
 }

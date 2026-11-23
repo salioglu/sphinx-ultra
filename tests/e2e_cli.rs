@@ -3138,3 +3138,161 @@ fn sphinx_build_d_source_encoding_warns_about_deprecation_like_sphinx() {
     assert!(result.status.success());
     assert!(!stderr_of(&result).contains("deprecated"));
 }
+
+/// F8b: every logger warning located at a node (`location=node`) prints
+/// the node's source made absolute (`get_node_location`'s `abspath`), so a
+/// node from an included file prints `<SRCDIR>/part.inc:N`, while the
+/// reporter's records keep the include's relative spelling. Probed on
+/// Sphinx 9.1.0 for each phase that warns about a node: the parse-time
+/// duplicates (std and py), the index and std domains in stage M, the
+/// numbering (`location=toctreenode`), and the resolve pass's
+/// `ReferencesResolver` and `OnlyNodeTransform`; the math and citation
+/// domains already located theirs so. `abspath` does not depend on the
+/// cwd: the bytes are the same from the source directory and from its
+/// parent.
+#[test]
+fn included_file_node_locations_are_absolute() {
+    let src = temp_source(
+        "t14-node-locations",
+        &[
+            (
+                "index.rst",
+                "Index\n=====\n\n.. toctree::\n   :numbered:\n\n   a\n\n.. include:: num.inc\n\n\
+                 .. toctree::\n\n   other\n   zdoc\n",
+            ),
+            ("a.rst", "A\n=\n\nSec\n---\n"),
+            ("b.rst", "B\n=\n\nBsec\n----\n"),
+            (
+                "num.inc",
+                "Part\n\n.. toctree::\n   :numbered:\n\n   a\n   b\n",
+            ),
+            (
+                "other.rst",
+                "Other\n=====\n\n.. _lbl:\n\nSec\n---\n\n.. envvar:: XVAR\n\n\
+                 .. py:function:: f()\n\n.. [cit] other citation\n\n.. math::\n   :label: eq1\n\n   \
+                 x\n\nSee [cit]_ and :eq:`eq1`.\n",
+            ),
+            ("zdoc.rst", "Zdoc\n====\n\n.. include:: part.inc\n"),
+            (
+                "part.inc",
+                "Part para.\n\n.. _lbl:\n\nPsec\n----\n\n.. envvar:: XVAR\n\n\
+                 .. py:function:: f()\n\n.. index:: pair: lonely\n\n.. [cit] part citation\n\n\
+                 .. math::\n   :label: eq1\n\n   y\n\nSee :ref:`missing-target` and [cit]_ and \
+                 :eq:`nosuch` and [nocit]_.\n\n.. only:: html and\n\n   Kept.\n",
+            ),
+        ],
+    );
+    let expected = "\
+<SRCDIR>/part.inc:8: WARNING: duplicate envvar description of XVAR, other instance in other
+<SRCDIR>/part.inc:10: WARNING: duplicate object description of f, other instance in other, use :no-index: for one of them
+<SRCDIR>/part.inc:16: WARNING: duplicate label of equation eq1, other instance in other [ref.equation]
+<SRCDIR>/part.inc:14: WARNING: duplicate citation cit, other instance in <SRCDIR>/other.rst [ref.citation]
+<SRCDIR>/part.inc:12: WARNING: invalid pair index entry 'lonely' [index]
+<SRCDIR>/part.inc:6: WARNING: duplicate label lbl, other instance in <SRCDIR>/other.rst
+<SRCDIR>/num.inc:3: WARNING: a is already assigned section numbers (nested numbered toctree?) [toc.secnum]
+<SRCDIR>/part.inc:21: WARNING: undefined label: 'missing-target' [ref.ref]
+<SRCDIR>/part.inc:21: WARNING: equation not found: nosuch [ref.eq]
+<SRCDIR>/part.inc:21: WARNING: citation not found: nocit [ref.ref]
+<SRCDIR>/part.inc:23: WARNING: exception while evaluating only directive expression: unexpected token 'end of template'
+  line 1
+";
+    let parent = src.parent().expect("the source directory has a parent");
+    for (name, cwd, source) in [("srcdir", src.as_path(), "."), ("parent", parent, "")] {
+        let out = out_dir(&format!("t14-node-locations-{name}"));
+        let log = out.with_extension("w");
+        let source = if source.is_empty() {
+            src.to_str().unwrap()
+        } else {
+            source
+        };
+        let result = bin()
+            .current_dir(cwd)
+            .args([
+                source,
+                out.to_str().unwrap(),
+                "-q",
+                "-w",
+                log.to_str().unwrap(),
+            ])
+            .output()
+            .expect("binary should run");
+        assert!(result.status.success(), "{name}: {}", stderr_of(&result));
+        assert_eq!(
+            srcdir_spelled(&std::fs::read(&log).unwrap(), &src),
+            expected,
+            "{name}"
+        );
+    }
+}
+
+/// `-t` adds a tag to the build's, which `.. only::` reads in the resolve
+/// pass (`OnlyNodeTransform`): with `-t mytag` the content of `.. only::
+/// mytag` stays and that of `.. only:: not mytag` goes, and without it the
+/// other way round. Seen in what the search index holds, which Sphinx
+/// feeds from the resolved doctree; probed on Sphinx 9.1.0 (`-b html`):
+/// `keptalpha` and `word` with the tag, `droppedbeta` and `word` without.
+#[test]
+fn only_directive_follows_cli_tags() {
+    let src = temp_source(
+        "t14-only-tags",
+        &[(
+            "index.rst",
+            "Tags\n====\n\n.. only:: mytag\n\n   Keptalpha words.\n\n.. only:: not mytag\n\n   \
+             Droppedbeta words.\n",
+        )],
+    );
+    for (name, extra, terms) in [
+        ("tagged", &["-t", "mytag"][..], ["keptalpha", "word"]),
+        ("untagged", &[][..], ["droppedbeta", "word"]),
+    ] {
+        let out = out_dir(&format!("t14-only-tags-{name}"));
+        let mut args = vec![src.to_str().unwrap(), out.to_str().unwrap(), "-q"];
+        args.extend_from_slice(extra);
+        let result = sphinx_build(&args);
+        assert!(result.status.success(), "{name}: {}", stderr_of(&result));
+        let indexed: Vec<String> = search_value(&out)["terms"]
+            .as_object()
+            .expect("terms is an object")
+            .keys()
+            .cloned()
+            .collect();
+        assert_eq!(indexed, terms, "{name}");
+    }
+}
+
+/// `trim_doctest_flags` reaches the resolve pass: the search index, which
+/// Sphinx feeds from the resolved doctree, holds no `# doctest:` comment of
+/// a doctest block by default and holds it under `-D
+/// trim_doctest_flags=0`. Probed on Sphinx 9.1.0 (`-b html`): `comput` and
+/// `result`, then `comput`, `doctest`, `result` and `skip`.
+#[test]
+fn trim_doctest_flags_reaches_the_search_index() {
+    let src = temp_source(
+        "t14-trim-flags",
+        &[(
+            "index.rst",
+            "Trim\n====\n\n>>> compute()  # doctest: +SKIP\nresult\n",
+        )],
+    );
+    for (name, extra, terms) in [
+        ("default", &[][..], &["comput", "result"][..]),
+        (
+            "off",
+            &["-D", "trim_doctest_flags=0"][..],
+            &["comput", "doctest", "result", "skip"][..],
+        ),
+    ] {
+        let out = out_dir(&format!("t14-trim-flags-{name}"));
+        let mut args = vec![src.to_str().unwrap(), out.to_str().unwrap(), "-q"];
+        args.extend_from_slice(extra);
+        let result = sphinx_build(&args);
+        assert!(result.status.success(), "{name}: {}", stderr_of(&result));
+        let indexed: Vec<String> = search_value(&out)["terms"]
+            .as_object()
+            .expect("terms is an object")
+            .keys()
+            .cloned()
+            .collect();
+        assert_eq!(indexed, terms, "{name}");
+    }
+}

@@ -1863,6 +1863,7 @@ mod tests {
                     registry: &parsed.registry,
                     names: &parsed.state.names,
                     path: &path,
+                    source_dir: std::path::Path::new(""),
                 },
                 &doc2path,
             );

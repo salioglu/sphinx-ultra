@@ -7,7 +7,9 @@
 //! - `sphinx_docutils_doctree_differential.json`, the post-read doctrees of
 //!   the HTML oracle's docutils snippets, each read under the oracle's own
 //!   `conf.py` (keep_warnings off) — compared strictly against
-//!   [`KNOWN_POST_READ_GAPS`].
+//!   [`KNOWN_POST_READ_GAPS`] — and the dummy builder's resolved doctrees
+//!   of the same reads ([`resolve_standalone`]), compared strictly against
+//!   [`KNOWN_RESOLVED_STANDALONE_GAPS`].
 //!
 //! Regenerate the fixtures (manual, never in CI), with the locked core
 //! oracle profile:
@@ -40,10 +42,11 @@ mod support {
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use sphinx_ultra::builder::BuilderKind;
 use sphinx_ultra::config::BuildConfig;
 use sphinx_ultra::py::PySigConfig;
-use sphinx_ultra::read::{read_standalone, ReadSettings};
-use sphinx_ultra::rst::ParseOptions;
+use sphinx_ultra::read::{read_standalone, resolve_standalone, ReadSettings};
+use sphinx_ultra::rst::{ParseOptions, ReadConfig};
 
 #[derive(serde::Deserialize)]
 struct Fixture {
@@ -269,7 +272,7 @@ fn matches_sphinx_oracle_pformat() {
 }
 
 // ---------------------------------------------------------------------------
-// The HTML oracle's docutils snippets, post-read
+// The HTML oracle's docutils snippets, post-read and resolved
 // ---------------------------------------------------------------------------
 
 #[derive(serde::Deserialize)]
@@ -280,14 +283,15 @@ struct DocutilsFixture {
 }
 
 /// One HTML-oracle docutils snippet: its input, the `conf.py` the oracle
-/// read it with and Sphinx's post-read doctree. (The fixture's `resolved`,
-/// the dummy builder's resolved doctree, is compared from T14.)
+/// read it with, Sphinx's post-read doctree and the dummy builder's
+/// resolved doctree.
 #[derive(serde::Deserialize)]
 struct DocutilsCase {
     name: String,
     rst: String,
     conf: String,
     post_read: String,
+    resolved: String,
 }
 
 fn docutils_fixture() -> DocutilsFixture {
@@ -352,10 +356,15 @@ fn conf_py_config(conf: &str) -> BuildConfig {
     }
 }
 
-/// Every docutils snippet whose post-read doctree differs from the
-/// oracle's, by case: `(expected, actual)` pformats, a panic reported as
-/// the actual text.
-fn post_read_mismatches(fixture: &DocutilsFixture) -> BTreeMap<String, (String, String)> {
+/// Every docutils snippet whose doctree, as `compare` gives it from the
+/// snippet's standalone read under the oracle's `conf.py`, differs from
+/// the tree `expected` takes from the fixture, by case: `(expected,
+/// actual)` pformats, a panic reported as the actual text.
+fn snippet_mismatches(
+    fixture: &DocutilsFixture,
+    expected: fn(&DocutilsCase) -> &str,
+    compare: fn(&str, &ParseOptions, &ReadSettings) -> String,
+) -> BTreeMap<String, (String, String)> {
     let mut configs: BTreeMap<&str, BuildConfig> = BTreeMap::new();
     let mut mismatches = BTreeMap::new();
     for case in &fixture.cases {
@@ -370,16 +379,40 @@ fn post_read_mismatches(fixture: &DocutilsFixture) -> BTreeMap<String, (String, 
             exclude_patterns: config.exclude_patterns.clone(),
             py: PySigConfig::from(&*config),
             source_encoding: config.source_encoding.clone(),
+            read: ReadConfig::from(&*config),
             ..ParseOptions::default()
         };
         let rst = case.rst.clone();
-        let actual = std::panic::catch_unwind(move || read_pformat(&rst, &parse, &settings))
+        let actual = std::panic::catch_unwind(move || compare(&rst, &parse, &settings))
             .unwrap_or_else(|_| "PANICKED\n".to_string());
-        if actual != case.post_read {
-            mismatches.insert(case.name.clone(), (case.post_read.clone(), actual));
+        let expected = expected(case);
+        if actual != expected {
+            mismatches.insert(case.name.clone(), (expected.to_string(), actual));
         }
     }
     mismatches
+}
+
+/// Every docutils snippet whose post-read doctree differs from the
+/// oracle's ([`snippet_mismatches`]).
+fn post_read_mismatches(fixture: &DocutilsFixture) -> BTreeMap<String, (String, String)> {
+    snippet_mismatches(fixture, |case| &case.post_read, read_pformat)
+}
+
+/// The pformat of the doctree [`resolve_standalone`] gives for `rst`: the
+/// dummy builder's write, as the oracle's `get_and_resolve_doctree`.
+fn resolved_pformat(rst: &str, parse: &ParseOptions, settings: &ReadSettings) -> String {
+    let read = read_standalone(rst, parse, settings);
+    resolve_standalone(&read, settings, BuilderKind::Dummy)
+        .0
+        .root
+        .pformat()
+}
+
+/// Every docutils snippet whose resolved doctree differs from the
+/// oracle's ([`snippet_mismatches`]).
+fn resolved_mismatches(fixture: &DocutilsFixture) -> BTreeMap<String, (String, String)> {
+    snippet_mismatches(fixture, |case| &case.resolved, resolved_pformat)
 }
 
 /// The docutils snippets whose post-read doctree is not Sphinx's yet, each
@@ -392,26 +425,22 @@ fn post_read_mismatches(fixture: &DocutilsFixture) -> BTreeMap<String, (String, 
 #[rustfmt::skip]
 const KNOWN_POST_READ_GAPS: &[(&str, &str)] = &[];
 
-/// Holds Sphinx's post-read doctree of every runnable HTML-oracle docutils
-/// snippet, read under the oracle's `conf.py`, to [`KNOWN_POST_READ_GAPS`].
-#[test]
-fn docutils_snippets_post_read_differential() {
-    let fixture = docutils_fixture();
-    let names: BTreeSet<String> = fixture.cases.iter().map(|case| case.name.clone()).collect();
-    assert_eq!(names.len(), fixture.cases.len(), "a case name repeats");
-    assert_eq!(
-        names,
-        runnable_docutils_snippets(),
-        "the fixture's cases are not the ledger's runnable docutils snippets"
-    );
+/// The docutils snippets whose resolved doctree ([`resolve_standalone`],
+/// the dummy builder's write) is not Sphinx's yet, as
+/// [`KNOWN_POST_READ_GAPS`] lists the post-read ones: strictly, one row per
+/// line as [`docutils_snippets_resolved_census`] prints it.
+#[rustfmt::skip]
+const KNOWN_RESOLVED_STANDALONE_GAPS: &[(&str, &str)] = &[];
 
-    let mismatches = post_read_mismatches(&fixture);
-    let known: BTreeSet<&str> = KNOWN_POST_READ_GAPS.iter().map(|(case, _)| *case).collect();
-    assert_eq!(
-        known.len(),
-        KNOWN_POST_READ_GAPS.len(),
-        "KNOWN_POST_READ_GAPS lists a case twice"
-    );
+/// Holds a mismatch set to its strict gap table: every listed case must
+/// differ and every differing case must be listed.
+fn assert_gaps(
+    table: &str,
+    gaps: &[(&str, &str)],
+    mismatches: &BTreeMap<String, (String, String)>,
+) {
+    let known: BTreeSet<&str> = gaps.iter().map(|(case, _)| *case).collect();
+    assert_eq!(known.len(), gaps.len(), "{table} lists a case twice");
     let observed: BTreeSet<&str> = mismatches.keys().map(String::as_str).collect();
     let regressions: Vec<String> = observed
         .difference(&known)
@@ -426,11 +455,49 @@ fn docutils_snippets_post_read_differential() {
     let fixed: Vec<&str> = known.difference(&observed).copied().collect();
     assert!(
         regressions.is_empty() && fixed.is_empty(),
-        "the post-read mismatch set differs from KNOWN_POST_READ_GAPS: {} regressions, {} fixed \
-         (delete their rows: {fixed:?})\n{}",
+        "the mismatch set differs from {table}: {} regressions, {} fixed (delete their rows: \
+         {fixed:?})\n{}",
         regressions.len(),
         fixed.len(),
         regressions.join("\n")
+    );
+}
+
+/// The fixture's case-name set is the ledger's runnable docutils snippets.
+fn assert_fixture_cases(fixture: &DocutilsFixture) {
+    let names: BTreeSet<String> = fixture.cases.iter().map(|case| case.name.clone()).collect();
+    assert_eq!(names.len(), fixture.cases.len(), "a case name repeats");
+    assert_eq!(
+        names,
+        runnable_docutils_snippets(),
+        "the fixture's cases are not the ledger's runnable docutils snippets"
+    );
+}
+
+/// Holds Sphinx's post-read doctree of every runnable HTML-oracle docutils
+/// snippet, read under the oracle's `conf.py`, to [`KNOWN_POST_READ_GAPS`].
+#[test]
+fn docutils_snippets_post_read_differential() {
+    let fixture = docutils_fixture();
+    assert_fixture_cases(&fixture);
+    assert_gaps(
+        "KNOWN_POST_READ_GAPS",
+        KNOWN_POST_READ_GAPS,
+        &post_read_mismatches(&fixture),
+    );
+}
+
+/// Holds the dummy builder's resolved doctree of every runnable HTML-oracle
+/// docutils snippet ([`resolve_standalone`]) to
+/// [`KNOWN_RESOLVED_STANDALONE_GAPS`].
+#[test]
+fn docutils_snippets_resolved_differential() {
+    let fixture = docutils_fixture();
+    assert_fixture_cases(&fixture);
+    assert_gaps(
+        "KNOWN_RESOLVED_STANDALONE_GAPS",
+        KNOWN_RESOLVED_STANDALONE_GAPS,
+        &resolved_mismatches(&fixture),
     );
 }
 
@@ -449,21 +516,15 @@ fn first_differing_line<'a>(expected: &'a str, actual: &'a str) -> (usize, &'a s
     }
 }
 
-/// Prints the current post-read mismatch set as `KNOWN_POST_READ_GAPS`
-/// rows. A row's reason lists the fix families its divergence shows and the
-/// latest task that fixes one of them ([`support::read_gaps`]); a
-/// divergence no family explains gets a `?` family and a comment above its
-/// row, and fails the census once every row is printed:
-///
-/// `cargo test --locked --test sphinx_doctree_differential docutils_snippets_post_read_census -- --ignored --nocapture`
-#[test]
-#[ignore]
-fn docutils_snippets_post_read_census() {
-    let fixture = docutils_fixture();
+/// Prints `mismatches` as gap-table rows. A row's reason lists the fix
+/// families its divergence shows and the latest task that fixes one of
+/// them ([`support::read_gaps`]); a divergence no family explains gets a
+/// `?` family and a comment above its row, and fails the census once
+/// every row is printed.
+fn print_census(mismatches: &BTreeMap<String, (String, String)>) {
     let mut table = String::new();
     let mut unexplained_rows = 0;
-    let mismatches = post_read_mismatches(&fixture);
-    for (case, (expected, actual)) in &mismatches {
+    for (case, (expected, actual)) in mismatches {
         let census = support::read_gaps::tree_census(expected, actual);
         if !census.unexplained.is_empty() {
             unexplained_rows += 1;
@@ -480,4 +541,24 @@ fn docutils_snippets_post_read_census() {
         unexplained_rows, 0,
         "rows with a `?` family need a family the census does not know"
     );
+}
+
+/// Prints the current post-read mismatch set as `KNOWN_POST_READ_GAPS`
+/// rows ([`print_census`]):
+///
+/// `cargo test --locked --test sphinx_doctree_differential docutils_snippets_post_read_census -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn docutils_snippets_post_read_census() {
+    print_census(&post_read_mismatches(&docutils_fixture()));
+}
+
+/// Prints the current resolved mismatch set as
+/// `KNOWN_RESOLVED_STANDALONE_GAPS` rows ([`print_census`]):
+///
+/// `cargo test --locked --test sphinx_doctree_differential docutils_snippets_resolved_census -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn docutils_snippets_resolved_census() {
+    print_census(&resolved_mismatches(&docutils_fixture()));
 }

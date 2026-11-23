@@ -20,14 +20,20 @@
 //!
 //! A row nothing ports yet runs as an explicit no-op
 //! ([`TransformId::transform`]).
+//!
+//! The post-transforms a builder applies as it writes a document, after
+//! the read, are [`post`]'s, with the build tags `.. only::` reads in
+//! [`tags`].
 
 pub mod footnotes;
 pub mod location;
 pub mod misc;
+pub mod post;
 pub mod references;
 pub mod reporter;
 pub mod sphinx;
 pub mod state;
+pub mod tags;
 #[cfg(test)]
 pub(crate) mod test_support;
 pub mod tree;
@@ -1044,6 +1050,7 @@ fn sphinx_domains(
         docname,
         &mut output.doctree,
         inputs.source_path,
+        inputs.source_dir,
         &mut index_warnings,
     );
     let equation_warnings = env_math::process_doc(
@@ -1067,6 +1074,7 @@ fn sphinx_domains(
             registry: &output.registry,
             names: &output.state.names,
             path: inputs.source_path,
+            source_dir: inputs.source_dir,
         },
         inputs.doc2path,
     );

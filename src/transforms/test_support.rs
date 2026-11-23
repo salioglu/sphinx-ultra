@@ -175,9 +175,10 @@ pub(crate) struct Resolved {
     pub(crate) unresolvable: usize,
 }
 
-/// `docname` of `project` resolved against the project's environment the
-/// way the build resolves it: the dummy builder's `''` URIs, `numfig` off,
-/// no intersphinx, not nitpicky.
+/// `docname` of `project` with its references resolved against the
+/// project's environment the way the build's `ReferencesResolver` (10)
+/// resolves them, the later post-transforms left out: the dummy builder's
+/// `''` URIs, `numfig` off, no intersphinx, not nitpicky.
 pub(crate) fn resolved(project: &Project, docname: &str) -> Resolved {
     let formats = BTreeMap::new();
     let intersphinx = Intersphinx::default();
@@ -201,7 +202,14 @@ pub(crate) fn resolved(project: &Project, docname: &str) -> Resolved {
         .expect("a document of the project");
     let mut doctree = doctree.clone();
     let path = format!("<SRCDIR>/{docname}.rst");
-    let resolution = resolve_document(&resolver, &nitpick, docname, &mut doctree, Path::new(&path));
+    let resolution = resolve_document(
+        &resolver,
+        &nitpick,
+        docname,
+        &mut doctree,
+        Path::new(&path),
+        Path::new("<SRCDIR>"),
+    );
     let pformat = doctree.root.pformat();
     let document = DOC.replace("index.rst", &format!("{docname}.rst"));
     let body = pformat

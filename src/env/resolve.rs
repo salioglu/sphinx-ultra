@@ -833,18 +833,30 @@ pub struct DocumentResolution {
 /// Resolve every `pending_xref` in one document, rewriting the tree the way
 /// `ReferencesResolver.run` does: the node is replaced by the reference
 /// that resolution built, or by its own content node when it failed.
+///
+/// Every warning it logs is about a node (`location=node`), so it names
+/// the node's source as `get_node_location` does, made absolute against
+/// the project's source directory `source_dir`
+/// ([`crate::rst::node_source_path`]): a node from an included file names
+/// `<srcdir>/part.rst`, whatever the cwd. `path`, the document's own
+/// source, stands for a source the table does not know.
 pub fn resolve_document(
     resolver: &Resolver<'_>,
     nitpick: &NitpickConfig<'_>,
     docname: &str,
     doctree: &mut Doctree,
     path: &Path,
+    source_dir: &Path,
 ) -> DocumentResolution {
     let mut out = DocumentResolution::default();
     // The walk mutates `root` while warnings read the source table for
-    // each node's `(source, line)`; the table is tiny, so a clone is the
-    // simplest split.
-    let sources = doctree.sources.clone();
+    // each node's `(source, line)`; the table is tiny, so a copy of it,
+    // its paths made absolute, is the simplest split.
+    let sources: Vec<String> = doctree
+        .sources
+        .iter()
+        .map(|source| crate::rst::node_source_path(source, source_dir))
+        .collect();
     resolve_children(
         resolver,
         nitpick,
@@ -855,7 +867,6 @@ pub fn resolve_document(
         None,
         &mut out,
     );
-    propagate_desc_domain(&mut doctree.root);
     out
 }
 
@@ -881,28 +892,6 @@ type Location = Option<(u16, u32)>;
 /// for any kind.
 fn contributes_location(node: &Node) -> bool {
     node.span.line != 0 && !matches!(node.kind, kinds::DOCUMENT | "desc" | "desc_content")
-}
-
-/// `PropagateDescDomain` (`post_transforms/__init__.py:382-390`, priority
-/// 200): "Add the domain name of the parent node as a class in each
-/// desc_signature node." Only descriptions that named a domain get one, so
-/// `describe`/`object` (`domain=""`) are left alone.
-fn propagate_desc_domain(node: &mut Node) {
-    if node.kind == "desc" {
-        if let Some(AttrValue::Str(domain)) = node.get("domain") {
-            if !domain.is_empty() {
-                let domain = domain.clone();
-                for child in &mut node.children {
-                    if child.kind == "desc_signature" {
-                        child.attrs.classes.push(domain.clone());
-                    }
-                }
-            }
-        }
-    }
-    for child in &mut node.children {
-        propagate_desc_domain(child);
-    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -958,7 +947,7 @@ fn resolve_children(
 
 /// docutils' `Element.basic_attributes` taken out of `node`: its `ids`,
 /// `classes`, `names` and `dupnames`.
-fn take_basic_atts(node: &mut Node) -> [Vec<String>; 4] {
+pub(crate) fn take_basic_atts(node: &mut Node) -> [Vec<String>; 4] {
     [
         std::mem::take(&mut node.attrs.ids),
         std::mem::take(&mut node.attrs.classes),
@@ -970,7 +959,7 @@ fn take_basic_atts(node: &mut Node) -> [Vec<String>; 4] {
 /// docutils `Element.update_basic_atts` (`SP/docutils/nodes.py:850-871`):
 /// each basic attribute of `node` gains, in order, the values of `basic`'s
 /// ([`take_basic_atts`]) it does not hold yet.
-fn update_basic_atts(node: &mut Node, basic: [Vec<String>; 4]) {
+pub(crate) fn update_basic_atts(node: &mut Node, basic: [Vec<String>; 4]) {
     let [ids, classes, names, dupnames] = basic;
     for (list, values) in [
         (&mut node.attrs.ids, ids),

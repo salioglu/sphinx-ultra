@@ -140,7 +140,8 @@ pub struct BuildConfig {
     /// match in full (`nitpick_ignore_regex`, `:274-282`).
     pub nitpick_ignore_regex: Vec<(String, String)>,
 
-    /// Tags set via `-t` (consumed by `only`/`ifconfig` once M2 lands)
+    /// Tags set via `-t`, which `.. only::` reads beside the builder's own
+    /// ([`crate::transforms::tags::Tags`])
     pub tags: Vec<String>,
 
     /// Cache/doctree directory override (Sphinx `-d`); defaults to
@@ -187,6 +188,14 @@ pub struct BuildConfig {
     /// ([`crate::read::ReadSettings::keep_warnings`]). A `-D` override takes
     /// Sphinx's bool grammar, `0` or `1` only ([`STRICT_BOOL_KEYS`]).
     pub keep_warnings: bool,
+
+    /// `trim_doctest_flags`, default `True` (`config.py:267`, rebuild class
+    /// `'env'`): whether `TrimDoctestFlagsTransform`, the post-transform at
+    /// priority 401, strips `# doctest: +FLAG` comments and `<BLANKLINE>`
+    /// markers from doctest blocks and Python console literal blocks
+    /// ([`crate::transforms::post`]). A `-D` override takes Sphinx's bool
+    /// grammar, `0` or `1` only ([`STRICT_BOOL_KEYS`]).
+    pub trim_doctest_flags: bool,
 
     /// `primary_domain`, default `'py'` (`config.py:268`, rebuild class
     /// `'env'`, `None` allowed): every document's default domain
@@ -365,7 +374,7 @@ const NONE_DEFAULT_INT_KEYS: [&str; 2] = [
 /// turns `'0'` and `'1'` into `False` and `True` and raises `ConfigError`
 /// for anything else (`config.py:366-374`). The crate's other bool keys
 /// still also take `true`/`false`.
-const STRICT_BOOL_KEYS: [&str; 1] = ["keep_warnings"];
+const STRICT_BOOL_KEYS: [&str; 2] = ["keep_warnings", "trim_doctest_flags"];
 
 /// `deprecate_source_encoding` (`config.py:886-896`, a `config-inited`
 /// handler at priority 790): the encodings it does NOT warn about.
@@ -512,6 +521,7 @@ impl Default for BuildConfig {
             suppress_warnings: Vec::new(),
             show_warning_types: true,
             keep_warnings: false,
+            trim_doctest_flags: true,
             primary_domain: Some("py".to_string()),
             highlight_language: "default".to_string(),
 
@@ -1518,6 +1528,44 @@ output:
                 format!("'keep_warnings' must be '0' or '1', got '{value}'")
             );
             assert!(!config.keep_warnings, "{value}: the setting is unchanged");
+        }
+    }
+
+    /// `trim_doctest_flags` (`config.py:267`: default `True`, type `bool`
+    /// only) takes the same bool grammar on `-D` as `keep_warnings`, and
+    /// its override reaches `conf_values`.
+    #[test]
+    fn trim_doctest_flags_takes_sphinxs_bool_grammar() {
+        let mut config = BuildConfig::default();
+        assert!(config.trim_doctest_flags);
+
+        assert!(config
+            .apply_override("trim_doctest_flags", "0")
+            .unwrap()
+            .is_none());
+        assert!(!config.trim_doctest_flags);
+        assert_eq!(
+            config.conf_values.get("trim_doctest_flags"),
+            Some(&serde_json::Value::Bool(false))
+        );
+        assert!(config
+            .apply_override("trim_doctest_flags", "1")
+            .unwrap()
+            .is_none());
+        assert!(config.trim_doctest_flags);
+
+        for value in ["false", "False", "true", "no", ""] {
+            let error = config
+                .apply_override("trim_doctest_flags", value)
+                .expect_err(value);
+            assert_eq!(
+                error.to_string(),
+                format!("'trim_doctest_flags' must be '0' or '1', got '{value}'")
+            );
+            assert!(
+                config.trim_doctest_flags,
+                "{value}: the setting is unchanged"
+            );
         }
     }
 
