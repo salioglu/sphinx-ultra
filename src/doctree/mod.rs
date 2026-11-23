@@ -567,7 +567,7 @@ const TEXT_ELEMENT_KINDS: &[&str] = &[
 ];
 
 /// Whether `kind` names a `nodes.TextElement` class ([`TEXT_ELEMENT_KINDS`]).
-fn is_text_element(kind: &str) -> bool {
+pub(crate) fn is_text_element(kind: &str) -> bool {
     TEXT_ELEMENT_KINDS.binary_search(&kind).is_ok()
 }
 

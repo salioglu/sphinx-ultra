@@ -475,18 +475,21 @@ pub struct DocumentState {
     /// `image`'s `:target:` wraps: docutils appends it after the option
     /// block's nested state machine has cleared the line, so it has the
     /// source and no line when its container has `document` set, and
-    /// neither when it has not ([DS §6.1]).
+    /// neither when it has not ([DS §6.1]). A node the parse discards
+    /// keeps its entry only inside a subtree [`Self::detached`] keeps.
     pub loc_overrides: HashMap<Uid, DocLoc>,
     /// docutils' node registries ([`Registries`]), by node identity.
     pub registries: Registries,
     /// The transforms `document.note_pending` queued, in parse order.
     pub pending: Vec<PendingRecord>,
-    /// The subtrees the parser discarded that hold a registered node: in
-    /// docutils those nodes leave the tree but stay in the registries,
-    /// where the transforms still number them, resolve through them and
-    /// report against them ([DS §4.4]). Every registered [`Uid`] is
-    /// reachable exactly once from the root or from here
-    /// ([`Self::misplaced_registrations`]).
+    /// The subtrees the parser discarded that hold a node a registry or a
+    /// pending record holds: in docutils those nodes leave the tree but
+    /// stay in the registries, where the transforms still number them,
+    /// resolve through them and report against them ([DS §4.4]). Every registered [`Uid`] is reachable exactly once
+    /// from the root or from here ([`Self::misplaced_registrations`]). The
+    /// read transforms' arena takes the forest over
+    /// ([`crate::transforms::tree::TxTree::from_parse`]), leaving this
+    /// empty.
     pub detached: Vec<Node>,
     /// How many identities the document has minted ([`Self::mint_uid`]).
     pub next_uid: u32,
@@ -639,13 +642,29 @@ impl DocumentState {
         node
     }
 
-    /// Subtrees the parser discards: each one holding a node with an
-    /// identity (a registered node) is kept in [`Self::detached`], the
-    /// way docutils' registries keep such nodes alive; the rest are
-    /// dropped.
+    /// Subtrees the parser discards. Each one holding a node a registry or
+    /// a pending record holds is kept in [`Self::detached`], the way
+    /// docutils' registries keep such nodes alive. The rest are dropped,
+    /// as docutils garbage-collects them, together with the location
+    /// overrides of their nodes ([`Self::loc_overrides`]): a node with an
+    /// identity for its override alone keeps nothing alive.
     pub(crate) fn detach(&mut self, nodes: impl IntoIterator<Item = Node>) {
-        self.detached
-            .extend(nodes.into_iter().filter(holds_identity));
+        let mut held: Option<HashSet<Uid>> = None;
+        for node in nodes {
+            let mut uids = Vec::new();
+            identities(&node, &mut uids);
+            if uids.is_empty() {
+                continue;
+            }
+            let held = held.get_or_insert_with(|| self.held_uids().collect());
+            if uids.iter().any(|uid| held.contains(uid)) {
+                self.detached.push(node);
+            } else {
+                for uid in &uids {
+                    self.loc_overrides.remove(uid);
+                }
+            }
+        }
     }
 
     /// The read-state fixture's `registries_post_parse` ([DS §11]) for the
@@ -723,6 +742,16 @@ impl DocumentState {
         })
     }
 
+    /// Every identity the state holds a node by: each registry entry's (a
+    /// node several registries hold comes once per registry) and each
+    /// pending record's.
+    pub(crate) fn held_uids(&self) -> impl Iterator<Item = Uid> + '_ {
+        self.registries
+            .uids()
+            .into_iter()
+            .chain(self.pending.iter().map(|record| record.node))
+    }
+
     /// The end-of-parse invariant ([DS §8.2]): every registered identity
     /// (the registries' and the pending records') is reachable exactly
     /// once from `root` or from [`Self::detached`]. Returns each one that
@@ -732,10 +761,7 @@ impl DocumentState {
         let reached = Reached::of(root, &self.detached);
         let mut seen = HashSet::new();
         let mut misplaced: Vec<(Uid, usize)> = self
-            .registries
-            .uids()
-            .into_iter()
-            .chain(self.pending.iter().map(|record| record.node))
+            .held_uids()
             .filter(|uid| seen.insert(*uid))
             .map(|uid| (uid, reached.count(uid)))
             .filter(|&(_, count)| count != 1)
@@ -745,9 +771,12 @@ impl DocumentState {
     }
 }
 
-/// Whether the subtree holds a node with an identity.
-fn holds_identity(node: &Node) -> bool {
-    node.uid().is_some() || node.children.iter().any(holds_identity)
+/// Every identity in the subtree, in pre-order.
+fn identities(node: &Node, out: &mut Vec<Uid>) {
+    out.extend(node.uid());
+    for child in &node.children {
+        identities(child, out);
+    }
 }
 
 /// Where each identity sits in a tree and its detached forest: the node

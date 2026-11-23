@@ -2235,7 +2235,10 @@ impl BlockParser {
             // Probe-verified: an attribution needs preceding quote body —
             // a quote whose only content is "-- x" is a plain paragraph.
             let has_body = acc.iter().any(|l| !l.is_blank());
-            match attribution_from_chunk(&self.sources, chunk, span) {
+            // `parse_attribution` stamps the attribution with its own first
+            // line (`states.py:1365-1371`), not the quote's.
+            let chunk_span = self.span_of(chunk, 0, chunk.len() - 1);
+            match attribution_from_chunk(&self.sources, chunk, chunk_span) {
                 Some(attr) if has_body => quotes.push((std::mem::take(&mut acc), Some(attr))),
                 _ => acc.extend_from_slice(chunk),
             }
@@ -2249,7 +2252,7 @@ impl BlockParser {
             let mut attr_messages = Vec::new();
             if let Some((raw_attr, lineno)) = attribution {
                 let raw = raw_attr.astext();
-                let inline = self.inline(&raw, raw_attr.span, lineno);
+                let inline = self.inline(&raw, span, lineno);
                 let mut a = Node::elem(kinds::ATTRIBUTION, raw_attr.span);
                 a.children = inline.nodes;
                 attr_messages = inline.messages;
@@ -2289,13 +2292,14 @@ impl BlockParser {
 
     fn parse_line_block(&mut self, lines: &[LineRec], pos: &mut usize, out: &mut Vec<Node>) {
         let start = *pos;
-        // (depth, text, lineno): depth None on bare `|` lines inherits the
-        // previous line's depth (fixture-verified). Continuations dedent by
-        // the FIRST continuation line's indent, preserving deeper relative
-        // indents. Each line is parsed at its `|` line's own number, the
-        // `abs_line_number()` `line_block_line` is called with
-        // (`states.py:1736-1742`), its continuation lines included.
-        let mut items: Vec<(Option<usize>, String, u32)> = Vec::new();
+        // (depth, text, first and last line): depth None on bare `|` lines
+        // inherits the previous line's depth (fixture-verified).
+        // Continuations dedent by the FIRST continuation line's indent,
+        // preserving deeper relative indents. Each line is parsed at its
+        // `|` line's own number, the `abs_line_number()` `line_block_line`
+        // is called with (`states.py:1736-1742`), its continuation lines
+        // included, and located there (`:1744-1745`).
+        let mut items: Vec<(Option<usize>, String, usize, usize)> = Vec::new();
         let mut cont_dedent: Option<usize> = None;
         let mut p = *pos;
         while p < lines.len() && !lines[p].is_blank() {
@@ -2304,11 +2308,11 @@ impl BlockParser {
             if l.indent() == 0 && (text == "|" || text.starts_with("| ")) {
                 cont_dedent = None;
                 if text == "|" {
-                    items.push((None, String::new(), l.lineno));
+                    items.push((None, String::new(), p, p));
                 } else {
                     let content = &text[2..];
                     let depth = content.len() - content.trim_start_matches(' ').len();
-                    items.push((Some(depth), content[depth..].to_string(), l.lineno));
+                    items.push((Some(depth), content[depth..].to_string(), p, p));
                 }
                 p += 1;
             } else if l.indent() > 0 && !items.is_empty() {
@@ -2319,6 +2323,7 @@ impl BlockParser {
                         last.1.push('\n');
                     }
                     last.1.push_str(&text[dedent..]);
+                    last.3 = p;
                 }
                 p += 1;
             } else {
@@ -2327,18 +2332,19 @@ impl BlockParser {
         }
         // Resolve inherited depths and inline-parse each line's text.
         let span = self.span_of(lines, start, p - 1);
-        let mut resolved: Vec<(usize, Vec<Node>)> = Vec::with_capacity(items.len());
+        let mut resolved: Vec<(usize, Vec<Node>, Span)> = Vec::with_capacity(items.len());
         let mut lb_messages: Vec<Node> = Vec::new();
         let mut prev_depth = 0usize;
-        for (depth, text, lineno) in items {
+        for (depth, text, first, last) in items {
             let d = depth.unwrap_or(prev_depth);
             prev_depth = d;
+            let line_span = self.span_of(lines, first, last);
             if text.is_empty() {
-                resolved.push((d, Vec::new()));
+                resolved.push((d, Vec::new(), line_span));
             } else {
-                let inline = self.inline(&text, span, lineno);
+                let inline = self.inline(&text, span, line_span.line);
                 lb_messages.extend(inline.messages);
-                resolved.push((d, inline.nodes));
+                resolved.push((d, inline.nodes, line_span));
             }
         }
         out.push(build_line_block(&mut resolved, span, 0));
@@ -8005,7 +8011,10 @@ impl BlockParser {
                 if child.kind == kinds::TARGET {
                     figure.children.push(child);
                 } else if child.kind == kinds::PARAGRAPH {
-                    let mut caption = Node::elem("caption", input.span);
+                    // `caption.source = child.source; caption.line =
+                    // child.line` (`images.py:171-173`): the paragraph's
+                    // location, not the directive's.
+                    let mut caption = Node::elem("caption", child.span);
                     caption.children = child.children;
                     figure.children.push(caption);
                     caption_done = true;
@@ -8284,12 +8293,13 @@ impl BlockParser {
             ));
             return;
         }
-        let mut resolved: Vec<(usize, Vec<Node>)> = Vec::with_capacity(input.content.len());
+        // `LineBlock.run` locates no line; each takes the directive's span.
+        let mut resolved: Vec<(usize, Vec<Node>, Span)> = Vec::with_capacity(input.content.len());
         let mut lb_messages: Vec<Node> = Vec::new();
         let mut prev_depth = 0usize;
         for l in &input.content {
             if l.is_blank() {
-                resolved.push((prev_depth, Vec::new()));
+                resolved.push((prev_depth, Vec::new(), input.span));
                 continue;
             }
             // `LineBlock.run` (misc.py): `inline_text(line_text.strip())`
@@ -8310,7 +8320,7 @@ impl BlockParser {
             let lineno = input.lineno + l.lineno.saturating_sub(1);
             let inline = self.inline(&text, input.span, lineno);
             lb_messages.extend(inline.messages);
-            resolved.push((depth, inline.nodes));
+            resolved.push((depth, inline.nodes, input.span));
         }
         let mut block = build_line_block(&mut resolved, input.span, 0);
         if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
@@ -13924,23 +13934,25 @@ fn attribution_from_chunk(
     Some((attribution, first.lineno))
 }
 
-fn build_line_block(items: &mut [(usize, Vec<Node>)], span: Span, guard: usize) -> Node {
+/// The `line_block` of `items` — each line's indent depth, inline nodes
+/// and span — nested by depth as `nest_line_block_segment` nests them.
+fn build_line_block(items: &mut [(usize, Vec<Node>, Span)], span: Span, guard: usize) -> Node {
     let mut lb = Node::elem(kinds::LINE_BLOCK, span);
     // Totality guard mirroring MAX_NEST_DEPTH: absurd nesting flattens
     // instead of overflowing the stack (docutils crashes here).
     if guard >= MAX_NEST_DEPTH {
-        for (_, children) in items.iter_mut() {
-            let mut line = Node::elem(kinds::LINE, span);
+        for (_, children, line_span) in items.iter_mut() {
+            let mut line = Node::elem(kinds::LINE, *line_span);
             line.children = std::mem::take(children);
             lb.children.push(line);
         }
         return lb;
     }
-    let base = items.iter().map(|(d, _)| *d).min().unwrap_or(0);
+    let base = items.iter().map(|(d, _, _)| *d).min().unwrap_or(0);
     let mut i = 0usize;
     while i < items.len() {
         if items[i].0 <= base {
-            let mut line = Node::elem(kinds::LINE, span);
+            let mut line = Node::elem(kinds::LINE, items[i].2);
             line.children = std::mem::take(&mut items[i].1);
             lb.children.push(line);
             i += 1;

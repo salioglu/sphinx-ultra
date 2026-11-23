@@ -644,7 +644,7 @@ pub fn parse_rst_full(source: &str, opts: &ParseOptions) -> ParseOutput {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::doctree::{kinds, Node, Uid};
     use serde_json::{json, Value};
@@ -1132,6 +1132,71 @@ mod tests {
             d["refnames"],
             json!([["notafield", [["reference", [], false]]]])
         );
+    }
+
+    /// Content a directive drops that holds no registered or pending node
+    /// is gone, as docutils garbage-collects it, even when a node in it
+    /// has an identity for its location override alone (an image's
+    /// `:target:` reference to a URI): its override goes with it. Each
+    /// discarded subtree is judged on its own, so an image dropped beside
+    /// a paragraph with a `[#]_` goes while the paragraph stays; a
+    /// `:target:` naming a target is a registered reference (`refnames`)
+    /// and keeps its subtree and its override.
+    #[test]
+    fn discarded_subtrees_without_registrations_are_dropped() {
+        let image = |target: &str| format!("   .. image:: pic.png\n      :target: {target}\n");
+        let uri = image("https://x/");
+        let both_modes = [
+            format!(".. table::\n\n{uri}"),
+            format!(".. list-table::\n\n{uri}"),
+            // The caption is no paragraph: the legend is dropped.
+            format!(".. figure:: a.png\n\n   - x\n\n{uri}"),
+        ];
+        let sphinx_only = [
+            format!(".. hlist::\n\n{uri}"),
+            format!(".. py:function:: f()\n   :no-typesetting:\n\n{uri}"),
+        ];
+        let docutils = ParseOptions {
+            source_path: "<snippet>".into(),
+            ..Default::default()
+        };
+        let mut parses = Vec::new();
+        for source in both_modes.iter().chain(&sphinx_only) {
+            parses.push((sphinx_parse(source), source));
+        }
+        for source in &both_modes {
+            parses.push((parse_rst_full(source, &docutils), source));
+        }
+        for (out, source) in parses {
+            assert_eq!(
+                out.state.next_uid, 1,
+                "{source:?}: the reference has an identity"
+            );
+            assert!(
+                out.state.detached.is_empty(),
+                "{source:?}: {:?}",
+                out.state.detached
+            );
+            assert!(out.state.loc_overrides.is_empty(), "{source:?}");
+        }
+
+        let out = sphinx_parse(&format!(".. hlist::\n\n{uri}\n   Para [#]_.\n"));
+        let detached: Vec<&str> = out.state.detached.iter().map(|node| node.kind).collect();
+        assert_eq!(detached, [kinds::PARAGRAPH]);
+        assert!(out.state.loc_overrides.is_empty());
+        assert!(out
+            .state
+            .misplaced_registrations(&out.doctree.root)
+            .is_empty());
+
+        let out = sphinx_parse(&format!(".. hlist::\n\n{}", image("bad_")));
+        let [reference] = out.state.detached.as_slice() else {
+            panic!("one detached root, got {:?}", out.state.detached);
+        };
+        assert_eq!(reference.kind, kinds::REFERENCE);
+        let uid = reference.uid().expect("registered");
+        let overridden: Vec<&Uid> = out.state.loc_overrides.keys().collect();
+        assert_eq!(overridden, [&uid]);
     }
 
     /// docutils' `CSVTable.run` makes the title before it reads the data
@@ -2368,45 +2433,30 @@ mod tests {
         serde_json::from_str(&text).expect("fixture parses")
     }
 
-    /// The end-of-parse assertion ([DS §8.2]: every registered `Uid` is
-    /// reachable exactly once from the root or from `detached`), checked
-    /// explicitly on every input of the three parse corpora: each
-    /// `doctree_differential.json` case in docutils mode and again in
-    /// sphinx mode, each `sphinx_doctree_differential.json` case in sphinx
-    /// mode with its `conf`, and every document of every
-    /// `env_differential.json` project, parsed the way the build parses it
-    /// (sphinx mode, its srcdir, docname and docname set).
-    ///
-    /// Only the docutils corpus registers nodes: the other two hold no
-    /// reference, footnote, citation or substitution definition (their
-    /// targets are labels and `refuri` targets, which no registry keeps).
-    /// It registers 186 nodes over the two modes and keeps one detached
-    /// subtree per mode (`substitutions.replace_auto_footnote_error`), the
-    /// floors below; its parses mint 190 identities, the four more being
-    /// the image `:target:` references that hold only a location override.
-    #[test]
-    fn every_registered_uid_is_reachable_once() {
-        /// Per corpus: parses checked, distinct nodes registered, detached
-        /// subtrees kept.
-        #[derive(Debug, Default)]
-        struct Tally {
-            parses: usize,
-            registered: usize,
-            detached: usize,
-        }
-        let mut tallies: [Tally; 3] = Default::default();
-        let mut check = |corpus: usize, label: &str, output: &ParseOutput| {
-            let state = &output.state;
-            let misplaced = state.misplaced_registrations(&output.doctree.root);
-            assert!(misplaced.is_empty(), "{label}: {misplaced:?}");
-            let tally = &mut tallies[corpus];
-            tally.parses += 1;
-            // Every registered node holds one identity, and so does a node
-            // with a location override.
-            tally.registered += state.next_uid as usize;
-            tally.detached += state.detached.len();
-        };
+    /// The parse corpora the parse-level invariants are checked on, each
+    /// input parsed the way its consumer parses it
+    /// ([`for_each_corpus_parse`]).
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(crate) enum Corpus {
+        /// `doctree_differential.json`: each case in docutils mode, then
+        /// again in sphinx mode.
+        Docutils,
+        /// `sphinx_doctree_differential.json`: each case in sphinx mode
+        /// with its `conf`.
+        Sphinx,
+        /// `env_differential.json`: every document of every project, as
+        /// the build parses it (sphinx mode, its srcdir, docname and
+        /// docname set).
+        Env,
+        /// `read_state_differential.json`: each case as
+        /// `tests/read_state_differential.rs` parses it (sphinx mode,
+        /// `<SRCDIR>/index.rst`, docname `index`).
+        ReadState,
+    }
 
+    /// Parses every input of the four corpora ([`Corpus`]) and hands each
+    /// parse to `visit` with its corpus and a label naming the input.
+    pub(crate) fn for_each_corpus_parse(mut visit: impl FnMut(Corpus, &str, ParseOutput)) {
         let docutils = fixture("doctree_differential.json");
         for case in docutils["cases"].as_array().expect("cases") {
             let name = case["name"].as_str().expect("name");
@@ -2418,7 +2468,7 @@ mod tests {
                     ..Default::default()
                 };
                 let label = format!("{name} (sphinx: {sphinx})");
-                check(0, &label, &parse_rst_full(source, &options));
+                visit(Corpus::Docutils, &label, parse_rst_full(source, &options));
             }
         }
 
@@ -2433,7 +2483,7 @@ mod tests {
                     .unwrap_or_default(),
                 ..sphinx_options()
             };
-            check(1, name, &parse_rst_full(source, &options));
+            visit(Corpus::Sphinx, name, parse_rst_full(source, &options));
         }
 
         let env = fixture("env_differential.json");
@@ -2473,20 +2523,81 @@ mod tests {
                 };
                 let source = body.as_str().expect("text");
                 let label = format!("{name}/{docname}");
-                check(2, &label, &parse_rst_full(source, &options));
+                visit(Corpus::Env, &label, parse_rst_full(source, &options));
             }
         }
 
-        // 735 docutils cases twice, 489 sphinx cases, 84 env documents; the
-        // check is not vacuous.
-        let [docutils, sphinx, env] = &tallies;
+        let read_state = fixture("read_state_differential.json");
+        for case in read_state["cases"].as_array().expect("cases") {
+            let name = case["name"].as_str().expect("name");
+            let source = case["rst"].as_str().expect("rst");
+            let options = ParseOptions {
+                source_path: "<SRCDIR>/index.rst".to_string(),
+                sphinx: true,
+                docname: "index".to_string(),
+                ..Default::default()
+            };
+            visit(Corpus::ReadState, name, parse_rst_full(source, &options));
+        }
+    }
+
+    /// The end-of-parse assertion ([DS §8.2]: every registered `Uid` is
+    /// reachable exactly once from the root or from `detached`), checked
+    /// explicitly on every input of the four parse corpora
+    /// ([`for_each_corpus_parse`]).
+    ///
+    /// Only the docutils and read-state corpora register nodes: the other
+    /// two hold no reference, footnote, citation or substitution definition
+    /// (their targets are labels and `refuri` targets, which no registry
+    /// keeps). The docutils corpus registers 186 nodes over the two modes
+    /// and keeps one detached subtree per mode
+    /// (`substitutions.replace_auto_footnote_error`); its parses mint 190
+    /// identities, the four more being the image `:target:` references
+    /// that hold only a location override. The read-state corpus registers
+    /// 95 nodes and keeps five detached subtrees: the definitions of
+    /// `state.rejected_subst_autofootnote` and
+    /// `state.rejected_subst_indirect_target`, the title and the content
+    /// of `state.rejected_table_refs` and the content of
+    /// `state.rejected_list_table_refs`. Those counts are the floors below.
+    #[test]
+    fn every_registered_uid_is_reachable_once() {
+        /// Per corpus: parses checked, distinct nodes registered, detached
+        /// subtrees kept.
+        #[derive(Debug, Default)]
+        struct Tally {
+            parses: usize,
+            registered: usize,
+            detached: usize,
+        }
+        let mut tallies: [Tally; 4] = Default::default();
+        for_each_corpus_parse(|corpus, label, output| {
+            let state = &output.state;
+            let misplaced = state.misplaced_registrations(&output.doctree.root);
+            assert!(misplaced.is_empty(), "{label}: {misplaced:?}");
+            let tally = &mut tallies[corpus as usize];
+            tally.parses += 1;
+            let registered: std::collections::HashSet<Uid> = state.held_uids().collect();
+            tally.registered += registered.len();
+            tally.detached += state.detached.len();
+        });
+
+        // 735 docutils cases twice, 489 sphinx cases, 84 env documents, 89
+        // read-state cases; the check is not vacuous.
+        let [docutils, sphinx, env, read_state] = &tallies;
         assert!(
-            docutils.parses >= 2 * 735 && sphinx.parses >= 489 && env.parses >= 84,
+            docutils.parses >= 2 * 735
+                && sphinx.parses >= 489
+                && env.parses >= 84
+                && read_state.parses >= 89,
             "too few parses checked: {tallies:?}"
         );
         assert!(
             docutils.registered >= 2 * 93 && docutils.detached >= 2,
             "the docutils corpus stopped exercising the check: {tallies:?}"
+        );
+        assert!(
+            read_state.registered >= 95 && read_state.detached >= 5,
+            "the read-state corpus stopped exercising the check: {tallies:?}"
         );
     }
 
