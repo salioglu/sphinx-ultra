@@ -381,8 +381,28 @@ pub(crate) struct BlockParser {
     /// flips its align validation, unicode's trim flags land here.
     substitution_ctx: Option<SubstCtx>,
     /// A [`SpliceRequest`] a directive just returned, waiting for the
-    /// enclosing block-parse loop to insert it at its cursor.
-    pending_splice: Option<SpliceRequest>,
+    /// enclosing block-parse loop to insert it at its cursor, and whether
+    /// the directive ran where an insertion reaches the top-level input
+    /// ([`Self::connected`]).
+    pending_splice: Option<(SpliceRequest, bool)>,
+    /// docutils' top-level `input_lines` as the parse goes on: the
+    /// document's lines, with each included file's lines and padding
+    /// lines where docutils inserts them, whatever the include's depth
+    /// ([`Self::insert_into_input`]). The parse leaves it behind as
+    /// [`DocumentState::input_lines`].
+    input: Vec<LineRec>,
+    /// Whether the lines the running block-parse loop reads are, in
+    /// docutils, a slice of the top-level input, which `ViewList.insert`
+    /// passes an insertion up to (`SP/docutils/statemachine.py:1228-1243`).
+    /// They are, except in a table cell, a glossary definition, a
+    /// substitution definition and a detached parse, which docutils parses
+    /// from a list it builds or disconnects.
+    connected: bool,
+    /// The last line of the running directive's content: docutils trims
+    /// the content of its trailing blank lines (`parse_directive_block`),
+    /// so the lines of an include that ends the content go into the input
+    /// right after it ([`Self::insert_into_input`]).
+    content_end: Option<(u16, u32)>,
     /// How the construct [`Self::parse_element`] parsed last ended; the
     /// document loop keeps the top-level one for [`final_position`].
     ending: Ending,
@@ -519,6 +539,9 @@ impl BlockParser {
             equation_serial: 0,
             substitution_ctx: None,
             pending_splice: None,
+            input: Vec::new(),
+            connected: true,
+            content_end: None,
             ending: Ending::PastEnd,
             machine_position: None,
             top_block_pending: false,
@@ -768,9 +791,9 @@ impl BlockParser {
             if let Some(start) = section {
                 self.open_section(start, &mut root, &mut stack);
             }
-            if let Some(request) = self.pending_splice.take() {
+            if let Some((request, connected)) = self.pending_splice.take() {
                 let mut stream = owned.take().unwrap_or_else(|| lines.to_vec());
-                self.apply_splice(&mut stream, pos, request);
+                self.apply_splice(&mut stream, pos, request, connected);
                 owned = Some(stream);
             }
         }
@@ -823,6 +846,9 @@ impl BlockParser {
         // lines whose source is `<generated text>`, which no table entry
         // names; that case is not modelled.)
         sub.attached = false;
+        // Its lines are a list of their own, whose insertions reach no
+        // other input.
+        sub.connected = false;
         sub.line_bias = self.line_bias;
         sub.depth = self.depth;
         // A nested state machine: the top-level one stays where it is.
@@ -883,8 +909,16 @@ impl BlockParser {
     /// it): each segment's text becomes a new source-table entry and their
     /// records join the running stream contiguously. On id-space
     /// exhaustion the remaining segments are dropped (same totality guard
-    /// as [`Self::push_source`]).
-    fn apply_splice(&mut self, lines: &mut Vec<LineRec>, at: usize, request: SpliceRequest) {
+    /// as [`Self::push_source`]). A request made where docutils passes an
+    /// insertion up to the top-level input (`connected`) also goes into
+    /// that input ([`Self::insert_into_input`]).
+    fn apply_splice(
+        &mut self,
+        lines: &mut Vec<LineRec>,
+        at: usize,
+        request: SpliceRequest,
+        connected: bool,
+    ) {
         let mut recs: Vec<LineRec> = Vec::new();
         for segment in request.segments {
             let SpliceSegment {
@@ -910,7 +944,57 @@ impl BlockParser {
             recs.extend(segment_recs);
         }
         let at = at.min(lines.len());
+        if connected {
+            if let Some(&anchor) = at.checked_sub(1).and_then(|last| lines.get(last)) {
+                self.insert_into_input(anchor, &recs);
+            }
+        }
         lines.splice(at..at, recs);
+    }
+
+    /// docutils' `insert_input` as it reaches the top-level input
+    /// ([`Self::input`]). The state machine that read the include inserts
+    /// the lines right after the include's block, and `ViewList.insert`
+    /// passes them up, through every list the machine's lines are a slice
+    /// of, to the same place in the top-level input
+    /// (`SP/docutils/statemachine.py:1228-1243`). `anchor` is the
+    /// include's last line in the stream it was read from: its own line or
+    /// its last option line. docutils' block goes on through the blank
+    /// lines after it, up to the next line that is not blank, unless the
+    /// anchor ends the running directive's content, which docutils trimmed
+    /// of its trailing blank lines ([`Self::content_end`]). This parser's
+    /// nested streams keep no trailing blank lines, so they are read off
+    /// the top-level input. An anchor the input does not hold inserts
+    /// nothing.
+    fn insert_into_input(&mut self, anchor: LineRec, recs: &[LineRec]) {
+        let key = (anchor.source, anchor.lineno);
+        let Some(last) = self
+            .input
+            .iter()
+            .position(|line| (line.source, line.lineno) == key)
+        else {
+            return;
+        };
+        let at = if self.content_end == Some(key) {
+            last + 1
+        } else {
+            self.input[last + 1..]
+                .iter()
+                .position(|line| !line.is_blank())
+                .map_or(self.input.len(), |blanks| last + 1 + blanks)
+        };
+        self.input.splice(at..at, recs.iter().copied());
+    }
+
+    /// Runs `parse` over a block docutils parses from a list it builds
+    /// anew or disconnects from the lines it was read from
+    /// (`StringList.disconnect`): an include in it reaches no other input
+    /// ([`Self::connected`]).
+    fn parse_disconnected<T>(&mut self, parse: impl FnOnce(&mut Self) -> T) -> T {
+        let saved = std::mem::replace(&mut self.connected, false);
+        let out = parse(self);
+        self.connected = saved;
+        out
     }
 
     /// Re-wrap `rec` to the `from..to` byte sub-range of its current view
@@ -1053,6 +1137,7 @@ impl BlockParser {
         // Open sections, deepest last; nodes attach on close.
         let mut stack: Vec<Node> = Vec::new();
         let mut lines = std::mem::take(&mut self.top);
+        self.input = lines.clone();
         let mut pos = 0usize;
         // How the last top-level construct left the state machine; `None`
         // until one is parsed.
@@ -1075,8 +1160,8 @@ impl BlockParser {
             }
             // A directive just asked for new lines at the cursor (the
             // `include` directive's insert mode).
-            if let Some(request) = self.pending_splice.take() {
-                self.apply_splice(&mut lines, pos, request);
+            if let Some((request, connected)) = self.pending_splice.take() {
+                self.apply_splice(&mut lines, pos, request, connected);
             }
         }
         while !stack.is_empty() {
@@ -1087,7 +1172,7 @@ impl BlockParser {
             "a raised `only` outlived its section"
         );
         self.state.final_position = final_position(&lines, last_ending);
-        self.state.input_lines = lines
+        self.state.input_lines = std::mem::take(&mut self.input)
             .iter()
             .map(|line| (line.source, line.lineno))
             .collect();
@@ -1250,9 +1335,9 @@ impl BlockParser {
             }
             let section = self.parse_element(cur, &mut pos, false, &mut out);
             debug_assert!(section.is_none(), "titles never match in nested contexts");
-            if let Some(request) = self.pending_splice.take() {
+            if let Some((request, connected)) = self.pending_splice.take() {
                 let mut stream = owned.take().unwrap_or_else(|| lines.to_vec());
-                self.apply_splice(&mut stream, pos, request);
+                self.apply_splice(&mut stream, pos, request, connected);
                 owned = Some(stream);
             }
         }
@@ -3197,7 +3282,8 @@ impl BlockParser {
                 .collect();
             if dedented.iter().any(|l| !l.is_blank()) {
                 self.line_bias += 1;
-                entry.children = self.parse_nested(&dedented, "entry");
+                // `GridTableParser.setup` disconnects the table's block.
+                entry.children = self.parse_disconnected(|me| me.parse_nested(&dedented, "entry"));
                 self.line_bias -= 1;
             }
             entries[rn][cn] = Some(entry);
@@ -3606,7 +3692,10 @@ impl BlockParser {
                     .collect();
                 if dedented.iter().any(|l| !l.is_blank()) {
                     self.line_bias += 1;
-                    entry.children = self.parse_nested(&dedented, "entry");
+                    // `SimpleTableParser.setup` disconnects the table's
+                    // block.
+                    entry.children =
+                        self.parse_disconnected(|me| me.parse_nested(&dedented, "entry"));
                     self.line_bias -= 1;
                 }
                 r.children.push(entry);
@@ -3938,6 +4027,11 @@ impl BlockParser {
             lineno,
             rawsource,
         };
+        // The content, trimmed of its trailing blank lines as docutils'
+        // is, ends where an include that ends it inserts its lines
+        // ([`Self::content_end`]).
+        let content_end = input.content.last().map(|line| (line.source, line.lineno));
+        let outer_content_end = std::mem::replace(&mut self.content_end, content_end);
         match spec.kind {
             DirectiveKind::Admonition(kind) => self.run_admonition(kind, input, out),
             DirectiveKind::GenericAdmonition => self.run_generic_admonition(input, out),
@@ -3998,6 +4092,7 @@ impl BlockParser {
                 self.finish_directive(outcome);
             }
         }
+        self.content_end = outer_content_end;
     }
 
     /// Bank a directive's [`DirectiveOutcome`] for the enclosing
@@ -4006,7 +4101,7 @@ impl BlockParser {
     /// route their return value through here.
     fn finish_directive(&mut self, outcome: DirectiveOutcome) {
         if let DirectiveOutcome::Splice(request) = outcome {
-            self.pending_splice = Some(request);
+            self.pending_splice = Some((request, self.connected));
         }
     }
 
@@ -5267,7 +5362,10 @@ impl BlockParser {
             }
             item.children.extend(term_messages);
             let mut definition = Node::elem(kinds::DEFINITION, input.span);
-            definition.children = self.parse_nested_attached(&def_lines, "definition");
+            // `Glossary.run` copies each definition into a `StringList` of
+            // its own.
+            definition.children =
+                self.parse_disconnected(|me| me.parse_nested_attached(&def_lines, "definition"));
             item.children.push(definition);
             dl.children.push(item);
         }
@@ -8631,17 +8729,20 @@ impl BlockParser {
             });
             let saved_kind = self.nested_node_kind.replace("substitution_definition");
             let saved_attached = std::mem::replace(&mut self.attached, false);
-            self.run_directive_core(
-                &dname,
-                dfirst,
-                &dblock,
-                block_end,
-                &embedded_raw,
-                dlineno,
-                span,
-                vec![("alt".to_string(), OptVal::Str(subname_ws.clone()))],
-                &mut produced,
-            );
+            // `substitution_def` disconnects the definition's block.
+            self.parse_disconnected(|me| {
+                me.run_directive_core(
+                    &dname,
+                    dfirst,
+                    &dblock,
+                    block_end,
+                    &embedded_raw,
+                    dlineno,
+                    span,
+                    vec![("alt".to_string(), OptVal::Str(subname_ws.clone()))],
+                    &mut produced,
+                )
+            });
             self.nested_node_kind = saved_kind;
             self.attached = saved_attached;
             let ctx = self.substitution_ctx.take().unwrap_or_default();
@@ -14594,6 +14695,7 @@ mod tests {
                 vec!["alpha".to_string(), "beta".to_string()],
                 "inc.rst".to_string(),
             ),
+            false,
         );
 
         assert_eq!(
@@ -18984,7 +19086,7 @@ mod include_tests {
             ],
         };
         let mut stream = std::mem::take(&mut p.top);
-        p.apply_splice(&mut stream, 4, request);
+        p.apply_splice(&mut stream, 4, request, false);
         let items: Vec<(String, u32)> = stream
             .iter()
             .map(|l| (p.sources.path(l.source).to_string(), l.lineno))
@@ -19720,6 +19822,115 @@ mod include_tests {
         let pf = tree.root.pformat();
         assert!(messages_of(&tree).is_empty(), "{pf}");
         assert!(pf.contains("<literal_block source=\"inc.rst\""), "{pf}");
+    }
+
+    /// The parse leaves docutils' top-level `input_lines` behind
+    /// ([`crate::transforms::state::DocumentState::input_lines`]). A nested
+    /// state machine reads a slice of its parent's lines, and
+    /// `ViewList.insert` passes every insertion up to the parent
+    /// (`SP/docutils/statemachine.py:1228-1243`), so an include at any depth
+    /// puts its lines into the top-level input too, right after the last
+    /// line of the include's block. That block ends with the blank lines
+    /// that follow the directive, at the top level and in a list item, a
+    /// block quote or an included file alike. A directive's content has had
+    /// its trailing blank lines trimmed (`parse_directive_block`), so an
+    /// include that ends a note's content is followed by its lines at once.
+    /// A table cell, a glossary definition and a substitution definition are
+    /// parsed from blocks that pass nothing up, so their includes leave the
+    /// input as it is. Each row is the `input_lines` of a Sphinx 9.1.0 read
+    /// of `index.rst` beside `inc.rst` (and `inc2.rst`), as `path:line` per
+    /// offset, `<` and `>` standing for the padding lines' `internal padding
+    /// before ` and `internal padding after `.
+    #[test]
+    fn included_lines_join_the_top_level_input_where_docutils_inserts_them() {
+        const INCLUDED: &str =
+            "<inc.rst:0 inc.rst:1 inc.rst:2 inc.rst:3 inc.rst:4 inc.rst:5 >inc.rst:6";
+        let rows: [(&str, &str, String); 10] = [
+            (
+                ".. note::\n\n   .. include:: inc.rst\n\nText.\n\n.. rst-class:: x\n",
+                "A.\n\nB.\n",
+                format!(
+                    "index.rst:1 index.rst:2 index.rst:3 {INCLUDED} index.rst:4 index.rst:5 \
+                     index.rst:6 index.rst:7"
+                ),
+            ),
+            (
+                ".. include:: inc.rst\n\nText.\n\n.. rst-class:: x\n",
+                "A.\n\nB.\n",
+                format!("index.rst:1 index.rst:2 {INCLUDED} index.rst:3 index.rst:4 index.rst:5"),
+            ),
+            (
+                "- .. include:: inc.rst\n\n- B\n\nText.\n",
+                "A.\n\nB.\n",
+                format!("index.rst:1 index.rst:2 {INCLUDED} index.rst:3 index.rst:4 index.rst:5"),
+            ),
+            (
+                "Para.\n\n   .. include:: inc.rst\n\nText.\n",
+                "A.\n\nB.\n",
+                format!("index.rst:1 index.rst:2 index.rst:3 index.rst:4 {INCLUDED} index.rst:5"),
+            ),
+            (
+                ".. note::\n\n   .. include:: inc.rst\n\n   After.\n\nText.\n",
+                "A.\n\nB.\n",
+                format!(
+                    "index.rst:1 index.rst:2 index.rst:3 index.rst:4 {INCLUDED} index.rst:5 \
+                     index.rst:6 index.rst:7"
+                ),
+            ),
+            (
+                "   - .. note::\n\n        .. include:: inc.rst\n\n   Quote.\n\nText.\n",
+                "A.\n\nB.\n",
+                format!(
+                    "index.rst:1 index.rst:2 index.rst:3 {INCLUDED} index.rst:4 index.rst:5 \
+                     index.rst:6 index.rst:7"
+                ),
+            ),
+            (
+                ".. note::\n\n   .. include:: inc.rst\n\nText.\n",
+                "A.\n\n.. include:: inc2.rst\n\nB.\n",
+                "index.rst:1 index.rst:2 index.rst:3 <inc.rst:0 inc.rst:1 inc.rst:2 inc.rst:3 \
+                 inc.rst:4 <inc2.rst:0 inc2.rst:1 inc2.rst:2 inc2.rst:3 >inc2.rst:4 inc.rst:5 \
+                 inc.rst:6 inc.rst:7 >inc.rst:8 index.rst:4 index.rst:5"
+                    .to_string(),
+            ),
+            (
+                "+------------------------+\n| .. include:: inc.rst   |\n\
+                 +------------------------+\n\nText.\n",
+                "A.\n\nB.\n",
+                "index.rst:1 index.rst:2 index.rst:3 index.rst:4 index.rst:5".to_string(),
+            ),
+            (
+                ".. glossary::\n\n   term\n      .. include:: inc.rst\n\nText.\n",
+                "A.\n\nB.\n",
+                "index.rst:1 index.rst:2 index.rst:3 index.rst:4 index.rst:5 index.rst:6"
+                    .to_string(),
+            ),
+            (
+                ".. |x| include:: inc.rst\n\nText |x|.\n",
+                "A.\n\nB.\n",
+                "index.rst:1 index.rst:2 index.rst:3".to_string(),
+            ),
+        ];
+        for (index, inc, expected) in rows {
+            let tmp = tempfile::tempdir().unwrap();
+            write(tmp.path(), "inc.rst", inc);
+            write(tmp.path(), "inc2.rst", "C.\n");
+            let out = parse_sphinx_full(tmp.path(), "index", index);
+            let root = format!("{}/", tmp.path().display());
+            let input_lines: Vec<String> = out
+                .state
+                .input_lines
+                .iter()
+                .map(|&(source, line)| {
+                    let path = out.doctree.sources[usize::from(source)]
+                        .replace(&root, "")
+                        .replace("internal padding before ", "<")
+                        .replace("internal padding after ", ">");
+                    format!("{path}:{line}")
+                })
+                .collect();
+            assert_eq!(input_lines.join(" "), expected, "{index:?}");
+        }
     }
 }
 

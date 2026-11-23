@@ -494,11 +494,16 @@ pub struct DocumentState {
     /// message with neither a node nor a line is located at ([DS §6.2]).
     pub final_position: DocLoc,
     /// The top-level state machine's `input_lines` once the parse has
-    /// ended, included files spliced in with their padding lines: each
-    /// line's source-table entry and 1-based line, as
+    /// ended: each line's source-table entry and 1-based line, as
     /// `input_lines.info(offset)` gives them (`srcoffset + 1`; 0 for an
-    /// `internal padding before` line). What a message given a line after
-    /// the parse is located against ([`Self::source_and_line`]).
+    /// `internal padding before` line). An include at any depth has put
+    /// its lines and their padding lines in, where `ViewList.insert` passes
+    /// them up to: after the last line of the include's block, trailing
+    /// blank lines included unless they ended a directive's content. An
+    /// include in a table cell, a glossary definition or a substitution
+    /// definition has not, since docutils parses those from lists of their
+    /// own. What a message given a line after the parse is located against
+    /// ([`Self::source_and_line`]).
     pub input_lines: Vec<(u16, u32)>,
     /// The docutils locations of the nodes whose location the default rule
     /// ([DS §8.2]) does not give, by identity, as docutils' parse leaves

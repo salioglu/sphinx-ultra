@@ -1266,47 +1266,103 @@ mod tests {
 
     /// `line=pending.line` reads the pending node's line as docutils'
     /// reporter reads a given line once the parse is over: an offset into
-    /// the top-level input, included files spliced in
-    /// (`get_source_and_line(lineno)`). A pending node on line 5 of an
-    /// included file stands at offset 4, which is the included file's line
-    /// 2 when the inclusion is the document's third line: Sphinx 9.1.0
-    /// reports `inc.rst:2` for this project.
+    /// the top-level input (`get_source_and_line(lineno)`), which holds
+    /// each included file's lines where docutils' `ViewList.insert` put
+    /// them, whatever the include's depth
+    /// ([`crate::transforms::state::DocumentState::input_lines`]). Each row
+    /// is a Sphinx 9.1.0 build (`-w`) of `index.rst` beside `inc.rst`:
+    ///
+    /// - a pending node on line 5 of an included file stands at offset 4,
+    ///   which is the included file's line 2 when the inclusion is the
+    ///   document's third line;
+    /// - an include's lines go in after the blank lines that end its
+    ///   block, at the top level as in a list item: line 5 is `inc.rst`
+    ///   line 2 after a top-level include, and line 7 is `inc.rst` line 4
+    ///   after one in a list item;
+    /// - docutils trims a directive's content of its trailing blank lines,
+    ///   so the lines of an include that ends a note go in right after it:
+    ///   line 7 is `inc.rst` line 3;
+    /// - docutils parses a glossary definition and a substitution
+    ///   definition from lists of their own, which pass no insertion on,
+    ///   so the line stays the document's.
     #[test]
     fn a_class_attribute_error_reads_its_line_against_the_input() {
-        let tmp = tempfile::tempdir().expect("a temporary source directory");
-        std::fs::write(
-            tmp.path().join("inc.rst"),
-            "Para.\n\nMore.\n\n.. rst-class:: lonely\n",
-        )
-        .expect("inc.rst writes");
-        let parse = ParseOptions {
-            source_path: tmp.path().join("index.rst").display().to_string(),
-            srcdir: Some(tmp.path().to_path_buf()),
-            ..index_rst()
-        };
-        let read = read_standalone(
-            "Line one.\n\n.. include:: inc.rst\n",
-            &parse,
-            &harness_settings(true),
-        );
-        let records: Vec<String> = read
-            .diagnostics
-            .iter()
-            .map(|diagnostic| diagnostic.render(true))
-            .collect();
-        assert_eq!(records.len(), 1, "{records:#?}");
-        assert!(
-            records[0].ends_with(
-                "inc.rst:2: ERROR: No suitable element following \"rst-class\" directive\n\n\
-                 .. rst-class:: lonely [docutils]"
+        const INC: &str = "A.\n\nB.\n";
+        const TAIL: &str = "Text.\n\n.. rst-class:: x\n";
+        // (index.rst, inc.rst, the error's location and line, the class).
+        let rows: [(String, &str, &str, u32, &str); 6] = [
+            (
+                "Line one.\n\n.. include:: inc.rst\n".to_string(),
+                "Para.\n\nMore.\n\n.. rst-class:: lonely\n",
+                "inc.rst:2",
+                2,
+                "lonely",
             ),
-            "{records:#?}"
-        );
-        let pformat = read.outcome.doctree().root.pformat();
-        assert!(
-            pformat.contains("<system_message level=\"3\" line=\"2\" "),
-            "{pformat}"
-        );
+            (
+                format!(".. include:: inc.rst\n\n{TAIL}"),
+                INC,
+                "inc.rst:2",
+                2,
+                "x",
+            ),
+            (
+                format!("- .. include:: inc.rst\n\n- B\n\n{TAIL}"),
+                INC,
+                "inc.rst:4",
+                4,
+                "x",
+            ),
+            (
+                format!(".. note::\n\n   .. include:: inc.rst\n\n{TAIL}"),
+                INC,
+                "inc.rst:3",
+                3,
+                "x",
+            ),
+            (
+                format!(".. glossary::\n\n   term\n      .. include:: inc.rst\n\n{TAIL}"),
+                INC,
+                "/index.rst:8",
+                8,
+                "x",
+            ),
+            (
+                format!(".. |x| include:: inc.rst\n\n{TAIL}"),
+                INC,
+                "/index.rst:5",
+                5,
+                "x",
+            ),
+        ];
+        for (index, inc, location, line, class) in rows {
+            let tmp = tempfile::tempdir().expect("a temporary source directory");
+            std::fs::write(tmp.path().join("inc.rst"), inc).expect("inc.rst writes");
+            let parse = ParseOptions {
+                source_path: tmp.path().join("index.rst").display().to_string(),
+                srcdir: Some(tmp.path().to_path_buf()),
+                ..index_rst()
+            };
+            let read = read_standalone(&index, &parse, &harness_settings(true));
+            let records: Vec<String> = read
+                .diagnostics
+                .iter()
+                .map(|diagnostic| diagnostic.render(true))
+                .filter(|record| record.contains("rst-class"))
+                .collect();
+            let expected = format!(
+                "{location}: ERROR: No suitable element following \"rst-class\" directive\n\n\
+                 .. rst-class:: {class} [docutils]"
+            );
+            assert!(
+                records.len() == 1 && records[0].ends_with(&expected),
+                "{index:?}: {records:#?}"
+            );
+            let pformat = read.outcome.doctree().root.pformat();
+            assert!(
+                pformat.contains(&format!("<system_message level=\"3\" line=\"{line}\" ")),
+                "{index:?}: {pformat}"
+            );
+        }
     }
 
     /// `DocInfo` (340-008, `SP/docutils/transforms/frontmatter.py:266-…`)
