@@ -592,6 +592,17 @@ impl DocumentState {
         seq
     }
 
+    /// A Sphinx `logger.warning` the parse raises: it rides the parse's
+    /// `log_warnings` (never the tree), with the next record seq.
+    pub(crate) fn log_warning(&mut self, message: String, location: crate::rst::LogLocation) {
+        let seq = self.draw_seq();
+        self.parse.log_warnings.push(crate::rst::ParseLogWarning {
+            message,
+            location,
+            seq,
+        });
+    }
+
     /// docutils `Reporter.system_message(level, text, *children, line=…)`
     /// during the parse (`SP/docutils/utils/__init__.py:171-221`): builds
     /// the `system_message` node at `loc` — its `level`, `line` (when there

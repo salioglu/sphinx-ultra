@@ -422,6 +422,10 @@ fn config_of(project: &Project) -> BuildConfig {
     // in-process oracle harness.
     let mut config = BuildConfig {
         validate_directives: false,
+        // The generator's `conf.py` loads no extension
+        // (`tools/gen_env_fixture.py`), and the extension list steers the
+        // read: `:external:` is a role only with intersphinx loaded.
+        extensions: Vec::new(),
         ..BuildConfig::default()
     };
     let conf = project.conf.as_object().expect("conf is an object");
@@ -3328,6 +3332,8 @@ fn py_builtins_in_a_loaded_inventory_resolve_externally_before_the_silencer() {
             encoder.finish().unwrap();
             std::fs::write(source_dir.join("local.inv"), compressed).unwrap();
             config.nitpicky = true;
+            // Sphinx loads inventories only with the extension loaded.
+            config.extensions = vec!["sphinx.ext.intersphinx".to_string()];
             config.intersphinx_mapping.insert(
                 "other".to_string(),
                 (

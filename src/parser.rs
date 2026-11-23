@@ -44,6 +44,9 @@ pub struct Parser {
     /// The read configuration ([`ReadSettings`]), projected out of the build
     /// configuration once.
     read: ReadSettings,
+    /// The build configuration the Sphinx-mode parse reads
+    /// ([`crate::rst::ReadConfig`]), projected out of it once.
+    read_config: rst::ReadConfig,
 }
 
 /// Everything one source file's read produces: the pipeline's [`Document`]
@@ -65,6 +68,7 @@ impl Parser {
             srcdir: None,
             source_encoding: config.source_encoding.clone(),
             read: ReadSettings::from_config(config),
+            read_config: rst::ReadConfig::from(config),
         })
     }
 
@@ -154,6 +158,7 @@ impl Parser {
                 srcdir: self.srcdir.clone(),
                 source_encoding: self.source_encoding.clone(),
                 trace_ids: self.read.trace_ids,
+                read: self.read_config.clone(),
             },
             &self.read,
         );

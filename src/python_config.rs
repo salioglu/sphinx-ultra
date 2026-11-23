@@ -150,6 +150,13 @@ pub struct ConfPyConfig {
     /// `keep_warnings` (`config.py:261`), `None` when conf.py said nothing.
     pub keep_warnings: Option<bool>,
 
+    // The read-side keys (`config.py:257`, `:268`).
+    /// `primary_domain`: `None` when conf.py said nothing, `Some(None)` for
+    /// an explicit `primary_domain = None`.
+    pub primary_domain: Option<Option<String>>,
+    /// `highlight_language`, `None` when conf.py said nothing.
+    pub highlight_language: Option<String>,
+
     // Object-signature / py-domain family. `None` means "conf.py did not
     // mention it", which is what keeps sphinx's own default in place —
     // notably distinct from `Some(0)` for the two line-length keys, where
@@ -421,6 +428,12 @@ impl PythonConfigParser {
         config.suppress_warnings = extract_string_list("suppress_warnings");
         config.show_warning_types = extract_bool("show_warning_types");
         config.keep_warnings = extract_bool("keep_warnings");
+        config.primary_domain = match self.conf_namespace.get("primary_domain") {
+            Some(serde_json::Value::Null) => Some(None),
+            Some(value) => value.as_str().map(|name| Some(name.to_string())),
+            None => None,
+        };
+        config.highlight_language = extract_string("highlight_language");
 
         // Object-signature / py-domain family. The two line-length keys are
         // `int | None`, so they read through `as_i64` rather than
@@ -583,6 +596,8 @@ impl PythonConfigParser {
                 | "suppress_warnings"
                 | "show_warning_types"
                 | "keep_warnings"
+                | "primary_domain"
+                | "highlight_language"
                 | "intersphinx_mapping"
                 | "intersphinx_disabled_reftypes"
                 | "intersphinx_resolve_self"
@@ -1159,6 +1174,8 @@ impl Default for ConfPyConfig {
             suppress_warnings: Vec::new(),
             show_warning_types: None,
             keep_warnings: None,
+            primary_domain: None,
+            highlight_language: None,
             // `None` = "conf.py said nothing", which leaves
             // `BuildConfig::default()`'s sphinx defaults untouched.
             maximum_signature_line_length: None,
@@ -1192,10 +1209,11 @@ impl Default for ConfPyConfig {
 impl ConfPyConfig {
     /// Convert conf.py configuration to BuildConfig.
     ///
-    /// Fails only where Sphinx itself raises `ConfigError` at
-    /// `config-inited` — today that is `intersphinx_mapping` validation
-    /// (`ext/intersphinx/_load.py:131-136`), which aborts the build before
-    /// it reads a single document.
+    /// Nothing fails here today: the one `ConfigError` Sphinx raises at
+    /// `config-inited`, `intersphinx_mapping` validation
+    /// (`ext/intersphinx/_load.py:131-136`), runs once the `-D` overrides
+    /// are in ([`BuildConfig::init_intersphinx_mapping`]), and only with
+    /// the extension loaded.
     pub fn to_build_config(&self) -> Result<BuildConfig> {
         let mut config = BuildConfig::default();
 
@@ -1346,18 +1364,10 @@ impl ConfPyConfig {
         }
         config.modindex_common_prefix = self.modindex_common_prefix.clone();
 
-        // intersphinx + the shared HTTP configuration group.
-        let (mapping, errors) = crate::intersphinx::validate_mapping(&self.intersphinx_mapping);
-        for error in &errors {
-            // Sphinx logs each one with `LOGGER.error` before raising.
-            log::error!("{error}");
-        }
-        if !errors.is_empty() {
-            return Err(anyhow!(crate::intersphinx::mapping_config_error(
-                errors.len()
-            )));
-        }
-        config.intersphinx_mapping = mapping;
+        // The intersphinx family + the shared HTTP configuration group.
+        // `intersphinx_mapping` itself is the extension's to validate, at
+        // `config-inited` ([`BuildConfig::init_intersphinx_mapping`]), from
+        // the value `conf_values` keeps.
         if let Some(disabled) = &self.intersphinx_disabled_reftypes {
             config.intersphinx_disabled_reftypes = disabled.clone();
         }
@@ -1377,6 +1387,12 @@ impl ConfPyConfig {
         config.suppress_warnings = self.suppress_warnings.clone();
         if let Some(show_warning_types) = self.show_warning_types {
             config.show_warning_types = show_warning_types;
+        }
+        if let Some(primary_domain) = &self.primary_domain {
+            config.primary_domain = primary_domain.clone();
+        }
+        if let Some(highlight_language) = &self.highlight_language {
+            config.highlight_language = highlight_language.clone();
         }
         if let Some(keep_warnings) = self.keep_warnings {
             config.keep_warnings = keep_warnings;
@@ -1686,7 +1702,8 @@ e = 'esc\n'
     #[test]
     fn the_intersphinx_family_reaches_the_build_config() {
         let p = parse(
-            "intersphinx_mapping = {\n\
+            "extensions = ['sphinx.ext.intersphinx']\n\
+             intersphinx_mapping = {\n\
              'python': ('https://docs.python.org/3', None),\n\
              'other': ('https://example.org/', 'local.inv'),\n\
              }\n\
@@ -1698,10 +1715,13 @@ e = 'esc\n'
              tls_cacerts = '/etc/ca.pem'\n\
              user_agent = 'mine/1'\n",
         );
-        let config = p
+        let mut config = p
             .extract_configuration()
             .unwrap()
             .to_build_config()
+            .unwrap();
+        config
+            .init_intersphinx_mapping()
             .expect("a valid mapping must not fail configuration");
 
         assert_eq!(
@@ -1751,18 +1771,77 @@ e = 'esc\n'
         );
     }
 
+    /// `validate_intersphinx_mapping` is a `config-inited` handler of the
+    /// extension (`ext/intersphinx/_load.py:38-136`): a malformed entry
+    /// aborts the configuration only with `sphinx.ext.intersphinx` loaded,
+    /// after the per-entry errors Sphinx logs; without it the mapping is an
+    /// ordinary variable and nothing loads. Loading the `conf.py` never
+    /// fails on it, so the `-D` overrides apply first.
     #[test]
-    fn an_invalid_intersphinx_mapping_stops_the_configuration() {
-        let p = parse("intersphinx_mapping = {'p': 'https://x/'}\n");
-        let err = p
+    fn an_invalid_intersphinx_mapping_stops_the_configuration_with_the_extension() {
+        let p = parse(
+            "extensions = ['sphinx.ext.intersphinx']\nintersphinx_mapping = {'p': 'https://x/'}\n",
+        );
+        let mut config = p
             .extract_configuration()
             .unwrap()
             .to_build_config()
+            .expect("loading does not validate the mapping");
+        let err = config
+            .init_intersphinx_mapping()
             .expect_err("a malformed entry must abort");
         assert_eq!(
             err.to_string(),
             "Invalid `intersphinx_mapping` configuration (1 error)."
         );
+        assert_eq!(
+            err.errors,
+            ["Invalid value `'https://x/'` in intersphinx_mapping['p']. \
+              Expected a two-element tuple or list."]
+        );
+
+        let p = parse("intersphinx_mapping = {'p': 'https://x/'}\n");
+        let mut config = p
+            .extract_configuration()
+            .unwrap()
+            .to_build_config()
+            .unwrap();
+        config
+            .init_intersphinx_mapping()
+            .expect("without the extension the mapping is not validated");
+        assert!(config.intersphinx_mapping.is_empty());
+    }
+
+    /// `primary_domain` (`config.py:268`, `None` allowed) and
+    /// `highlight_language` (`config.py:257`) are standard keys read into
+    /// the build configuration: an explicit `None` unsets the primary
+    /// domain, and unset, each keeps Sphinx's default.
+    #[test]
+    fn read_side_keys_reach_the_build_config() {
+        let p = parse("primary_domain = None\nhighlight_language = 'python3'\n");
+        let config = p.extract_configuration().unwrap();
+        assert!(!config.custom_configs.contains_key("primary_domain"));
+        assert!(!config.custom_configs.contains_key("highlight_language"));
+        let config = config.to_build_config().unwrap();
+        assert_eq!(config.primary_domain, None);
+        assert_eq!(config.highlight_language, "python3");
+
+        let p = parse("primary_domain = 'js'\n");
+        let config = p
+            .extract_configuration()
+            .unwrap()
+            .to_build_config()
+            .unwrap();
+        assert_eq!(config.primary_domain.as_deref(), Some("js"));
+
+        let p = parse("project = 'x'\n");
+        let config = p
+            .extract_configuration()
+            .unwrap()
+            .to_build_config()
+            .unwrap();
+        assert_eq!(config.primary_domain.as_deref(), Some("py"));
+        assert_eq!(config.highlight_language, "default");
     }
 
     #[test]

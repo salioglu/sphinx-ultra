@@ -559,6 +559,28 @@ async fn run_build(args: RunArgs) -> Result<i32> {
         }
     }
 
+    // `config-inited`'s last handler, the one `sphinx.ext.intersphinx`
+    // registers: an `ERROR` record for each rejected `intersphinx_mapping`
+    // entry, then the `ConfigError` (`ext/intersphinx/_load.py:64-136`).
+    if let Err(error) = config.init_intersphinx_mapping() {
+        if !sphinx_mode {
+            for message in &error.errors {
+                log::error!("{message}");
+            }
+            return Err(error.into());
+        }
+        for message in &error.errors {
+            stream.record(&Diagnostic {
+                location: Location::None,
+                severity: Severity::Error,
+                message: message.clone(),
+                category: Category::None,
+            })?;
+        }
+        stream.raw(&config_error_report(&anyhow::Error::new(error)))?;
+        return Ok(2);
+    }
+
     // Save the fail_on_warning flag before moving config
     let should_fail_on_warning = config.fail_on_warning;
 

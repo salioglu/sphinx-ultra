@@ -57,6 +57,21 @@ pub enum BuildError {
 #[error("{0}")]
 pub struct ConfigError(pub String);
 
+/// A `ConfigError` a `config-inited` handler raises after logging an
+/// `ERROR` record (no location, no type) for each problem it found, as
+/// `validate_intersphinx_mapping` does for every rejected
+/// `intersphinx_mapping` entry (`ext/intersphinx/_load.py:64-125`).
+/// sphinx-build mode prints the records to the warning stream, then the
+/// `Configuration error!` report. `Display` prints Sphinx's message alone.
+#[derive(Error, Debug)]
+#[error("{message}")]
+pub struct ConfigInitError {
+    /// The `ERROR` records, in the order the handler logged them.
+    pub errors: Vec<String>,
+    /// The `ConfigError` message.
+    pub message: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct BuildWarning {
     pub file: PathBuf,

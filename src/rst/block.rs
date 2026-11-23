@@ -24,6 +24,7 @@ use unicode_normalization::UnicodeNormalization;
 use std::sync::Arc;
 
 use super::lines::{LineRec, Lines};
+use super::roles::{DispatchCtx, DomainId};
 
 const ADORNMENT_CHARS: &str = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
 const BULLET_CHARS: [char; 6] = ['*', '+', '-', '\u{2022}', '\u{2023}', '\u{2043}'];
@@ -259,6 +260,14 @@ pub(crate) struct BlockParser {
     /// [`super::ParseOptions::source_encoding`]: the sphinx-mode default
     /// for `include`'s and `literalinclude`'s `:encoding:`.
     pub(crate) source_encoding: String,
+    /// The configuration the Sphinx-mode parse reads (see
+    /// [`super::ParseOptions::read`]).
+    pub(crate) read: super::ReadConfig,
+    /// sphinx `env.current_document.default_domain`: the domain unprefixed
+    /// role and directive names are looked up in first —
+    /// `primary_domain` at the start of the document, then what
+    /// `.. default-domain::` sets.
+    pub(crate) default_domain: Option<DomainId>,
     /// `.. highlight::` state consumed by later code-blocks in the same
     /// document (sphinx env.temp_data\['highlight_language'\]).
     highlight_language: Option<String>,
@@ -401,6 +410,8 @@ impl BlockParser {
             py: crate::py::PySigConfig::default(),
             srcdir: None,
             source_encoding: super::DEFAULT_SOURCE_ENCODING.to_string(),
+            read: super::ReadConfig::default(),
+            default_domain: None,
             highlight_language: None,
             program: None,
             py_module: None,
@@ -549,7 +560,11 @@ impl BlockParser {
             span,
             lineno,
             &mut self.state,
-            self.sphinx,
+            DispatchCtx {
+                sphinx: self.sphinx,
+                default_domain: self.default_domain,
+                intersphinx: self.read.intersphinx,
+            },
             &self.docname,
             super::inline::RefContext {
                 program: self.program.as_deref(),
@@ -642,6 +657,8 @@ impl BlockParser {
         sub.exclude_patterns = self.exclude_patterns.clone();
         sub.py = self.py.clone();
         sub.srcdir = self.srcdir.clone();
+        sub.read = self.read.clone();
+        sub.default_domain = self.default_domain;
         sub.highlight_language = self.highlight_language.clone();
         sub.program = self.program.clone();
         // The py ref_context flows in like `program` (state changes made
@@ -3417,6 +3434,45 @@ impl BlockParser {
         );
     }
 
+    /// `sphinx_domains.directive` (`SP/sphinx/util/docutils.py:313-346`)
+    /// over docutils' lookup, for `lower`, the name lowercased: a
+    /// `domain:` prefix asks that domain, and an unknown one logs `unknown
+    /// directive name: X` with no location; a bare name asks the default
+    /// domain. The std domain then always gets the name (the part after
+    /// the colon), and last come Sphinx's other registrations and
+    /// docutils' own. A docutils parse has no domains.
+    fn lookup_directive(&mut self, lower: &str) -> Option<DirectiveSpec> {
+        if !self.sphinx {
+            return directive_spec_mode(lower, false);
+        }
+        let name = match lower.split_once(':') {
+            Some((domain_name, name)) => {
+                match DomainId::from_name(domain_name) {
+                    Some(domain) => {
+                        if let Some(spec) = domain_directive_spec(domain, name) {
+                            return Some(spec);
+                        }
+                    }
+                    None => self.log_warning(
+                        format!("unknown directive name: {lower}"),
+                        super::LogLocation::None,
+                    ),
+                }
+                name
+            }
+            None => {
+                if let Some(spec) = self
+                    .default_domain
+                    .and_then(|domain| domain_directive_spec(domain, lower))
+                {
+                    return Some(spec);
+                }
+                lower
+            }
+        };
+        domain_directive_spec(DomainId::Std, name).or_else(|| directive_spec_mode(lower, true))
+    }
+
     /// The name-lookup + parse_directive_block + run dispatch shared by
     /// body-level directives and substitution-embedded ones.
     #[allow(clippy::too_many_arguments)]
@@ -3433,12 +3489,16 @@ impl BlockParser {
     ) {
         self.capture_directive_record(name, &first_line, block, lineno);
         let lower = name.to_lowercase();
-        let Some(spec) = directive_spec_mode(&lower, self.sphinx) else {
-            // Unknown: INFO (language-resolution narrative) + ERROR.
+        let Some(spec) = self.lookup_directive(&lower) else {
+            // Unknown: INFO (language-resolution narrative) + ERROR. The
+            // INFO names the name docutils' lookup was given, which
+            // `sphinx_domains.directive` lowercased; the ERROR the name as
+            // written (`states.py:2415-2423`).
+            let looked_up = if self.sphinx { lower.as_str() } else { name };
             out.push(self.msg(
                 messages::INFO,
                 &format!(
-                    "No directive entry for \"{name}\" in module \"docutils.parsers.rst.languages.en\".\nTrying \"{name}\" as canonical directive name."
+                    "No directive entry for \"{looked_up}\" in module \"docutils.parsers.rst.languages.en\".\nTrying \"{looked_up}\" as canonical directive name."
                 ),
                 span.source,
                 lineno,
@@ -3601,6 +3661,7 @@ impl BlockParser {
             DirectiveKind::VersionChange(info) => self.run_version_change(info, input, out),
             DirectiveKind::SeeAlso => self.run_seealso(input, out),
             DirectiveKind::SphinxCodeBlock => self.run_sphinx_code_block(input, out),
+            DirectiveKind::SphinxCode => self.run_sphinx_code(input, out),
             DirectiveKind::Highlight => self.run_highlight(input, out),
             DirectiveKind::Only => self.run_only(input, out),
             DirectiveKind::SphinxMath => self.run_sphinx_math(input, out),
@@ -3621,12 +3682,13 @@ impl BlockParser {
             }
             DirectiveKind::LiteralInclude => self.run_literalinclude(input, out),
             DirectiveKind::ProgramDir => self.run_program(input),
-            // `DefaultDomain.run` sets `env.current_document.default_domain`
-            // and returns []. This crate implements no domain whose
-            // directives/roles the default would route to (the std domain is
-            // always consulted last anyway), so the state has nothing to
-            // steer — the node-level effect, an empty return, is all of it.
-            DirectiveKind::DefaultDomainDir => {}
+            // `DefaultDomain.run` (`SP/sphinx/directives/__init__.py:353-366`):
+            // `current_document.default_domain =
+            // env.domains.get(argument.lower())`, so a name no domain is
+            // registered under leaves the document without one. No nodes.
+            DirectiveKind::DefaultDomainDir => {
+                self.default_domain = DomainId::from_name(&input.arguments[0].to_lowercase());
+            }
             #[cfg(test)]
             DirectiveKind::TestSplice => {
                 let outcome = self.run_test_splice(input);
@@ -4135,13 +4197,7 @@ impl BlockParser {
             node.attrs.classes.extend(classes.iter().cloned());
         }
         node.set("xml:space", AttrValue::Str("preserve".to_string()));
-        self.directive_add_name(
-            &mut node,
-            &input.options,
-            input.span.source,
-            input.lineno,
-            out,
-        );
+        self.directive_add_name(&mut node, &input.options, input.span.source, input.lineno);
         match opt_get(&input.options, "number-lines") {
             Some(value) => {
                 // `firstline = options['number-lines'] or 1` — a bare flag
@@ -4355,7 +4411,7 @@ impl BlockParser {
                 } else {
                     caption_option.as_str()
                 };
-                match self.literalinclude_container(caption_text, lb, &input, out) {
+                match self.literalinclude_container(caption_text, lb, &input) {
                     Ok(container) => out.push(container),
                     Err(text) => out.push(self.msg(
                         messages::WARNING,
@@ -4366,13 +4422,7 @@ impl BlockParser {
                 }
             }
             None => {
-                self.directive_add_name(
-                    &mut lb,
-                    &input.options,
-                    input.span.source,
-                    input.lineno,
-                    out,
-                );
+                self.directive_add_name(&mut lb, &input.options, input.span.source, input.lineno);
                 out.push(lb);
             }
         }
@@ -4389,7 +4439,6 @@ impl BlockParser {
         caption: &str,
         literal_node: Node,
         input: &DirectiveInput<'_>,
-        out: &mut Vec<Node>,
     ) -> Result<Node, String> {
         let parsed = self.parse_detached(caption, 1, input.span.source, "caption");
         if let Some(node) = parsed.first() {
@@ -4435,7 +4484,6 @@ impl BlockParser {
             &input.options,
             input.span.source,
             input.lineno,
-            out,
         );
         if container.attrs.ids.is_empty() {
             self.state.set_id(&mut container);
@@ -4548,15 +4596,10 @@ impl BlockParser {
         );
     }
 
-    /// A Sphinx `logger.warning` the parse raises: it rides `log_warnings`
-    /// (never the tree), with the next record seq.
+    /// A Sphinx `logger.warning` the parse raises
+    /// ([`DocumentState::log_warning`]).
     fn log_warning(&mut self, message: String, location: super::LogLocation) {
-        let seq = self.state.draw_seq();
-        self.state.parse.log_warnings.push(super::ParseLogWarning {
-            message,
-            location,
-            seq,
-        });
+        self.state.log_warning(message, location);
     }
 
     /// `.. program::` (`domains/std/__init__.py:333-348`): pure
@@ -4601,6 +4644,11 @@ impl BlockParser {
         node.set("nowrap", AttrValue::Int(i64::from(nowrap)));
         node.set("xml:space", AttrValue::Str("preserve".to_string()));
         node.children.push(Node::text_node(latex, input.span));
+        // `self.add_name(node)` before `add_target`
+        // (`SP/sphinx/directives/patches.py:170-174`): a `:name:` names the
+        // block even when it is also the label, and its id comes before the
+        // equation's, which `PropagateTargets` appends (`docutils-0514`).
+        self.directive_add_name(&mut node, &input.options, input.span.source, input.lineno);
         match label {
             Some(label) => {
                 self.equation_serial += 1;
@@ -4973,13 +5021,21 @@ impl BlockParser {
         // `self.name` is the directive name as written for the bare
         // docutils registration, but `'{domain}:{name}'` for a domain
         // directive (`Domain.directive`'s adapter, `domains/__init__.py`),
-        // which is why `describe` reports `domain=""` and `option` reports
-        // `domain="std"` / `objtype="option"`. For the aliasing py
+        // `name` being the one the std lookup took — after any prefix, so
+        // `std:cmdoption` and `foo:envvar` report `cmdoption` and `envvar`
+        // — which is why `describe` reports `domain=""` and `option`
+        // reports `domain="std"` / `objtype="option"`. For the aliasing py
         // directives, `run()` rewrites `self.name` BEFORE the base run
         // partitions it, so the objtype is the ALIASED kind's (trap 13).
         let (domain, objtype) = match kind {
             DescDispatch::Std(ObjectDescKind::Describe) => ("", input.name.to_string()),
-            DescDispatch::Std(_) => ("std", input.name.to_lowercase()),
+            DescDispatch::Std(_) => {
+                let lower = input.name.to_lowercase();
+                let name = lower
+                    .split_once(':')
+                    .map_or(lower.as_str(), |(_, name)| name);
+                ("std", name.to_string())
+            }
             DescDispatch::Py(py) => ("py", py.kind.objtype().to_string()),
         };
         let span = input.span;
@@ -6053,13 +6109,7 @@ impl BlockParser {
         if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
             node.attrs.classes.extend(classes.iter().cloned());
         }
-        self.directive_add_name(
-            &mut node,
-            &input.options,
-            input.span.source,
-            input.lineno,
-            out,
-        );
+        self.directive_add_name(&mut node, &input.options, input.span.source, input.lineno);
         let content = self.parse_nested(&input.content, "seealso");
         node.children.extend(content);
         out.push(node);
@@ -6074,33 +6124,54 @@ impl BlockParser {
             .arguments
             .first()
             .cloned()
-            .or_else(|| self.highlight_language.clone())
-            .unwrap_or_else(|| "default".to_string());
-        // sphinx util.parselinenos + CodeBlock.run: an invalid spec
-        // REPLACES the whole block with a WARNING system_message;
-        // out-of-range lines are filtered (review findings 31/43/45/46).
+            .unwrap_or_else(|| self.document_highlight_language());
+        // `CodeBlock.run` (`SP/sphinx/directives/code.py:127-142`): an
+        // invalid spec REPLACES the whole block with the reporter WARNING
+        // of its `ValueError`; a spec reaching past the last line is a
+        // logger warning located by the `(source, line)` tuple, and keeps
+        // the lines in range — `0`, the index -1, among them — plus one
+        // (`hl_lines` stays even when that leaves it empty).
         let nlines = input.content.len() as i64;
-        let mut hl_lines: Vec<i64> = Vec::new();
+        let mut hl_lines: Option<Vec<i64>> = None;
         if let Some(OptVal::Str(spec)) = opt_get(&input.options, "emphasize-lines") {
-            match parse_linenos(spec, nlines) {
-                Ok(lines_list) => hl_lines = lines_list,
+            match parse_line_num_spec(spec, nlines) {
+                Ok(lines) => {
+                    if lines.any_out_of_range(nlines) {
+                        self.log_warning(
+                            format!(
+                                "line number spec is out of range(1-{nlines}): {}",
+                                py_repr(Some(spec))
+                            ),
+                            super::LogLocation::Tuple {
+                                source: input.span.source,
+                                line: input.lineno,
+                            },
+                        );
+                    }
+                    hl_lines = Some(
+                        lines
+                            .in_range_values(nlines)
+                            .iter()
+                            .map(|n| n + 1)
+                            .collect(),
+                    );
+                }
                 Err(msg) => {
                     out.push(self.msg(messages::WARNING, &msg, input.span.source, input.lineno));
                     return;
                 }
             }
         }
-        let highlight_args = if hl_lines.is_empty() {
-            "{}".to_string()
-        } else {
-            format!(
+        let highlight_args = match hl_lines {
+            None => "{}".to_string(),
+            Some(hl_lines) => format!(
                 "{{'hl_lines': [{}]}}",
                 hl_lines
                     .iter()
                     .map(|n| n.to_string())
                     .collect::<Vec<_>>()
                     .join(", ")
-            )
+            ),
         };
         let mut lb = Node::elem(kinds::LITERAL_BLOCK, input.span);
         lb.set(
@@ -6133,7 +6204,6 @@ impl BlockParser {
                     &input.options,
                     input.span.source,
                     input.lineno,
-                    out,
                 );
                 let inline = self.inline(&caption_text.clone(), input.span, input.lineno);
                 let mut caption = Node::elem("caption", input.span);
@@ -6144,16 +6214,73 @@ impl BlockParser {
                 out.extend(inline.messages);
             }
             _ => {
-                self.directive_add_name(
-                    &mut lb,
-                    &input.options,
-                    input.span.source,
-                    input.lineno,
-                    out,
-                );
+                self.directive_add_name(&mut lb, &input.options, input.span.source, input.lineno);
                 out.push(lb);
             }
         }
+    }
+
+    /// `current_document.highlight_language or config.highlight_language`:
+    /// the language a code directive with no argument takes.
+    fn document_highlight_language(&self) -> String {
+        self.highlight_language
+            .clone()
+            .unwrap_or_else(|| self.read.highlight_language.clone())
+    }
+
+    /// Sphinx's `code` (`SP/sphinx/directives/patches.py:85-134`), which a
+    /// Sphinx parse runs in place of docutils': a `literal_block` with
+    /// `force`, `highlight_args` and a `language` (the argument, else the
+    /// highlight language), `linenos` with `:number-lines:` and its
+    /// `linenostart` when that is a non-zero number — and no Pygments, so
+    /// no `code` class and no tokens.
+    fn run_sphinx_code(&mut self, input: DirectiveInput<'_>, out: &mut Vec<Node>) {
+        if input.content.is_empty() {
+            out.push(self.directive_content_error(
+                input.name,
+                input.span.source,
+                input.lineno,
+                input.rawsource,
+            ));
+            return;
+        }
+        let code = self.join_lines(&input.content);
+        let mut node = Node::elem(kinds::LITERAL_BLOCK, input.span);
+        // `nodes.literal_block(code, code, ...)`.
+        node.set_rawsource(&code);
+        if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
+            node.attrs.classes.extend(classes.iter().cloned());
+        }
+        node.set(
+            "force",
+            AttrValue::Int(i64::from(opt_get(&input.options, "force").is_some())),
+        );
+        node.set("xml:space", AttrValue::Str("preserve".to_string()));
+        node.children.push(Node::text_node(code, input.span));
+        self.directive_add_name(&mut node, &input.options, input.span.source, input.lineno);
+        let language = input
+            .arguments
+            .first()
+            .cloned()
+            .unwrap_or_else(|| self.document_highlight_language());
+        node.set("language", AttrValue::Str(language));
+        let mut highlight_args = "{}".to_string();
+        if let Some(number_lines) = opt_get(&input.options, "number-lines") {
+            node.set("linenos", AttrValue::Int(1));
+            // `if self.options['number-lines']:` — Python truth: no value
+            // (`None`) and `0` leave `linenostart` out.
+            let start = match number_lines {
+                OptVal::Int(0) | OptVal::Null => None,
+                OptVal::Int(n) => Some(n.to_string()),
+                OptVal::Str(digits) => Some(digits.clone()),
+                _ => None,
+            };
+            if let Some(start) = start {
+                highlight_args = format!("{{'linenostart': {start}}}");
+            }
+        }
+        node.set("highlight_args", AttrValue::Str(highlight_args));
+        out.push(node);
     }
 
     /// sphinx highlight: emits a highlightlang node AND sets the state
@@ -6450,13 +6577,7 @@ impl BlockParser {
         if let Some(OptVal::Str(a)) = opt_get(&input.options, "align") {
             table.set("align", AttrValue::Str(a.clone()));
         }
-        self.directive_add_name(
-            &mut table,
-            &input.options,
-            input.span.source,
-            input.lineno,
-            out,
-        );
+        self.directive_add_name(&mut table, &input.options, input.span.source, input.lineno);
         if let Some(t) = title {
             table.children.insert(0, t);
         }
@@ -7048,13 +7169,7 @@ impl BlockParser {
             }
         }
         node.children.append(&mut title_messages);
-        self.directive_add_name(
-            &mut node,
-            &input.options,
-            input.span.source,
-            input.lineno,
-            out,
-        );
+        self.directive_add_name(&mut node, &input.options, input.span.source, input.lineno);
         let content = self.parse_nested(&input.content, kind);
         node.children.extend(content);
         out.push(node);
@@ -7069,13 +7184,7 @@ impl BlockParser {
         if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
             node.attrs.classes.extend(classes.iter().cloned());
         }
-        self.directive_add_name(
-            &mut node,
-            &input.options,
-            input.span.source,
-            input.lineno,
-            out,
-        );
+        self.directive_add_name(&mut node, &input.options, input.span.source, input.lineno);
         out.push(node);
         out.extend(inline.messages);
     }
@@ -7121,13 +7230,7 @@ impl BlockParser {
         if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
             node.attrs.classes.extend(classes.iter().cloned());
         }
-        self.directive_add_name(
-            &mut node,
-            &input.options,
-            input.span.source,
-            input.lineno,
-            out,
-        );
+        self.directive_add_name(&mut node, &input.options, input.span.source, input.lineno);
         let content = self.parse_nested(&input.content, "compound");
         node.children.extend(content);
         out.push(node);
@@ -7164,13 +7267,7 @@ impl BlockParser {
         }
         let mut node = Node::elem("container", input.span);
         node.attrs.classes.extend(classes);
-        self.directive_add_name(
-            &mut node,
-            &input.options,
-            input.span.source,
-            input.lineno,
-            out,
-        );
+        self.directive_add_name(&mut node, &input.options, input.span.source, input.lineno);
         let content = self.parse_nested(&input.content, "container");
         node.children.extend(content);
         out.push(node);
@@ -7199,13 +7296,7 @@ impl BlockParser {
         if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
             node.attrs.classes.extend(classes.iter().cloned());
         }
-        self.directive_add_name(
-            &mut node,
-            &input.options,
-            input.span.source,
-            input.lineno,
-            out,
-        );
+        self.directive_add_name(&mut node, &input.options, input.span.source, input.lineno);
         out.push(node);
         out.extend(inline.messages);
     }
@@ -7286,10 +7377,9 @@ impl BlockParser {
         options: &[(String, OptVal)],
         source: u16,
         lineno: u32,
-        out: &mut Vec<Node>,
     ) {
         if let Some(OptVal::Str(n)) = opt_get(options, "name") {
-            self.note_explicit_name(node, n, source, lineno, out);
+            self.note_explicit_name(node, n, source, lineno);
         }
     }
 
@@ -7301,20 +7391,16 @@ impl BlockParser {
     /// model rejects it (`nodes.py:1974-1990`), and Sphinx never runs the
     /// `Messages` transform that would place it again, so such a message
     /// is logged and absent from the tree ([TW A10]).
-    fn note_explicit_name(
-        &mut self,
-        node: &mut Node,
-        name: &str,
-        source: u16,
-        lineno: u32,
-        out: &mut Vec<Node>,
-    ) {
+    fn note_explicit_name(&mut self, node: &mut Node, name: &str, source: u16, lineno: u32) {
         node.attrs.names.push(ids::fully_normalize_name(name));
         let reported = self
             .state
             .note_explicit_target(node, DocLoc::at(source, lineno));
         if keeps_duplicate_name_message(node) {
-            out.extend(reported);
+            // `msgnode += msg` (`nodes.py:1974-1990`): the node's own child,
+            // after what it holds when it is named — a title — and before
+            // the content the directive parses into it next.
+            node.children.extend(reported);
         }
     }
 
@@ -7337,13 +7423,7 @@ impl BlockParser {
         if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
             node.attrs.classes.extend(classes.iter().cloned());
         }
-        self.directive_add_name(
-            &mut node,
-            &input.options,
-            input.span.source,
-            input.lineno,
-            out,
-        );
+        self.directive_add_name(&mut node, &input.options, input.span.source, input.lineno);
         let content = self.parse_nested(&input.content, kind);
         node.children.extend(content);
         out.push(node);
@@ -7373,13 +7453,7 @@ impl BlockParser {
                     .push(format!("admonition-{}", ids::make_id(&title_text)));
             }
         }
-        self.directive_add_name(
-            &mut node,
-            &input.options,
-            input.span.source,
-            input.lineno,
-            out,
-        );
+        self.directive_add_name(&mut node, &input.options, input.span.source, input.lineno);
         let inline = self.inline(&title_text, input.span, input.lineno);
         let mut title = Node::elem(kinds::TITLE, input.span);
         title.children = inline.nodes;
@@ -7393,7 +7467,7 @@ impl BlockParser {
     }
 
     fn run_image(&mut self, input: DirectiveInput<'_>, out: &mut Vec<Node>) {
-        match self.build_image(&input, out) {
+        match self.build_image(&input) {
             Ok(mut node) => {
                 if node.kind == kinds::REFERENCE {
                     self.note_image_target_location(&mut node, input.span.source, self.attached);
@@ -7427,11 +7501,7 @@ impl BlockParser {
 
     /// images.py Image.run(): builds the image node (possibly wrapped in a
     /// reference); Err carries the system_message. Shared with figure.
-    fn build_image(
-        &mut self,
-        input: &DirectiveInput<'_>,
-        out: &mut Vec<Node>,
-    ) -> Result<Node, Box<Node>> {
+    fn build_image(&mut self, input: &DirectiveInput<'_>) -> Result<Node, Box<Node>> {
         // Two-stage :align: validation (images.py:53-63): the converter
         // accepted all six values; at body level only horizontal ones are
         // legal, inside a substitution definition only vertical ones. The
@@ -7503,13 +7573,7 @@ impl BlockParser {
             }
         }
         image.set("uri", AttrValue::Str(uri));
-        self.directive_add_name(
-            &mut image,
-            &input.options,
-            input.span.source,
-            input.lineno,
-            out,
-        );
+        self.directive_add_name(&mut image, &input.options, input.span.source, input.lineno);
         Ok(match reference {
             Some(mut r) => {
                 r.children.push(image);
@@ -7544,7 +7608,7 @@ impl BlockParser {
             lineno: input.lineno,
             rawsource: input.rawsource,
         };
-        let mut image_node = match self.build_image(&image_input, out) {
+        let mut image_node = match self.build_image(&image_input) {
             Ok(n) => n,
             Err(msg) => {
                 // Inner image error short-circuits: no <figure> at all.
@@ -7576,7 +7640,7 @@ impl BlockParser {
         if let Some(OptVal::Str(n)) = opt_get(&input.options, "figname") {
             if !n.is_empty() {
                 let n = n.clone();
-                self.note_explicit_name(&mut figure, &n, input.span.source, input.lineno, out);
+                self.note_explicit_name(&mut figure, &n, input.span.source, input.lineno);
             }
         }
         if let Some(OptVal::Str(a)) = opt_get(&input.options, "align") {
@@ -7627,13 +7691,7 @@ impl BlockParser {
         if name_on_figure {
             // After the nested parse, exactly where sphinx calls it — the
             // caption's own targets are registered first.
-            self.directive_add_name(
-                &mut figure,
-                &input.options,
-                input.span.source,
-                input.lineno,
-                out,
-            );
+            self.directive_add_name(&mut figure, &input.options, input.span.source, input.lineno);
         }
         out.push(figure);
     }
@@ -7732,13 +7790,7 @@ impl BlockParser {
                 node.children.push(Node::text_node(code, input.span));
             }
         }
-        self.directive_add_name(
-            &mut node,
-            &input.options,
-            input.span.source,
-            input.lineno,
-            out,
-        );
+        self.directive_add_name(&mut node, &input.options, input.span.source, input.lineno);
         out.push(node);
     }
 
@@ -7767,13 +7819,7 @@ impl BlockParser {
             }
             node.children.push(Node::text_node(block, input.span));
             if !named {
-                self.directive_add_name(
-                    &mut node,
-                    &input.options,
-                    input.span.source,
-                    input.lineno,
-                    out,
-                );
+                self.directive_add_name(&mut node, &input.options, input.span.source, input.lineno);
                 named = true;
             }
             out.push(node);
@@ -7919,13 +7965,7 @@ impl BlockParser {
         if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
             block.attrs.classes.extend(classes.iter().cloned());
         }
-        self.directive_add_name(
-            &mut block,
-            &input.options,
-            input.span.source,
-            input.lineno,
-            out,
-        );
+        self.directive_add_name(&mut block, &input.options, input.span.source, input.lineno);
         out.push(block);
         out.append(&mut lb_messages);
     }
@@ -8810,6 +8850,9 @@ enum DirectiveKind {
     SeeAlso,
     /// sphinx code-block/sourcecode (sphinx/directives/code.py).
     SphinxCodeBlock,
+    /// Sphinx's `code` (`SP/sphinx/directives/patches.py:85-134`), which
+    /// replaces docutils' in a Sphinx parse.
+    SphinxCode,
     Highlight,
     Only,
     SphinxMath,
@@ -9009,6 +9052,15 @@ const CODE_BLOCK_OPTS: &[(&str, Conv)] = &[
     ("name", Conv::Unchanged),
 ];
 
+/// Sphinx's `code` option spec (`SP/sphinx/directives/patches.py:92-97`):
+/// `number-lines` is Sphinx's `optional_int`.
+const SPHINX_CODE_OPTS: &[(&str, Conv)] = &[
+    ("class", Conv::ClassOption),
+    ("force", Conv::Flag),
+    ("name", Conv::Unchanged),
+    ("number-lines", Conv::OptionalInt),
+];
+
 const HIGHLIGHT_OPTS: &[(&str, Conv)] =
     &[("linenothreshold", Conv::PyIntAny), ("force", Conv::Flag)];
 
@@ -9038,52 +9090,6 @@ const LITERALINCLUDE_OPTS: &[(&str, Conv)] = &[
     ("name", Conv::Unchanged),
     ("diff", Conv::UnchangedRequired),
 ];
-
-/// sphinx.util.parselinenos: 1-based spec ('1,3-5', open ends '-4'/'4-')
-/// against `nlines` total lines; invalid or reversed specs raise. Range
-/// materialization is clamped to nlines so a huge upper bound cannot
-/// blow memory (values past nlines are filtered anyway).
-fn parse_linenos(spec: &str, nlines: i64) -> Result<Vec<i64>, String> {
-    let invalid = || format!("invalid line number spec: {}", py_repr(Some(spec)));
-    let mut out = Vec::new();
-    for part in spec.split(',') {
-        // `begend = part.strip().split('-')` — Python's set, BEFORE `int()`
-        // gets to reject a `\x1f` (round F pins: `\x1f1`, `1\x1f,2`). The
-        // inner `a`/`b` trims below stand in for `int()`'s own White_Space
-        // strip, which is exactly Rust's set.
-        let part = part.trim_matches(crate::utils::py_isspace);
-        if let Some((a, b)) = part.split_once('-') {
-            let (a, b) = (a.trim(), b.trim());
-            let start = if a.is_empty() {
-                1
-            } else {
-                py_int(a).ok_or_else(invalid)?
-            };
-            let end = if b.is_empty() {
-                nlines
-            } else {
-                py_int(b).ok_or_else(invalid)?
-            };
-            if start > end {
-                return Err(invalid());
-            }
-            let clamped_end = end.min(nlines);
-            let mut n = start.max(1);
-            while n <= clamped_end {
-                out.push(n);
-                n += 1;
-            }
-        } else if !part.is_empty() {
-            let n = py_int(part).ok_or_else(invalid)?;
-            if n >= 1 && n <= nlines {
-                out.push(n);
-            }
-        } else {
-            return Err(invalid());
-        }
-    }
-    Ok(out)
-}
 
 fn sphinx_directive_spec(lower: &str) -> Option<DirectiveSpec> {
     let version_change = |info: &'static (&'static str, &'static str, &'static str)| {
@@ -9124,6 +9130,14 @@ fn sphinx_directive_spec(lower: &str) -> Option<DirectiveSpec> {
             has_content: true,
             option_spec: CODE_BLOCK_OPTS,
             kind: DirectiveKind::SphinxCodeBlock,
+        }),
+        "code" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 1,
+            final_argument_whitespace: false,
+            has_content: true,
+            option_spec: SPHINX_CODE_OPTS,
+            kind: DirectiveKind::SphinxCode,
         }),
         "highlight" => Some(DirectiveSpec {
             required_arguments: 1,
@@ -9173,65 +9187,7 @@ fn sphinx_directive_spec(lower: &str) -> Option<DirectiveSpec> {
             option_spec: HLIST_OPTS,
             kind: DirectiveKind::HList,
         }),
-        "glossary" => Some(DirectiveSpec {
-            required_arguments: 0,
-            optional_arguments: 0,
-            final_argument_whitespace: false,
-            has_content: true,
-            option_spec: GLOSSARY_OPTS,
-            kind: DirectiveKind::Glossary,
-        }),
         "describe" | "object" => Some(object_desc_spec(ObjectDescKind::Describe)),
-        "envvar" => Some(object_desc_spec(ObjectDescKind::EnvVar)),
-        "confval" => Some(object_desc_spec(ObjectDescKind::Confval)),
-        "option" | "cmdoption" => Some(object_desc_spec(ObjectDescKind::Cmdoption)),
-        // `PythonDomain.directives` (`domains/python/__init__.py:739-754`)
-        // with the run()-time name aliasing resolved at spec-lookup time
-        // [PY §1.1].
-        "py:function" => Some(py_object_desc_spec(PyObjectKind::Function, None, false)),
-        "py:data" => Some(py_object_desc_spec(PyObjectKind::Data, None, false)),
-        "py:class" => Some(py_object_desc_spec(PyObjectKind::Class, None, false)),
-        "py:exception" => Some(py_object_desc_spec(PyObjectKind::Exception, None, false)),
-        "py:method" => Some(py_object_desc_spec(PyObjectKind::Method, None, false)),
-        "py:classmethod" => Some(py_object_desc_spec(
-            PyObjectKind::Method,
-            Some("classmethod"),
-            false,
-        )),
-        "py:staticmethod" => Some(py_object_desc_spec(
-            PyObjectKind::Method,
-            Some("staticmethod"),
-            false,
-        )),
-        "py:attribute" => Some(py_object_desc_spec(PyObjectKind::Attribute, None, false)),
-        "py:property" => Some(py_object_desc_spec(PyObjectKind::Property, None, false)),
-        "py:type" => Some(py_object_desc_spec(PyObjectKind::TypeAlias, None, false)),
-        "py:decorator" => Some(py_object_desc_spec(PyObjectKind::Function, None, true)),
-        "py:decoratormethod" => Some(py_object_desc_spec(PyObjectKind::Method, None, true)),
-        "py:module" => Some(DirectiveSpec {
-            required_arguments: 1,
-            optional_arguments: 0,
-            final_argument_whitespace: false,
-            has_content: true,
-            option_spec: PY_MODULE_OPTS,
-            kind: DirectiveKind::PyModule,
-        }),
-        "py:currentmodule" => Some(DirectiveSpec {
-            required_arguments: 1,
-            optional_arguments: 0,
-            final_argument_whitespace: false,
-            has_content: false,
-            option_spec: &[],
-            kind: DirectiveKind::PyCurrentModule,
-        }),
-        "program" => Some(DirectiveSpec {
-            required_arguments: 1,
-            optional_arguments: 0,
-            final_argument_whitespace: true,
-            has_content: false,
-            option_spec: &[],
-            kind: DirectiveKind::ProgramDir,
-        }),
         "default-domain" => Some(DirectiveSpec {
             required_arguments: 1,
             optional_arguments: 0,
@@ -9239,6 +9195,87 @@ fn sphinx_directive_spec(lower: &str) -> Option<DirectiveSpec> {
             has_content: false,
             option_spec: &[],
             kind: DirectiveKind::DefaultDomainDir,
+        }),
+        _ => None,
+    }
+}
+
+/// `Domain.directive(name)` for the domains whose directives this crate
+/// implements: `PythonDomain.directives` (`domains/python/__init__.py:739-754`),
+/// with the run()-time name aliasing resolved at spec-lookup time
+/// [PY §1.1], and `StandardDomain.directives`
+/// (`domains/std/__init__.py:739-747`) but `productionlist` (T18c). The c,
+/// cpp, js and rst domains' directives are not modelled (decision 16).
+fn domain_directive_spec(domain: DomainId, name: &str) -> Option<DirectiveSpec> {
+    match (domain, name) {
+        (DomainId::Py, "function") => {
+            Some(py_object_desc_spec(PyObjectKind::Function, None, false))
+        }
+        (DomainId::Py, "data") => Some(py_object_desc_spec(PyObjectKind::Data, None, false)),
+        (DomainId::Py, "class") => Some(py_object_desc_spec(PyObjectKind::Class, None, false)),
+        (DomainId::Py, "exception") => {
+            Some(py_object_desc_spec(PyObjectKind::Exception, None, false))
+        }
+        (DomainId::Py, "method") => Some(py_object_desc_spec(PyObjectKind::Method, None, false)),
+        (DomainId::Py, "classmethod") => Some(py_object_desc_spec(
+            PyObjectKind::Method,
+            Some("classmethod"),
+            false,
+        )),
+        (DomainId::Py, "staticmethod") => Some(py_object_desc_spec(
+            PyObjectKind::Method,
+            Some("staticmethod"),
+            false,
+        )),
+        (DomainId::Py, "attribute") => {
+            Some(py_object_desc_spec(PyObjectKind::Attribute, None, false))
+        }
+        (DomainId::Py, "property") => {
+            Some(py_object_desc_spec(PyObjectKind::Property, None, false))
+        }
+        (DomainId::Py, "type") => Some(py_object_desc_spec(PyObjectKind::TypeAlias, None, false)),
+        (DomainId::Py, "decorator") => {
+            Some(py_object_desc_spec(PyObjectKind::Function, None, true))
+        }
+        (DomainId::Py, "decoratormethod") => {
+            Some(py_object_desc_spec(PyObjectKind::Method, None, true))
+        }
+        (DomainId::Py, "module") => Some(DirectiveSpec {
+            required_arguments: 1,
+            optional_arguments: 0,
+            final_argument_whitespace: false,
+            has_content: true,
+            option_spec: PY_MODULE_OPTS,
+            kind: DirectiveKind::PyModule,
+        }),
+        (DomainId::Py, "currentmodule") => Some(DirectiveSpec {
+            required_arguments: 1,
+            optional_arguments: 0,
+            final_argument_whitespace: false,
+            has_content: false,
+            option_spec: &[],
+            kind: DirectiveKind::PyCurrentModule,
+        }),
+        (DomainId::Std, "program") => Some(DirectiveSpec {
+            required_arguments: 1,
+            optional_arguments: 0,
+            final_argument_whitespace: true,
+            has_content: false,
+            option_spec: &[],
+            kind: DirectiveKind::ProgramDir,
+        }),
+        (DomainId::Std, "option" | "cmdoption") => {
+            Some(object_desc_spec(ObjectDescKind::Cmdoption))
+        }
+        (DomainId::Std, "confval") => Some(object_desc_spec(ObjectDescKind::Confval)),
+        (DomainId::Std, "envvar") => Some(object_desc_spec(ObjectDescKind::EnvVar)),
+        (DomainId::Std, "glossary") => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 0,
+            final_argument_whitespace: false,
+            has_content: true,
+            option_spec: GLOSSARY_OPTS,
+            kind: DirectiveKind::Glossary,
         }),
         _ => None,
     }
@@ -10622,7 +10659,7 @@ pub(crate) fn index_entry_tuple(
 /// The legacy `module:`/`keyword:`/... prefixes raise `ValueError` in
 /// sphinx; here they fall through to the shorthand branch (hardening note —
 /// the oracle corpus avoids them).
-fn process_index_entry(entry: &str, target_id: &str) -> Vec<String> {
+pub(crate) fn process_index_entry(entry: &str, target_id: &str) -> Vec<String> {
     use crate::utils::py_isspace;
     const TYPES: &[&str] = &["single", "pair", "double", "triple", "see", "seealso"];
     // Every strip here is Python's — `entry.strip()`, `entry[1:].lstrip()`,

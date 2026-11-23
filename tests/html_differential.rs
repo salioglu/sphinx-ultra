@@ -2096,13 +2096,13 @@ fn html_oracle_aux_census() {
         let sources = CaseSources::read(&case, &profile_root);
         for (component, diagnostics) in by_component {
             let census = match component {
-                AuxComponent::Warnings => warning_census(&case, &sources, &diagnostics),
+                AuxComponent::Warnings => warning_census(&case, &diagnostics),
                 AuxComponent::ExitClass => {
                     GapCensus::unattributed(diagnostics.iter().map(|diagnostic| {
                         format!("{}: {}", diagnostic.category, diagnostic.detail)
                     }))
                 }
-                AuxComponent::ObjectsInv => inventory_census(&sources, &diagnostics),
+                AuxComponent::ObjectsInv => inventory_census(&diagnostics),
                 AuxComponent::SearchIndex => searchindex_census(&case, &sources, &diagnostics),
             };
             *counts.entry(component).or_default() += 1;
@@ -2232,10 +2232,11 @@ fn family_sort_key(family: &str) -> (bool, u32, &str) {
     }
 }
 
-/// `[docutils]` records that only a transform, Sphinx's role and directive
-/// dispatch or the HTML writer creates, by message, with that family. Every
-/// other `[docutils]` record is one Ultra's parser already holds in the tree,
-/// which the reporter channel (F1) prints [TW §6.3, §7.4]; these need F1 too.
+/// `[docutils]` records that only a transform or the HTML writer creates, by
+/// message, with that family. Every other `[docutils]` record is one Ultra's
+/// parser already holds in the tree — since T7's role and directive
+/// dispatch (F5), the unknown-role and `code`-option ones too — which the
+/// reporter channel (F1) prints [TW §6.3, §7.4]; these need F1 too.
 const REPORTER_MESSAGE_FIXES: &[(&str, GapFix)] = &[
     ("Unknown target name: ", gap_fix("F4", "5a-T10")),
     ("Anonymous hyperlink mismatch: ", gap_fix("F4", "5a-T10")),
@@ -2249,8 +2250,6 @@ const REPORTER_MESSAGE_FIXES: &[(&str, GapFix)] = &[
     (" may not begin with a transition.", gap_fix("F7", "5a-T9c")),
     (" may not end with a transition.", gap_fix("F7", "5a-T9c")),
     ("Cannot scale image!", gap_fix("F8", "5b")),
-    ("Unknown interpreted text role ", gap_fix("F5", "5a-T7")),
-    ("Error in \"code\" directive:", gap_fix("F5", "5a-T7")),
 ];
 
 /// Logger records Ultra does not print, by message [TW §6.3, §7.3].
@@ -2264,8 +2263,6 @@ const MISSING_LOGGER_FIXES: &[(&str, GapFix)] = &[
     ),
     ("citation not found: ", gap_fix("F6", "5a-T13b")),
     ("Could not obtain image size. ", gap_fix("F8", "5b")),
-    ("unknown role name: ", gap_fix("F5", "5a-T7")),
-    ("line number spec is out of range", gap_fix("F11", "5a-T7")),
     ("equation not found: ", gap_fix("F10", "5a-T13b")),
 ];
 
@@ -2295,11 +2292,7 @@ const M1_VALIDATION_MESSAGES: &[&str] = &[
 /// one side prints is matched against the message families of [TW §6.3,
 /// §7.3]. An expected record whose only difference is a relative location
 /// (`part.rst:6` for `<SRCDIR>/part.rst:6`) is F8b.
-fn warning_census(
-    case: &CaseRecord,
-    sources: &CaseSources,
-    diagnostics: &[Diagnostic],
-) -> GapCensus {
+fn warning_census(case: &CaseRecord, diagnostics: &[Diagnostic]) -> GapCensus {
     use regex::Regex;
     use std::sync::LazyLock;
     static M1: LazyLock<Regex> = LazyLock::new(|| {
@@ -2322,7 +2315,6 @@ fn warning_census(
             None => true,
         }
     });
-    let intersphinx_without_extension = sources.intersphinx_without_extension();
     for record in &expected_only {
         let message = warning_record_message(record).unwrap_or(record);
         let fixes = if record.ends_with(" [docutils]") {
@@ -2339,10 +2331,6 @@ fn warning_census(
             .find(|(pattern, _)| record.contains(pattern))
         {
             vec![*fix]
-        } else if intersphinx_without_extension && record.contains(" [ref.") {
-            // Ultra resolves the reference through the inventory that
-            // Sphinx never loads without the extension.
-            vec![gap_fix("F12", "5a-T7")]
         } else {
             census.unexplained.push(format!("expected only: {message}"));
             continue;
@@ -2353,8 +2341,6 @@ fn warning_census(
         let message = warning_record_message(record).unwrap_or(record);
         if M1.is_match(message) {
             census.fixes.insert(gap_fix("F2", "5a-T3"));
-        } else if intersphinx_without_extension && message.starts_with("external ") {
-            census.fixes.insert(gap_fix("F12", "5a-T7"));
         } else {
             census.unexplained.push(format!("actual only: {record}"));
         }
@@ -2486,47 +2472,16 @@ impl CaseSources {
         }
         sources
     }
-
-    /// Whether `conf.py` configures intersphinx without loading the
-    /// extension, which Sphinx then never runs (F12).
-    fn intersphinx_without_extension(&self) -> bool {
-        self.conf.contains("intersphinx_mapping") && !self.conf.contains("sphinx.ext.intersphinx")
-    }
-
-    /// Whether the documents use an object directive without a domain
-    /// prefix, which Sphinx resolves through the default domain, `py` (T7).
-    fn use_unprefixed_py_directive(&self) -> bool {
-        use regex::Regex;
-        use std::sync::LazyLock;
-        static DIRECTIVE: LazyLock<Regex> = LazyLock::new(|| {
-            Regex::new(r"(?m)^\s*\.\. (class|function|module)::").expect("valid pattern")
-        });
-        DIRECTIVE.is_match(&self.documents)
-    }
 }
 
 /// The causes of an `objects.inv` mismatch [BASE §2.8], told by each record
 /// only one side holds or holds differently.
-fn inventory_census(sources: &CaseSources, diagnostics: &[Diagnostic]) -> GapCensus {
+fn inventory_census(diagnostics: &[Diagnostic]) -> GapCensus {
     let mut census = GapCensus::default();
     for diagnostic in diagnostics {
         let expected = InventoryFields::parse(&diagnostic.expected);
         let actual = InventoryFields::parse(&diagnostic.actual);
         let fix = match (diagnostic.category.as_str(), &expected, &actual) {
-            // Sphinx gives an unprefixed `.. class::` its `py` object.
-            ("inventory-missing-record", Some(record), None)
-                if record.role.starts_with("py:") && sources.use_unprefixed_py_directive() =>
-            {
-                Some(gap_fix("INV:default-domain", "5a-T7"))
-            }
-            // `.. math::` registers its `:name:` as a label.
-            ("inventory-missing-record", Some(record), None)
-                if record.role == "std:label"
-                    && sources.documents.contains(".. math::")
-                    && sources.documents.contains(":name:") =>
-            {
-                Some(gap_fix("INV:math-name", "5a-T7"))
-            }
             // A title's dangling reference stays as its problematic text, the
             // reference's raw source (`[1]_`).
             ("inventory-changed-record", Some(expected), Some(actual))
@@ -2580,8 +2535,8 @@ impl InventoryFields {
 }
 
 /// The causes of a `searchindex.js` mismatch [TW A18, BASE §2.9], told by
-/// the terms, index entries and titles that differ, the case's expected
-/// warnings and the constructs its sources use.
+/// the terms and titles that differ, the case's expected warnings and the
+/// constructs its sources use.
 fn searchindex_census(
     case: &CaseRecord,
     sources: &CaseSources,
@@ -2589,11 +2544,9 @@ fn searchindex_census(
 ) -> GapCensus {
     let mut expected_only_terms = BTreeSet::new();
     let mut actual_only_terms = BTreeSet::new();
-    let mut index_entries_differ = false;
     let mut retargeted_titles = false;
     for diagnostic in diagnostics {
         let key = diagnostic.detail.split('"').nth(1).unwrap_or_default();
-        index_entries_differ |= key == "indexentries";
         let (expected, actual) = match (
             serde_json::from_str::<serde_json::Value>(&diagnostic.expected),
             serde_json::from_str::<serde_json::Value>(&diagnostic.actual),
@@ -2626,16 +2579,6 @@ fn searchindex_census(
     let warnings = case.warnings.as_str();
     let reference_text_terms = expected_only_terms.iter().any(|term| term.ends_with('_'));
     let causes = [
-        // An index entry or glossary term holding a control character or a
-        // no-break space: Ultra writes `ax1fb` for Sphinx's `a\u001fb`.
-        (
-            index_entries_differ
-                && sources
-                    .documents
-                    .chars()
-                    .any(|c| (c.is_control() && !matches!(c, '\t' | '\n' | '\r')) || c == '\u{a0}'),
-            gap_fix("SI:entry-control-chars", "5a-T7"),
-        ),
         // `keep_warnings = True` keeps the system messages, whose words Sphinx
         // indexes.
         (
@@ -2667,11 +2610,6 @@ fn searchindex_census(
             reference_text_terms && warnings.contains(" footnote references: only "),
             gap_fix("SI:footnote-refs", "5a-T11"),
         ),
-        // An unknown role's problematic text (`:bogus:`x``) is indexed.
-        (
-            warnings.contains("Unknown interpreted text role "),
-            gap_fix("SI:unknown-role", "5a-T7"),
-        ),
         // Ultra indexes a substitution reference's name, Sphinx its
         // replacement.
         (
@@ -2679,26 +2617,6 @@ fn searchindex_census(
                 .iter()
                 .any(|term| sources.documents.contains(&format!("|{term}|"))),
             gap_fix("SI:substitutions", "5a-T11"),
-        ),
-        // Sphinx-mode dispatch: an unprefixed `.. class::` is a `py:class`,
-        // `:index:` and `.. code::` are Sphinx's, and the long PEP and RFC
-        // role names are docutils' plain references.
-        (
-            sources.use_unprefixed_py_directive(),
-            gap_fix("SI:default-domain", "5a-T7"),
-        ),
-        (
-            sources.documents.contains(":index:`"),
-            gap_fix("SI:index-role", "5a-T7"),
-        ),
-        (
-            sources.documents.contains(".. code::"),
-            gap_fix("SI:code-directive", "5a-T7"),
-        ),
-        (
-            sources.documents.contains(":pep-reference:`")
-                || sources.documents.contains(":rfc-reference:`"),
-            gap_fix("SI:pep-rfc-roles", "5a-T7"),
         ),
     ];
     let mut census = GapCensus::default();
@@ -2973,20 +2891,12 @@ const KNOWN_AUX_GAPS: &[(&str, AuxComponent, &str)] = &[
     ("core/docutils_snippets/docutils-0255", AuxComponent::Warnings, "F1+F4: 5a-T10"),
     ("core/docutils_snippets/docutils-0255", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
     ("core/docutils_snippets/docutils-0263", AuxComponent::Warnings, "F1: 5a-T8"),
-    ("core/docutils_snippets/docutils-0264", AuxComponent::Warnings, "F1+F5: 5a-T8"),
-    ("core/docutils_snippets/docutils-0264", AuxComponent::SearchIndex, "SI:unknown-role: 5a-T7"),
-    ("core/docutils_snippets/docutils-0265", AuxComponent::Warnings, "F1+F5: 5a-T8"),
-    ("core/docutils_snippets/docutils-0265", AuxComponent::SearchIndex, "SI:unknown-role: 5a-T7"),
-    ("core/docutils_snippets/docutils-0266", AuxComponent::Warnings, "F1+F5: 5a-T8"),
-    ("core/docutils_snippets/docutils-0266", AuxComponent::SearchIndex, "SI:unknown-role: 5a-T7"),
-    ("core/docutils_snippets/docutils-0267", AuxComponent::Warnings, "F1+F5: 5a-T8"),
-    ("core/docutils_snippets/docutils-0267", AuxComponent::SearchIndex, "SI:unknown-role: 5a-T7"),
-    ("core/docutils_snippets/docutils-0268", AuxComponent::SearchIndex, "SI:pep-rfc-roles: 5a-T7"),
-    ("core/docutils_snippets/docutils-0270", AuxComponent::SearchIndex, "SI:pep-rfc-roles: 5a-T7"),
+    ("core/docutils_snippets/docutils-0264", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0265", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0266", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0267", AuxComponent::Warnings, "F1: 5a-T8"),
     ("core/docutils_snippets/docutils-0275", AuxComponent::Warnings, "F1: 5a-T8"),
-    ("core/docutils_snippets/docutils-0276", AuxComponent::SearchIndex, "SI:index-role: 5a-T7"),
-    ("core/docutils_snippets/docutils-0278", AuxComponent::Warnings, "F1+F5: 5a-T8"),
-    ("core/docutils_snippets/docutils-0278", AuxComponent::SearchIndex, "SI:unknown-role: 5a-T7"),
+    ("core/docutils_snippets/docutils-0278", AuxComponent::Warnings, "F1: 5a-T8"),
     ("core/docutils_snippets/docutils-0280", AuxComponent::Warnings, "F6: 5a-T11"),
     ("core/docutils_snippets/docutils-0281", AuxComponent::Warnings, "F6: 5a-T11"),
     ("core/docutils_snippets/docutils-0282", AuxComponent::Warnings, "F6: 5a-T11"),
@@ -3097,22 +3007,14 @@ const KNOWN_AUX_GAPS: &[(&str, AuxComponent, &str)] = &[
     ("core/docutils_snippets/docutils-0501", AuxComponent::Warnings, "F3: 5a-T13a"),
     ("core/docutils_snippets/docutils-0502", AuxComponent::Warnings, "F3: 5a-T13a"),
     ("core/docutils_snippets/docutils-0503", AuxComponent::Warnings, "F1: 5a-T8"),
-    ("core/docutils_snippets/docutils-0506", AuxComponent::SearchIndex, "SI:code-directive: 5a-T7"),
-    ("core/docutils_snippets/docutils-0509", AuxComponent::Warnings, "F1+F5: 5a-T8"),
+    ("core/docutils_snippets/docutils-0509", AuxComponent::Warnings, "F1: 5a-T8"),
     ("core/docutils_snippets/docutils-0510", AuxComponent::Warnings, "F1: 5a-T8"),
-    ("core/docutils_snippets/docutils-0514", AuxComponent::ObjectsInv, "INV:math-name: 5a-T7"),
     ("core/docutils_snippets/docutils-0519", AuxComponent::Warnings, "F1: 5a-T8"),
     ("core/docutils_snippets/docutils-0520", AuxComponent::Warnings, "F1: 5a-T8"),
     ("core/docutils_snippets/docutils-0521", AuxComponent::Warnings, "F1: 5a-T8"),
     ("core/docutils_snippets/docutils-0522", AuxComponent::Warnings, "F1: 5a-T8"),
     ("core/docutils_snippets/docutils-0523", AuxComponent::Warnings, "F1: 5a-T8"),
     ("core/docutils_snippets/docutils-0527", AuxComponent::Warnings, "F1: 5a-T8"),
-    ("core/docutils_snippets/docutils-0528", AuxComponent::ObjectsInv, "INV:default-domain: 5a-T7"),
-    ("core/docutils_snippets/docutils-0528", AuxComponent::SearchIndex, "SI:default-domain: 5a-T7"),
-    ("core/docutils_snippets/docutils-0529", AuxComponent::ObjectsInv, "INV:default-domain: 5a-T7"),
-    ("core/docutils_snippets/docutils-0529", AuxComponent::SearchIndex, "SI:default-domain: 5a-T7"),
-    ("core/docutils_snippets/docutils-0530", AuxComponent::SearchIndex, "SI:default-domain: 5a-T7"),
-    ("core/docutils_snippets/docutils-0531", AuxComponent::SearchIndex, "SI:default-domain: 5a-T7"),
     ("core/docutils_snippets/docutils-0533", AuxComponent::Warnings, "F1: 5a-T8"),
     ("core/docutils_snippets/docutils-0538", AuxComponent::Warnings, "F1: 5a-T8"),
     ("core/docutils_snippets/docutils-0540", AuxComponent::Warnings, "F1: 5a-T8"),
@@ -3152,10 +3054,8 @@ const KNOWN_AUX_GAPS: &[(&str, AuxComponent, &str)] = &[
     ("core/docutils_snippets/docutils-0602", AuxComponent::Warnings, "F1: 5a-T8"),
     ("core/docutils_snippets/docutils-0603", AuxComponent::Warnings, "F1+F4: 5a-T10"),
     ("core/docutils_snippets/docutils-0603", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
-    ("core/docutils_snippets/docutils-0605", AuxComponent::Warnings, "F1+F5: 5a-T8"),
-    ("core/docutils_snippets/docutils-0605", AuxComponent::SearchIndex, "SI:unknown-role: 5a-T7"),
-    ("core/docutils_snippets/docutils-0606", AuxComponent::Warnings, "F1+F5: 5a-T8"),
-    ("core/docutils_snippets/docutils-0606", AuxComponent::SearchIndex, "SI:unknown-role: 5a-T7"),
+    ("core/docutils_snippets/docutils-0605", AuxComponent::Warnings, "F1: 5a-T8"),
+    ("core/docutils_snippets/docutils-0606", AuxComponent::Warnings, "F1: 5a-T8"),
     ("core/docutils_snippets/docutils-0607", AuxComponent::Warnings, "F1+F4: 5a-T10"),
     ("core/docutils_snippets/docutils-0607", AuxComponent::SearchIndex, "SI:word_: 5a-T10"),
     ("core/docutils_snippets/docutils-0608", AuxComponent::Warnings, "F1+F4: 5a-T10"),
@@ -3212,7 +3112,6 @@ const KNOWN_AUX_GAPS: &[(&str, AuxComponent, &str)] = &[
     ("core/docutils_snippets/docutils-0707", AuxComponent::Warnings, "F3: 5a-T13a"),
     ("core/docutils_snippets/docutils-0708", AuxComponent::Warnings, "F3: 5a-T13a"),
     ("core/docutils_snippets/docutils-0712", AuxComponent::SearchIndex, "SI:substitutions: 5a-T11"),
-    ("core/docutils_snippets/docutils-0715", AuxComponent::SearchIndex, "SI:default-domain: 5a-T7"),
     ("core/docutils_snippets/docutils-0716", AuxComponent::Warnings, "F3: 5a-T13a"),
     ("core/docutils_snippets/docutils-0719", AuxComponent::Warnings, "F1: 5a-T8"),
     ("core/docutils_snippets/docutils-0720", AuxComponent::Warnings, "F1: 5a-T8"),
@@ -3224,8 +3123,7 @@ const KNOWN_AUX_GAPS: &[(&str, AuxComponent, &str)] = &[
     ("core/environment_projects/numfig_off_numref", AuxComponent::Warnings, "F3: 5a-T13a"),
     ("core/environment_projects/py_locations", AuxComponent::Warnings, "F8b: 5a-T14"),
     ("core/environment_projects/toctree_numbered_depth2", AuxComponent::Warnings, "F3: 5a-T13a"),
-    ("core/html_projects/intersphinx", AuxComponent::Warnings, "F1+F5+F12: 5a-T8"),
-    ("core/html_projects/intersphinx", AuxComponent::SearchIndex, "SI:unknown-role: 5a-T7"),
+    ("core/html_projects/intersphinx", AuxComponent::Warnings, "F1: 5a-T8"),
     ("core/inventory_projects/dispname_and_header_escape", AuxComponent::SearchIndex, "SI:propagate-targets: 5a-T10"),
     ("core/inventory_projects/std_objects_and_docs", AuxComponent::SearchIndex, "SI:propagate-targets: 5a-T10"),
     ("core/inventory_projects/unicode_names", AuxComponent::SearchIndex, "SI:propagate-targets: 5a-T10"),
@@ -3285,15 +3183,7 @@ const KNOWN_AUX_GAPS: &[(&str, AuxComponent, &str)] = &[
     ("core/sphinx_read_snippets/sphinx_read-0282", AuxComponent::Warnings, "F1: 5a-T8"),
     ("core/sphinx_read_snippets/sphinx_read-0284", AuxComponent::Warnings, "F1: 5a-T8"),
     ("core/sphinx_read_snippets/sphinx_read-0295", AuxComponent::Warnings, "F1: 5a-T8"),
-    ("core/sphinx_read_snippets/sphinx_read-0297", AuxComponent::Warnings, "F11: 5a-T7"),
     ("core/sphinx_read_snippets/sphinx_read-0335", AuxComponent::Warnings, "F10: 5a-T13b"),
     ("core/sphinx_read_snippets/sphinx_read-0344", AuxComponent::Warnings, "F1: 5a-T8"),
-    ("core/sphinx_read_snippets/sphinx_read-0347", AuxComponent::SearchIndex, "SI:entry-control-chars: 5a-T7"),
-    ("core/sphinx_read_snippets/sphinx_read-0348", AuxComponent::SearchIndex, "SI:entry-control-chars: 5a-T7"),
-    ("core/sphinx_read_snippets/sphinx_read-0349", AuxComponent::SearchIndex, "SI:entry-control-chars: 5a-T7"),
-    ("core/sphinx_read_snippets/sphinx_read-0350", AuxComponent::SearchIndex, "SI:entry-control-chars: 5a-T7"),
-    ("core/sphinx_read_snippets/sphinx_read-0351", AuxComponent::SearchIndex, "SI:entry-control-chars: 5a-T7"),
-    ("core/sphinx_read_snippets/sphinx_read-0352", AuxComponent::SearchIndex, "SI:entry-control-chars: 5a-T7"),
-    ("core/sphinx_read_snippets/sphinx_read-0358", AuxComponent::SearchIndex, "SI:entry-control-chars: 5a-T7"),
     ("core/sphinx_read_snippets/sphinx_read-0387", AuxComponent::Warnings, "F1: 5a-T8"),
 ];

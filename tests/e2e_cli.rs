@@ -2231,14 +2231,25 @@ fn nitpicky_resolves_real_refs() {
 // ---------------------------------------------------------------------------
 // intersphinx (tests/fixtures/intersphinx): a project whose conf.py maps one
 // other project to a *local* inventory file, so the whole feature is
-// exercised end to end without ever touching the network.
+// exercised end to end without ever touching the network. Its conf.py does
+// not load `sphinx.ext.intersphinx` (the HTML oracle's `intersphinx` case
+// records what Sphinx does then); `-D extensions=sphinx.ext.intersphinx`
+// loads it, as it does in Sphinx (`config.py:316-321`).
 // ---------------------------------------------------------------------------
+
+/// The `-D` override that loads intersphinx into the fixture project.
+const LOAD_INTERSPHINX: [&str; 2] = ["-D", "extensions=sphinx.ext.intersphinx"];
 
 #[test]
 fn intersphinx_resolves_a_cross_project_ref_and_reports_a_missing_external() {
     let out = out_dir("intersphinx");
     let src = fixture("intersphinx");
-    let result = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap()]);
+    let result = sphinx_build(&[
+        src.to_str().unwrap(),
+        out.to_str().unwrap(),
+        LOAD_INTERSPHINX[0],
+        LOAD_INTERSPHINX[1],
+    ]);
 
     assert!(result.status.success(), "stderr: {}", stderr_of(&result));
     let stderr = stderr_of(&result);
@@ -2276,6 +2287,8 @@ fn disabling_the_labels_objtype_takes_the_cross_project_ref_away_again() {
     let result = sphinx_build(&[
         src.to_str().unwrap(),
         out.to_str().unwrap(),
+        LOAD_INTERSPHINX[0],
+        LOAD_INTERSPHINX[1],
         "-D",
         "intersphinx_disabled_reftypes=std:label",
     ]);
@@ -2283,6 +2296,34 @@ fn disabling_the_labels_objtype_takes_the_cross_project_ref_away_again() {
     let stderr = stderr_of(&result);
     assert!(
         stderr.contains("index.rst:4: WARNING: undefined label: 'example' [ref.ref]"),
+        "stderr: {stderr}"
+    );
+}
+
+/// Without `sphinx.ext.intersphinx` in `extensions`, Sphinx loads no
+/// inventory and has no `:external:` role: the fixture's
+/// `:external:std:ref:` is an unknown domain role, logged with no
+/// location, and the label only the inventory holds stays undefined (the
+/// HTML oracle's `html_projects/intersphinx`, [TW F12]). The role's
+/// `[docutils]` ERROR prints once reporter records do (T8).
+#[test]
+fn without_the_extension_intersphinx_is_inert() {
+    let out = out_dir("intersphinx-not-loaded");
+    let src = fixture("intersphinx");
+    let result = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap()]);
+
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    let stderr = stderr_of(&result);
+    assert!(
+        stderr.contains("WARNING: unknown role name: external:std:ref\n"),
+        "stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("index.rst:4: WARNING: undefined label: 'example' [ref.ref]"),
+        "stderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("reference target not found"),
         "stderr: {stderr}"
     );
 }
@@ -2297,7 +2338,8 @@ fn an_invalid_intersphinx_mapping_exits_two_with_sphinxs_config_error() {
             ("index.rst", "Title\n=====\n\nText.\n"),
             (
                 "conf.py",
-                "project = 'Bad'\nintersphinx_mapping = {'p': 'https://x/'}\n",
+                "project = 'Bad'\nextensions = ['sphinx.ext.intersphinx']\n\
+                 intersphinx_mapping = {'p': 'https://x/'}\n",
             ),
         ],
     );
@@ -2335,7 +2377,8 @@ fn an_empty_inventory_location_tuple_exits_two_with_sphinxs_invariant_error() {
             ("index.rst", "Title\n=====\n\nText.\n"),
             (
                 "conf.py",
-                "project = 'Empty'\nintersphinx_mapping = {'p': ('https://x/', ())}\n",
+                "project = 'Empty'\nextensions = ['sphinx.ext.intersphinx']\n\
+                 intersphinx_mapping = {'p': ('https://x/', ())}\n",
             ),
         ],
     );
@@ -2353,6 +2396,87 @@ fn an_empty_inventory_location_tuple_exits_two_with_sphinxs_invariant_error() {
         stderr.contains("An invalid intersphinx_mapping entry was added after normalisation."),
         "stderr: {stderr}"
     );
+}
+
+/// `intersphinx_mapping` is validated, and its inventories loaded, only
+/// with `sphinx.ext.intersphinx` loaded: without it the key is an ordinary
+/// `conf.py` variable, so neither a malformed entry nor one that would
+/// break an inventory invariant stops the build (Sphinx 9.1.0, probed:
+/// exit 0, an empty `-w` file).
+#[test]
+fn without_the_extension_intersphinx_mapping_is_not_validated() {
+    for (name, mapping) in [
+        ("intersphinx-bad-no-extension", "{'p': 'https://x/'}"),
+        (
+            "intersphinx-empty-no-extension",
+            "{'p': ('https://x/', ())}",
+        ),
+    ] {
+        let conf = format!("project = 'P'\nintersphinx_mapping = {mapping}\n");
+        let src = temp_source(
+            name,
+            &[
+                ("index.rst", "Title\n=====\n\nText.\n"),
+                ("conf.py", conf.as_str()),
+            ],
+        );
+        let out = out_dir(name);
+        let warnings = out_dir(&format!("{name}-log")).join("warnings.txt");
+        let result = sphinx_build(&[
+            src.to_str().unwrap(),
+            out.to_str().unwrap(),
+            "-q",
+            "-w",
+            warnings.to_str().unwrap(),
+        ]);
+        assert!(result.status.success(), "{name}: {}", stderr_of(&result));
+        assert_eq!(std::fs::read_to_string(&warnings).unwrap(), "", "{name}");
+    }
+}
+
+/// `validate_intersphinx_mapping` logs one bare `ERROR` record per rejected
+/// entry before it raises (`SP/sphinx/ext/intersphinx/_load.py:64-125`):
+/// the records reach the warning stream, stderr and the `-w` file alike,
+/// ahead of the `Configuration error!` report (Sphinx 9.1.0, probed; the
+/// report as the HTML oracle reduces it).
+#[test]
+fn intersphinx_mapping_errors_reach_both_halves_before_the_report() {
+    let src = temp_source(
+        "intersphinx-mapping-errors",
+        &[
+            ("index.rst", "Title\n=====\n\nText.\n"),
+            (
+                "conf.py",
+                "project = 'Bad'\nextensions = ['sphinx.ext.intersphinx']\n\
+                 intersphinx_mapping = {'p': 'https://x/'}\n",
+            ),
+        ],
+    );
+    let out = out_dir("intersphinx-mapping-errors");
+    let warnings = out_dir("intersphinx-mapping-errors-log").join("warnings.txt");
+    let result = sphinx_build(&[
+        src.to_str().unwrap(),
+        out.to_str().unwrap(),
+        "-q",
+        "-w",
+        warnings.to_str().unwrap(),
+    ]);
+
+    assert_eq!(
+        result.status.code(),
+        Some(2),
+        "stderr: {}",
+        stderr_of(&result)
+    );
+    let written = String::from_utf8(std::fs::read(&warnings).unwrap()).unwrap();
+    assert_eq!(
+        written,
+        "ERROR: Invalid value `'https://x/'` in intersphinx_mapping['p']. \
+         Expected a two-element tuple or list.\n\
+         \nConfiguration error!\n\n    sphinx.errors.ConfigError: Invalid \
+         `intersphinx_mapping` configuration (1 error).\n"
+    );
+    assert_eq!(String::from_utf8(result.stderr).unwrap(), written);
 }
 
 /// The `ConfigError` raised while the inventories load gets the report a

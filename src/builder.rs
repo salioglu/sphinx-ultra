@@ -530,7 +530,12 @@ fn md5_hex(input: &str) -> String {
 }
 
 impl SphinxBuilder {
-    pub fn new(config: BuildConfig, source_dir: PathBuf, output_dir: PathBuf) -> Result<Self> {
+    pub fn new(mut config: BuildConfig, source_dir: PathBuf, output_dir: PathBuf) -> Result<Self> {
+        // The intersphinx extension's `config-inited` step, for a caller
+        // that has not run it; the CLI has, after printing the records
+        // Sphinx logs for a rejected mapping, and running it again changes
+        // nothing.
+        config.init_intersphinx_mapping()?;
         // -d/doctree_dir relocates the cache (sphinx-build's doctree dir).
         let cache_dir = config
             .doctree_dir
@@ -623,7 +628,9 @@ impl SphinxBuilder {
     /// [`ConfigError`](crate::error::ConfigError), which aborts the build
     /// with the report and exit code an invalid mapping gets at config time.
     fn load_intersphinx_inventories(&mut self) -> Result<()> {
-        if self.config.intersphinx_mapping.is_empty() {
+        // Without `sphinx.ext.intersphinx` Sphinx loads no inventory,
+        // whatever `intersphinx_mapping` says ([TW F12]).
+        if !self.config.intersphinx_enabled() || self.config.intersphinx_mapping.is_empty() {
             return Ok(());
         }
         let http = HttpConfig {
@@ -2295,6 +2302,44 @@ mod tests {
         )
         .unwrap();
         std::fs::write(source_dir.join("a.rst"), "A\n=\n\nBody.\n").unwrap();
+    }
+
+    /// A library caller that builds from a loaded `conf.py` without the
+    /// CLI's `config-inited` step still gets the extension's
+    /// `intersphinx_mapping` ([`BuildConfig::init_intersphinx_mapping`]),
+    /// and a malformed one still stops the build.
+    #[test]
+    fn a_builder_initialises_the_intersphinx_mapping_itself() {
+        let tmp = TempDir::new().unwrap();
+        let conf = tmp.path().join("conf.py");
+        std::fs::write(
+            &conf,
+            "extensions = ['sphinx.ext.intersphinx']\n\
+             intersphinx_mapping = {'other': ('https://example.org/', None)}\n",
+        )
+        .unwrap();
+        let config = BuildConfig::from_file(&conf).unwrap();
+        assert!(config.intersphinx_mapping.is_empty(), "not yet initialised");
+        let builder =
+            SphinxBuilder::new(config, tmp.path().to_path_buf(), tmp.path().join("out")).unwrap();
+        assert_eq!(
+            builder.config.intersphinx_mapping["other"],
+            ("https://example.org/".to_string(), vec![None])
+        );
+
+        std::fs::write(
+            &conf,
+            "extensions = ['sphinx.ext.intersphinx']\nintersphinx_mapping = {'p': 'x'}\n",
+        )
+        .unwrap();
+        let config = BuildConfig::from_file(&conf).unwrap();
+        let error = SphinxBuilder::new(config, tmp.path().to_path_buf(), tmp.path().join("out2"))
+            .err()
+            .expect("a malformed mapping stops the build");
+        assert_eq!(
+            error.to_string(),
+            "Invalid `intersphinx_mapping` configuration (1 error)."
+        );
     }
 
     fn build_incrementally(source_dir: &Path, output_dir: &Path) -> (BuildStats, SphinxBuilder) {

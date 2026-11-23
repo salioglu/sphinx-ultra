@@ -14,6 +14,7 @@ pub(crate) mod digits;
 pub mod inline;
 pub mod lines;
 mod punctuation;
+pub(crate) mod roles;
 
 use std::collections::HashMap;
 
@@ -76,6 +77,49 @@ pub struct ParseOptions {
     /// the parse allocates, in `ParseOutput.state.ids` — the read-state
     /// differential's `id_trace`. Tests only; off by default.
     pub trace_ids: bool,
+    /// The configuration the Sphinx-mode read consumes ([`ReadConfig`]).
+    pub read: ReadConfig,
+}
+
+/// The build configuration a Sphinx-mode parse reads, each field holding
+/// Sphinx 9.1.0's default unless the configuration says otherwise
+/// ([`ReadConfig::from`] a [`crate::config::BuildConfig`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReadConfig {
+    /// `primary_domain` (`SP/sphinx/config.py:268`, default `'py'`): the
+    /// domain each document starts with as its default
+    /// (`env.current_document.default_domain`), which unprefixed role and
+    /// directive names are looked up in before the std domain. A name no
+    /// domain is registered under, or `None`, leaves a document without
+    /// one (`env.domains.get(name)`).
+    pub primary_domain: Option<String>,
+    /// `highlight_language` (`config.py:257`, default `'default'`): the
+    /// language a `code-block` or Sphinx `code` directive with no argument
+    /// takes when no `.. highlight::` set one.
+    pub highlight_language: String,
+    /// Whether `sphinx.ext.intersphinx` is in `extensions`: only then is
+    /// `:external:` a role ([RC §2.2], [TW F12]).
+    pub intersphinx: bool,
+}
+
+impl Default for ReadConfig {
+    fn default() -> Self {
+        ReadConfig {
+            primary_domain: Some("py".to_string()),
+            highlight_language: "default".to_string(),
+            intersphinx: false,
+        }
+    }
+}
+
+impl From<&crate::config::BuildConfig> for ReadConfig {
+    fn from(config: &crate::config::BuildConfig) -> Self {
+        ReadConfig {
+            primary_domain: config.primary_domain.clone(),
+            highlight_language: config.highlight_language.clone(),
+            intersphinx: config.intersphinx_enabled(),
+        }
+    }
 }
 
 /// Sphinx's default `source_encoding` (`config.py:244`).
@@ -93,6 +137,7 @@ impl Default for ParseOptions {
             srcdir: None,
             source_encoding: DEFAULT_SOURCE_ENCODING.to_string(),
             trace_ids: false,
+            read: ReadConfig::default(),
         }
     }
 }
@@ -572,6 +617,14 @@ pub fn parse_rst_full(source: &str, opts: &ParseOptions) -> ParseOutput {
     parser.py = opts.py.clone();
     parser.srcdir = opts.srcdir.clone();
     parser.source_encoding = opts.source_encoding.clone();
+    // `env.current_document.default_domain =
+    // env.domains.get(config.primary_domain)` (`prepare_settings`).
+    parser.default_domain = opts
+        .read
+        .primary_domain
+        .as_deref()
+        .and_then(roles::DomainId::from_name);
+    parser.read = opts.read.clone();
     if opts.trace_ids {
         parser.state.ids.enable_trace();
     }
@@ -2191,6 +2244,380 @@ mod tests {
             assert_eq!(definition.rawsource(), Some(".. |sub| replace:: text"));
             // The inline target an embedded alias builds is no Referential.
             assert_eq!(first(root, kinds::TARGET).and_then(Node::rawsource), None);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Sphinx-mode directive dispatch and the read configuration (T7)
+    // ------------------------------------------------------------------
+
+    use super::roles::tests::{parse as read_parse, read_tree};
+
+    /// The `ParseLogWarning`s of a parse, as `(message, location)`.
+    fn logged(out: &ParseOutput) -> Vec<(String, LogLocation)> {
+        out.registry
+            .log_warnings
+            .iter()
+            .map(|warning| (warning.message.clone(), warning.location))
+            .collect()
+    }
+
+    /// `sphinx_domains.directive` (`SP/sphinx/util/docutils.py:313-346`):
+    /// an unprefixed name asks the default domain first, so `class`,
+    /// `function` and `module` are `py`'s (`docutils-0528`…`-0533`,
+    /// `-0715`; `.. class::` with no argument is `py:class`'s argument
+    /// error, worded like docutils' `class`); with no default domain —
+    /// `primary_domain = None`, or a `.. default-domain::` naming no domain
+    /// — `class` is docutils' again, and the directive lowercases its
+    /// argument. A `domain:` prefix asks that domain and then the std
+    /// domain by the bare name, so the six `std:` names this crate has
+    /// resolve like their bare spelling, `py:envvar` reaches std too, and
+    /// an unknown prefix logs `unknown directive name: X` with no location
+    /// before it does. Expected trees probed on Sphinx 9.1.0 with
+    /// `keep_warnings = True`.
+    #[test]
+    fn directive_lookup_uses_default_domain() {
+        for (source, expected) in [
+        (
+            ".. class:: myclass\n\nSome paragraph following.\n\n.. function:: f()\n\n.. module:: m\n",
+            "<document source=\"<SRC>/index.rst\">\n    <index entries=\"('single',\\ 'myclass\\ (built-in\\ class)',\\ 'myclass',\\ '',\\ None)\">\n    <desc classes=\"py class\" desctype=\"class\" domain=\"py\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"class\">\n        <desc_signature _toc_name=\"myclass\" _toc_parts=\"('myclass',)\" class=\"\" classes=\"sig sig-object\" fullname=\"myclass\" ids=\"myclass\" module=\"True\">\n            <desc_annotation xml:space=\"preserve\">\n                <desc_sig_keyword classes=\"k\">\n                    class\n                <desc_sig_space classes=\"w\">\n                     \n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                myclass\n        <desc_content>\n    <paragraph>\n        Some paragraph following.\n    <index entries=\"('pair',\\ 'built-in\\ function;\\ f()',\\ 'f',\\ '',\\ None)\">\n    <desc classes=\"py function\" desctype=\"function\" domain=\"py\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"function\">\n        <desc_signature _toc_name=\"f()\" _toc_parts=\"('f',)\" class=\"\" classes=\"sig sig-object\" fullname=\"f\" ids=\"f\" module=\"True\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                f\n            <desc_parameterlist xml:space=\"preserve\">\n        <desc_content>\n    <index entries=\"('pair',\\ 'module;\\ m',\\ 'module-m',\\ '',\\ None)\">\n    <target ids=\"module-m\" ismod=\"1\">\n",
+        ),
+        (
+            ".. class::\n\n   Body.\n",
+            "<document source=\"<SRC>/index.rst\">\n    <system_message level=\"3\" line=\"1\" source=\"<SRC>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error in \"class\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. class::\n            \n               Body.\n",
+        ),
+        (
+            ".. default-domain:: std\n\n.. class:: x\n\nPara.\n\n.. default-domain:: nonexistent\n\n.. class:: y\n\nPara two.\n\n.. default-domain:: PY\n\n.. class:: z\n",
+            "<document source=\"<SRC>/index.rst\">\n    <paragraph classes=\"x\">\n        Para.\n    <paragraph classes=\"y\">\n        Para two.\n    <index entries=\"('single',\\ 'z\\ (built-in\\ class)',\\ 'z',\\ '',\\ None)\">\n    <desc classes=\"py class\" desctype=\"class\" domain=\"py\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"class\">\n        <desc_signature _toc_name=\"z\" _toc_parts=\"('z',)\" class=\"\" classes=\"sig sig-object\" fullname=\"z\" ids=\"z\" module=\"True\">\n            <desc_annotation xml:space=\"preserve\">\n                <desc_sig_keyword classes=\"k\">\n                    class\n                <desc_sig_space classes=\"w\">\n                     \n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                z\n        <desc_content>\n",
+        ),
+        (
+            ".. std:envvar:: E\n\n.. foo:envvar:: F\n\n.. py:envvar:: G\n\n.. std:program:: prog\n\n.. std:option:: -x\n\n.. std:cmdoption:: -y\n\n.. std:confval:: cv\n\n.. std:glossary::\n\n   term\n      def\n",
+            "<document source=\"<SRC>/index.rst\">\n    <index entries=\"('single',\\ 'environment\\ variable;\\ E',\\ 'envvar-E',\\ '',\\ None)\">\n    <desc classes=\"std envvar\" desctype=\"envvar\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"envvar\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" classes=\"sig sig-object\" ids=\"envvar-E\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                E\n        <desc_content>\n    <index entries=\"('single',\\ 'environment\\ variable;\\ F',\\ 'envvar-F',\\ '',\\ None)\">\n    <desc classes=\"std envvar\" desctype=\"envvar\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"envvar\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" classes=\"sig sig-object\" ids=\"envvar-F\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                F\n        <desc_content>\n    <index entries=\"('single',\\ 'environment\\ variable;\\ G',\\ 'envvar-G',\\ '',\\ None)\">\n    <desc classes=\"std envvar\" desctype=\"envvar\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"envvar\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" classes=\"sig sig-object\" ids=\"envvar-G\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                G\n        <desc_content>\n    <index entries=\"('pair',\\ 'prog\\ command\\ line\\ option;\\ -x',\\ 'cmdoption-prog-x',\\ '',\\ None)\">\n    <desc classes=\"std option\" desctype=\"option\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"option\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" allnames=\"-x\" classes=\"sig sig-object\" ids=\"cmdoption-prog-x\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                -x\n            <desc_addname classes=\"sig-prename descclassname\" xml:space=\"preserve\">\n        <desc_content>\n    <index entries=\"('pair',\\ 'prog\\ command\\ line\\ option;\\ -y',\\ 'cmdoption-prog-y',\\ '',\\ None)\">\n    <desc classes=\"std cmdoption\" desctype=\"cmdoption\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"cmdoption\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" allnames=\"-y\" classes=\"sig sig-object\" ids=\"cmdoption-prog-y\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                -y\n            <desc_addname classes=\"sig-prename descclassname\" xml:space=\"preserve\">\n        <desc_content>\n    <index entries=\"('pair',\\ 'cv;\\ configuration\\ value',\\ 'confval-cv',\\ '',\\ None)\">\n    <desc classes=\"std confval\" desctype=\"confval\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"confval\">\n        <desc_signature _toc_name=\"cv\" _toc_parts=\"('cv',)\" classes=\"sig sig-object\" fullname=\"cv\" ids=\"confval-cv\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                cv\n        <desc_content>\n    <glossary sorted=\"0\">\n        <definition_list classes=\"glossary\">\n            <definition_list_item>\n                <term ids=\"term-term\">\n                    term\n                    <index entries=\"('single',\\ 'term',\\ 'term-term',\\ 'main',\\ None)\">\n                <definition>\n                    <paragraph>\n                        def\n",
+        ),
+        (
+            ".. FUNCTION:: f()\n\n.. Std:EnvVar:: E\n",
+            "<document source=\"<SRC>/index.rst\">\n    <index entries=\"('pair',\\ 'built-in\\ function;\\ f()',\\ 'f',\\ '',\\ None)\">\n    <desc classes=\"py function\" desctype=\"function\" domain=\"py\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"function\">\n        <desc_signature _toc_name=\"f()\" _toc_parts=\"('f',)\" class=\"\" classes=\"sig sig-object\" fullname=\"f\" ids=\"f\" module=\"True\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                f\n            <desc_parameterlist xml:space=\"preserve\">\n        <desc_content>\n    <index entries=\"('single',\\ 'environment\\ variable;\\ E',\\ 'envvar-E',\\ '',\\ None)\">\n    <desc classes=\"std envvar\" desctype=\"envvar\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"envvar\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" classes=\"sig sig-object\" ids=\"envvar-E\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                E\n        <desc_content>\n",
+        ),
+        ] {
+            assert_eq!(read_tree(source, ReadConfig::default()), expected, "{source}");
+        }
+        let out = read_parse(
+            ".. std:envvar:: E\n\n.. foo:envvar:: F\n\n.. Foo:Note:: n\n",
+            ReadConfig::default(),
+        );
+        assert_eq!(
+            logged(&out),
+            [
+                (
+                    "unknown directive name: foo:envvar".to_string(),
+                    LogLocation::None
+                ),
+                (
+                    "unknown directive name: foo:note".to_string(),
+                    LogLocation::None
+                ),
+            ]
+        );
+        let unknown: Vec<String> = tree_messages(&out)
+            .iter()
+            .map(|message| message.children[0].astext_docutils())
+            .filter(|text| text.starts_with("Unknown"))
+            .collect();
+        assert_eq!(unknown, ["Unknown directive type \"Foo:Note\"."]);
+
+        // `primary_domain = None`: docutils' `class`, and `:func:` is no
+        // role at all.
+        let none = ReadConfig {
+            primary_domain: None,
+            ..ReadConfig::default()
+        };
+        assert_eq!(
+            read_tree(".. class:: x\n\nPara.\n\n:func:`f`\n", none.clone()),
+            "<document source=\"<SRC>/index.rst\">\n    <paragraph classes=\"x\">\n        Para.\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            :func:`f`\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"3\" line=\"5\" source=\"<SRC>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Unknown interpreted text role \"func\".\n"
+        );
+        // A name no domain is registered under is no domain either.
+        let unknown_domain = ReadConfig {
+            primary_domain: Some("nope".to_string()),
+            ..ReadConfig::default()
+        };
+        assert_eq!(
+            read_tree(".. class:: x\n\nPara.\n\n:func:`f`\n", unknown_domain),
+            read_tree(".. class:: x\n\nPara.\n\n:func:`f`\n", none)
+        );
+
+        // The bare role names follow the default domain too: `func` and
+        // `class` are py's, `ref` is std's, `py:ref` falls back to std's,
+        // and an unknown prefix logs before the std lookup.
+        let source = ":func:`f` :class:`C` :ref:`r` :py:ref:`r2` :foo:doc:`index`\n";
+        let expected = "<document source=\"<SRC>/index.rst\">\n    <paragraph>\n        <pending_xref py:class=\"True\" py:module=\"True\" refdoc=\"index\" refdomain=\"py\" refexplicit=\"0\" reftarget=\"f\" reftype=\"func\" refwarn=\"0\">\n            <literal classes=\"xref py py-func\">\n                f()\n         \n        <pending_xref py:class=\"True\" py:module=\"True\" refdoc=\"index\" refdomain=\"py\" refexplicit=\"0\" reftarget=\"C\" reftype=\"class\" refwarn=\"0\">\n            <literal classes=\"xref py py-class\">\n                C\n         \n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"0\" reftarget=\"r\" reftype=\"ref\" refwarn=\"1\">\n            <inline classes=\"xref std std-ref\">\n                r\n         \n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"0\" reftarget=\"r2\" reftype=\"ref\" refwarn=\"1\">\n            <inline classes=\"xref std std-ref\">\n                r2\n         \n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"0\" reftarget=\"index\" reftype=\"doc\" refwarn=\"1\">\n            <inline classes=\"xref std std-doc\">\n                index\n";
+        assert_eq!(read_tree(source, ReadConfig::default()), expected);
+
+        // The c, cpp, js and rst domains are registered, so their prefixes
+        // log nothing, but this crate implements none of their directives
+        // (decision 16), and `productionlist` waits for T18c in both
+        // spellings: each keeps `Unknown directive type`.
+        for name in [
+            "c:function",
+            "cpp:class",
+            "js:function",
+            "rst:directive",
+            "std:productionlist",
+            "productionlist",
+        ] {
+            let out = read_parse(&format!(".. {name}:: x\n"), ReadConfig::default());
+            assert!(logged(&out).is_empty(), "{name}");
+            let texts: Vec<String> = tree_messages(&out)
+                .iter()
+                .map(|message| message.children[0].astext_docutils())
+                .collect();
+            assert!(
+                texts.contains(&format!("Unknown directive type \"{name}\".")),
+                "{name}: {texts:?}"
+            );
+        }
+    }
+
+    /// Sphinx's `code` directive (`SP/sphinx/directives/patches.py:85-134`)
+    /// replaces docutils' in a Sphinx parse: a `literal_block` with
+    /// `force`, `highlight_args` and a `language` (the argument, else the
+    /// highlight language), `linenos` and `linenostart` from
+    /// `:number-lines:` (Sphinx's `optional_int`, whose ValueError text the
+    /// option error carries, `docutils-0509`), and no Pygments: no
+    /// `code` class, no tokens (`docutils-0504`…`-0508`). Sphinx's `code`
+    /// role keeps an empty `language` and loses the escapes ([RC §3.11],
+    /// `docutils-0274`, `-0302`). Probed on Sphinx 9.1.0 with
+    /// `keep_warnings = True`.
+    #[test]
+    fn sphinx_code_directive_and_role() {
+        for (source, expected) in [
+        (
+            ".. code::\n\n   x = 1\n   y = 2\n\n.. code::\n   :class: extra\n   :name: snippet one\n\n   pass\n\n.. code:: python\n\n   x = 1\n\n.. code::\n   :number-lines:\n\n   one\n   two\n\n.. code::\n   :number-lines: 9\n   :force:\n\n   one\n   two\n",
+            "<document source=\"<SRC>/index.rst\">\n    <literal_block force=\"0\" highlight_args=\"{}\" language=\"default\" xml:space=\"preserve\">\n        x = 1\n        y = 2\n    <literal_block classes=\"extra\" force=\"0\" highlight_args=\"{}\" ids=\"snippet-one\" language=\"default\" names=\"snippet\\ one\" xml:space=\"preserve\">\n        pass\n    <literal_block force=\"0\" highlight_args=\"{}\" language=\"python\" xml:space=\"preserve\">\n        x = 1\n    <literal_block force=\"0\" highlight_args=\"{}\" language=\"default\" linenos=\"1\" xml:space=\"preserve\">\n        one\n        two\n    <literal_block force=\"1\" highlight_args=\"{'linenostart': 9}\" language=\"default\" linenos=\"1\" xml:space=\"preserve\">\n        one\n        two\n",
+        ),
+        (
+            ".. code::\n   :number-lines: xyz\n\n   one\n\n.. code::\n\n.. code::\n   :number-lines: -1\n\n   one\n",
+            "<document source=\"<SRC>/index.rst\">\n    <system_message level=\"3\" line=\"1\" source=\"<SRC>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error in \"code\" directive:\n            invalid option value: (option: \"number-lines\"; value: 'xyz')\n            invalid literal for int() with base 10: 'xyz'.\n        <literal_block xml:space=\"preserve\">\n            .. code::\n               :number-lines: xyz\n            \n               one\n    <system_message level=\"3\" line=\"6\" source=\"<SRC>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"code\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. code::\n    <system_message level=\"3\" line=\"8\" source=\"<SRC>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error in \"code\" directive:\n            invalid option value: (option: \"number-lines\"; value: '-1')\n            negative value; must be positive or zero.\n        <literal_block xml:space=\"preserve\">\n            .. code::\n               :number-lines: -1\n            \n               one\n",
+        ),
+        (
+            ".. highlight:: c\n\n.. code::\n\n   int x;\n\n.. code-block::\n\n   int y;\n",
+            "<document source=\"<SRC>/index.rst\">\n    <highlightlang force=\"0\" lang=\"c\" linenothreshold=\"9223372036854775807\">\n    <literal_block force=\"0\" highlight_args=\"{}\" language=\"c\" xml:space=\"preserve\">\n        int x;\n    <literal_block force=\"0\" highlight_args=\"{}\" language=\"c\" xml:space=\"preserve\">\n        int y;\n",
+        ),
+        (
+            ":code:`x = 1`\n\n:code:`a\\*b`\n\n:code:`a\\\\b`\n\n:CODE:`y`\n",
+            "<document source=\"<SRC>/index.rst\">\n    <paragraph>\n        <literal classes=\"code\" language=\"\">\n            x = 1\n    <paragraph>\n        <literal classes=\"code\" language=\"\">\n            a*b\n    <paragraph>\n        <literal classes=\"code\" language=\"\">\n            a\\b\n    <paragraph>\n        <literal classes=\"code\" language=\"\">\n            y\n",
+        ),
+        ] {
+            assert_eq!(read_tree(source, ReadConfig::default()), expected, "{source}");
+        }
+    }
+
+    /// `highlight_language` is the language of a `code-block` or `code`
+    /// with no argument until a `.. highlight::` sets the document's
+    /// own; a `::` literal block gets none at read time (Sphinx 9.1.0,
+    /// `highlight_language = 'python3'`).
+    #[test]
+    fn highlight_language_reaches_code_block() {
+        let read = ReadConfig {
+            highlight_language: "python3".to_string(),
+            ..ReadConfig::default()
+        };
+        assert_eq!(
+            read_tree(
+                ".. code-block::\n\n   x\n\n.. code::\n\n   y\n\n::\n\n   z\n\n\
+                 .. highlight:: c\n\n.. code-block::\n\n   w\n",
+                read
+            ),
+            "<document source=\"<SRC>/index.rst\">\n    <literal_block force=\"0\" highlight_args=\"{}\" language=\"python3\" xml:space=\"preserve\">\n        x\n    <literal_block force=\"0\" highlight_args=\"{}\" language=\"python3\" xml:space=\"preserve\">\n        y\n    <literal_block xml:space=\"preserve\">\n        z\n    <highlightlang force=\"0\" lang=\"c\" linenothreshold=\"9223372036854775807\">\n    <literal_block force=\"0\" highlight_args=\"{}\" language=\"c\" xml:space=\"preserve\">\n        w\n"
+        );
+    }
+
+    /// Sphinx's `math` directive names its node (`add_name`) as well as
+    /// labelling it from `:name:` when it has no `:label:`, so the block
+    /// keeps the name and its id before the equation id
+    /// (`docutils-0514`; Sphinx 9.1.0, `keep_warnings = True`).
+    #[test]
+    fn math_name_without_label_keeps_names() {
+        let source = ".. math::\n   :class: eq\n   :name: my eq\n\n   x^2\n\n.. math::\n   :label: lab\n   :name: nm\n\n   y\n";
+        let expected = "<document source=\"<SRC>/index.rst\">\n    <target refid=\"equation-my-eq\">\n    <math_block classes=\"eq\" docname=\"index\" ids=\"my-eq equation-my-eq\" label=\"my eq\" names=\"my\\ eq\" no-wrap=\"0\" nowrap=\"0\" number=\"1\" xml:space=\"preserve\">\n        x^2\n    <target refid=\"equation-lab\">\n    <math_block docname=\"index\" ids=\"nm equation-lab\" label=\"lab\" names=\"nm\" no-wrap=\"0\" nowrap=\"0\" number=\"2\" xml:space=\"preserve\">\n        y\n";
+        assert_eq!(read_tree(source, ReadConfig::default()), expected);
+    }
+
+    /// F11 ([TW §6.3]): `code-block`'s `line number spec is out of
+    /// range(1-N): <repr>` is a Sphinx logger warning, not a reporter
+    /// message: it leaves the tree alone (the lines in range are kept), is
+    /// located by the `(source, line)` tuple, which renders
+    /// `<srcdir>/index.rst.rst:N` (`sphinx_read-0297`), and is ordered
+    /// among the parse's records by its seq: between the empty `note`'s
+    /// ERROR before it and the empty `warning`'s after it, as Sphinx
+    /// prints them (probed on Sphinx 9.1.0).
+    #[test]
+    fn emphasize_lines_out_of_range_warns() {
+        let [(source, expected)] = [
+        (
+            ".. note::\n\n.. code-block:: python\n   :emphasize-lines: 1,99\n\n   a\n   b\n\n.. warning::\n",
+            "<document source=\"<SRC>/index.rst\">\n    <system_message level=\"3\" line=\"1\" source=\"<SRC>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"note\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. note::\n    <literal_block force=\"0\" highlight_args=\"{'hl_lines': [1]}\" language=\"python\" xml:space=\"preserve\">\n        a\n        b\n    <system_message level=\"3\" line=\"9\" source=\"<SRC>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"warning\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. warning::\n",
+        ),
+        ];
+        let out = read_parse(source, ReadConfig::default());
+        assert_eq!(read_tree(source, ReadConfig::default()), expected);
+        let [warning] = out.registry.log_warnings.as_slice() else {
+            panic!("one logger record: {:?}", out.registry.log_warnings);
+        };
+        assert_eq!(
+            (warning.message.as_str(), warning.location),
+            (
+                "line number spec is out of range(1-2): '1,99'",
+                LogLocation::Tuple { source: 0, line: 3 }
+            )
+        );
+        let errors: Vec<u32> = reporter_records(&out)
+            .into_iter()
+            .filter(|(_, level, _, _)| *level == crate::doctree::messages::ERROR)
+            .map(|(seq, _, _, _)| seq)
+            .collect();
+        let [before, after] = errors.as_slice() else {
+            panic!("two ERRORs: {errors:?}");
+        };
+        assert!(
+            before < &warning.seq && &warning.seq < after,
+            "{before} < {} < {after}",
+            warning.seq
+        );
+        let sources = ["/src/index.rst".to_string()];
+        assert_eq!(
+            warning
+                .diagnostic(&sources, std::path::Path::new("/src"), "index")
+                .render(true),
+            "/src/index.rst.rst:3: WARNING: line number spec is out of range(1-2): '1,99'"
+        );
+    }
+
+    /// Decision 17's highlight edges, for `code-block` ([BL]): every
+    /// emphasized line out of range still warns and leaves an empty
+    /// `hl_lines`; `0` is the index `-1`, which passes the `< nlines`
+    /// filter and the `+ 1` back as a silent `0` (and `0-1` as `[0, 1]`);
+    /// an open left end counts from 1; and an invalid spec is the
+    /// `ValueError` funnel, a reporter WARNING in place of the block.
+    /// (`literalinclude`'s own edges, the too-far-negative `:lines:` index
+    /// among them, are pinned in `block.rs`'s
+    /// `the_negative_index_edges_of_linenos_specs_match_the_probe`.)
+    /// Probed on Sphinx 9.1.0 with `keep_warnings = True`.
+    #[test]
+    fn emphasize_lines_edges_match_sphinx() {
+        for (source, expected, warning) in [
+        (
+            ".. code-block:: python\n   :emphasize-lines: 9\n\n   a\n   b\n",
+            "<document source=\"<SRC>/index.rst\">\n    <literal_block force=\"0\" highlight_args=\"{'hl_lines': []}\" language=\"python\" xml:space=\"preserve\">\n        a\n        b\n",
+            Some("line number spec is out of range(1-2): '9'"),
+        ),
+        (
+            ".. code-block:: python\n   :emphasize-lines: 0\n\n   a\n   b\n",
+            "<document source=\"<SRC>/index.rst\">\n    <literal_block force=\"0\" highlight_args=\"{'hl_lines': [0]}\" language=\"python\" xml:space=\"preserve\">\n        a\n        b\n",
+            None,
+        ),
+        (
+            ".. code-block:: python\n   :emphasize-lines: 0-1\n\n   a\n   b\n",
+            "<document source=\"<SRC>/index.rst\">\n    <literal_block force=\"0\" highlight_args=\"{'hl_lines': [0, 1]}\" language=\"python\" xml:space=\"preserve\">\n        a\n        b\n",
+            None,
+        ),
+        (
+            ".. code-block:: python\n   :emphasize-lines: -5\n\n   a\n   b\n",
+            "<document source=\"<SRC>/index.rst\">\n    <literal_block force=\"0\" highlight_args=\"{'hl_lines': [1, 2]}\" language=\"python\" xml:space=\"preserve\">\n        a\n        b\n",
+            Some("line number spec is out of range(1-2): '-5'"),
+        ),
+        (
+            ".. code-block:: python\n   :emphasize-lines: 5-3\n\n   a\n   b\n",
+            "<document source=\"<SRC>/index.rst\">\n    <system_message level=\"2\" line=\"1\" source=\"<SRC>/index.rst\" type=\"WARNING\">\n        <paragraph>\n            invalid line number spec: '5-3'\n",
+            None,
+        ),
+        (
+            ".. code-block:: python\n   :emphasize-lines: -\n\n   a\n   b\n",
+            "<document source=\"<SRC>/index.rst\">\n    <system_message level=\"2\" line=\"1\" source=\"<SRC>/index.rst\" type=\"WARNING\">\n        <paragraph>\n            invalid line number spec: '-'\n",
+            None,
+        ),
+        ] {
+            let out = read_parse(source, ReadConfig::default());
+            assert_eq!(read_tree(source, ReadConfig::default()), expected, "{source}");
+            let messages: Vec<&str> = out
+                .registry
+                .log_warnings
+                .iter()
+                .map(|warning| warning.message.as_str())
+                .collect();
+            assert_eq!(messages, warning.into_iter().collect::<Vec<_>>(), "{source}");
+        }
+    }
+
+    /// The kinds that keep the duplicate-name message `add_name` appends
+    /// to them (`keeps_duplicate_name_message`) hold it as their own
+    /// child, appended when the directive names the node: before the
+    /// content the nested parse adds, after a topic's or sidebar's title
+    /// and subtitle (`msgnode` is the node, `SP/docutils/nodes.py:1974-1990`).
+    /// Probed on Sphinx 9.1.0 with `keep_warnings = True`.
+    #[test]
+    fn kept_duplicate_name_message_is_the_named_nodes_child() {
+        for (source, kind, expected) in [
+            (
+                ".. _x:\n\nPara.\n\n.. container:: c\n   :name: x\n\n   Body.\n",
+                "container",
+                "<container classes=\"c\" dupnames=\"x\" ids=\"id1\">\n    <system_message backrefs=\"id1\" level=\"2\" line=\"5\" source=\"<SRC>/index.rst\" type=\"WARNING\">\n        <paragraph>\n            Duplicate explicit target name: \"x\".\n    <paragraph>\n        Body.\n",
+            ),
+            (
+                ".. _x:\n\nPara.\n\n.. topic:: T\n   :name: x\n\n   Body.\n",
+                "topic",
+                "<topic dupnames=\"x\" ids=\"id1\">\n    <title>\n        T\n    <system_message backrefs=\"id1\" level=\"2\" line=\"5\" source=\"<SRC>/index.rst\" type=\"WARNING\">\n        <paragraph>\n            Duplicate explicit target name: \"x\".\n    <paragraph>\n        Body.\n",
+            ),
+            (
+                ".. _x:\n\nPara.\n\n.. sidebar:: S\n   :name: x\n\n   Body.\n",
+                "sidebar",
+                "<sidebar dupnames=\"x\" ids=\"id1\">\n    <title>\n        S\n    <system_message backrefs=\"id1\" level=\"2\" line=\"5\" source=\"<SRC>/index.rst\" type=\"WARNING\">\n        <paragraph>\n            Duplicate explicit target name: \"x\".\n    <paragraph>\n        Body.\n",
+            ),
+            (
+                ".. _x:\n\nPara.\n\n.. sidebar:: S\n   :name: x\n   :subtitle: Sub\n\n   Body.\n",
+                "sidebar",
+                "<sidebar dupnames=\"x\" ids=\"id1\">\n    <title>\n        S\n    <subtitle>\n        Sub\n    <system_message backrefs=\"id1\" level=\"2\" line=\"5\" source=\"<SRC>/index.rst\" type=\"WARNING\">\n        <paragraph>\n            Duplicate explicit target name: \"x\".\n    <paragraph>\n        Body.\n",
+            ),
+            (
+                ".. _x:\n\nPara.\n\n.. compound::\n   :name: x\n\n   Body.\n",
+                "compound",
+                "<compound dupnames=\"x\" ids=\"id1\">\n    <system_message backrefs=\"id1\" level=\"2\" line=\"5\" source=\"<SRC>/index.rst\" type=\"WARNING\">\n        <paragraph>\n            Duplicate explicit target name: \"x\".\n    <paragraph>\n        Body.\n",
+            ),
+        ] {
+            let out = read_parse(source, ReadConfig::default());
+            let node = first(&out.doctree.root, kind).expect("the named node");
+            assert_eq!(node.pformat(), expected, "{source}");
+            assert_eq!(tree_messages(&out).len(), 1, "{source}");
+        }
+        // An admonition and `seealso` hold it first too. Sphinx locates it
+        // at the end of the directive block (lines 6, 10 and 8), which is
+        // T8's to print; the tree position is checked here.
+        for (source, kind, paragraphs) in [
+            (".. _x:\n\nPara.\n\n.. note:: b\n   :name: x\n", "note", 1),
+            (
+                ".. _x:\n\nPara.\n\n.. note::\n   :name: x\n\n   Body one.\n\n   Body two.\n",
+                "note",
+                2,
+            ),
+            (
+                ".. _x:\n\nPara.\n\n.. seealso::\n   :name: x\n\n   Body.\n",
+                "seealso",
+                1,
+            ),
+        ] {
+            let out = read_parse(source, ReadConfig::default());
+            let node = first(&out.doctree.root, kind).expect("the named node");
+            let children: Vec<&str> = node.children.iter().map(|child| child.kind).collect();
+            let mut expected = vec![kinds::SYSTEM_MESSAGE];
+            expected.extend(std::iter::repeat_n(kinds::PARAGRAPH, paragraphs));
+            assert_eq!(children, expected, "{source}");
+            let message = &node.children[0];
+            assert_eq!(message.attrs.backrefs, node.attrs.ids, "{source}");
+            assert_eq!(
+                message.children[0].astext_docutils(),
+                "Duplicate explicit target name: \"x\".",
+                "{source}"
+            );
+            assert_eq!(tree_messages(&out).len(), 1, "{source}");
         }
     }
 }

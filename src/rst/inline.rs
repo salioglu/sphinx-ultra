@@ -18,6 +18,7 @@ use crate::doctree::{kinds, messages, AttrValue, Node, Span};
 use crate::transforms::state::{DocLoc, DocumentState};
 
 use super::punctuation;
+use super::roles::{self, DispatchCtx, Resolution, RoleFn, RoleTable};
 
 const NULL: char = '\u{0}';
 
@@ -304,9 +305,11 @@ struct Inliner<'a> {
     /// its reporter builds and logs the messages, located at `lineno` of
     /// the span's source.
     state: &'a mut DocumentState,
-    /// Sphinx mode: unknown-in-docutils roles become pending_xref nodes
-    /// (no messages) and every role occurrence is recorded.
-    sphinx: bool,
+    /// The role registries the parse looks roles up in.
+    table: &'a RoleTable,
+    /// The mode and document state the lookup depends on; in Sphinx mode
+    /// every role occurrence is also recorded.
+    dispatch: DispatchCtx,
     docname: &'a str,
     /// The enclosing document's ref_context state (see [`RefContext`]).
     ctx: RefContext<'a>,
@@ -989,50 +992,11 @@ impl<'a> Inliner<'a> {
         self.nodes.push(reference);
     }
 
-    /// sphinx.roles.XRefRole anatomy (probe-verified via :doc: in the
-    /// wave-3 probes): pending_xref with refdoc/refdomain/refexplicit/
-    /// reftarget/reftype/refwarn attrs and an `inline classes="xref
-    /// {domain} {domain}-{type}"` child. Role→domain mapping covers the
-    /// std and py domains; explicit `domain:role` names pass through.
-    fn emit_sphinx_xref(&mut self, lower: &str, raw: &str) {
-        let (domain, reftype) = match lower.rsplit_once(':') {
-            Some((d, t)) => (d.to_string(), t.to_string()),
-            None => {
-                let d = match lower {
-                    "doc" | "ref" | "term" | "option" | "envvar" | "numref" | "keyword"
-                    | "token" | "program" | "confval" => "std",
-                    // The eleven `PythonDomain.roles` keys
-                    // (`domains/python/__init__.py:755-767`). An
-                    // unqualified role name resolves against
-                    // `primary_domain` (default `py`) BEFORE the std
-                    // fallback (`util/docutils.py`, `sphinx_domains.role`),
-                    // and `type` is a py role with no std counterpart.
-                    "func" | "class" | "meth" | "mod" | "attr" | "data" | "exc" | "obj"
-                    | "const" | "deco" | "type" => "py",
-                    // `AnyXRefRole` is registered domainless (`roles.py`
-                    // `specific_docroles`), so `XRefRole.run`'s name split
-                    // leaves `refdomain=''` — which is what routes the node
-                    // into `_resolve_pending_any_xref` instead of a domain.
-                    "any" => "",
-                    // `:eq:` is the math domain's, registered domainless
-                    // like `:any:` (`app.add_role('eq',
-                    // MathReferenceRole(warn_dangling=True))`,
-                    // `domains/math.py:163`); `result_nodes` then stamps
-                    // `refdomain = 'math'` onto the node (`:32-44`).
-                    "eq" => "math",
-                    _ => "std",
-                };
-                (d.to_string(), lower.to_string())
-            }
-        };
-        self.emit_xref_node(&domain, &reftype, raw, None);
-    }
-
     /// The `:external:`/`:external+inv:` roles, which
-    /// `IntersphinxDispatcher` claims *before* docutils' own role lookup
-    /// (`ext/intersphinx/_resolve.py:350-366`) — and therefore before the
-    /// generic `domain:role` split above, which would otherwise read
-    /// `external:py:func` as domain `external:py`.
+    /// `IntersphinxDispatcher` claims *before* any other role lookup
+    /// (`ext/intersphinx/_resolve.py:350-366`) when `sphinx.ext.intersphinx`
+    /// is loaded ([`roles::resolve_role`]); without it the name is an
+    /// unknown domain's.
     ///
     /// The name is the one the author wrote, not the lowercased one: the
     /// inventory name inside it is case-sensitive
@@ -1105,10 +1069,13 @@ impl<'a> Inliner<'a> {
         (target, title)
     }
 
-    /// The body of [`Self::emit_sphinx_xref`], with the domain and role
-    /// already decided. `external` is `Some(inventory)` for a node the
-    /// `:external:` role produced — `Some(None)` when that role named no
-    /// inventory.
+    /// sphinx.roles.XRefRole anatomy (probe-verified via :doc: in the
+    /// wave-3 probes): a `pending_xref` with refdoc/refdomain/refexplicit/
+    /// reftarget/reftype/refwarn attrs and an `inline classes="xref
+    /// {domain} {domain}-{type}"` child, for the role the dispatch found
+    /// ([`roles::resolve_role`]). `external` is `Some(inventory)` for a
+    /// node the `:external:` role produced — `Some(None)` when that role
+    /// named no inventory.
     fn emit_xref_node(
         &mut self,
         domain: &str,
@@ -1408,12 +1375,17 @@ impl<'a> Inliner<'a> {
         self.nodes.push(node);
     }
 
-    /// Apply a built-in role by (raw, unlowercased) name.
+    /// The interpreted text `:given_name:` + `raw` (`Inliner.interpreted`,
+    /// `SP/docutils/parsers/rst/states.py:996-1007`): look the role up
+    /// ([`roles::resolve_role`]) and run it, or report docutils'
+    /// `Unknown interpreted text role` ERROR, naming the role as written,
+    /// over a `problematic` of the whole construct. `rawsource` is the
+    /// construct, null-escaped.
     fn apply_role(&mut self, given_name: &str, raw: &str, rawsource: &str) {
-        let lower = given_name.to_lowercase();
-        if self.sphinx {
+        if self.dispatch.sphinx {
             // Record EVERY role occurrence for the build pipeline
             // (validation + nitpicky), M1-scanner display-split semantics.
+            let lower = given_name.to_lowercase();
             let text = unescape(raw, false);
             let (target, display) = match (text.rfind('<'), text.ends_with('>')) {
                 (Some(lt), true) => (
@@ -1432,80 +1404,33 @@ impl<'a> Inliner<'a> {
                 line: self.lineno,
             });
         }
-        // en language aliases -> canonical names
-        let canonical = match lower.as_str() {
-            "abbreviation" | "ab" => "abbreviation",
-            "acronym" | "ac" => "acronym",
-            "code" => "code",
-            "emphasis" => "emphasis",
-            "literal" => "literal",
-            "math" => "math",
-            "pep-reference" | "pep" => "pep-reference",
-            "rfc-reference" | "rfc" => "rfc-reference",
-            "strong" => "strong",
-            "subscript" | "sub" => "subscript",
-            "superscript" | "sup" => "superscript",
-            "title-reference" | "title" | "t" => "title-reference",
-            "raw" => "raw",
-            "index" | "i" => "index",
-            "named-reference" => "named-reference",
-            "anonymous-reference" => "anonymous-reference",
-            "footnote-reference" => "footnote-reference",
-            "citation-reference" => "citation-reference",
-            "substitution-reference" => "substitution-reference",
-            "target" => "target",
-            "uri-reference" | "uri" | "url" => "uri-reference",
-            _ if self.sphinx && crate::intersphinx::is_external_role(given_name) => {
-                self.emit_external_xref(given_name, raw);
-                return;
-            }
-            _ if self.sphinx && matches!(lower.as_str(), "cve" | "cwe") => {
-                self.emit_sphinx_extlink(&lower, raw);
-                return;
-            }
-            _ if self.sphinx => {
-                // Sphinx mode: non-docutils roles resolve through the
-                // domain registries; at parse layer they become
-                // pending_xref nodes and NEVER message. (Genuinely unknown
-                // roles would error in real Sphinx — hardening note.)
-                self.emit_sphinx_xref(&lower, raw);
-                return;
-            }
-            _ => {
-                // Not in the language module: INFO + canonical lookup, which
-                // also fails for anything we do not know -> ERROR.
-                let info = format!(
-                    "No role entry for \"{given_name}\" in module \"docutils.parsers.rst.languages.en\".\nTrying \"{given_name}\" as canonical role name."
-                );
-                if lower == "restructuredtext-unimplemented-role" {
+        let (role, call_name) =
+            match roles::resolve_role(self.table, &self.dispatch, given_name, self.state) {
+                Resolution::Found {
+                    role,
+                    call_name,
+                    info,
+                } => {
+                    if let Some(info) = info {
+                        let message = self.report(messages::INFO, &info);
+                        self.messages.push(message);
+                    }
+                    (role, call_name)
+                }
+                Resolution::NotFound { info } => {
                     self.role_problematic(
                         rawsource,
-                        Some(info),
-                        messages::ERROR,
-                        &format!("Interpreted text role \"{given_name}\" not implemented."),
-                    );
-                } else {
-                    self.role_problematic(
-                        rawsource,
-                        Some(info),
+                        info,
                         messages::ERROR,
                         &format!("Unknown interpreted text role \"{given_name}\"."),
                     );
+                    return;
                 }
-                return;
-            }
-        };
-        match canonical {
-            "emphasis" => self.emit_inline(kinds::EMPHASIS, raw, false),
-            "strong" => self.emit_inline(kinds::STRONG, raw, false),
-            "literal" => self.emit_inline(kinds::LITERAL, raw, false),
-            "subscript" => self.emit_inline(kinds::SUBSCRIPT, raw, false),
-            "superscript" => self.emit_inline(kinds::SUPERSCRIPT, raw, false),
-            "title-reference" => self.emit_inline(kinds::TITLE_REFERENCE, raw, false),
-            "abbreviation" => self.emit_inline(kinds::ABBREVIATION, raw, false),
-            "acronym" => self.emit_inline(kinds::ACRONYM, raw, false),
-            "math" => self.emit_inline(kinds::MATH, raw, true),
-            "code" => {
+            };
+        match role {
+            RoleFn::Generic(kind) => self.emit_inline(kind, raw, false),
+            RoleFn::Math => self.emit_inline(kinds::MATH, raw, true),
+            RoleFn::DocutilsCode => {
                 self.flush_text();
                 let mut node = Node::elem(kinds::LITERAL, self.span);
                 node.attrs.classes.push("code".to_string());
@@ -1513,86 +1438,173 @@ impl<'a> Inliner<'a> {
                     .push(Node::text_node(unescape(raw, true), self.span));
                 self.nodes.push(node);
             }
-            "pep-reference" => {
-                if self.sphinx {
-                    // Sphinx overrides pep with an index-emitting external.
-                    self.emit_sphinx_extlink("pep", raw);
-                    return;
-                }
-                let text = unescape(raw, false);
-                match text.parse::<u32>().ok().filter(|n| *n <= 9999) {
-                    Some(n) => {
-                        self.flush_text();
-                        // `nodes.reference(rawtext, ...)` (`roles.py`
-                        // `pep_reference_role`): the whole role text.
-                        let mut r = Node::elem(kinds::REFERENCE, self.span);
-                        r.set_rawsource(&unescape(rawsource, true));
-                        r.set(
-                            "refuri",
-                            AttrValue::Str(format!("https://peps.python.org/pep-{n:04}")),
-                        );
-                        r.children
-                            .push(Node::text_node(format!("PEP {text}"), self.span));
-                        self.nodes.push(r);
-                    }
-                    None => self.role_problematic(
-                        rawsource,
-                        None,
-                        messages::ERROR,
-                        &format!(
-                            "PEP number must be a number from 0 to 9999; \"{text}\" is invalid."
-                        ),
-                    ),
-                }
-            }
-            "rfc-reference" => {
-                if self.sphinx {
-                    self.emit_sphinx_extlink("rfc", raw);
-                    return;
-                }
-                let text = unescape(raw, false);
-                let (numpart, fragment) = match text.split_once('#') {
-                    Some((a, b)) => (a.to_string(), Some(b.to_string())),
-                    None => (text.clone(), None),
-                };
-                match numpart.parse::<u32>().ok().filter(|n| *n >= 1) {
-                    Some(n) => {
-                        self.flush_text();
-                        // `rfc_reference_role`: `reference(rawtext, ...)`.
-                        let mut r = Node::elem(kinds::REFERENCE, self.span);
-                        r.set_rawsource(&unescape(rawsource, true));
-                        let mut uri = format!("https://tools.ietf.org/html/rfc{n}.html");
-                        if let Some(f) = fragment {
-                            uri = format!("{uri}#{f}");
-                        }
-                        r.set("refuri", AttrValue::Str(uri));
-                        r.children
-                            .push(Node::text_node(format!("RFC {n}"), self.span));
-                        self.nodes.push(r);
-                    }
-                    None => self.role_problematic(
-                        rawsource,
-                        None,
-                        messages::ERROR,
-                        &format!(
-                            "RFC number must be a number greater than or equal to 1; \"{numpart}\" is invalid."
-                        ),
-                    ),
-                }
-            }
-            "raw" => self.role_problematic(
+            RoleFn::SphinxCode => self.sphinx_code(raw, rawsource),
+            RoleFn::PepReference => self.pep_reference(raw, rawsource),
+            RoleFn::RfcReference => self.rfc_reference(raw, rawsource),
+            RoleFn::Raw => self.role_problematic(
                 rawsource,
                 None,
                 messages::ERROR,
-                "No format (Writer name) is associated with this role: \"raw\".\nThe \"raw\" role cannot be used directly.\nInstead, use the \"role\" directive to create a new role with an associated format.",
+                &format!(
+                    "No format (Writer name) is associated with this role: \"{call_name}\".\n\
+                     The \"raw\" role cannot be used directly.\n\
+                     Instead, use the \"role\" directive to create a new role with an \
+                     associated format."
+                ),
             ),
-            other => self.role_problematic(
+            RoleFn::Unimplemented => self.role_problematic(
                 rawsource,
                 None,
                 messages::ERROR,
-                &format!("Interpreted text role \"{other}\" not implemented."),
+                &format!("Interpreted text role \"{call_name}\" not implemented."),
+            ),
+            RoleFn::Index => self.index_role(raw),
+            RoleFn::Pep => self.emit_sphinx_extlink("pep", raw),
+            RoleFn::Rfc => self.emit_sphinx_extlink("rfc", raw),
+            RoleFn::Cve => self.emit_sphinx_extlink("cve", raw),
+            RoleFn::Cwe => self.emit_sphinx_extlink("cwe", raw),
+            // `AnyXRefRole` is registered domainless (`roles.py`
+            // `specific_docroles`), so `XRefRole.run`'s name split leaves
+            // `refdomain=''` — which is what routes the node into
+            // `_resolve_pending_any_xref` instead of a domain.
+            RoleFn::Any => self.emit_xref_node("", "any", raw, None),
+            // `:eq:` is the math domain's, registered domainless like
+            // `:any:` (`app.add_role('eq', MathReferenceRole(warn_dangling=True))`,
+            // `domains/math.py:163`); `result_nodes` then stamps
+            // `refdomain = 'math'` onto the node (`:32-44`).
+            RoleFn::Eq => self.emit_xref_node("math", "eq", raw, None),
+            RoleFn::Domain(domain, name) => self.emit_xref_node(domain.name(), name, raw, None),
+            RoleFn::Unported(name) => self.emit_xref_node("std", name, raw, None),
+            RoleFn::External => self.emit_external_xref(given_name, raw),
+        }
+    }
+
+    /// docutils `pep_reference_role` (`SP/docutils/parsers/rst/roles.py:272-292`):
+    /// a plain `reference` to `pep_base_url` + `pep-%04d`, which Sphinx
+    /// leaves at docutils' `https://peps.python.org/`.
+    fn pep_reference(&mut self, raw: &str, rawsource: &str) {
+        let text = unescape(raw, false);
+        match text.parse::<u32>().ok().filter(|n| *n <= 9999) {
+            Some(n) => {
+                self.flush_text();
+                // `nodes.reference(rawtext, ...)`: the whole role text.
+                let mut r = Node::elem(kinds::REFERENCE, self.span);
+                r.set_rawsource(&unescape(rawsource, true));
+                r.set(
+                    "refuri",
+                    AttrValue::Str(format!("https://peps.python.org/pep-{n:04}")),
+                );
+                r.children
+                    .push(Node::text_node(format!("PEP {text}"), self.span));
+                self.nodes.push(r);
+            }
+            None => self.role_problematic(
+                rawsource,
+                None,
+                messages::ERROR,
+                &format!("PEP number must be a number from 0 to 9999; \"{text}\" is invalid."),
             ),
         }
+    }
+
+    /// docutils `rfc_reference_role` (`roles.py:295-319`): a plain
+    /// `reference` to `rfc_base_url` + `rfc%d.html`, the section after `#`
+    /// kept as the fragment. Sphinx sets `rfc_base_url` to the IETF
+    /// datatracker (`SP/sphinx/environment/__init__.py:66`).
+    fn rfc_reference(&mut self, raw: &str, rawsource: &str) {
+        let text = unescape(raw, false);
+        let (numpart, fragment) = match text.split_once('#') {
+            Some((a, b)) => (a.to_string(), Some(b.to_string())),
+            None => (text.clone(), None),
+        };
+        match numpart.parse::<u32>().ok().filter(|n| *n >= 1) {
+            Some(n) => {
+                self.flush_text();
+                // `rfc_reference_role`: `reference(rawtext, ...)`.
+                let mut r = Node::elem(kinds::REFERENCE, self.span);
+                r.set_rawsource(&unescape(rawsource, true));
+                let base = if self.dispatch.sphinx {
+                    "https://datatracker.ietf.org/doc/html/"
+                } else {
+                    "https://tools.ietf.org/html/"
+                };
+                let mut uri = format!("{base}rfc{n}.html");
+                if let Some(f) = fragment {
+                    uri = format!("{uri}#{f}");
+                }
+                r.set("refuri", AttrValue::Str(uri));
+                r.children
+                    .push(Node::text_node(format!("RFC {n}"), self.span));
+                self.nodes.push(r);
+            }
+            None => self.role_problematic(
+                rawsource,
+                None,
+                messages::ERROR,
+                // `'... "%s" is invalid.' % text`: the whole text, the
+                // section included.
+                &format!(
+                    "RFC number must be a number greater than or equal to 1; \"{text}\" is invalid."
+                ),
+            ),
+        }
+    }
+
+    /// Sphinx's `code_role` (`SP/sphinx/roles.py:577-605`), the canonical
+    /// `code` of a Sphinx build: a `literal` with `classes="code"` and a
+    /// `language`, empty with no `.. role::` options, over the null-escaped
+    /// text — the escapes are gone, where docutils' `code` puts the
+    /// backslashes back ([RC §3.11]).
+    fn sphinx_code(&mut self, raw: &str, rawsource: &str) {
+        self.flush_text();
+        let mut node = Node::elem(kinds::LITERAL, self.span);
+        node.set_rawsource(&unescape(rawsource, true));
+        node.attrs.classes.push("code".to_string());
+        node.set("language", AttrValue::Str(String::new()));
+        node.children.push(Node::text_node_escaped(raw, self.span));
+        self.nodes.push(node);
+    }
+
+    /// Sphinx's `IndexRole` (`SP/sphinx/domains/index.py:97-117`), a
+    /// `ReferenceRole`: a fresh `index-N` serial, then an `index` node
+    /// holding the entries — an explicit target is a full entry
+    /// (`process_index_entry`), an implicit one a single entry, main when
+    /// it starts with `!` — a `target` holding the id, which the role does
+    /// not register (`note_explicit_target` is the directive's), and the
+    /// title as text ([RC §3.9]).
+    fn index_role(&mut self, raw: &str) {
+        let target_id = format!("index-{}", self.state.new_index_serialno());
+        let (title, entries) = match explicit_title(raw) {
+            Some((title, target)) => (
+                title,
+                super::block::process_index_entry(&target, &target_id),
+            ),
+            None => {
+                let text = unescape(raw, false);
+                match text.strip_prefix('!') {
+                    Some(rest) => (
+                        rest.to_string(),
+                        vec![super::block::index_entry_tuple(
+                            "single", rest, &target_id, "main", None,
+                        )],
+                    ),
+                    None => (
+                        text.clone(),
+                        vec![super::block::index_entry_tuple(
+                            "single", &text, &target_id, "", None,
+                        )],
+                    ),
+                }
+            }
+        };
+        self.flush_text();
+        let mut index = Node::elem("index", self.span);
+        index.set("entries", AttrValue::List(entries));
+        self.nodes.push(index);
+        let mut target = Node::elem(kinds::TARGET, self.span);
+        target.attrs.ids.push(target_id);
+        self.nodes.push(target);
+        self.nodes.push(Node::text_node(title, self.span));
     }
 
     /// Phrase reference body handling incl. embedded `<uri>`/`<alias_>`
@@ -1836,6 +1848,29 @@ impl<'a> Inliner<'a> {
     }
 }
 
+/// `ReferenceRole.explicit_title_re`, `^(.+?)\s*(?<!\x00)<(.*?)>$` with
+/// DOTALL (`SP/sphinx/util/docutils.py:730`), over the null-escaped text,
+/// as `(title, target)`, both unescaped: the first `<` that is not
+/// escaped, has a title before it and opens a target the closing `>` of
+/// the text ends. The lazy title gives its trailing whitespace (Python's
+/// `\s`) to `\s*`, but keeps one character. (T17a's `ReferenceParts`
+/// takes this split to every reference role, [RC §3.17].)
+fn explicit_title(escaped: &str) -> Option<(String, String)> {
+    let chars: Vec<char> = escaped.chars().collect();
+    let n = chars.len();
+    if n < 3 || chars[n - 1] != '>' {
+        return None;
+    }
+    let open = (1..n - 1).find(|&j| chars[j] == '<' && chars[j - 1] != NULL)?;
+    let mut title_end = open;
+    while title_end > 1 && crate::utils::py_isspace(chars[title_end - 1]) {
+        title_end -= 1;
+    }
+    let title: String = chars[..title_end].iter().collect();
+    let target: String = chars[open + 1..n - 1].iter().collect();
+    Some((unescape(&title, false), unescape(&target, false)))
+}
+
 /// Remove whitespace per line from a URI (escaped whitespace survives as
 /// literal after unescape). docutils' `''.join(unescape(part).split())` is
 /// Python's `str.split()`, so `\x1f` goes too ([`crate::utils::py_isspace`]).
@@ -2040,23 +2075,27 @@ pub fn parse_inline(
         span,
         lineno,
         state,
-        false,
+        DispatchCtx {
+            sphinx: false,
+            default_domain: None,
+            intersphinx: false,
+        },
         "index",
         RefContext::default(),
         &py,
     )
 }
 
-/// [`parse_inline`] with the mode and context the block parser passes;
-/// messages stamp the path of `span`'s source from the state's source
-/// table.
+/// [`parse_inline`] with the mode, role dispatch and context the block
+/// parser passes; messages stamp the path of `span`'s source from the
+/// state's source table.
 #[allow(clippy::too_many_arguments)]
-pub fn parse_inline_ext(
+pub(crate) fn parse_inline_ext(
     text: &str,
     span: Span,
     lineno: u32,
     state: &mut DocumentState,
-    sphinx: bool,
+    dispatch: DispatchCtx,
     docname: &str,
     ctx: RefContext<'_>,
     py: &crate::py::PySigConfig,
@@ -2067,7 +2106,8 @@ pub fn parse_inline_ext(
         span,
         lineno,
         state,
-        sphinx,
+        table: RoleTable::builtin(dispatch.sphinx),
+        dispatch,
         docname,
         ctx,
         py,
@@ -2190,7 +2230,9 @@ mod tests {
         assert_eq!(nodes[0].text.as_deref(), Some("*not markup*"));
     }
 
-    /// Sphinx-mode inline parse, for the roles that only exist there.
+    /// Sphinx-mode inline parse, for the roles that only exist there: the
+    /// default domain is `py`, and `sphinx.ext.intersphinx` is loaded, so
+    /// the `:external:` roles exist.
     fn sphinx_nodes(text: &str) -> Vec<Node> {
         sphinx_nodes_with(text, &crate::py::PySigConfig::default())
     }
@@ -2203,7 +2245,12 @@ mod tests {
     /// The same, under a chosen ref_context.
     fn sphinx_nodes_in(text: &str, ctx: RefContext<'_>, py: &crate::py::PySigConfig) -> Vec<Node> {
         let mut state = DocumentState::default();
-        parse_inline_ext(text, Span::ZERO, 1, &mut state, true, "index", ctx, py).nodes
+        let dispatch = DispatchCtx {
+            sphinx: true,
+            default_domain: Some(roles::DomainId::Py),
+            intersphinx: true,
+        };
+        parse_inline_ext(text, Span::ZERO, 1, &mut state, dispatch, "index", ctx, py).nodes
     }
 
     fn attr<'a>(node: &'a Node, key: &'static str) -> Option<&'a AttrValue> {
@@ -2281,15 +2328,14 @@ mod tests {
         }
     }
 
-    /// The interception is by name, so an ordinary role whose name merely
-    /// starts with the same letters is untouched.
+    /// The interception is by name, so a name that merely starts with the
+    /// same letters goes through the ordinary lookup, which has no
+    /// `externally` role: docutils' unknown-role `problematic`, no
+    /// intersphinx node.
     #[test]
-    fn a_role_named_like_external_is_still_an_ordinary_xref() {
+    fn a_role_named_like_external_is_not_intercepted() {
         let nodes = sphinx_nodes(":externally:`x`");
-        assert_eq!(
-            attr(&nodes[0], "reftype"),
-            Some(&AttrValue::Str("externally".into()))
-        );
+        assert_eq!(nodes[0].kind, kinds::PROBLEMATIC);
         assert_eq!(attr(&nodes[0], "intersphinx"), None);
     }
 

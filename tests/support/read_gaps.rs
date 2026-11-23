@@ -7,13 +7,15 @@
 //! A gap row's reason is `"<families>: <owner>"`: every family its
 //! divergence shows, and the latest task that fixes one of them (the plan's
 //! Global Constraints). The family names are the corpus-baseline report's
-//! [BASE §3.8] (`dangling refs`, `unknown role`, `docinfo`, `propagate
-//! targets`, `autonumber ids`, `code directive`, `doctest class`,
-//! `footnotes`, `` `class` is `py:class` ``, `citations`, `indirect
-//! targets`, `pep/rfc index order`, `substitutions`, and the
-//! writer-invisible `candidates`), plus `system_message` and, for read
-//! state the HTML oracle's inputs never show, `class attribute`,
-//! `transitions` and `pending`.
+//! [BASE §3.8] (`dangling refs`, `docinfo`, `propagate targets`,
+//! `autonumber ids`, `doctest class`, `footnotes`, `citations`, `indirect
+//! targets`, `substitutions`, and the writer-invisible `candidates`), plus
+//! `system_message` and, for read state the HTML oracle's inputs never
+//! show, `class attribute`, `transitions` and `pending`. The dispatch
+//! families T7 fixed (`unknown role`, `code directive`, `` `class` is
+//! `py:class` ``, `pep/rfc index order` and the math directive's names) are
+//! gone: a divergence of that shape now is a regression, which the census
+//! reports unexplained.
 
 use std::collections::BTreeSet;
 
@@ -61,13 +63,6 @@ pub const fn gap_fix(family: &'static str, owner: &'static str) -> GapFix {
 pub const DANGLING_REFS: GapFix = gap_fix("dangling refs", "5a-T10");
 pub const INDIRECT_TARGETS: GapFix = gap_fix("indirect targets", "5a-T10");
 pub const PROPAGATE_TARGETS: GapFix = gap_fix("propagate targets", "5a-T10");
-pub const UNKNOWN_ROLE: GapFix = gap_fix("unknown role", "5a-T7");
-pub const CODE_DIRECTIVE: GapFix = gap_fix("code directive", "5a-T7");
-pub const PY_CLASS: GapFix = gap_fix("`class` is `py:class`", "5a-T7");
-pub const PEP_RFC: GapFix = gap_fix("pep/rfc index order", "5a-T7");
-/// [BASE §3.8] files the math directive's `:name:` ids under autonumber
-/// ids; T7 fixes them (`math_name_without_label_keeps_names`).
-pub const MATH_NAMES: GapFix = gap_fix("autonumber ids", "5a-T7");
 pub const SYSTEM_MESSAGE: GapFix = gap_fix("system_message", "5a-T9b");
 pub const DOCTEST_CLASS: GapFix = gap_fix("doctest class", "5a-T9c");
 pub const TRANSITIONS: GapFix = gap_fix("transitions", "5a-T9c");
@@ -244,7 +239,6 @@ fn problematic_fixes(text: &str, defined: &BTreeSet<String>, census: &mut Census
         }
         // `[#]_` / `[*]_` with no footnote left: Footnotes (620).
         _ if text == "[#]_" || text == "[*]_" => census.add(FOOTNOTES),
-        _ if text.starts_with(':') || text.ends_with(':') => census.add(UNKNOWN_ROLE),
         // A named or anonymous reference, a `[label]_` footnote reference
         // with no footnote, or an image `:target:` reference (no text):
         // AnonymousHyperlinks (440) or SphinxDanglingReferences (850).
@@ -304,20 +298,6 @@ fn hunk_census(hunk: &Hunk<'_>, defined: &BTreeSet<String>) -> Census {
         .chain(added.iter().map(|line| line.to_string()))
         .collect();
 
-    // `:pep:` / `:rfc:`: Sphinx's reference precedes its index entry, and
-    // the text and entry numbers move with it.
-    let pep_rfc = removed.iter().chain(&added).any(|line| {
-        line.contains("https://peps.python.org/")
-            || line.contains("https://datatracker.ietf.org/")
-            || line.contains("'Python\\ Enhancement\\ Proposals;")
-            || line.contains("'RFC;\\ RFC")
-            || line.starts_with("PEP ")
-            || line.starts_with("RFC ")
-    });
-    if pep_rfc {
-        census.add(PEP_RFC);
-    }
-
     for (at, line) in removed.iter().enumerate() {
         if line.starts_with("<problematic ") {
             problematic_fixes(&text_under(&hunk.removed, at), defined, &mut census);
@@ -357,17 +337,6 @@ fn hunk_census(hunk: &Hunk<'_>, defined: &BTreeSet<String>) -> Census {
         {
             census.add(AUTONUMBER_IDS);
         }
-        if line.starts_with("<math_block ") && line.contains(" names=\"") {
-            census.add(MATH_NAMES);
-        }
-        if line.starts_with("<literal classes=\"code\" language=")
-            || line.starts_with("<literal_block ") && line.contains(" highlight_args=")
-        {
-            census.add(CODE_DIRECTIVE);
-        }
-        if line.starts_with("<desc classes=\"py class\"") {
-            census.add(PY_CLASS);
-        }
         if line.starts_with("<section classes=") {
             census.add(CLASS_ATTRIBUTE);
         }
@@ -404,16 +373,8 @@ fn hunk_census(hunk: &Hunk<'_>, defined: &BTreeSet<String>) -> Census {
             {
                 census.add(SUBSTITUTIONS);
             }
-            if line.starts_with("<problematic ") && !starts(&removed, "<problematic ") {
-                // A role Sphinx knows and we do not (`:index:`).
-                census.add(UNKNOWN_ROLE);
-            }
             if line.starts_with("<paragraph classes=") && !starts(&removed, "<desc ") {
                 census.add(CLASS_ATTRIBUTE);
-            }
-            if *line == "<inline classes=\"ln\">" {
-                // docutils' line-numbered `code` where Sphinx's numbers none.
-                census.add(CODE_DIRECTIVE);
             }
             if line.starts_with("<system_message ") {
                 let message = text_under(&hunk.added, at + 1);

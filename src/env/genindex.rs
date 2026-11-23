@@ -235,7 +235,11 @@ fn expect(chars: &[char], at: &mut usize, want: char) -> Option<()> {
     }
 }
 
-/// `None`, or a `'`/`"`-quoted string with Python's repr escapes.
+/// `None`, or a `'`/`"`-quoted string with the escapes Python's `repr()`
+/// writes ([`crate::utils::py_repr_str`]): `\\`, the quotes, `\n`, `\r`,
+/// `\t`, and `\xNN`, `\uNNNN` and `\UNNNNNNNN` for the characters it does
+/// not print — the control characters an index entry or a glossary term
+/// can hold (`sphinx_read-0347`…`-0350`, `-0358`).
 fn parse_literal(chars: &[char], at: &mut usize) -> Option<Option<String>> {
     if chars[*at..].starts_with(&['N', 'o', 'n', 'e']) {
         *at += 4;
@@ -255,12 +259,24 @@ fn parse_literal(chars: &[char], at: &mut usize) -> Option<Option<String>> {
             '\\' => {
                 let escaped = *chars.get(*at)?;
                 *at += 1;
-                out.push(match escaped {
-                    'n' => '\n',
-                    'r' => '\r',
-                    't' => '\t',
-                    other => other,
-                });
+                let digits = match escaped {
+                    'x' => 2,
+                    'u' => 4,
+                    'U' => 8,
+                    _ => 0,
+                };
+                if digits == 0 {
+                    out.push(match escaped {
+                        'n' => '\n',
+                        'r' => '\r',
+                        't' => '\t',
+                        other => other,
+                    });
+                    continue;
+                }
+                let hex: String = chars.get(*at..*at + digits)?.iter().collect();
+                *at += digits;
+                out.push(char::from_u32(u32::from_str_radix(&hex, 16).ok()?)?);
             }
             other => out.push(other),
         }
@@ -280,17 +296,14 @@ pub(crate) fn split_index_msg(entry_type: &str, value: &str) -> Result<Vec<Strin
 }
 
 /// `_split_into` (`util/index_entries.py:21-27`): split at the first `n-1`
-/// semicolons, strip each part, and reject unless **every** part is
-/// non-empty (`len(list(filter(None, parts))) < n`).
-///
-/// `trim` stands in for Python's `str.strip()`. The two agree except on the
-/// C0 separators `U+001C`-`U+001F`, which Python's `str.isspace()` counts
-/// as whitespace and Unicode's `White_Space` property does not — so a part
-/// padded with one of those would strip in sphinx and not here.
+/// semicolons, strip each part with Python's `str.strip()` — so the C0
+/// separators `U+001C`-`U+001F` go too ([`crate::utils::py_isspace`]) —
+/// and reject unless **every** part is non-empty
+/// (`len(list(filter(None, parts))) < n`).
 fn split_into(n: usize, entry_type: &str, value: &str) -> Result<Vec<String>, String> {
     let parts: Vec<String> = value
         .splitn(n, ';')
-        .map(|part| part.trim().to_string())
+        .map(|part| part.trim_matches(crate::utils::py_isspace).to_string())
         .collect();
     if parts.iter().filter(|part| !part.is_empty()).count() < n {
         return Err(invalid_entry(entry_type, value));
@@ -792,6 +805,72 @@ mod tests {
         assert!(warnings.is_empty(), "{warnings:?}");
         // The node itself stays: nothing was *rejected*, only unreadable.
         assert_eq!(doctree.root.children.len(), 1);
+    }
+
+    /// The entries Sphinx indexes keep the characters `repr()` escapes as
+    /// `\xNN`, `\uNNNN` and `\UNNNNNNNN` — the `indexentries` keys of the
+    /// oracle's `searchindex.js` are `"a\u001fb"`, `"a b"`,
+    /// `"a\u007fb"`, `"term\u001fone"` and `"!\u001fa"`
+    /// (`sphinx_read-0347`…`-0350`, `-0358`) — and Sphinx's `str.strip()`
+    /// in `_split_into` strips the C0 separators `str.isspace()` counts,
+    /// so the glossary terms `term\xa0` and `term\x1f` index as `term`
+    /// (`sphinx_read-0351`, `-0352`).
+    #[test]
+    fn index_and_glossary_entries_keep_control_characters() {
+        let chars: Vec<char> = "'a\\x1fb'".chars().collect();
+        let mut at = 0;
+        assert_eq!(
+            parse_literal(&chars, &mut at),
+            Some(Some("a\u{1f}b".into()))
+        );
+        assert_eq!(at, chars.len());
+        for (literal, value) in [
+            ("'a\\xa0b'", "a\u{a0}b"),
+            ("'a\\x7fb'", "a\u{7f}b"),
+            ("'\\u2028'", "\u{2028}"),
+            ("'\\U000e0001'", "\u{e0001}"),
+            ("'\\n\\r\\t\\\\'", "\n\r\t\\"),
+            ("\"it's\"", "it's"),
+            ("'say \\'hi\\''", "say 'hi'"),
+            ("'\\\"'", "\""),
+        ] {
+            let chars: Vec<char> = literal.chars().collect();
+            let mut at = 0;
+            assert_eq!(
+                parse_literal(&chars, &mut at),
+                Some(Some(value.to_string())),
+                "{literal}"
+            );
+            assert_eq!(at, chars.len(), "{literal}");
+        }
+        for value in [
+            "a\u{1f}b",
+            "a\u{a0}b",
+            "a\u{7f}b",
+            "term\u{1f}one",
+            "!\u{1f}a",
+            "\u{2028}",
+            "\u{e0001}",
+        ] {
+            let rendered = index_entry_tuple("single", value, "index-0", "", None);
+            assert_eq!(
+                parse_index_entries(std::slice::from_ref(&rendered), "a"),
+                vec![record("single", value, "index-0", false, None)],
+                "{rendered}"
+            );
+        }
+        assert_eq!(
+            split_index_msg("single", "term\u{1f}"),
+            Ok(vec!["term".into()])
+        );
+        assert_eq!(
+            split_index_msg("single", "term\u{a0}"),
+            Ok(vec!["term".into()])
+        );
+        assert_eq!(
+            split_index_msg("pair", "\u{1c}a;\u{1f}b\u{1e}"),
+            Ok(vec!["a".to_string(), "b".to_string()])
+        );
     }
 
     #[test]
