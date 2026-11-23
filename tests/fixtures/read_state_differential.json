@@ -5561,6 +5561,370 @@
         "<SRCDIR>/index.rst:5: ERROR: Undefined substitution referenced: \"zsub\". [docutils]",
         "<SRCDIR>/index.rst:8: ERROR: Undefined substitution referenced: \"asub\". [docutils]"
       ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.location.parsed_literal",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para.\n    <literal_block xml:space=\"preserve\">\n        code \n        <problematic ids=\"id2\" refid=\"id1\">\n            bad_\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para.\n\n.. parsed-literal::\n\n   code bad_\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:5: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.location.parsed_literal_list_item",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                item\n            <literal_block xml:space=\"preserve\">\n                code \n                <problematic ids=\"id2\" refid=\"id1\">\n                    bad_\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "- item\n\n  .. parsed-literal::\n\n     code bad_\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:5: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        6
+      ],
+      "id_trace": [
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.location.parsed_literal_table_cell",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <table>\n        <tgroup cols=\"1\">\n            <colspec colwidth=\"24\">\n            <tbody>\n                <row>\n                    <entry>\n                        <literal_block xml:space=\"preserve\">\n                            code \n                            <problematic ids=\"id2\" refid=\"id1\">\n                                bad_\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "+------------------------+\n| .. parsed-literal::    |\n|                        |\n|    code bad_           |\n+------------------------+\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:5: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        4
+      ],
+      "id_trace": [
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.location.rubric_before_paragraph",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <rubric>\n        Rubric \n        <problematic ids=\"id2\" refid=\"id1\">\n            bad_\n    <paragraph>\n        Para.\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": ".. rubric:: Rubric bad_\n\nPara.\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:2: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        5
+      ],
+      "id_trace": [
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.location.rubric_option",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <rubric classes=\"x\">\n        Rubric \n        <problematic ids=\"id2\" refid=\"id1\">\n            bad_\n    <paragraph>\n        Para.\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": ".. rubric:: Rubric bad_\n   :class: x\n\nPara.\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.location.rubric_list_item",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                item\n            <rubric>\n                Rubric \n                <problematic ids=\"id2\" refid=\"id1\">\n                    bad_\n            <paragraph>\n                Para.\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "- item\n\n  .. rubric:: Rubric bad_\n\n  Para.\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:0: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.location.rubric_in_only",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <only expr=\"html\">\n        <rubric>\n            Rubric \n            <problematic ids=\"id2\" refid=\"id1\">\n                bad_\n        <paragraph>\n            Para.\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": ".. only:: html\n\n   .. rubric:: Rubric bad_\n\n   Para.\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:4: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
     }
   ],
   "docutils_version": "0.22.4",

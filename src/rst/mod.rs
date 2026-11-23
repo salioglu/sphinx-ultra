@@ -1708,6 +1708,141 @@ pub(crate) mod tests {
         }
     }
 
+    /// The locations a `parsed-literal`'s literal block and a `rubric` have
+    /// once Sphinx's ApplySourceWorkaround (010) has run, which the default
+    /// rule ([DS §8.2] rule 4: the directive's line) does not give. A
+    /// parsed-literal block keeps `node.line = self.content_offset + 1`
+    /// (`body.py:144`), its first content line as the machine counts it,
+    /// one high in a table cell, and takes its source from its container
+    /// or from 010. docutils makes a rubric without a location, so it takes
+    /// its container's `setup_child` location in a container that has
+    /// `document` set (the document, a section, `only`, object description
+    /// content, a glossary definition): where the machine reading its block
+    /// stopped, its trailing blank lines included, or the source and no
+    /// line after an option block. In any other container (a list item, a
+    /// `note`, also inside `only`, a block quote, a definition) it has none
+    /// until 010 gives it its ancestor's source and line 0. A rubric in a
+    /// substitution definition keeps the default rule. Probed on Sphinx
+    /// 9.1.0: each node's `get_source_line` after the read.
+    #[test]
+    fn loc_overrides_for_parsed_literals_and_rubrics() {
+        let source_only = DocLoc {
+            source: Some(SourceRef::Table(0)),
+            line: None,
+        };
+        let at = |line| Some(DocLoc::at(0, line));
+        let literal = kinds::LITERAL_BLOCK;
+        let rubric = "rubric";
+        let cell = "+------------------------+\n| .. parsed-literal::    |\n\
+                    |                        |\n|    code bad_           |\n\
+                    +------------------------+\n";
+        let rows = [
+            (
+                literal,
+                "Para.\n\n.. parsed-literal::\n\n   code bad_\n",
+                at(5),
+            ),
+            (
+                literal,
+                "- item\n\n  .. parsed-literal::\n\n     code bad_\n",
+                at(5),
+            ),
+            (
+                literal,
+                "Para.\n\n.. parsed-literal::\n   :class: x\n\n   code bad_\n",
+                at(6),
+            ),
+            (
+                literal,
+                ".. note::\n\n   .. parsed-literal::\n\n      code bad_\n",
+                at(5),
+            ),
+            (
+                literal,
+                "Para.\n\n.. parsed-literal::\n   code bad_\n",
+                at(4),
+            ),
+            (literal, ".. parsed-literal:: code bad_\n", at(1)),
+            (literal, cell, at(5)),
+            (rubric, ".. rubric:: Rubric bad_\n", at(1)),
+            (rubric, ".. rubric:: Rubric bad_\n\nPara.\n", at(2)),
+            (rubric, ".. rubric:: Rubric bad_\n\n\n\nPara.\n", at(4)),
+            (rubric, ".. rubric:: R\n   bad_ long\n\nPara.\n", at(3)),
+            (
+                rubric,
+                "Title\n=====\n\nSub\n---\n\n.. rubric:: Rubric bad_\n\n\nPara.\n",
+                at(9),
+            ),
+            (
+                rubric,
+                ".. rubric:: Rubric bad_\n   :class: x\n\nPara.\n",
+                Some(source_only),
+            ),
+            (
+                rubric,
+                ".. only:: html\n\n   .. rubric:: Rubric bad_\n\n   Para.\n",
+                at(4),
+            ),
+            (
+                rubric,
+                ".. only:: html\n\n   .. rubric:: Rubric bad_\n\n\nAfter.\n",
+                at(3),
+            ),
+            (
+                rubric,
+                ".. py:function:: f()\n\n   .. rubric:: Rubric bad_\n\n   Text.\n",
+                at(4),
+            ),
+            (
+                rubric,
+                ".. py:function:: f()\n\n   .. rubric:: Rubric bad_\n      :class: x\n\n   \
+                 Text.\n",
+                Some(source_only),
+            ),
+            (
+                rubric,
+                ".. glossary::\n\n   term\n      .. rubric:: R bad_\n\n      Text.\n",
+                at(5),
+            ),
+            (
+                rubric,
+                ".. note::\n\n   .. only:: html\n\n      .. rubric:: R bad_\n\n      Text.\n",
+                at(6),
+            ),
+            (
+                rubric,
+                "- item\n\n  .. rubric:: Rubric bad_\n\n  Para.\n",
+                at(0),
+            ),
+            (
+                rubric,
+                ".. note::\n\n   .. rubric:: Rubric bad_\n\n   Para.\n",
+                at(0),
+            ),
+            (
+                rubric,
+                "Para.\n\n   .. rubric:: Rubric bad_\n\n   Text.\n",
+                at(0),
+            ),
+            (rubric, "term\n   .. rubric:: R bad_\n\n   Text.\n", at(0)),
+            (
+                rubric,
+                ".. only:: html\n\n   .. note::\n\n      .. rubric:: R bad_\n\n      Text.\n",
+                at(0),
+            ),
+            (rubric, ".. |s| rubric:: R bad_\n\nPara |s|.\n", None),
+        ];
+        for (kind, source, expected) in rows {
+            let out = sphinx_parse(source);
+            let node = first(&out.doctree.root, kind).expect("the node");
+            let found = node
+                .uid()
+                .and_then(|uid| out.state.loc_overrides.get(&uid))
+                .copied();
+            assert_eq!(found, expected, "{source:?}");
+        }
+    }
+
     /// Every duplicate name `NameTable::bind` reports is logged at
     /// creation: two explicit targets give one WARNING, two sections an
     /// INFO that never prints. The index directive notes its target with
@@ -2216,8 +2351,9 @@ pub(crate) mod tests {
     /// directive's line — and otherwise at docutils' state-machine
     /// position: a top-level directive's block end, its trailing blank
     /// lines included. A `parsed-literal` node has only `line =
-    /// content_offset + 1`, its first content line. Probed on Sphinx 9.1.0
-    /// for every directive kind that takes `:name:`.
+    /// content_offset + 1`, its first content line, which a table cell's
+    /// machine counts one high. Probed on Sphinx 9.1.0 for every directive
+    /// kind that takes `:name:`.
     #[test]
     fn duplicate_name_messages_follow_the_node_location_rule() {
         let duplicate = "WARNING: Duplicate explicit target name: \"a\". [docutils]";
@@ -2233,6 +2369,12 @@ pub(crate) mod tests {
             (
                 ".. parsed-literal::\n   :name: a\n\n   lit one\n\nAfter.\n",
                 8,
+            ),
+            (
+                "+------------------------+\n| .. parsed-literal::    |\n\
+                 |    :name: a            |\n|                        |\n\
+                 |    lit one             |\n+------------------------+\n\nAfter.\n",
+                10,
             ),
             (
                 ".. code-block:: python\n   :name: a\n\n   pass\n\nAfter.\n",

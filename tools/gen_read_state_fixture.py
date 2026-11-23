@@ -294,6 +294,43 @@ CASES += [
         "__ https://x.example/\n__ https://y.example/\n",
     ),
 ]
+# More `state.location.*` contexts: nodes whose docutils location the parse
+# records ([DS §8.2]'s overrides), each holding one unknown reference `bad_`
+# that SphinxDanglingReferences (850) reports where the walk-up from it
+# stops ([DS §6.1]). A parsed-literal block stands at its first content
+# line, `node.line = self.content_offset + 1` (`body.py:144`), whatever its
+# container, one line high in a table cell, whose machine counts one high.
+# A rubric stands where its container's `setup_child` puts it: where the
+# machine reading its block stopped (its trailing blank line, also in the
+# container Sphinx's `only` attaches), at the source and no line after an
+# option block, and, in a container without `document`, at line 0, which
+# ApplySourceWorkaround (010) gives it.
+CASES += [
+    ("state.location.parsed_literal", "Para.\n\n.. parsed-literal::\n\n   code bad_\n"),
+    (
+        "state.location.parsed_literal_list_item",
+        "- item\n\n  .. parsed-literal::\n\n     code bad_\n",
+    ),
+    (
+        "state.location.parsed_literal_table_cell",
+        "+------------------------+\n| .. parsed-literal::    |\n"
+        "|                        |\n|    code bad_           |\n"
+        "+------------------------+\n",
+    ),
+    ("state.location.rubric_before_paragraph", ".. rubric:: Rubric bad_\n\nPara.\n"),
+    (
+        "state.location.rubric_option",
+        ".. rubric:: Rubric bad_\n   :class: x\n\nPara.\n",
+    ),
+    (
+        "state.location.rubric_list_item",
+        "- item\n\n  .. rubric:: Rubric bad_\n\n  Para.\n",
+    ),
+    (
+        "state.location.rubric_in_only",
+        ".. only:: html\n\n   .. rubric:: Rubric bad_\n\n   Para.\n",
+    ),
+]
 
 
 # ---------------------------------------------------------------------------

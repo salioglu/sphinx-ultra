@@ -206,7 +206,9 @@ mod tests {
     /// (220) has copied the definition's reference in. An inline node has
     /// no location of its own, a paragraph has its first line, a section
     /// title its section's, a classifier its item's source and no line,
-    /// and an image's `:target:` reference has the source only.
+    /// an image's `:target:` reference has the source only, a
+    /// parsed-literal block its first content line, and a rubric the line
+    /// its container's `setup_child` or 010 gives it.
     ///
     /// An image has its own line wherever it is, and Sphinx's
     /// ImageCollector locates `image file not readable` there
@@ -255,7 +257,7 @@ mod tests {
             }
             rows += 1;
         }
-        assert!(rows >= 27, "only {rows} location cases");
+        assert!(rows >= 34, "only {rows} location cases");
         // Every image and reference, in pre-order.
         let images: [(&str, &str, &[&str]); 3] = [
             (

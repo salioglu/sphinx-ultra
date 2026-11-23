@@ -3693,6 +3693,7 @@ impl BlockParser {
             name,
             first_line,
             &block,
+            lines[raw_end - 1],
             &rawsource,
             lineno,
             span,
@@ -3741,13 +3742,17 @@ impl BlockParser {
     }
 
     /// The name-lookup + parse_directive_block + run dispatch shared by
-    /// body-level directives and substitution-embedded ones.
+    /// body-level directives and substitution-embedded ones. `block_end`
+    /// is the line the machine reading the directive's block stops on: its
+    /// last line, trailing blank lines included
+    /// ([`DirectiveInput::current`]).
     #[allow(clippy::too_many_arguments)]
     fn run_directive_core(
         &mut self,
         name: &str,
         first_line: LineRec,
         block: &[LineRec],
+        block_end: LineRec,
         rawsource: &str,
         lineno: u32,
         span: Span,
@@ -3852,12 +3857,20 @@ impl BlockParser {
         // field-marker line. Presets (the substitution alt=) seed the
         // dict and are overridden by parsed options.
         let mut options: Vec<(String, OptVal)> = presets;
+        let mut current = DocLoc::at(block_end.source, block_end.lineno);
         if !spec.option_spec.is_empty() {
             if let Some(k) = arg_block
                 .iter()
                 .position(|l| field_marker(self.sources.line_text(*l)).is_some())
             {
                 let opt_block = arg_block.split_off(k);
+                // `parse_extension_options` runs a nested machine over the
+                // block, which ends just past its last line.
+                let last = opt_block[opt_block.len() - 1];
+                current = DocLoc {
+                    source: Some(SourceRef::Table(last.source)),
+                    line: None,
+                };
                 match parse_extension_options(&self.sources, &opt_block, spec.option_spec) {
                     Ok(opts) => {
                         for (k2, v) in opts {
@@ -3915,6 +3928,7 @@ impl BlockParser {
             options,
             content,
             content_lineno,
+            current,
             span,
             lineno,
             rawsource,
@@ -4554,6 +4568,7 @@ impl BlockParser {
             options: input.options.clone(),
             content: Vec::new(),
             content_lineno: input.content_lineno,
+            current: input.current,
             span: input.span,
             lineno: input.lineno,
             rawsource: input.rawsource,
@@ -7510,6 +7525,22 @@ impl BlockParser {
         }
         let loc = self.machine_loc(directive_loc(&input));
         self.directive_add_name(&mut node, &input.options, loc);
+        // docutils makes the rubric without a location. Its container's
+        // `setup_child` gives it the machine's position when the container
+        // has `document` set ([`DirectiveInput::current`]); otherwise 010
+        // gives it its nearest located ancestor's source, this node's own
+        // but across an `include`, and line 0
+        // (`SP/sphinx/util/nodes.py:193-217`). A rubric in a substitution
+        // definition, which docutils moves out into the definition's
+        // container (`states.py:2184-2191`), keeps the default rule.
+        if self.substitution_ctx.is_none() {
+            let own = if self.attached {
+                input.current
+            } else {
+                DocLoc::at(input.span.source, 0)
+            };
+            self.note_location(&mut node, own);
+        }
         out.push(node);
         out.extend(inline.messages);
     }
@@ -7621,13 +7652,23 @@ impl BlockParser {
         if let Some(OptVal::StrList(classes)) = opt_get(&input.options, "class") {
             node.attrs.classes.extend(classes.iter().cloned());
         }
-        self.directive_add_name(
-            &mut node,
-            &input.options,
-            DocLoc::at(input.span.source, input.content_lineno),
-        );
+        // `node.line = self.content_offset + 1` (`body.py:144`): the first
+        // content line as the machine counts it ([`Self::line_bias`]). The
+        // node keeps that line, and takes its source from its container's
+        // `setup_child` or, in a container without `document`, from Sphinx's
+        // ApplySourceWorkaround (010, `SP/sphinx/util/nodes.py:180-184`).
+        let loc = DocLoc::at(input.span.source, input.content_lineno + self.line_bias);
+        self.directive_add_name(&mut node, &input.options, loc);
+        self.note_location(&mut node, loc);
         out.push(node);
         out.extend(inline.messages);
+    }
+
+    /// Records `loc` as the docutils location of `node`, which the default
+    /// rule ([DS §8.2]) does not give it ([`DocumentState::loc_overrides`]).
+    fn note_location(&mut self, node: &mut Node, loc: DocLoc) {
+        let uid = self.state.identify(node);
+        self.state.loc_overrides.insert(uid, loc);
     }
 
     /// A `DirectiveError` a directive's `run()` raises (`raise
@@ -7703,8 +7744,9 @@ impl BlockParser {
     /// at the node (`base_node=node`), so `loc` is where the node stands
     /// when it is named: the directive's line ([`directive_loc`]) when the
     /// directive located it first (`get_source_and_line(self.lineno)`,
-    /// `set_source_info`), the first content line for `parsed-literal`
-    /// (`node.line = self.content_offset + 1`), and otherwise docutils'
+    /// `set_source_info`), the first content line as the machine counts it
+    /// for `parsed-literal` (`node.line = self.content_offset + 1`, one
+    /// high in a table cell), and otherwise docutils'
     /// state-machine position ([`Self::machine_loc`]) — admonitions,
     /// `seealso`, `rubric`, the tables, Sphinx's `math` and `code`, a
     /// captioned code block's container. Probed per kind on Sphinx 9.1.0.
@@ -7936,6 +7978,7 @@ impl BlockParser {
                 .collect(),
             content: Vec::new(),
             content_lineno: input.content_lineno,
+            current: input.current,
             span: input.span,
             lineno: input.lineno,
             rawsource: input.rawsource,
@@ -8531,6 +8574,10 @@ impl BlockParser {
                 let offset = dline_text.len() - t.len();
                 self.rewrap_from(dline, offset)
             };
+            // The definition's nested machine reads the embedded directive
+            // to the end of the definition's block, which `substitution_def`
+            // took without its trailing blank lines.
+            let block_end = content_block.last().copied().unwrap_or(dline);
             self.substitution_ctx = Some(SubstCtx::default());
             let saved_kind = self.nested_node_kind.replace("substitution_definition");
             let saved_attached = std::mem::replace(&mut self.attached, false);
@@ -8538,6 +8585,7 @@ impl BlockParser {
                 &dname,
                 dfirst,
                 &dblock,
+                block_end,
                 &embedded_raw,
                 dlineno,
                 span,
@@ -11315,6 +11363,16 @@ struct DirectiveInput<'r> {
     /// stands for (`states.py:2301-2345`): the first content line, or,
     /// with no content, the line the content would start on.
     content_lineno: u32,
+    /// docutils' `(document.current_source, document.current_line)` while
+    /// the directive runs, which `setup_child` gives a node it returns
+    /// without a location when the container has `document` set
+    /// ([`BlockParser::attached`]): the last line of the directive's
+    /// block, its trailing blank lines included, where the machine that
+    /// read the block stopped; or, once an option block's nested machine
+    /// has ended just past its last line, that line's source and no line
+    /// (`StringList.info`, `SP/docutils/statemachine.py:1299-1307`;
+    /// [DS §6.1]).
+    current: DocLoc,
     span: Span,
     lineno: u32,
     rawsource: &'r str,
