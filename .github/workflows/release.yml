@@ -124,7 +124,7 @@ jobs:
       # build cannot break when the runner image or host toolchain drifts.
       - name: Install cross
         if: matrix.use_cross
-        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
         with:
           tool: cross
 
@@ -196,7 +196,7 @@ jobs:
       # The release already exists with its notes (release-please created it,
       # or `gh release create` on the manual path); it only gains the files.
       - name: Upload to the GitHub release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           fail_on_unmatched_files: true
