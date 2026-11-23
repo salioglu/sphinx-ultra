@@ -31,10 +31,16 @@ const ENDS_DOCUMENT: &str = "Document may not end with a transition.";
 ///
 /// The loop is `for node in self.document.findall(nodes.transition)`, a
 /// live walk ([`TxTree::next_node`] from each transition, which this
-/// transform moves but never replaces). The generator reaches a moved
-/// transition a second time, right behind the section it moved behind,
-/// which is not a last child: that visit changes nothing, so the walk here
-/// goes on from the transition's new place instead.
+/// transform moves but never replaces). The generator walks each child
+/// list by index, so the next node it yields after a move is the moved
+/// transition itself, at its new place right behind the ancestor it was
+/// moved behind, and the walk here visits it there again too. Under the
+/// document or a section that visit changes nothing: the transition
+/// follows that ancestor, a section or a node holding one, so it neither
+/// begins its parent nor follows a transition, and it is not a last child.
+/// Under any other parent, an `only` or a `desc_content` holding sections,
+/// it reports that the transition is not the child of a document or
+/// section.
 pub struct Transitions;
 
 impl Transform for Transitions {
@@ -45,17 +51,21 @@ impl Transform for Transitions {
             .tree
             .next_node(root, is_transition, false, true, false, false);
         while let Some(transition) = next {
-            visit_transition(cx, transition);
-            next = cx
-                .tree
-                .next_node(transition, is_transition, false, true, true, true);
+            next = if visit_transition(cx, transition) {
+                // The generator's second visit, which never moves the
+                // transition again: it is not a last child now.
+                Some(transition)
+            } else {
+                cx.tree
+                    .next_node(transition, is_transition, false, true, true, true)
+            };
         }
     }
 }
 
 /// `Transitions.visit_transition` (`SP/docutils/transforms/misc.py:94-143`)
-/// for the transition at `node`.
-fn visit_transition(cx: &mut TransformCx<'_>, node: TxId) {
+/// for the transition at `node`: whether it moved the transition.
+fn visit_transition(cx: &mut TransformCx<'_>, node: TxId) -> bool {
     let parent = cx
         .tree
         .parent(node)
@@ -84,11 +94,11 @@ fn visit_transition(cx: &mut TransformCx<'_>, node: TxId) {
         }
     }
     if !structural {
-        return;
+        return false;
     }
     if index + 1 != cx.tree.node(parent).children.len() {
         // No need to move the node.
-        return;
+        return false;
     }
     // Climb from the transition while the node behind which it is to be
     // moved, docutils' `sibling`, is the last child of its parent,
@@ -102,13 +112,14 @@ fn visit_transition(cx: &mut TransformCx<'_>, node: TxId) {
             // goes behind it.
             let warning = cx.report(WARNING, ENDS_DOCUMENT, node);
             cx.tree.append(parent, warning);
-            return;
+            return false;
         };
         index = child_index(cx.tree, grand, sibling);
         above = grand;
     }
     cx.tree.remove(parent, node);
     cx.tree.insert(above, index + 1, node);
+    true
 }
 
 /// `parent.index(child)`.
@@ -400,7 +411,9 @@ mod tests {
     /// warning. When the inserted message is the section's last child, the
     /// transition still moves (`index += 1` points at the message) and the
     /// message stays behind. One under a non-structural parent (`only`) is
-    /// reported and left there.
+    /// reported and left there, and so is one that ends a section under an
+    /// `only` or in a `desc_content` and moves into it: the generator
+    /// visits a moved transition again at its new place.
     ///
     /// Each row is a Sphinx 9.1.0 read of the input as `index.rst` (the
     /// read-state harness, `keep_warnings = True`): the post-read doctree
@@ -525,6 +538,37 @@ mod tests {
                  <transition>\n        <paragraph>\n            more\n"
                     .to_string(),
                 vec![record(5, CHILD)],
+            ),
+            (
+                // A transition that ends a section under `only` moves into
+                // the `only`, and the generator, visiting it again there,
+                // reports it.
+                ".. only:: html\n\n   A\n   =\n\n   para\n\n   ----\n\n   B\n   =\n\n   text\n",
+                "    <only expr=\"html\">\n        <section ids=\"a\" names=\"a\">\n            \
+                 <title>\n                A\n            <paragraph>\n                para\n        \
+                 <transition>\n        <section ids=\"b\" names=\"b\">\n            <title>\n                \
+                 B\n            <paragraph>\n                text\n"
+                    .to_string(),
+                vec![record(8, CHILD)],
+            ),
+            (
+                // The same in a `desc_content`.
+                ".. py:function:: f()\n\n   A\n   =\n\n   para\n\n   ----\n\n   B\n   =\n\n   text\n",
+                "    <index entries=\"('pair',\\ 'built-in\\ function;\\ f()',\\ 'f',\\ '',\\ None)\">\n    \
+                 <desc classes=\"py function\" desctype=\"function\" domain=\"py\" \
+                 no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" \
+                 nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"function\">\n        \
+                 <desc_signature _toc_name=\"f()\" _toc_parts=\"('f',)\" class=\"\" \
+                 classes=\"sig sig-object\" fullname=\"f\" ids=\"f\" module=\"True\">\n            \
+                 <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                \
+                 f\n            <desc_parameterlist xml:space=\"preserve\">\n        \
+                 <desc_content>\n            <section ids=\"a\" names=\"a\">\n                \
+                 <title>\n                    A\n                <paragraph>\n                    \
+                 para\n            <transition>\n            <section ids=\"b\" names=\"b\">\n                \
+                 <title>\n                    B\n                <paragraph>\n                    \
+                 text\n"
+                    .to_string(),
+                vec![record(8, CHILD)],
             ),
         ];
         let settings = ReadSettings::from_config(&BuildConfig {
