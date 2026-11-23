@@ -370,7 +370,12 @@ impl TxTree {
             None => &mut self.detached,
         };
         let Some(index) = siblings.iter().position(|&node| node == id) else {
-            debug_assert!(false, "{id:?} has no place to be replaced in");
+            // The message names no node: CodeQL's rust/cleartext-logging
+            // reads anything that flows from a `uid` as sensitive.
+            debug_assert!(
+                false,
+                "replace_self: the node has no place to be replaced in"
+            );
             return;
         };
         siblings.splice(index..=index, with.iter().copied());
@@ -587,7 +592,7 @@ mod tests {
             for uid in held {
                 let id = tree
                     .by_uid(uid)
-                    .unwrap_or_else(|| panic!("{label}: {uid:?} does not resolve"));
+                    .unwrap_or_else(|| panic!("{label}: a held identity does not resolve"));
                 assert_eq!(tree.node(id).uid(), Some(uid), "{label}");
             }
             assert_eq!(
@@ -784,7 +789,10 @@ mod tests {
                     assert_eq!(state.loc_overrides.get(&new), overrides.get(&old));
                     fresh.push(new);
                 }
-                (old, new) => panic!("{}: {old:?} copied as {new:?}", a.kind),
+                (None, Some(_)) => {
+                    panic!("{}: the copy has an identity its original lacks", a.kind)
+                }
+                (Some(_), None) => panic!("{}: the copy lost its original's identity", a.kind),
             }
         }
         // The pending node, `ref_`, the alias's reference and target, and
