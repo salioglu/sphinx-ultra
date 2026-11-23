@@ -28,12 +28,6 @@ ignore = [
     # directory), which are never untrusted input, and replacing it changes
     # the on-disk cache format. Revisit when the cache format next changes.
     { id = "RUSTSEC-2025-0141", reason = "bincode: cache persistence only, no untrusted input; format change scheduled with the next cache-version bump" },
-    # unsafe-libyaml backs serde_yaml, the loader for sphinx-ultra.yaml. The
-    # only safe-Rust serde YAML crate (serde-saphyr) requires Rust 1.89 and
-    # this crate's MSRV is 1.85; the forks (serde_yaml_ng, serde_norway) keep
-    # the same unsafe-libyaml dependency. Swap to serde-saphyr at the next
-    # MSRV bump.
-    { id = "RUSTSEC-2024-0449", reason = "serde_yaml/unsafe-libyaml: parses the project's own config file; replacement blocked on MSRV 1.89" },
 ]
 
 [licenses]
