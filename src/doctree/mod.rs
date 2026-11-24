@@ -666,11 +666,16 @@ pub struct Doctree {
 }
 
 impl Doctree {
-    /// The `(source path, line)` a warning about a node should report —
-    /// docutils' `(node.source, node.line)`. Line 0 means unknown; a
-    /// `source` the table doesn't know (a foreign or hand-built span)
-    /// falls back to the document's own path.
-    pub fn source_and_line(&self, span: Span) -> (&str, u32) {
+    /// A span's table path and line, the source table read by hand: line 0
+    /// means unknown, and a `source` the table doesn't know (a foreign or
+    /// hand-built span) falls back to the document's own path.
+    ///
+    /// Tests only. It is not docutils' location of a node, which
+    /// [`crate::transforms::location`] models (and a warning prints made
+    /// absolute, [`crate::rst::LogLocation::Node`]): an included file's
+    /// table path is relative to the source directory.
+    #[cfg(test)]
+    pub(crate) fn source_and_line(&self, span: Span) -> (&str, u32) {
         let path = self
             .sources
             .get(span.source as usize)
