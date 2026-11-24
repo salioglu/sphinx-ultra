@@ -78,6 +78,7 @@ reading of their regular expressions (research report "smart quotes" §6.1,
 import argparse
 import importlib.util
 import json
+import os
 import random
 import re
 import shutil
@@ -520,6 +521,12 @@ def read_corpus(gs, smartquotes):
                     doctree = gs.probe(app, base, rst)
                     warnings = app._warning.getvalue()[start:]
                     warnings = warnings.replace(str(base / "index.rst"), gs.SOURCE_TOKEN)
+                    # Another file of the srcdir a warning names (the
+                    # download collector's `download file not readable`,
+                    # wave 5a T17a) is spelled under `<SRCDIR>`; such a
+                    # warning is never SmartQuotes', so the variant records
+                    # it in no case.
+                    warnings = warnings.replace(f"{base}{os.sep}", "<SRCDIR>/")
                     assert str(base) not in warnings, f"{name}: srcdir leaked:\n{warnings}"
                     results[name] = (
                         gs.normalize(doctree.pformat(), base),

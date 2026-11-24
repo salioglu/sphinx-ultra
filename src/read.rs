@@ -210,6 +210,8 @@ impl ReadOutcome {
                 toctrees: Vec::new(),
                 registry: RegistryExport::default(),
                 state: DocumentState::default(),
+                roles_after: crate::rst::roles::RoleTable::default(),
+                crash: None,
             },
         }
     }
@@ -515,6 +517,7 @@ pub fn resolve_standalone(
         env: &env,
         numfig: false,
         numfig_format: &numfig_format,
+        math: crate::env::math::MathConfig::default(),
         doctree: &load_doctree,
         relative_uri: &|_, _| String::new(),
         intersphinx: &intersphinx,

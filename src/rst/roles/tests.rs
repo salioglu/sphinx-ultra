@@ -31,29 +31,29 @@ enum WithoutDefault {
 /// docutils' `_roles` restored after every lookup.
 #[rustfmt::skip]
 const SPHINX_LOOKUPS: &[(&str, Option<RoleFn>, WithoutDefault, bool, bool)] = &[
-    ("abbr", Some(Unported("abbr")), Same, false, false),
+    ("abbr", Some(Abbr), Same, false, false),
     ("any", Some(Any), Same, false, false),
-    ("command", Some(Unported("command")), Same, false, false),
+    ("command", Some(SphinxGeneric("command")), Same, false, false),
     ("cve", Some(Cve), Same, false, false),
     ("cwe", Some(Cwe), Same, false, false),
-    ("dfn", Some(Unported("dfn")), Same, false, false),
-    ("download", Some(Unported("download")), Same, false, false),
+    ("dfn", Some(SphinxGeneric("dfn")), Same, false, false),
+    ("download", Some(Download), Same, false, false),
     ("eq", Some(Eq), Same, false, false),
-    ("file", Some(Unported("file")), Same, false, false),
-    ("guilabel", Some(Unported("guilabel")), Same, false, false),
+    ("file", Some(EmphasizedLiteral), Same, false, false),
+    ("guilabel", Some(GuiLabel), Same, false, false),
     ("index", Some(Index), Same, false, false),
-    ("kbd", Some(Unported("kbd")), Same, false, false),
-    ("mailheader", Some(Unported("mailheader")), Same, false, false),
-    ("makevar", Some(Unported("makevar")), Same, false, false),
-    ("manpage", Some(Unported("manpage")), Same, false, false),
-    ("menuselection", Some(Unported("menuselection")), Same, false, false),
-    ("mimetype", Some(Unported("mimetype")), Same, false, false),
-    ("newsgroup", Some(Unported("newsgroup")), Same, false, false),
+    ("kbd", Some(Kbd), Same, false, false),
+    ("mailheader", Some(SphinxGeneric("mailheader")), Same, false, false),
+    ("makevar", Some(SphinxGeneric("makevar")), Same, false, false),
+    ("manpage", Some(Manpage), Same, false, false),
+    ("menuselection", Some(MenuSelection), Same, false, false),
+    ("mimetype", Some(SphinxGeneric("mimetype")), Same, false, false),
+    ("newsgroup", Some(SphinxGeneric("newsgroup")), Same, false, false),
     ("pep", Some(Pep), Same, false, false),
-    ("program", Some(Unported("program")), Same, false, false),
-    ("regexp", Some(Unported("regexp")), Same, false, false),
+    ("program", Some(SphinxGeneric("program")), Same, false, false),
+    ("regexp", Some(SphinxGeneric("regexp")), Same, false, false),
     ("rfc", Some(Rfc), Same, false, false),
-    ("samp", Some(Unported("samp")), Same, false, false),
+    ("samp", Some(EmphasizedLiteral), Same, false, false),
     ("abbreviation", Some(Generic("abbreviation")), Same, false, false),
     ("acronym", Some(Generic("acronym")), Same, false, false),
     ("anonymous-reference", Some(Unimplemented), Same, false, false),
@@ -173,7 +173,7 @@ const SPHINX_LOOKUPS: &[(&str, Option<RoleFn>, WithoutDefault, bool, bool)] = &[
     ("foo:ref", Some(Domain(DomainId::Std, "ref")), Same, false, true),
     ("py:ref", Some(Domain(DomainId::Std, "ref")), Same, false, false),
     ("std:kbd", None, Same, true, false),
-    ("KBD", Some(Unported("kbd")), Same, false, false),
+    ("KBD", Some(Kbd), Same, false, false),
     ("Py:Func", Some(Domain(DomainId::Py, "func")), Same, false, false),
     ("bogus", None, Same, true, false),
     ("a:b:c", None, Same, true, true),
@@ -264,12 +264,15 @@ fn resolve_role_matches_sphinx_domains_role() {
         };
         assert_eq!(
             resolve(sphinx_ctx(Some(DomainId::Py), false), written),
-            (expected(written, &lowered, *role, *info), logged.clone()),
+            (
+                expected(written, &lowered, role.clone(), *info),
+                logged.clone()
+            ),
             "{written:?} with the py default domain"
         );
         let (role, info) = match without_default {
-            Same => (*role, *info),
-            NoDefault(role, info) => (*role, *info),
+            Same => (role.clone(), *info),
+            NoDefault(role, info) => (role.clone(), *info),
         };
         assert_eq!(
             resolve(sphinx_ctx(None, false), written),
@@ -335,7 +338,7 @@ fn resolve_role_matches_sphinx_domains_role() {
         assert_eq!(
             resolve(sphinx_ctx(Some(DomainId::Py), false), written),
             (
-                expected(written, written, without, without.is_none()),
+                expected(written, written, without.clone(), without.is_none()),
                 unknown_role_name(written)
             ),
             "{written:?} without intersphinx"

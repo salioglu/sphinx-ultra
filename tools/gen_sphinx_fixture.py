@@ -63,7 +63,10 @@ Pinned configuration (recorded in the fixture header, asserted at runtime):
     and directive registries are process-global: a case's `.. role::` (or a
     `.. default-role::` while `default_role` is unset) would otherwise leak
     into every later case of its app (wave-5 research, roles/config report
-    §6.1, probe P25)
+    §6.1, probe P25); the role functions' `options`/`content` attributes
+    are restored after every parse too, since a Sphinx role stores each
+    call's options there and `.. role::` parses its options against them
+    (`probe_namespace`)
   - default_role: `app.config.default_role`, passed to the parse the way
     `Builder.read_doc` passes it (`sphinx/builders/__init__.py:656`)
 
@@ -141,9 +144,11 @@ SphinxTestApp is constructed per DISTINCT conf dict (cases grouped by their
 JSON-serialized conf, mirroring the [SIG] appendix probe scripts) so fifty
 conf cases do not spin fifty apps; the base settings assertions run against
 every app. The fixture schema emits "conf" on a case ONLY when non-empty —
-absent means defaults — and the Rust consumer maps every conf key onto
-ParseOptions.py (PySigConfig), ERRORING on unmapped keys so a future conf
-addition here fails loudly there instead of silently parsing under defaults.
+absent means defaults — and the Rust consumers map every conf key onto
+the parse options (ParseOptions.py, PySigConfig, or ParseOptions.read,
+ReadConfig: tests/support/fixture_conf.rs, wave 5a T17a), ERRORING on
+unmapped keys so a future conf addition here fails loudly there instead of
+silently parsing under defaults.
 
 WAVE-4.5 EXCLUSIONS (py-domain corpus; every entry in EXCLUDED below carries
 its reason and the assert keeps CASES disjoint from it — see that dict).
@@ -329,6 +334,9 @@ SUPPORTED_KINDS = {
     "footnote_reference",
     "label",
     "substitution_definition",
+    # wave 5a T17a: Sphinx's manpage and download roles
+    "manpage",
+    "download_reference",
 }
 
 CASES = [
@@ -1117,6 +1125,67 @@ Term : "classifier" : 'c2'
     ('sx_smartquotes', 'substitution_in_context', 'Before |sub| after and |it|.\n\n.. |sub| replace:: "replaced" -- text\n.. |it| replace:: it\'s\n'),
     ('sx_smartquotes', 'footnote_context', 'Auto [#]_"quoted" and [1]_\'s.\n\n.. [#] Auto "footnote".\n.. [1] Numbered.\n'),
     ('sx_smartquotes', 'escaped_whitespace_between_inlines', '*a*\\ *"b"* and **c**\\ ``d``\\ "e" and *f*\\\n*"g"*\n'),
+    # ===== sx_sphinx_roles (wave 5a T17a; roles/config report §6.1) =====
+    # The role functions, the role directive and the reference-role split.
+    # `download_unreadable_and_url` waits for T17c: Sphinx's
+    # DownloadFileCollector (880) gives a URL target its `refuri`.
+    ('sx_sphinx_roles', 'generic_docroles', ':command:`ls -l` :dfn:`term` :mailheader:`Content-Type` :makevar:`CFLAGS` :mimetype:`text/plain` :newsgroup:`comp.lang.python` :program:`sphinx-build` :regexp:`^a.*b$`\n'),
+    ('sx_sphinx_roles', 'generic_docroles_escapes_case', ':command:`a\\*b \\`x\\``\n\n:program:`!prog` :dfn:`a <b>`\n\n:COMMAND:`upper` `suffix`:makevar:\n'),
+    ('sx_sphinx_roles', 'kbd_compound', ':kbd:`Ctrl`\n\n:kbd:`Ctrl+C`\n\n:kbd:`Ctrl+Alt+Del`\n\n:kbd:`Ctrl-x Ctrl-f`\n'),
+    ('sx_sphinx_roles', 'kbd_multiword', ':kbd:`Caps Lock`\n\n:kbd:`Ctrl+Page Up`\n\n:kbd:`Page Up+Ctrl`\n\n:kbd:`back  space`\n\n:kbd:`Num Lock+x`\n'),
+    ('sx_sphinx_roles', 'kbd_separator_edges', ':kbd:`-`\n\n:kbd:`Ctrl+-`\n\n:kbd:`Ctrl++`\n\n:kbd:`Shift ^ A`\n\n:kbd:`a  b`\n\n:kbd:`M-x  M-y`\n\n:kbd:`a\\+b`\n'),
+    ('sx_sphinx_roles', 'kbd_newline', ':kbd:`Ctrl\n+ Q`\n'),
+    ('sx_sphinx_roles', 'guilabel_accelerators', ':guilabel:`&Cancel`\n\n:guilabel:`O&K`\n\n:guilabel:`Save && Exit`\n\n:guilabel:`A & B`\n\n:guilabel:`\\&Esc`\n\n:guilabel:`&&&Foo`\n\n:guilabel:`Plain`\n'),
+    ('sx_sphinx_roles', 'menuselection', ':menuselection:`Start --> Programs`\n\n:menuselection:`&File --> &Open`\n\n:menuselection:`A-->B`\n\n:menuselection:`A --> B --> C`\n\n:menuselection:`A -> B`\n'),
+    ('sx_sphinx_roles', 'samp_braces', ':samp:`print({x})`\n\n:samp:`a{b}c{d}e`\n\n:samp:`{}`\n\n:samp:`{a{b}c}`\n\n:samp:`a}b{c`\n\n:samp:`{unclosed`\n\n:samp:`plain`\n'),
+    ('sx_sphinx_roles', 'samp_escapes_file', ':samp:`a\\\\{b\\\\}`\n\n:samp:`a\\{b\\}`\n\n:samp:`x\\\\\\\\y`\n\n:file:`/etc/{name}.conf`\n\n:file:`C:\\\\Users\\\\{user}`\n\n:SAMP:`Upper{X}`\n'),
+    ('sx_sphinx_roles', 'abbr_explanations', ':abbr:`LIFO (last-in, first-out)`\n\n:abbr:`LIFO`\n\n:abbr:`LIFO ()`\n\n:abbr:`(only explanation)`\n\n:abbr:`A (b) (c)`\n\n:abbr:`X (multi\nline)`\n\n:abbr:`Y(z)`\n'),
+    ('sx_sphinx_roles', 'manpage_no_url', ':manpage:`ls(1)`\n\n:manpage:`ls`\n\n:manpage:`ls.1`\n\n:manpage:`the ls page <ls(1)>`\n\n:manpage:`!ls(1)`\n\n:manpage:`git-commit(1posix)`\n\n:manpage:`a  b(8)`\n'),
+    ('sx_sphinx_roles', 'manpage_url_page_section', ':manpage:`ls(1)`\n\n:manpage:`ls`\n\n:manpage:`the ls page <ls(1)>`\n\n:manpage:`!ls(1)`\n', {'manpages_url': 'https://man.example/{page}.{section}'}),
+    ('sx_sphinx_roles', 'manpage_url_none_section', ':manpage:`ls(` :manpage:`ls()` :manpage:`ls.` :manpage:`a.b(3)` :manpage:`x(0)`\n', {'manpages_url': 'https://m/{page}/{section}/{path}'}),
+    ('sx_sphinx_roles', 'index_role_forms', 'Para :index:`term` here.\n\n:index:`!main term`\n\n:index:`see <single: a; b>`\n\n:index:`pair <pair: x; y>`\n\n:index:`bad <bogus: x>`\n\n:index:`text <x>`\n'),
+    ('sx_sphinx_roles', 'index_role_shorthand', ':index:`t <a, !b, , c>`\n\n:index:`!x`\n\n:index:`! spaced`\n\n:index:`see also <seealso: p; q>`\n\n:index:`d <double: m; n>`\n\n:index:`! <!z>`\n'),
+    ('sx_sphinx_roles', 'index_role_id_not_registered', 'T\n=\n\n:index:`x`\n\nIndex 0\n-------\n\ntext\n'),
+    ('sx_sphinx_roles', 'index_alias_unimplemented', ':I:`upper`\n\n:i:`alias`\n'),
+    ('sx_sphinx_roles', 'pep_rfc_long_names', ':pep-reference:`8` and :PEP:`0` and :pep:`008` end.\n\n:rfc-reference:`2822` and :RFC:`0002822` and :RFC:`1` end.\n'),
+    ('sx_sphinx_roles', 'pep_rfc_invalid_consumes_serial', ':pep:`abc`\n\n:rfc:`abc`\n\n:pep:`10000`\n\n:pep:`8#anchor`\n\n:pep-reference:`10000`\n'),
+    ('sx_sphinx_roles', 'pep_rfc_edges', ':rfc:`1#section-` :rfc:`1#Section-2` :pep:`x < 8 >` :rfc:`2 #page-3`\n'),
+    ('sx_sphinx_roles', 'code_role_sphinx', ':code:`x = 1`\n\n:code:`a\\*b`\n\n:code:`a\\\\b`\n'),
+    ('sx_sphinx_roles', 'role_directive_code', '.. role:: python(code)\n   :language: python\n\n.. role:: plain(code)\n\n:python:`print(1)`\n\n:plain:`y`\n'),
+    ('sx_sphinx_roles', 'role_directive_over_sphinx_roles', '.. role:: k(kbd)\n   :class: big\n\n.. role:: s(samp)\n\n.. role:: red\n\n.. role:: py3(code)\n   :language: python3\n   :class: x\n\n.. role:: g(guilabel)\n\n.. role:: m(menuselection)\n\n.. role:: d(download)\n\n.. role:: cmd(command)\n   :class: extra\n\n.. role:: ab(abbr)\n\n.. role:: mp(manpage)\n\n.. role:: idx(index)\n\n.. role:: p8(pep)\n\n:k:`Ctrl+C` :s:`a{b}` :red:`alert` :py3:`x=1` :g:`&OK` :m:`A --> B`\n\n:d:`f.txt` :cmd:`ls` :ab:`A (b)` :mp:`ls(1)` :idx:`entry` :p8:`8`\n'),
+    ('sx_sphinx_roles', 'role_directive_over_reference_roles', '.. role:: f(py:func)\n\n.. role:: a(any)\n\n:f:`g` :a:`y`\n'),
+    ('sx_sphinx_roles', 'unknown_domain_std_fallback', ':foo:ref:`lbl` :FOO:Doc:`index` :py:ref:`lbl` :js:doc:`index` :c:option:`-x`\n'),
+    ('sx_sphinx_roles', 'disabled_xrefs', ':ref:`!label` :doc:`!page` :term:`!x` :any:`!y` :keyword:`!k` :numref:`!n`\n\n:option:`!-x` :envvar:`!HOME` :confval:`!c` :token:`!t`\n\n:py:func:`!f` :py:meth:`!m()` :func:`!g` :py:class:`!~a.B` :eq:`!e`\n'),
+    ('sx_sphinx_roles', 'explicit_title_regex', ':doc:`a <b> <c>`\n\n:doc:`x \\<y>`\n\n:doc:`p\\ <q>`\n\n:manpage:`t <u(1)> <v(2)>`\n\n:download:`n <m <o>>`\n'),
+    ('sx_sphinx_roles', 'non_reference_roles_ignore_titles', ':kbd:`a <b>`\n\n:guilabel:`x <y>`\n\n:samp:`x <{y}>`\n\n:abbr:`x <y> (z)`\n\n:program:`a\nb`\n'),
+    ('sx_sphinx_roles', 'other_domain_xref_shapes', ':rst:dir:`code-block` :rst:role:`kbd` :math:numref:`e` :js:func:`f` :js:mod:`m` :c:func:`f` :cpp:func:`f`\n'),
+    ('sx_sphinx_roles', 'unknown_roles', ':std:kbd:`x`\n\n:py:kbd:`x`\n\n:bogus:`x`\n\n:foo:bar:`x`\n'),
+    ('sx_sphinx_roles', 'role_directive_errors', '.. role:: r(ref)\n   :class: special\n\n.. role:: x(bogus)\n\n:r:`lbl` :x:`w`\n'),
+    # ===== sx_config (wave 5a T17a; roles/config report §6.1): the
+    # read-side configuration keys T17a types and the directives that set
+    # the same state; the rst_prolog/rst_epilog cases are T17b's =====
+    ('sx_config', 'default_role_any', 'Text `x` and `a <b>` and `y`:literal:.\n', {'default_role': 'any'}),
+    ('sx_config', 'default_role_obj_adapter', 'Text `x` and `a <b>` and `y`:literal:.\n', {'default_role': 'obj'}),
+    ('sx_config', 'default_role_kbd', 'Text `Ctrl+x` and `a <b>` and `y`:literal:.\n', {'default_role': 'kbd'}),
+    ('sx_config', 'default_role_guilabel', 'Text `x` and `a <b>` and `y`:literal:.\n', {'default_role': 'guilabel'}),
+    ('sx_config', 'default_role_math', 'Text `x` and `a <b>` and `y`:literal:.\n', {'default_role': 'math'}),
+    ('sx_config', 'default_role_code', 'Text `x` and `a <b>` and `y`:literal:.\n', {'default_role': 'code'}),
+    ('sx_config', 'default_role_index', 'Text `x` and `a <b>` and `y`:literal:.\n', {'default_role': 'index'}),
+    ('sx_config', 'default_role_pep_error', 'Text `x` and `a <b>` and `y`:literal:.\n', {'default_role': 'pep'}),
+    ('sx_config', 'default_role_eq', 'Text `x` and `a <b>` and `y`:literal:.\n', {'default_role': 'eq'}),
+    ('sx_config', 'default_role_nonexistent', 'Text `x` and `a <b>` and `y`:literal:.\n', {'default_role': 'nonexistent'}),
+    ('sx_config', 'default_domain_c_roles', '.. default-domain:: c\n\n:func:`f` :type:`T` :macro:`M`\n'),
+    ('sx_config', 'unprefixed_py_directives', '.. module:: m\n\n.. currentmodule:: m\n\n.. data:: d\n\n.. std:envvar:: E\n\n.. py:envvar:: F\n\n.. CLASS:: K\n\n.. function:: f(x)\n'),
+    ('sx_config', 'highlight_language_read_time', '.. code-block::\n\n   y = 2\n\n.. code::\n\n   z = 3\n\nPara::\n\n    x = 1\n', {'highlight_language': 'python3'}),
+    ('sx_config', 'highlight_directive_state', '.. highlight:: c\n   :linenothreshold: 2\n\n.. code-block::\n\n   int c;\n\n.. highlight:: none\n   :force:\n\n.. code-block::\n\n   plain\n'),
+    ('sx_config', 'default_role_directive', 'A `x` here.\n\n.. default-role:: math\n\nB `a^2` here.\n\n.. default-role:: kbd\n\nC `Ctrl+X` here.\n\n.. default-role::\n\nD `z` here.\n\n.. default-role:: bogus\n\nE `w` here.\n\n.. default-role:: code\n\nF `q` here.\n'),
+    ('sx_config', 'default_role_directive_with_conf', 'A `x` here.\n\n.. default-role::\n\nD `z` here.\n', {'default_role': 'any'}),
+    ('sx_config', 'primary_domain_none', '.. function:: f(x)\n\n.. class:: C\n\n:func:`f` :class:`C` :data:`d` :mod:`m` :exc:`E` :type:`T` :obj:`o`\n', {'primary_domain': None}),
+    ('sx_config', 'default_domain_nonexistent', '.. default-domain:: nonexistent\n\n:func:`f` :ref:`lbl`\n\n.. function:: g()\n'),
+    # ===== sx_smartquotes, appended (wave 5a T17a; smart-quotes report
+    # §6.4): Sphinx's generic roles, which smart quotes educate unless
+    # their node is a literal =====
+    ('sx_smartquotes', 'generic_sphinx_roles', ':abbr:`"A" (explanation "x")` :guilabel:`"G" --` :menuselection:`"A" --> "B"` :dfn:`"d"` :kbd:`"k"` :file:`"f"` :guilabel:`a\\\\"b`\n'),
 ]
 
 
@@ -1184,11 +1253,35 @@ def make_app(base: Path, conf: dict) -> SphinxTestApp:
     )
 
 
+_MISSING = object()
+
+
+def role_functions():
+    """Every role function docutils' registries hold, once each: the local
+    `_roles` (where Sphinx registers its roles) and the canonical
+    `_role_registry`."""
+    from docutils.parsers.rst import roles
+
+    functions = {}
+    for role in [*roles._roles.values(), *roles._role_registry.values()]:
+        functions[id(role)] = role
+    return list(functions.values())
+
+
 @contextmanager
 def probe_namespace():
     """One probe's own `docutils_namespace()`: the role and directive
     registries it starts from are restored when it ends, so a case's
     `.. role::` or `.. default-role::` cannot leak into the next case.
+
+    So are the `options` and `content` attributes of every registered role
+    function (wave 5a T17a). A Sphinx role instance stores each call's
+    options there (`SphinxRole.__call__`: `self.options = options`), and a
+    `.. role::` directive parses its option block against the base role's
+    `options` (`convert_directive_function`): in a running process, a role
+    used before admits no option. Each case is read as the first document
+    of a fresh build, where every role is as `register_local_role` left it
+    (`{'class': ...}`), whatever the cases before it called.
 
     Leaving a `docutils_namespace()` also unregisters every node class Sphinx
     registered with docutils (`additional_nodes`), which in a real build stay
@@ -1197,12 +1290,23 @@ def probe_namespace():
     needs `visit_index`). The ones registered when the probe starts, the
     app's, are registered again when it ends."""
     registered = list(additional_nodes)
+    attributes = [
+        (role, name, getattr(role, name, _MISSING))
+        for role in role_functions()
+        for name in ("options", "content")
+    ]
     try:
         with docutils_namespace():
             yield
     finally:
         for node in registered:
             register_node(node)
+        for role, name, value in attributes:
+            if value is _MISSING:
+                if name in getattr(role, "__dict__", {}):
+                    delattr(role, name)
+            else:
+                setattr(role, name, dict(value) if isinstance(value, dict) else value)
 
 
 def probe(app: SphinxTestApp, base: Path, rst_text: str, docname: str = "index"):
@@ -1314,6 +1418,8 @@ def generate_sphinx_snippets() -> int:
         "pysig": 30,
         "pyconf": 30,
         "sx_smartquotes": 26,
+        "sx_sphinx_roles": 28,
+        "sx_config": 16,
     }
     counts: dict = {}
     for case in CASES:
@@ -1408,8 +1514,9 @@ def generate_sphinx_snippets() -> int:
         "settings": settings_record,
         "conf_semantics": (
             "a case's optional 'conf' dict is confoverrides applied on top "
-            "of the base settings above; absent = defaults. The consumer "
-            "maps every key onto ParseOptions.py and errors on unmapped keys."
+            "of the base settings above; absent = defaults. The consumers "
+            "map every key onto the parse options (ParseOptions.py or "
+            "ParseOptions.read) and error on unmapped keys."
         ),
         "normalizations": [
             f"srcdir index.rst absolute path -> {SOURCE_TOKEN}",

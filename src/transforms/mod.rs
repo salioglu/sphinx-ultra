@@ -737,6 +737,8 @@ pub(crate) fn read_transforms_with(
         toctrees,
         registry,
         mut state,
+        roles_after,
+        crash,
     } = parsed;
     let mut tree = TxTree::from_parse(doctree, &mut state);
     for (key, id) in schedule(&state) {
@@ -763,6 +765,8 @@ pub(crate) fn read_transforms_with(
             toctrees,
             registry,
             state,
+            roles_after,
+            crash,
         },
     }
 }

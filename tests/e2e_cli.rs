@@ -3617,3 +3617,183 @@ fn trim_doctest_flags_reaches_the_search_index() {
         assert_eq!(indexed, terms, "{name}");
     }
 }
+
+/// Decision 14: custom roles and the default role follow Sphinx's
+/// build-scoped registry, documents read in sorted docname order, under
+/// `-j 4` as under `-j 1`. `d01` uses `:red:` before `d02` defines it;
+/// `d03` defines `blue` over `red`, so its parse needs `d02`'s registry;
+/// `d04` uses both; `d05`'s `.. default-role::` (no `default_role` set)
+/// leaks into `d06` and `d07`, which `d07` then resets for `d08`. Each
+/// document's parse in parallel starts from the baseline registry, and
+/// every one after `d02`, the first to leave another, is read again in
+/// order. The pinned streams are Sphinx 9.1.0's `-j 1` ones (its own `-j 4`
+/// reads chunks in separate processes, where the registry does not
+/// carry). A warm build in which `d04` alone is outdated reads it from
+/// the baseline registry: the cached `d02` and `d03` contribute nothing,
+/// as in Sphinx's incremental build.
+#[test]
+fn custom_roles_under_parallel_reads() {
+    let index = format!(
+        "Index\n=====\n\n.. toctree::\n\n{}",
+        (1..=8).map(|n| format!("   d0{n}\n")).collect::<String>()
+    );
+    let files = [
+        ("index.rst", index.as_str()),
+        ("d01.rst", "D01\n===\n\n:red:`a` comes before its role.\n"),
+        ("d02.rst", "D02\n===\n\n.. role:: red\n\n:red:`b` is red.\n"),
+        (
+            "d03.rst",
+            "D03\n===\n\n.. role:: blue(red)\n\n:blue:`c` is blue.\n",
+        ),
+        ("d04.rst", "D04\n===\n\n:red:`d` and :blue:`e`.\n"),
+        ("d05.rst", "D05\n===\n\n.. default-role:: pep-reference\n"),
+        ("d06.rst", "D06\n===\n\n`abc` is no PEP.\n"),
+        ("d07.rst", "D07\n===\n\n`8` is one.\n\n.. default-role::\n"),
+        ("d08.rst", "D08\n===\n\n`abc` is a title.\n"),
+    ];
+    let src = temp_source("t17a-parallel-roles", &files);
+    let cold = "\
+<SRCDIR>/d01.rst:4: ERROR: Unknown interpreted text role \"red\". [docutils]
+<SRCDIR>/d06.rst:4: ERROR: PEP number must be a number from 0 to 9999; \"abc\" is invalid. [docutils]
+";
+    for jobs in ["4", "1"] {
+        let (result, written) = warning_stream(
+            &src,
+            &out_dir(&format!("t17a-parallel-roles-j{jobs}")),
+            &["-j", jobs],
+        );
+        assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+        assert_eq!(written, cold, "-j {jobs}");
+    }
+
+    let out = out_dir("t17a-parallel-roles-warm");
+    let (result, written) = warning_stream(&src, &out, &["-j", "4"]);
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert_eq!(written, cold);
+    touch(&src.join("d04.rst"));
+    let (result, written) = warning_stream(&src, &out, &["-j", "4"]);
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert_eq!(
+        written,
+        "\
+<SRCDIR>/d04.rst:4: ERROR: Unknown interpreted text role \"red\". [docutils]
+<SRCDIR>/d04.rst:4: ERROR: Unknown interpreted text role \"blue\". [docutils]
+"
+    );
+}
+
+/// A build of `files` that Sphinx 9.1.0 crashes on (decision 13): exit
+/// status 2, and the report — on stderr and in the `-w` file — naming the
+/// exception Sphinx raises, and where the input is.
+fn assert_crash_exits_two(test: &str, files: &[(&str, &str)], exception: &str, location: &str) {
+    let src = temp_source(test, files);
+    let out = out_dir(test);
+    let (result, written) = warning_stream(&src, &out, &[]);
+    assert_eq!(
+        result.status.code(),
+        Some(2),
+        "stderr: {}",
+        stderr_of(&result)
+    );
+    let stderr = srcdir_spelled(&result.stderr, &src);
+    assert!(
+        stderr.contains(&format!("\n    {exception}\n")),
+        "the report names the crash: {stderr}"
+    );
+    assert!(
+        stderr.contains(&format!(
+            "{location}: Sphinx 9.1.0 crashes on this input; sphinx-ultra stops the build as \
+             it does."
+        )),
+        "the report says where: {stderr}"
+    );
+    assert_eq!(written, stderr, "the -w file holds what stderr does");
+}
+
+/// Decision 13: a trailing `&` leaves `GUILabel` an empty span, whose first
+/// character Sphinx 9.1.0 takes: `IndexError`.
+#[test]
+fn guilabel_trailing_ampersand_exits_two() {
+    assert_crash_exits_two(
+        "t17a-crash-guilabel",
+        &[("index.rst", "Title\n=====\n\nPress :guilabel:`a&`.\n")],
+        "IndexError: string index out of range",
+        "<SRCDIR>/index.rst:4",
+    );
+}
+
+/// Decision 13: `MenuSelection` is `GUILabel` after its `-->`s: the same
+/// `IndexError`.
+#[test]
+fn menuselection_trailing_ampersand_exits_two() {
+    assert_crash_exits_two(
+        "t17a-crash-menuselection",
+        &[(
+            "index.rst",
+            "Title\n=====\n\nOpen :menuselection:`File --> Save &`.\n",
+        )],
+        "IndexError: string index out of range",
+        "<SRCDIR>/index.rst:4",
+    );
+}
+
+/// Decision 13: an entry type `process_index_entry` no longer supports, in
+/// an `:index:` role's explicit target, raises `ValueError` out of the
+/// role.
+#[test]
+fn index_role_removed_entry_type_exits_two() {
+    assert_crash_exits_two(
+        "t17a-crash-index",
+        &[(
+            "index.rst",
+            "Title\n=====\n\nSee :index:`os <module: os>`.\n",
+        )],
+        "ValueError: 'module' is no longer supported for index entries (from entry 'module: \
+         os'). Use 'pair: module; os' instead.",
+        "<SRCDIR>/index.rst:4",
+    );
+}
+
+/// Decision 13: with no `default_role`, a `.. default-role::` of a Sphinx
+/// role leaks into the documents read after its own, and the first of
+/// them that uses bare interpreted text calls that role with no default
+/// role to name it: `SphinxError('cannot determine default role!')`,
+/// reported under Sphinx's `Sphinx error!` heading. Under `-j 4` too: the
+/// leak reaches `b` through the sorted re-read.
+#[test]
+fn leaked_sphinx_default_role_exits_two() {
+    let files = [
+        ("index.rst", "Index\n=====\n\n.. toctree::\n\n   a\n   b\n"),
+        (
+            "a.rst",
+            "A\n=\n\n.. default-role:: kbd\n\nPress `Ctrl+C`.\n",
+        ),
+        ("b.rst", "B\n=\n\nThen `y` here.\n"),
+    ];
+    assert_crash_exits_two(
+        "t17a-crash-default-role",
+        &files,
+        "sphinx.errors.SphinxError: cannot determine default role!",
+        "<SRCDIR>/b.rst:4",
+    );
+    let src = temp_source("t17a-crash-default-role-j4", &files);
+    let out = out_dir("t17a-crash-default-role-j4");
+    let result = sphinx_build(&[
+        src.to_str().unwrap(),
+        out.to_str().unwrap(),
+        "-q",
+        "-j",
+        "4",
+    ]);
+    assert_eq!(
+        result.status.code(),
+        Some(2),
+        "stderr: {}",
+        stderr_of(&result)
+    );
+    let stderr = stderr_of(&result);
+    assert!(
+        stderr.starts_with("\nSphinx error!\n\n    sphinx.errors.SphinxError:"),
+        "{stderr}"
+    );
+}

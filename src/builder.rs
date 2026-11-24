@@ -128,6 +128,35 @@ impl BuilderKind {
     }
 }
 
+/// Decision 14's read schedule: whether the parallel parses of a build
+/// stand, given the role registries each document left
+/// ([`crate::rst::ParseOutput::roles_after`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReadSchedule {
+    /// No document left registries other than the ones every parse
+    /// started from: each parse saw what Sphinx's read would have.
+    Parallel,
+    /// The document at `changed`, in sorted docname order, is the first
+    /// to leave other registries: every document after it is parsed
+    /// again, in order, each from the registries the one before it left.
+    Reparse { changed: usize },
+}
+
+impl ReadSchedule {
+    /// The schedule for the documents a build parsed, given the
+    /// registries each one left, in sorted docname order, and the ones
+    /// every parse started from.
+    fn plan(
+        baseline: &crate::rst::roles::RoleTable,
+        roles_after: &[&crate::rst::roles::RoleTable],
+    ) -> ReadSchedule {
+        match roles_after.iter().position(|after| *after != baseline) {
+            Some(changed) => ReadSchedule::Reparse { changed },
+            None => ReadSchedule::Parallel,
+        }
+    }
+}
+
 /// One document's read-phase output: the pipeline's [`Document`] and the
 /// read it was derived from.
 ///
@@ -866,7 +895,15 @@ impl SphinxBuilder {
 
         let mut env = std::mem::take(&mut self.env);
         let to_read = self.plan_read(&env, &source_files);
-        let mut read_results = self.read_phase(&source_files, &to_read)?;
+        let mut read_results = match self.read_phase(&source_files, &to_read) {
+            Ok(read_results) => read_results,
+            // A read that crashes Sphinx (decision 13) ends the build with
+            // the environment as it was.
+            Err(error) => {
+                self.env = env;
+                return Err(error);
+            }
+        };
 
         self.merge_phase(&mut env, &mut read_results);
         self.resolve_phase(&mut env, &read_results);
@@ -1182,12 +1219,25 @@ impl SphinxBuilder {
         to_read
     }
 
-    /// Read phase: parse every outdated source file in parallel, and
-    /// recover the rest from the cache.
+    /// Read phase: recover every up-to-date document from the cache and
+    /// parse every outdated one, in parallel, then follow decision 14's
+    /// schedule ([`ReadSchedule`]): the role registries are build-scoped,
+    /// as docutils' `_roles` is for Sphinx, whose read is in sorted
+    /// docname order. Each parse starts from the build's baseline
+    /// registries ([`Parser::baseline_roles`]); once a document leaves
+    /// others (a `.. role::`, a `.. default-role::` without
+    /// `default_role` set), every document parsed after it in sorted
+    /// docname order is parsed again, in that order, each from the
+    /// registries the one before it left. Like Sphinx's, only the
+    /// documents read in this build contribute: one recovered from the
+    /// cache adds nothing.
     ///
     /// One file failing must not abort the build: failures become
     /// `BuildErrorReport`s (and a non-zero exit) while the rest continue.
-    /// Results keep the discovery order of `files`.
+    /// An input that crashes Sphinx does abort it (decision 13): the read
+    /// fails with the crash of the first document, in sorted docname
+    /// order, that has one ([`crate::rst::RoleCrash`]). Results keep the
+    /// discovery order of `files`.
     fn read_phase(&self, files: &[PathBuf], to_read: &BTreeSet<String>) -> Result<Vec<ReadResult>> {
         info!(
             "Processing {} files with {} parallel jobs",
@@ -1209,7 +1259,8 @@ impl SphinxBuilder {
             .num_threads(self.parallel_jobs)
             .build()?;
 
-        let results: Vec<(PathBuf, Result<ReadResult>)> = pool.install(|| {
+        let baseline = Arc::clone(self.parser.baseline_roles());
+        let mut results: Vec<(PathBuf, Result<ReadResult>)> = pool.install(|| {
             files
                 .par_iter()
                 .map(|file_path| {
@@ -1217,11 +1268,55 @@ impl SphinxBuilder {
                     let outdated = to_read.contains(&docname);
                     (
                         file_path.clone(),
-                        self.read_one_file(file_path, docname, &found_docs, outdated),
+                        self.read_one_file(file_path, docname, &found_docs, outdated, &baseline),
                     )
                 })
                 .collect()
         });
+
+        // The documents this build parsed, in sorted docname order.
+        let mut parsed: Vec<(String, usize)> = results
+            .iter()
+            .enumerate()
+            .filter_map(|(index, (_, result))| match result {
+                Ok(read) if read.read_time_us.is_some() => Some((read.docname.clone(), index)),
+                _ => None,
+            })
+            .collect();
+        parsed.sort();
+        let roles_after: Vec<&crate::rst::roles::RoleTable> = parsed
+            .iter()
+            .map(|(_, index)| match &results[*index].1 {
+                Ok(read) => &read.outcome.output.roles_after,
+                Err(_) => unreachable!("only successful reads are listed"),
+            })
+            .collect();
+        if let ReadSchedule::Reparse { changed } = ReadSchedule::plan(&baseline, &roles_after) {
+            let mut roles = Arc::new(roles_after[changed].clone());
+            for (docname, index) in &parsed[changed + 1..] {
+                let file_path = results[*index].0.clone();
+                let result = self.parse_one_file(&file_path, docname.clone(), &found_docs, &roles);
+                if let Ok(read) = &result {
+                    roles = Arc::new(read.outcome.output.roles_after.clone());
+                }
+                results[*index].1 = result;
+            }
+        }
+
+        // Decision 13: the first document in Sphinx's read order whose
+        // read crashes Sphinx fails the build.
+        for (docname, index) in &parsed {
+            if let Ok(read) = &results[*index].1 {
+                if let Some(crash) = &read.outcome.output.crash {
+                    let crash = crash.clone().located(
+                        &read.outcome.output.doctree.sources,
+                        &self.source_dir,
+                        docname,
+                    );
+                    return Err(anyhow::Error::new(crash));
+                }
+            }
+        }
 
         let mut read_results = Vec::with_capacity(results.len());
         for (file_path, result) in results {
@@ -1256,6 +1351,7 @@ impl SphinxBuilder {
         docname: String,
         found_docs: &Arc<BTreeSet<String>>,
         outdated: bool,
+        roles: &Arc<crate::rst::roles::RoleTable>,
     ) -> Result<ReadResult> {
         let relative_path = file_path.strip_prefix(&self.source_dir)?;
         debug!("Processing file: {}", relative_path.display());
@@ -1288,11 +1384,27 @@ impl SphinxBuilder {
             }
         }
 
-        // Read and parse the file
+        self.parse_one_file(file_path, docname, found_docs, roles)
+    }
+
+    /// One document's parse, from the role registries `roles`: its read
+    /// and the document it gives, stored in the cache when the build is
+    /// incremental.
+    fn parse_one_file(
+        &self,
+        file_path: &Path,
+        docname: String,
+        found_docs: &Arc<BTreeSet<String>>,
+        roles: &Arc<crate::rst::roles::RoleTable>,
+    ) -> Result<ReadResult> {
         let content = std::fs::read_to_string(file_path)?;
-        let parsed =
-            self.parser
-                .parse_full(file_path, &content, &docname, Some(Arc::clone(found_docs)))?;
+        let parsed = self.parser.parse_full_from(
+            file_path,
+            &content,
+            &docname,
+            Some(Arc::clone(found_docs)),
+            Arc::clone(roles),
+        )?;
         let mut document = parsed.document;
 
         // Simple document rendering (placeholder). Done here, in the read
@@ -1638,6 +1750,7 @@ impl SphinxBuilder {
             env,
             numfig: self.config.numfig,
             numfig_format: &self.config.numfig_format,
+            math: crate::env::math::MathConfig::from(&self.config),
             doctree: &load_doctree,
             relative_uri: &relative_uri,
             intersphinx: &self.intersphinx,
@@ -2331,6 +2444,186 @@ mod tests {
         (stats, builder)
     }
 
+    /// A cold build of the project `files` (relative path, text) with
+    /// `jobs` parallel jobs, as the CLI's sphinx-build mode configures it:
+    /// each document's resolved doctree, by docname, and the warning
+    /// stream.
+    fn build_roles_project(
+        files: &[(&str, &str)],
+        jobs: usize,
+    ) -> (BTreeMap<String, String>, Vec<String>) {
+        let tmp = TempDir::new().unwrap();
+        let source_dir = tmp.path().join("src");
+        for (path, text) in files {
+            let path = source_dir.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        let config = BuildConfig {
+            validate_directives: false,
+            ..BuildConfig::default()
+        };
+        let mut builder = SphinxBuilder::new(config, source_dir, tmp.path().join("out")).unwrap();
+        builder.set_parallel_jobs(jobs);
+        let stats = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(builder.build())
+            .unwrap();
+        let resolved = builder.resolved.lock().unwrap().clone();
+        let warnings = stats
+            .warning_details
+            .iter()
+            .map(|record| record.message.clone())
+            .collect();
+        (resolved, warnings)
+    }
+
+    /// The lines of `resolved`'s document `docname` after its first
+    /// `<paragraph>` line.
+    fn paragraph<'r>(resolved: &'r BTreeMap<String, String>, docname: &str) -> Vec<&'r str> {
+        let pformat = &resolved[docname];
+        let start = pformat
+            .lines()
+            .position(|line| line.trim() == "<paragraph>")
+            .unwrap_or_else(|| panic!("{docname} has a paragraph:\n{pformat}"));
+        pformat.lines().skip(start + 1).collect()
+    }
+
+    /// Decision 14 ([RC §3.15]): docutils keeps the roles `.. role::`
+    /// registers for the whole process, and Sphinx reads a build's
+    /// documents in sorted docname order, so a custom role exists in every
+    /// document after the one that defines it and in none before; so does
+    /// a `.. default-role::` while `default_role` is unset ([RC §4.2]).
+    /// The parallel parse starts every document from the baseline registry
+    /// and reads each one after the first to change it again, in order.
+    #[test]
+    fn custom_role_defined_in_earlier_doc_applies_to_later_doc() {
+        let files = [
+            (
+                "index.rst",
+                "Index\n=====\n\n.. toctree::\n\n   a\n   b\n   c\n   d\n",
+            ),
+            ("a.rst", "A\n=\n\nEarly :red:`x`.\n"),
+            (
+                "b.rst",
+                "B\n=\n\n.. role:: red\n\n.. default-role:: math\n\nHere :red:`y`.\n",
+            ),
+            ("c.rst", "C\n=\n\nLater :red:`z` and `a^2`.\n"),
+            ("d.rst", "D\n=\n\nLast `b^2`.\n"),
+        ];
+        for jobs in [4, 1] {
+            let (resolved, warnings) = build_roles_project(&files, jobs);
+            assert_eq!(
+                warnings,
+                ["Unknown interpreted text role \"red\"."],
+                "-j {jobs}"
+            );
+            assert_eq!(
+                paragraph(&resolved, "c")[..6],
+                [
+                    "            Later ",
+                    "            <inline classes=\"red\">",
+                    "                z",
+                    "             and ",
+                    "            <math>",
+                    "                a^2",
+                ],
+                "-j {jobs}"
+            );
+            assert_eq!(
+                paragraph(&resolved, "d")[..3],
+                [
+                    "            Last ",
+                    "            <math>",
+                    "                b^2"
+                ],
+                "-j {jobs}"
+            );
+        }
+    }
+
+    /// Decision 14: a role defined in an included file is registered by
+    /// the document that includes it, in that document's place in the
+    /// read order.
+    #[test]
+    fn role_defined_in_included_file_applies_to_later_doc() {
+        let files = [
+            ("index.rst", "Index\n=====\n\n.. toctree::\n\n   a\n   b\n"),
+            ("a.rst", "A\n=\n\n.. include:: roles.inc\n"),
+            ("roles.inc", ".. role:: red\n"),
+            ("b.rst", "B\n=\n\nLater :red:`z`.\n"),
+        ];
+        let (resolved, warnings) = build_roles_project(&files, 4);
+        assert_eq!(warnings, Vec::<String>::new());
+        assert_eq!(
+            paragraph(&resolved, "b")[..3],
+            [
+                "            Later ",
+                "            <inline classes=\"red\">",
+                "                z"
+            ]
+        );
+    }
+
+    /// Decision 14's schedule as a unit ([`ReadSchedule::plan`]): the
+    /// parallel parses stand while every document left the baseline
+    /// registry as it found it; otherwise every document after the first
+    /// that changed it is read again. And the build's re-read threads the
+    /// registry from document to document: `c` uses `blue`, which `b`
+    /// defines over `a`'s `red`, so `b` must be read from `a`'s registry
+    /// and `c` from `b`'s.
+    #[test]
+    fn read_schedule_follows_role_table_changes() {
+        use crate::rst::roles::{RoleFn, RoleTable};
+        let baseline = RoleTable::sphinx();
+        let mut red = RoleTable::sphinx();
+        red.register_local("red", RoleFn::GenericCustom);
+        let mut math = RoleTable::sphinx();
+        math.set_default(Some(RoleFn::Math));
+        assert_eq!(ReadSchedule::plan(&baseline, &[]), ReadSchedule::Parallel);
+        assert_eq!(
+            ReadSchedule::plan(&baseline, &[&baseline, &baseline, &baseline]),
+            ReadSchedule::Parallel
+        );
+        assert_eq!(
+            ReadSchedule::plan(&baseline, &[&baseline, &red, &red, &math]),
+            ReadSchedule::Reparse { changed: 1 }
+        );
+        assert_eq!(
+            ReadSchedule::plan(&baseline, &[&math, &math]),
+            ReadSchedule::Reparse { changed: 0 }
+        );
+        assert_eq!(
+            ReadSchedule::plan(&baseline, &[&baseline, &red]),
+            ReadSchedule::Reparse { changed: 1 }
+        );
+
+        let files = [
+            (
+                "index.rst",
+                "Index\n=====\n\n.. toctree::\n\n   a\n   b\n   c\n",
+            ),
+            ("a.rst", "A\n=\n\n.. role:: red\n"),
+            ("b.rst", "B\n=\n\n.. role:: blue(red)\n"),
+            ("c.rst", "C\n=\n\nUse :blue:`z`.\n"),
+        ];
+        for jobs in [4, 1] {
+            let (resolved, warnings) = build_roles_project(&files, jobs);
+            assert_eq!(warnings, Vec::<String>::new(), "-j {jobs}");
+            assert_eq!(
+                paragraph(&resolved, "c")[..3],
+                [
+                    "            Use ",
+                    "            <inline classes=\"blue\">",
+                    "                z"
+                ],
+                "-j {jobs}"
+            );
+        }
+    }
+
     /// `-W` and `-n` steer diagnostics, not content: toggling either must
     /// leave the fingerprint — and therefore the whole cache directory —
     /// alone. Sphinx cannot invalidate on either (`config.py:272` gives
@@ -2398,6 +2691,55 @@ mod tests {
         let mut numfig = base.clone();
         numfig.numfig = true;
         assert_ne!(config_fingerprint(&numfig).unwrap(), baseline, "numfig");
+
+        // The read-side keys of wave 5a T17a are rebuild class `'env'`
+        // (`config.py:247`, `:271`, `:282-285`).
+        for (key, changed) in [
+            (
+                "default_role",
+                BuildConfig {
+                    default_role: Some("any".to_string()),
+                    ..base.clone()
+                },
+            ),
+            (
+                "manpages_url",
+                BuildConfig {
+                    manpages_url: Some("https://man/{page}".to_string()),
+                    ..base.clone()
+                },
+            ),
+            (
+                "math_number_all",
+                BuildConfig {
+                    math_number_all: true,
+                    ..base.clone()
+                },
+            ),
+            (
+                "math_eqref_format",
+                BuildConfig {
+                    math_eqref_format: Some("Eq. {number}".to_string()),
+                    ..base.clone()
+                },
+            ),
+            (
+                "math_numfig",
+                BuildConfig {
+                    math_numfig: false,
+                    ..base.clone()
+                },
+            ),
+            (
+                "math_numsep",
+                BuildConfig {
+                    math_numsep: "-".to_string(),
+                    ..base.clone()
+                },
+            ),
+        ] {
+            assert_ne!(config_fingerprint(&changed).unwrap(), baseline, "{key}");
+        }
 
         // Both warning-stream keys are rebuild class `'env'`
         // (`config.py:262-263`): a warm build replays no read-phase record,

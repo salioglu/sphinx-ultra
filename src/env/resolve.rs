@@ -57,6 +57,13 @@ pub enum XrefOutcome {
     /// Nothing found: the caller decides whether this warrants a
     /// dangling-reference warning.
     Missing,
+    /// A reference node replaces the `pending_xref`, and the resolver
+    /// logged `warning` on its way (`Invalid math_eqref_format`), which
+    /// carries no `type`/`subtype`.
+    ResolvedWarning {
+        resolved: ResolvedXref,
+        warning: String,
+    },
 }
 
 /// The reference node a successful resolution builds.
@@ -100,6 +107,9 @@ pub struct Resolver<'a> {
     pub env: &'a BuildEnvironment,
     pub numfig: bool,
     pub numfig_format: &'a BTreeMap<String, String>,
+    /// The math domain's configuration values
+    /// ([`crate::env::math::MathConfig`]).
+    pub math: crate::env::math::MathConfig,
     /// A document's doctree, for `:numref:`'s target-node lookup
     /// (`env.get_doctree(docname).ids`).
     pub doctree: &'a dyn Fn(&str) -> Option<Cow<'a, Doctree>>,
@@ -160,12 +170,18 @@ impl Resolver<'_> {
     /// its target's id, with its number, `(N)`, in place of the content
     /// node.
     fn resolve_math(&self, req: &XrefRequest<'_>) -> XrefOutcome {
-        match crate::env::math::resolve_xref(self.env, self.numfig, req.reftarget) {
+        match crate::env::math::resolve_xref(self.env, self.numfig, &self.math, req.reftarget) {
             Some(target) => {
                 let mut node =
                     self.make_refnode(req.fromdoc, target.docname, Some(&target.node_id));
                 node.inner = Inner::Text(target.title);
-                XrefOutcome::Resolved(node)
+                match target.warning {
+                    Some(warning) => XrefOutcome::ResolvedWarning {
+                        resolved: node,
+                        warning,
+                    },
+                    None => XrefOutcome::Resolved(node),
+                }
             }
             None => XrefOutcome::Missing,
         }
@@ -696,7 +712,7 @@ struct NoNumber;
 
 /// Python's `KeyError` out of `str.format`, carrying the missing field.
 #[derive(Debug)]
-struct KeyError(String);
+pub(crate) struct KeyError(pub(crate) String);
 
 /// Python's `TypeError` out of `%`-formatting.
 #[derive(Debug)]
@@ -704,7 +720,11 @@ struct TypeError;
 
 /// `title.format(name=..., number=...)` for the fields numfig formats can
 /// name. Any other `{field}` is Python's `KeyError`.
-fn format_new_style(title: &str, figname: Option<&str>, fignum: &str) -> Result<String, KeyError> {
+pub(crate) fn format_new_style(
+    title: &str,
+    figname: Option<&str>,
+    fignum: &str,
+) -> Result<String, KeyError> {
     let mut out = String::with_capacity(title.len());
     let mut rest = title;
     while let Some(open) = rest.find('{') {
@@ -1148,6 +1168,18 @@ fn resolve_one(
 
     match outcome {
         XrefOutcome::Resolved(resolved) => {
+            vec![reference_node(resolved, contnode, span)]
+        }
+        XrefOutcome::ResolvedWarning { resolved, warning } => {
+            out.warnings.push(
+                BuildWarning::new(
+                    path.to_path_buf(),
+                    line,
+                    warning,
+                    WarningType::BrokenCrossReference,
+                )
+                .with_category(None),
+            );
             vec![reference_node(resolved, contnode, span)]
         }
         XrefOutcome::Kept { warning } => {
@@ -1881,6 +1913,7 @@ mod tests {
             env,
             numfig: true,
             numfig_format,
+            math: crate::env::math::MathConfig::default(),
             doctree: &|_| None,
             relative_uri: &|_, _| String::new(),
             intersphinx: &INERT,
@@ -2108,6 +2141,7 @@ mod tests {
             env: &env,
             numfig: false,
             numfig_format: &formats,
+            math: crate::env::math::MathConfig::default(),
             doctree: &|_| Some(Cow::Borrowed(&doctree)),
             relative_uri: &|_, _| String::new(),
             intersphinx: &INERT,
@@ -2160,6 +2194,7 @@ mod tests {
             env: &env,
             numfig: true,
             numfig_format: &formats,
+            math: crate::env::math::MathConfig::default(),
             doctree: &|_| Some(Cow::Borrowed(&doctree)),
             relative_uri: &|_, _| String::new(),
             intersphinx: &INERT,
@@ -2205,6 +2240,7 @@ mod tests {
             env: &env,
             numfig: true,
             numfig_format: &formats,
+            math: crate::env::math::MathConfig::default(),
             doctree: &|_| Some(Cow::Borrowed(&doctree)),
             relative_uri: &|_, _| String::new(),
             intersphinx: &INERT,

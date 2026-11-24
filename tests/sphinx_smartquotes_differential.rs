@@ -34,14 +34,18 @@
 //! Clones the tests/sphinx_doctree_differential.rs shape: committed JSON,
 //! version assertions, a floor against silent truncation, every mismatch
 //! collected before asserting, and panics reported as named mismatches. A
-//! case's `conf` maps onto `ParseOptions.py` exactly as there, an unmapped
-//! key an error.
+//! case's `conf` maps onto the parse options through the helper both
+//! consumers share (tests/support/fixture_conf.rs), an unmapped key an
+//! error.
+
+mod support {
+    pub mod fixture_conf;
+}
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use sphinx_ultra::builder::BuilderKind;
 use sphinx_ultra::config::BuildConfig;
-use sphinx_ultra::py::PySigConfig;
 use sphinx_ultra::read::{read_standalone, ReadSettings};
 use sphinx_ultra::rst::ParseOptions;
 use sphinx_ultra::transforms::smartquotes::SmartQuotesSettings;
@@ -101,84 +105,6 @@ struct BaseCase {
     #[serde(default)]
     conf: BTreeMap<String, serde_json::Value>,
     pseudo_xml: String,
-}
-
-/// Map a fixture case's `conf` dict onto the [`PySigConfig`] the parse layer
-/// consumes, as tests/sphinx_doctree_differential.rs maps it. Errors on any
-/// key (or value shape) it does not understand.
-fn py_config_from_conf(conf: &BTreeMap<String, serde_json::Value>) -> Result<PySigConfig, String> {
-    use serde_json::Value;
-
-    fn opt_i64(key: &str, value: &Value) -> Result<Option<i64>, String> {
-        match value {
-            Value::Null => Ok(None),
-            Value::Number(n) => n
-                .as_i64()
-                .map(Some)
-                .ok_or_else(|| format!("conf key {key}: non-integer number {n}")),
-            other => Err(format!("conf key {key}: expected integer, got {other}")),
-        }
-    }
-    fn boolean(key: &str, value: &Value) -> Result<bool, String> {
-        value
-            .as_bool()
-            .ok_or_else(|| format!("conf key {key}: expected bool, got {value}"))
-    }
-    fn string(key: &str, value: &Value) -> Result<String, String> {
-        value
-            .as_str()
-            .map(str::to_owned)
-            .ok_or_else(|| format!("conf key {key}: expected string, got {value}"))
-    }
-
-    let mut py = PySigConfig::default();
-    for (key, value) in conf {
-        match key.as_str() {
-            "maximum_signature_line_length" => {
-                py.maximum_signature_line_length = opt_i64(key, value)?;
-            }
-            "python_maximum_signature_line_length" => {
-                py.python_maximum_signature_line_length = opt_i64(key, value)?;
-            }
-            "python_trailing_comma_in_multi_line_signatures" => {
-                py.python_trailing_comma_in_multi_line_signatures = boolean(key, value)?;
-            }
-            "python_display_short_literal_types" => {
-                py.python_display_short_literal_types = boolean(key, value)?;
-            }
-            "python_use_unqualified_type_names" => {
-                py.python_use_unqualified_type_names = boolean(key, value)?;
-            }
-            "toc_object_entries" => py.toc_object_entries = boolean(key, value)?,
-            "toc_object_entries_show_parents" => {
-                py.toc_object_entries_show_parents = string(key, value)?;
-            }
-            "add_function_parentheses" => py.add_function_parentheses = boolean(key, value)?,
-            "add_module_names" => py.add_module_names = boolean(key, value)?,
-            "strip_signature_backslash" => py.strip_signature_backslash = boolean(key, value)?,
-            other => {
-                return Err(format!(
-                    "unmapped conf key {other:?}: teach py_config_from_conf about it \
-                     (and the parse layer, if it is not a PySigConfig knob)"
-                ));
-            }
-        }
-    }
-    Ok(py)
-}
-
-#[test]
-fn an_unmapped_conf_key_fails() {
-    let mut conf = BTreeMap::new();
-    conf.insert(
-        "python_no_such_setting".to_string(),
-        serde_json::Value::Bool(true),
-    );
-    let err = py_config_from_conf(&conf).unwrap_err();
-    assert!(
-        err.contains("unmapped conf key \"python_no_such_setting\""),
-        "unexpected error text: {err}"
-    );
 }
 
 /// The two read settings of a case: the base corpus's (smart quotes off)
@@ -262,18 +188,6 @@ fn line_changes(on: &[String], off: &[String]) -> (String, String) {
     (added, removed)
 }
 
-/// The parse options of a case read as the snippet harness reads it, under
-/// the `PySigConfig` its `conf` maps onto.
-fn parse_options(py: PySigConfig) -> ParseOptions {
-    ParseOptions {
-        source_path: "<snippet>".into(),
-        sphinx: true,
-        docname: "index".into(),
-        py,
-        ..Default::default()
-    }
-}
-
 /// Our two reads of `rst`, under `off` and then `on`: each one's tree, and
 /// how the warning lines of the second differ from the first's
 /// ([`line_changes`]). `None` when a read panicked.
@@ -316,15 +230,14 @@ fn smartquotes_variant_differential() {
     let (off, on) = read_settings_of(&fixture.settings);
     let mut mismatches = Vec::new();
     for case in &fixture.cases {
-        let py = match py_config_from_conf(&case.conf) {
-            Ok(py) => py,
+        let parse = match support::fixture_conf::snippet_parse_options(&case.conf) {
+            Ok(parse) => parse,
             Err(err) => {
                 mismatches.push(format!("[{}] CONF ERROR: {err}", case.name));
                 continue;
             }
         };
-        let Some((off_tree, on_tree, (added, removed))) =
-            read_both(&case.rst, parse_options(py), &off, &on)
+        let Some((off_tree, on_tree, (added, removed))) = read_both(&case.rst, parse, &off, &on)
         else {
             mismatches.push(format!("[{}] PANICKED on:\n{}", case.name, case.rst));
             continue;
@@ -382,15 +295,14 @@ fn smartquotes_variant_differential() {
             continue;
         }
         unchanged += 1;
-        let py = match py_config_from_conf(&case.conf) {
-            Ok(py) => py,
+        let parse = match support::fixture_conf::snippet_parse_options(&case.conf) {
+            Ok(parse) => parse,
             Err(err) => {
                 mismatches.push(format!("[{}] CONF ERROR: {err}", case.name));
                 continue;
             }
         };
-        let Some((off_tree, on_tree, (added, removed))) =
-            read_both(&case.rst, parse_options(py), &off, &on)
+        let Some((off_tree, on_tree, (added, removed))) = read_both(&case.rst, parse, &off, &on)
         else {
             mismatches.push(format!("[{}] PANICKED on:\n{}", case.name, case.rst));
             continue;

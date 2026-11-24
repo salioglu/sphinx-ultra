@@ -236,6 +236,39 @@ pub struct BuildConfig {
     /// ([`crate::rst::ReadConfig::highlight_language`]).
     pub highlight_language: String,
 
+    /// `default_role`, default `None` (`config.py:247`, rebuild class
+    /// `'env'`): the role bare interpreted text has in every document
+    /// ([`crate::rst::ReadConfig::default_role`]).
+    pub default_role: Option<String>,
+
+    /// `manpages_url`, default `None` (`config.py:271`, rebuild class
+    /// `'env'`): where the `manpage` role links a page
+    /// ([`crate::rst::ReadConfig::manpages_url`]).
+    pub manpages_url: Option<String>,
+
+    /// `math_number_all`, default `False` (`config.py:282`, rebuild class
+    /// `'env'`): the `math` directive numbers an equation with no label
+    /// too ([`crate::rst::ReadConfig::math_number_all`]). A `-D` override
+    /// takes Sphinx's bool grammar ([`STRICT_BOOL_KEYS`]).
+    pub math_number_all: bool,
+
+    /// `math_eqref_format`, default `None` (`config.py:283`, rebuild class
+    /// `'env'`): the text of a reference to an equation, its `{number}`
+    /// formatted in; `None` is `({number})`
+    /// ([`crate::env::math::resolve_xref`]).
+    pub math_eqref_format: Option<String>,
+
+    /// `math_numfig`, default `True` (`config.py:284`, rebuild class
+    /// `'env'`): with `numfig`, an equation's number is the one the
+    /// toctree's figure numbering gave it. A `-D` override takes Sphinx's
+    /// bool grammar ([`STRICT_BOOL_KEYS`]).
+    pub math_numfig: bool,
+
+    /// `math_numsep`, default `'.'` (`config.py:285`, rebuild class
+    /// `'env'`): what separates an equation's own number from its
+    /// section's in such a number.
+    pub math_numsep: String,
+
     /// Number figures, tables and code blocks (`numfig`, `config.py:275`).
     /// Off by default, exactly like Sphinx; when off,
     /// `assign_figure_numbers` assigns nothing and `:numref:` degrades.
@@ -419,7 +452,13 @@ const CONFVAL_TYPE_CHECKED_KEYS: [(&str, &str); 3] = [
 /// turns `'0'` and `'1'` into `False` and `True` and raises `ConfigError`
 /// for anything else (`config.py:366-374`). The crate's other bool keys
 /// still also take `true`/`false`.
-const STRICT_BOOL_KEYS: [&str; 3] = ["keep_warnings", "trim_doctest_flags", "smartquotes"];
+const STRICT_BOOL_KEYS: [&str; 5] = [
+    "keep_warnings",
+    "trim_doctest_flags",
+    "smartquotes",
+    "math_number_all",
+    "math_numfig",
+];
 
 /// `smartquotes_excludes` as `SphinxSmartQuotes.is_available` reads it
 /// (`SP/sphinx/transforms/__init__.py:383-397`): the two keys of a dict,
@@ -649,6 +688,12 @@ impl Default for BuildConfig {
             trim_doctest_flags: true,
             primary_domain: Some("py".to_string()),
             highlight_language: "default".to_string(),
+            default_role: None,
+            manpages_url: None,
+            math_number_all: false,
+            math_eqref_format: None,
+            math_numfig: true,
+            math_numsep: ".".to_string(),
 
             numfig: false,
             numfig_format: default_numfig_format(),
@@ -1539,6 +1584,7 @@ output:
                 primary_domain: Some("js".to_string()),
                 highlight_language: "python3".to_string(),
                 intersphinx: true,
+                ..crate::rst::ReadConfig::default()
             }
         );
         assert_eq!(
@@ -1557,6 +1603,51 @@ output:
         };
         assert_eq!(unset.apply_override("primary_domain", "c").unwrap(), None);
         assert_eq!(unset.primary_domain.as_deref(), Some("c"));
+    }
+
+    /// The read-side keys of wave 5a T17a take a `-D` override as Sphinx's
+    /// `convert_overrides` gives it: the string for a `str`- or
+    /// `None`-defaulted key, the bool grammar `0`/`1` for the math domain's
+    /// two bools (any other value a `ConfigError`). They reach the parse
+    /// through [`crate::rst::ReadConfig`] and the resolution through
+    /// [`crate::env::math::MathConfig`].
+    #[test]
+    fn role_and_math_keys_take_overrides() {
+        let mut config = BuildConfig::default();
+        for (key, value) in [
+            ("default_role", "obj"),
+            ("manpages_url", "https://man/{path}"),
+            ("math_number_all", "1"),
+            ("math_eqref_format", "({number})"),
+            ("math_numfig", "0"),
+            ("math_numsep", "-"),
+        ] {
+            assert_eq!(config.apply_override(key, value).unwrap(), None, "{key}");
+        }
+        assert_eq!(
+            crate::rst::ReadConfig::from(&config),
+            crate::rst::ReadConfig {
+                default_role: Some("obj".to_string()),
+                manpages_url: Some("https://man/{path}".to_string()),
+                math_number_all: true,
+                ..crate::rst::ReadConfig::from(&BuildConfig::default())
+            }
+        );
+        assert_eq!(
+            crate::env::math::MathConfig::from(&config),
+            crate::env::math::MathConfig {
+                numfig: false,
+                numsep: "-".to_string(),
+                eqref_format: Some("({number})".to_string()),
+            }
+        );
+        for key in ["math_number_all", "math_numfig"] {
+            let error = BuildConfig::default()
+                .apply_override(key, "true")
+                .unwrap_err()
+                .to_string();
+            assert_eq!(error, format!("'{key}' must be '0' or '1', got 'true'"));
+        }
     }
 
     /// `check_primary_domain` (`config-inited`, 800, `config.py:854-858`):

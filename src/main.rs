@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use sphinx_ultra::diagnostics::{Category, Diagnostic, Location, Severity, WarningFilter};
 use sphinx_ultra::error::ConfigError;
+use sphinx_ultra::rst::RoleCrash;
 use sphinx_ultra::{analyze_project, BuildConfig, SphinxBuilder};
 
 #[derive(Parser)]
@@ -612,6 +613,17 @@ async fn run_build(args: RunArgs) -> Result<i32> {
         // configuration records, as in Sphinx.
         Err(error) if sphinx_mode && error.downcast_ref::<ConfigError>().is_some() => {
             stream.raw(&config_error_report(&error))?;
+            return Ok(2);
+        }
+        // An input that crashes Sphinx 9.1.0 fails the build as Sphinx's
+        // crash does, with exit status 2 and a report naming the exception
+        // (decision 13), in both modes.
+        Err(error) if error.downcast_ref::<RoleCrash>().is_some() => {
+            let crash = error.downcast_ref::<RoleCrash>().expect("matched above");
+            if !sphinx_mode {
+                stream.open(args.warning_file.as_deref())?;
+            }
+            stream.raw(&crash.report())?;
             return Ok(2);
         }
         Err(error) => return Err(error),

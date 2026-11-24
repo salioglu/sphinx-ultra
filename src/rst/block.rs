@@ -23,7 +23,8 @@ use crate::utils::py_splitlines;
 use std::sync::Arc;
 
 use super::lines::{LineRec, Lines};
-use super::roles::{DispatchCtx, DomainId};
+use super::roles::custom::{role_arguments, CustomRole, RoleOptionSpec, RoleOptions};
+use super::roles::{DispatchCtx, DomainId, Resolution, RoleFn, RoleTable};
 
 const ADORNMENT_CHARS: &str = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
 const BULLET_CHARS: [char; 6] = ['*', '+', '-', '\u{2022}', '\u{2023}', '\u{2043}'];
@@ -662,6 +663,25 @@ impl BlockParser {
             dependencies: parse.dependency_records,
             included: parse.included_records,
         };
+        // `sphinx.util.rst.default_role` unregisters `''` when the
+        // document ends, whatever its `.. default-role::` did, but only
+        // with `default_role` set: without, the document's default role
+        // leaks into the next ([RC §4.2]).
+        let mut roles_after = match parse.roles {
+            Some(roles) => std::sync::Arc::unwrap_or_clone(roles),
+            None => super::roles::RoleTable::builtin(self.sphinx)
+                .as_ref()
+                .clone(),
+        };
+        if self.sphinx
+            && self
+                .read
+                .default_role
+                .as_deref()
+                .is_some_and(|name| !name.is_empty())
+        {
+            roles_after.set_default(None);
+        }
         super::ParseOutput {
             doctree: crate::doctree::Doctree {
                 root,
@@ -672,6 +692,8 @@ impl BlockParser {
             toctrees: parse.toctree_records,
             registry,
             state: self.state,
+            roles_after,
+            crash: parse.crash,
         }
     }
 
@@ -777,6 +799,7 @@ impl BlockParser {
                 py_modules_key: self.py_modules_key,
             },
             &self.py,
+            &self.read,
         );
         self.state.parse.role_records.append(&mut result.roles);
         result
@@ -4235,6 +4258,8 @@ impl BlockParser {
             }
             DirectiveKind::LiteralInclude => self.run_literalinclude(input, out),
             DirectiveKind::ProgramDir => self.run_program(input),
+            DirectiveKind::RoleDir => self.run_role(input, out),
+            DirectiveKind::DefaultRoleDir => self.run_default_role(input, out),
             // `DefaultDomain.run` (`SP/sphinx/directives/__init__.py:353-366`):
             // `current_document.default_domain =
             // env.domains.get(argument.lower())`, so a name no domain is
@@ -5196,6 +5221,235 @@ impl BlockParser {
         self.state.log_warning(message, location);
     }
 
+    /// The document's role registries ([`super::ParseOnlyState::roles`]).
+    fn role_table(&self) -> Arc<RoleTable> {
+        self.state
+            .parse
+            .roles
+            .clone()
+            .unwrap_or_else(|| RoleTable::builtin(self.sphinx))
+    }
+
+    /// The document's role registries, to change them: what a role
+    /// directive registers stays for the rest of the document, and for the
+    /// documents read after it (decision 14).
+    fn role_table_mut(&mut self) -> &mut RoleTable {
+        let sphinx = self.sphinx;
+        let roles = self
+            .state
+            .parse
+            .roles
+            .get_or_insert_with(|| RoleTable::builtin(sphinx));
+        Arc::make_mut(roles)
+    }
+
+    /// `roles.role(name, language, self.lineno, self.state.reporter)` as
+    /// a directive calls it — Sphinx's dispatcher in a Sphinx parse
+    /// ([`super::roles::resolve_role`]): the role, if any, and the INFO
+    /// docutils' lookup reported, at the directive's line.
+    fn lookup_role(&mut self, name: &str, source: u16, lineno: u32) -> (Option<RoleFn>, Vec<Node>) {
+        let table = self.role_table();
+        let ctx = DispatchCtx {
+            sphinx: self.sphinx,
+            default_domain: self.default_domain,
+            intersphinx: self.read.intersphinx,
+        };
+        let (role, info) = match super::roles::resolve_role(&table, &ctx, name, &mut self.state) {
+            Resolution::Found { role, info, .. } => (Some(role), info),
+            Resolution::NotFound { info } => (None, info),
+        };
+        let messages = info
+            .map(|info| self.msg(messages::INFO, &info, source, lineno))
+            .into_iter()
+            .collect();
+        (role, messages)
+    }
+
+    /// docutils' `Role.run` (`SP/docutils/parsers/rst/directives/misc.py:472-531`):
+    /// `.. role:: name` or `.. role:: name(base)` as the first line of its
+    /// content, on the directive's line or the one below, registers a
+    /// custom role ([`CustomRole`]) under `name`, which
+    /// calls `base` — looked up like any role name — or
+    /// `generic_custom_role`, with the options the lines below give,
+    /// parsed against what the base admits ([`RoleOptionSpec`]), and the
+    /// new name as its class unless they give one ([RC §3.15]). The
+    /// registration stays for the rest of the build (decision 14).
+    fn run_role(&mut self, input: DirectiveInput<'_>, out: &mut Vec<Node>) {
+        let (source, lineno, name) = (input.span.source, input.lineno, input.name);
+        // `self.content_offset > self.lineno`: the content's 0-based
+        // offset against the directive's 1-based line, so content that
+        // starts two or more lines below the directive line.
+        if input.content.is_empty() || input.content_lineno > lineno + 1 {
+            out.push(self.directive_run_error(
+                &format!("\"{name}\" directive requires arguments on the first line."),
+                source,
+                lineno,
+                input.rawsource,
+            ));
+            return;
+        }
+        let args = self.sources.line_text(input.content[0]).to_string();
+        let Some((new_name, base_name)) = role_arguments(&args) else {
+            out.push(self.directive_run_error(
+                &format!("\"{name}\" directive arguments not valid role names: \"{args}\"."),
+                source,
+                lineno,
+                input.rawsource,
+            ));
+            return;
+        };
+        let base = match base_name {
+            Some(base_name) => {
+                let (role, messages) = self.lookup_role(&base_name, source, lineno);
+                out.extend(messages);
+                match role {
+                    Some(role) => role,
+                    None => {
+                        out.push(self.directive_block_message(
+                            messages::ERROR,
+                            &format!("Unknown interpreted text role \"{base_name}\"."),
+                            source,
+                            lineno,
+                            input.rawsource,
+                        ));
+                        return;
+                    }
+                }
+            }
+            None => RoleFn::GenericCustom,
+        };
+        let mut options =
+            match self.role_directive_options(&input.content[1..], RoleOptionSpec::of(&base)) {
+                Ok(options) => options,
+                Err(detail) => {
+                    out.push(self.directive_block_message(
+                        messages::ERROR,
+                        &format!("Error in \"{name}\" directive:\n{detail}."),
+                        source,
+                        lineno,
+                        input.rawsource,
+                    ));
+                    return;
+                }
+            };
+        if options.classes.is_none() {
+            match super::roles::custom::class_option(&new_name) {
+                Ok(classes) => options.classes = Some(classes),
+                Err(detail) => {
+                    out.push(self.directive_block_message(
+                        messages::ERROR,
+                        &format!("Invalid argument for \"{name}\" directive:\n{detail}."),
+                        source,
+                        lineno,
+                        input.rawsource,
+                    ));
+                    return;
+                }
+            }
+        }
+        let role = CustomRole {
+            name: new_name.clone(),
+            base,
+            options,
+        };
+        self.role_table_mut()
+            .register_local(&new_name, RoleFn::Custom(Arc::new(role)));
+    }
+
+    /// `parse_directive_block(self.content[1:], self.content_offset,
+    /// convert_directive_function(base_role), option_presets={})`
+    /// (`states.py:2301-2345`) for a role directive: the lines after its
+    /// first are an option block against `spec`, and nothing else — no
+    /// base role admits content, so any other line is `no content
+    /// permitted`; with no option spec at all, every line is content.
+    fn role_directive_options(
+        &mut self,
+        lines: &[LineRec],
+        spec: RoleOptionSpec,
+    ) -> Result<RoleOptions, String> {
+        const CLASS: &[(&str, Conv)] = &[("class", Conv::ClassOption)];
+        const CLASS_LANGUAGE: &[(&str, Conv)] =
+            &[("class", Conv::ClassOption), ("language", Conv::Unchanged)];
+        const FORMAT_CLASS: &[(&str, Conv)] =
+            &[("format", Conv::Unchanged), ("class", Conv::ClassOption)];
+        let mut indented: Vec<LineRec> = lines.to_vec();
+        if indented.first().is_some_and(|line| line.is_blank()) {
+            indented.remove(0);
+        }
+        while indented.last().is_some_and(|line| line.is_blank()) {
+            indented.pop();
+        }
+        let option_spec = match spec {
+            _ if indented.is_empty() => return Ok(RoleOptions::default()),
+            RoleOptionSpec::None => return Err("no content permitted".to_string()),
+            RoleOptionSpec::Class => CLASS,
+            RoleOptionSpec::ClassLanguage => CLASS_LANGUAGE,
+            RoleOptionSpec::FormatClass => FORMAT_CLASS,
+        };
+        let blank = indented
+            .iter()
+            .position(|line| line.is_blank())
+            .unwrap_or(indented.len());
+        let mut arg_block = indented[..blank].to_vec();
+        let content = indented.get(blank + 1..).unwrap_or_default();
+        let mut options = RoleOptions::default();
+        if let Some(marker) = arg_block
+            .iter()
+            .position(|line| field_marker(self.sources.line_text(*line)).is_some())
+        {
+            let opt_block = arg_block.split_off(marker);
+            for (option, value) in parse_extension_options(&self.sources, &opt_block, option_spec)?
+            {
+                match (option.as_str(), value) {
+                    ("class", OptVal::StrList(classes)) => options.classes = Some(classes),
+                    ("language", OptVal::Str(language)) => options.language = Some(language),
+                    ("format", OptVal::Str(format)) => options.format = Some(format),
+                    _ => {}
+                }
+            }
+        }
+        // The lines before the options and after the blank line are the
+        // content no role admits (`arg_block + indented[i:]`).
+        if !arg_block.is_empty() || content.iter().any(|line| !line.is_blank()) {
+            return Err("no content permitted".to_string());
+        }
+        Ok(options)
+    }
+
+    /// `.. default-role::` (docutils' `DefaultRole.run`, `misc.py:534-555`;
+    /// Sphinx's, `SP/sphinx/directives/__init__.py:317-350`): with no
+    /// argument, `''` leaves the registry, and bare interpreted text is
+    /// `title_reference` again; otherwise the role the argument names,
+    /// looked up like any role name, becomes `''`, which, without
+    /// `default_role` set, stays for the documents read after this one
+    /// (decision 14). Sphinx also makes the name the document's default
+    /// role (`current_document.default_role`), which a Sphinx role called
+    /// as the default role takes as its name ([RC §4.2]).
+    fn run_default_role(&mut self, input: DirectiveInput<'_>, out: &mut Vec<Node>) {
+        let (source, lineno) = (input.span.source, input.lineno);
+        let Some(role_name) = input.arguments.first() else {
+            self.role_table_mut().set_default(None);
+            return;
+        };
+        let (role, messages) = self.lookup_role(role_name, source, lineno);
+        out.extend(messages);
+        match role {
+            Some(role) => {
+                self.role_table_mut().set_default(Some(role));
+                if self.sphinx {
+                    self.state.parse.default_role = Some(role_name.clone());
+                }
+            }
+            None => out.push(self.directive_block_message(
+                messages::ERROR,
+                &format!("Unknown interpreted text role \"{role_name}\"."),
+                source,
+                lineno,
+                input.rawsource,
+            )),
+        }
+    }
+
     /// `.. program::` (`domains/std/__init__.py:333-348`): pure
     /// `env.ref_context` state, no nodes. The literal argument `None` pops
     /// the scope rather than naming a program called "None".
@@ -5214,12 +5468,12 @@ impl BlockParser {
     /// Sphinx's math directive (`MathDirective`,
     /// `SP/sphinx/directives/patches.py:137-200`). The label is the
     /// `:label:` option's, else the `:name:` option's; an empty one is
-    /// numbered automatically, `<docname>:<n>` (`math_number_all`, which
-    /// would number an unlabelled equation too, is off by default and not
-    /// configurable here). A label registers the equation with the math
-    /// domain, which gives it its number ([`Self::note_equation`]), and the
-    /// equation's target `equation-<label>`. Absent, the label and number
-    /// are Python `None`, which pformat prints `"True"`.
+    /// numbered automatically, `<docname>:<n>`, and with `math_number_all`
+    /// so is an equation with none. A label registers the equation with
+    /// the math domain, which gives it its number
+    /// ([`Self::note_equation`]), and the equation's target
+    /// `equation-<label>`. Absent, the label and number are Python `None`,
+    /// which pformat prints `"True"`.
     ///
     /// The nodes are the post-read shape: `PropagateTargets` (260) has the
     /// target's id moved onto the block and the target refer to it, which
@@ -5256,10 +5510,12 @@ impl BlockParser {
         // equation's, which `PropagateTargets` appends (`docutils-0514`).
         let loc = self.machine_loc(directive_loc(&input));
         self.directive_add_name(&mut node, &input.options, loc);
-        // `if node['label'] == '': node['label'] = f'{docname}:{seq}'`,
-        // numbered by its own serial.
+        // `if node['label'] == '' or (self.config.math_number_all and not
+        // node['label']): node['label'] = f'{docname}:{seq}'`, numbered by
+        // its own serial.
+        let unlabelled = label.as_deref().is_none_or(str::is_empty);
         let label = match label {
-            Some(label) if label.is_empty() => {
+            _ if unlabelled && (label.is_some() || self.read.math_number_all) => {
                 let serial = self.state.new_serialno("sphinx.ext.math#equations");
                 Some(format!("{}:{serial}", self.docname))
             }
@@ -10109,6 +10365,11 @@ enum DirectiveKind {
     ProgramDir,
     /// `.. default-domain::` (`directives/__init__.py:353-366`).
     DefaultDomainDir,
+    /// docutils' `.. role::` (`SP/docutils/parsers/rst/directives/misc.py:472-531`).
+    RoleDir,
+    /// `.. default-role::`: docutils' (`misc.py:534-555`), and in a Sphinx
+    /// parse Sphinx's (`SP/sphinx/directives/__init__.py:317-350`).
+    DefaultRoleDir,
     /// Test-only exercise of the [`SpliceRequest`] channel: content lines
     /// become a spliced source named by the argument. Kept alongside the
     /// real producer ([`Self::Include`], wave-4.5 task 12) because it
@@ -13869,6 +14130,22 @@ fn directive_spec(lower: &str) -> Option<DirectiveSpec> {
             option_spec: RAW_OPTS,
             kind: DirectiveKind::Raw,
         }),
+        "role" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 0,
+            final_argument_whitespace: false,
+            has_content: true,
+            option_spec: &[],
+            kind: DirectiveKind::RoleDir,
+        }),
+        "default-role" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 1,
+            final_argument_whitespace: false,
+            has_content: false,
+            option_spec: &[],
+            kind: DirectiveKind::DefaultRoleDir,
+        }),
         "include" => Some(DirectiveSpec {
             required_arguments: 1,
             optional_arguments: 0,
@@ -14428,7 +14705,7 @@ fn nonnegative_int(s: &str) -> Result<OptVal, String> {
 /// decimal values, single underscores allowed BETWEEN digits, surrounding
 /// whitespace ignored. Returns (negative, digits-without-sign, canonical
 /// leading-zero-stripped ASCII string WITH sign).
-fn py_int_canonical(s: &str) -> Option<(bool, String)> {
+pub(crate) fn py_int_canonical(s: &str) -> Option<(bool, String)> {
     // `int()` strips Unicode White_Space ONLY — probed over all 0x110000
     // codepoints against CPython 3.12: it REJECTS the four C0 separators
     // `\x1c`-`\x1f` that `str.isspace` admits, so Rust's `trim()` is the

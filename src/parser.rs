@@ -49,6 +49,10 @@ pub struct Parser {
     /// The build configuration the Sphinx-mode parse reads
     /// ([`crate::rst::ReadConfig`]), projected out of it once.
     read_config: rst::ReadConfig,
+    /// The role registries every document of the build starts from
+    /// unless a document read before it changed them (decision 14): the
+    /// registries of a default Sphinx build.
+    baseline_roles: Arc<rst::roles::RoleTable>,
 }
 
 /// Everything one source file's read produces: the pipeline's [`Document`]
@@ -74,7 +78,17 @@ impl Parser {
             source_encoding: config.source_encoding.clone(),
             read: ReadSettings::from_config(config, BuilderKind::default()),
             read_config: rst::ReadConfig::from(config),
+            baseline_roles: rst::roles::RoleTable::builtin(true),
         })
+    }
+
+    /// The role registries a document starts from when no document read
+    /// before it in this build changed them (decision 14): what
+    /// [`Self::parse_full`] parses with, and what a document's
+    /// `roles_after` is compared with to decide whether the documents
+    /// after it must be read again from its registries.
+    pub(crate) fn baseline_roles(&self) -> &Arc<rst::roles::RoleTable> {
+        &self.baseline_roles
     }
 
     /// Read for the builder `kind` of a build configured by `config`
@@ -108,6 +122,21 @@ impl Parser {
         docname: &str,
         found_docs: Option<Arc<BTreeSet<String>>>,
     ) -> Result<ParsedFile> {
+        let roles = Arc::clone(&self.baseline_roles);
+        self.parse_full_from(file_path, content, docname, found_docs, roles)
+    }
+
+    /// [`Self::parse_full`], the document starting from the role
+    /// registries `roles`: the ones the document read before it in this
+    /// build left (decision 14).
+    pub(crate) fn parse_full_from(
+        &self,
+        file_path: &Path,
+        content: &str,
+        docname: &str,
+        found_docs: Option<Arc<BTreeSet<String>>>,
+        roles: Arc<rst::roles::RoleTable>,
+    ) -> Result<ParsedFile> {
         let output_path = self.get_output_path(file_path)?;
         let mut document = Document::new(file_path.to_path_buf(), output_path);
 
@@ -119,8 +148,15 @@ impl Parser {
             .and_then(|ext| ext.to_str())
             .unwrap_or("");
 
-        let outcome = match extension {
-            "rst" => self.parse_rst_into(content, file_path, docname, found_docs, &mut document),
+        let mut outcome = match extension {
+            "rst" => self.parse_rst_into_from(
+                content,
+                file_path,
+                docname,
+                found_docs,
+                Arc::clone(&roles),
+                &mut document,
+            ),
             "md" => {
                 document.content = self.parse_markdown(content)?;
                 document.title = "Untitled".to_string();
@@ -133,6 +169,12 @@ impl Parser {
             }
         };
 
+        // A document that is not reStructuredText leaves the role
+        // registries as it found them.
+        if extension != "rst" {
+            outcome.output.roles_after = (*roles).clone();
+        }
+
         debug!(
             "Parsed document: {} ({} chars)",
             file_path.display(),
@@ -142,19 +184,36 @@ impl Parser {
         Ok(ParsedFile { document, outcome })
     }
 
-    /// Read one RST source ([`read::read_document`]) and build `document`
-    /// from the read: title, toc and labels from its doctree; toctrees,
-    /// directive and role records and the registry export moved out of its
-    /// [`rst::ParseOutput`]. Returns the read, whose doctree callers (tests
-    /// included) can inspect for docname-carrying attrs
-    /// (`pending_xref[refdoc]`, toctree `parent`) that don't otherwise
-    /// survive onto `Document`.
+    /// [`Self::parse_rst_into_from`], from the build's baseline role
+    /// registries.
+    #[cfg(test)]
     fn parse_rst_into(
         &self,
         content: &str,
         file_path: &Path,
         docname: &str,
         found_docs: Option<Arc<BTreeSet<String>>>,
+        document: &mut Document,
+    ) -> ReadOutcome {
+        let roles = Arc::clone(&self.baseline_roles);
+        self.parse_rst_into_from(content, file_path, docname, found_docs, roles, document)
+    }
+
+    /// Read one RST source ([`read::read_document`]), starting from the
+    /// role registries `roles`, and build `document` from the read: title,
+    /// toc and labels from its doctree; toctrees, directive and role
+    /// records and the registry export moved out of its
+    /// [`rst::ParseOutput`]. Returns the read, whose doctree callers (tests
+    /// included) can inspect for docname-carrying attrs
+    /// (`pending_xref[refdoc]`, toctree `parent`) that don't otherwise
+    /// survive onto `Document`.
+    fn parse_rst_into_from(
+        &self,
+        content: &str,
+        file_path: &Path,
+        docname: &str,
+        found_docs: Option<Arc<BTreeSet<String>>>,
+        roles: Arc<rst::roles::RoleTable>,
         document: &mut Document,
     ) -> ReadOutcome {
         let mut outcome = read::read_document(
@@ -170,6 +229,7 @@ impl Parser {
                 source_encoding: self.source_encoding.clone(),
                 trace_ids: self.read.trace_ids,
                 read: self.read_config.clone(),
+                roles: Some(roles),
             },
             &self.read,
         );

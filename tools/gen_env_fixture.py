@@ -1555,6 +1555,325 @@ Text.
 """,
         },
     },
+    # -----------------------------------------------------------------------
+    # The role projects (wave 5a T17a, roles/config report §6.2): role
+    # dispatch warnings, and the build-scoped role registry, where `.. role::`
+    # and, while `default_role` is unset, `.. default-role::` reach every
+    # document read after their own, in sorted docname order.
+    # -----------------------------------------------------------------------
+    {
+        # P03b and P16: an unknown domain prefix warns `unknown role name`
+        # (no location) before the ERROR of the same role, and the std
+        # domain gets the role name after it; directives likewise.
+        "name": "roles_dispatch_warnings",
+        "conf": {},
+        "files": {
+            "index": """\
+Index
+=====
+
+.. toctree::
+
+   a
+   b
+""",
+            "a": """\
+A
+=
+
+:std:kbd:`x`
+
+:py:kbd:`x`
+
+:bogus:`x`
+
+:foo:bar:`x`
+
+:KBD:`Ctrl+X`
+
+:kbd:`a <b>`
+
+:guilabel:`x <y>`
+
+:samp:`x <{y}>`
+
+:abbr:`x <y> (z)`
+
+:program:`a
+b`
+""",
+            "b": """\
+B
+=
+
+:foo:ref:`lbl` :foo:kbd:`x` :FOO:Doc:`index`
+
+.. foo:envvar:: E
+
+.. foo:note:: n
+""",
+        },
+    },
+    {
+        # `a` uses `red` before `b` defines it; `c` uses both of `b`'s roles.
+        "name": "role_directive_leak",
+        "conf": {},
+        "files": {
+            "index": """\
+Index
+=====
+
+.. toctree::
+
+   a
+   b
+   c
+""",
+            "a": """\
+A
+=
+
+Early :red:`x`.
+""",
+            "b": """\
+B
+=
+
+.. role:: red
+
+.. role:: k(kbd)
+
+Here :red:`y` and :k:`Ctrl+C`.
+""",
+            "c": """\
+C
+=
+
+Later :red:`z` and :k:`Alt+F4`.
+""",
+        },
+    },
+    {
+        # Without `default_role`, `a`'s `.. default-role:: math` reaches `b`,
+        # and `c`'s `.. default-role:: py:obj` (a domain's role, which is
+        # called with its full name) reaches `d`.
+        "name": "default_role_leak",
+        "conf": {},
+        "files": {
+            "index": """\
+Index
+=====
+
+.. toctree::
+
+   a
+   b
+   c
+   d
+""",
+            "a": """\
+A
+=
+
+.. default-role:: math
+
+Inline `a^2`.
+""",
+            "b": """\
+B
+=
+
+Still `b^2`.
+""",
+            "c": """\
+C
+=
+
+.. default-role:: py:obj
+
+See `os.path`.
+""",
+            "d": """\
+D
+=
+
+And `sys`.
+""",
+        },
+    },
+    {
+        # The same files with `default_role` set: each document starts
+        # from it again, the registration ending with the document.
+        "name": "default_role_conf_resets",
+        "conf": {"default_role": "literal"},
+        "files": {
+            "index": """\
+Index
+=====
+
+.. toctree::
+
+   a
+   b
+   c
+   d
+""",
+            "a": """\
+A
+=
+
+.. default-role:: math
+
+Inline `a^2`.
+""",
+            "b": """\
+B
+=
+
+Still `b^2`.
+""",
+            "c": """\
+C
+=
+
+.. default-role:: py:obj
+
+See `os.path`.
+""",
+            "d": """\
+D
+=
+
+And `sys`.
+""",
+        },
+    },
+    {
+        # A `default_role` no role answers warns at each document.
+        "name": "default_role_unknown_conf",
+        "conf": {"default_role": "nonexistent"},
+        "files": {
+            "index": """\
+Index
+=====
+
+.. toctree::
+
+   a
+
+`index` text.
+""",
+            "a": """\
+A
+=
+
+`a` text.
+""",
+        },
+    },
+    {
+        # P07: `highlight_language` at read time (`code-block` and `code`
+        # with no argument) and in the resolve pass's
+        # HighlightLanguageTransform; each document starts over.
+        "name": "highlight_language_project",
+        "conf": {"highlight_language": "python3"},
+        "files": {
+            "index": """\
+Index
+=====
+
+.. toctree::
+
+   a
+   b
+""",
+            "a": """\
+A
+=
+
+Para::
+
+    x = 1
+
+.. code-block::
+
+   y = 2
+
+.. code::
+
+   z = 3
+
+>>> 1 + 1
+2
+
+.. highlight:: c
+   :linenothreshold: 2
+
+Para2::
+
+    int a;
+    int b;
+
+.. code-block::
+
+   int c;
+
+.. code-block:: ruby
+
+   puts 1
+
+.. parsed-literal::
+
+   *bold*
+
+.. highlight:: none
+   :force:
+
+Para3::
+
+    plain
+""",
+            "b": """\
+B
+=
+
+.. code-block::
+
+   b = 1
+
+Para::
+
+    c = 2
+""",
+        },
+    },
+    {
+        # `.. default-domain:: js`: unprefixed roles go to the js domain
+        # first (`fix_parens`, `js:module`/`js:object`), then std; `exc` has
+        # neither. js references stay unresolved (refwarn 0).
+        "name": "primary_domain_js_roles",
+        "conf": {},
+        "files": {
+            "index": """\
+Index
+=====
+
+.. toctree::
+
+   a
+""",
+            "a": """\
+A
+=
+
+.. default-domain:: js
+
+:func:`f` :meth:`o.m` :class:`K` :mod:`m` :data:`d` :attr:`x`
+
+:func:`~a.b` and :func:`.c` and :exc:`E` and :ref:`lbl`
+""",
+        },
+    },
 ]
 
 

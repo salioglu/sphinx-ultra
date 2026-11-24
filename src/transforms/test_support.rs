@@ -241,6 +241,7 @@ pub(crate) fn resolved(project: &Project, docname: &str) -> Resolved {
         env: &project.env,
         numfig: false,
         numfig_format: &formats,
+        math: crate::env::math::MathConfig::default(),
         doctree: &|_| None,
         relative_uri: &|_, _| String::new(),
         intersphinx: &intersphinx,

@@ -17,20 +17,35 @@
 //! `external:`/`external+` name, as written, before any of this
 //! (`SP/sphinx/ext/intersphinx/_resolve.py:350-366`).
 //!
-//! Docutils caches a canonical hit in `_roles` under the name it was
-//! looked up by (`roles.py:152-155`), so a canonical name outside the
-//! alias table creates its INFO only on first use in a build; the tables
-//! here are immutable, and every use creates it. Only
-//! `restructuredtext-unimplemented-role` is such a name, and an INFO
-//! message never prints and never survives Sphinx's read
-//! (`FilterSystemMessages`).
+//! The local registry is build-scoped ([`RoleTable`], decision 14):
+//! docutils keeps `_roles` for the whole process, so `.. role::` and a
+//! `.. default-role::` while `default_role` is unset reach every later
+//! document of the build. What else docutils caches there is not kept:
+//! a canonical hit is cached under the name it was looked up by
+//! (`roles.py:152-155`), so a canonical name outside the alias table
+//! creates its INFO only on first use in a build, where here every use
+//! creates it. Only `restructuredtext-unimplemented-role` is such a name,
+//! and an INFO message never prints and never survives Sphinx's read
+//! (`FilterSystemMessages`); keeping the cache would only make every
+//! document that uses a docutils role change the table.
+//!
+//! The role functions live beside the dispatch: docutils' in
+//! [`docutils`], Sphinx's in [`sphinx`], `ReferenceRole`'s title split in
+//! [`reference`] and the `role` directive's custom roles in [`custom`].
 
 use std::collections::BTreeMap;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 use crate::doctree::kinds;
 use crate::rst::LogLocation;
 use crate::transforms::state::DocumentState;
+
+pub(crate) mod custom;
+pub(crate) mod docutils;
+pub(crate) mod reference;
+pub(crate) mod sphinx;
+
+pub(crate) use custom::{CustomRole, RoleOptions};
 
 /// A domain of a default Sphinx 9.1.0 html build (`env.domains`, [RC
 /// §2.1]).
@@ -138,7 +153,7 @@ impl DomainId {
 
 /// What a role name resolves to: the role function docutils or Sphinx
 /// registered under it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum RoleFn {
     /// docutils `GenericRole`: the text in a node of this kind.
     Generic(&'static str),
@@ -157,6 +172,25 @@ pub(crate) enum RoleFn {
     /// Sphinx's `code_role`, which replaces docutils' canonical `code`
     /// (`SP/sphinx/roles.py:577-605`, `:643`).
     SphinxCode,
+    /// One of Sphinx's `generic_docroles`, by its registered name:
+    /// `CustomRole(name, GenericRole(name, nodeclass), {'classes':
+    /// [name]})` (`SP/sphinx/roles.py:28-37`, `:633-636`).
+    SphinxGeneric(&'static str),
+    /// Sphinx's `Keyboard` (`SP/sphinx/roles.py:478-528`).
+    Kbd,
+    /// Sphinx's `GUILabel` and `MenuSelection` (`:387-410`).
+    GuiLabel,
+    MenuSelection,
+    /// Sphinx's `EmphasizedLiteral`, registered as `file` and `samp`
+    /// (`:413-460`).
+    EmphasizedLiteral,
+    /// Sphinx's `Abbreviation` (`:463-475`).
+    Abbr,
+    /// Sphinx's `Manpage` (`:531-550`).
+    Manpage,
+    /// `XRefRole(nodeclass=addnodes.download_reference)`, registered
+    /// without a domain (`:610`).
+    Download,
     /// Sphinx's `IndexRole` (`SP/sphinx/domains/index.py:97-117`).
     Index,
     /// Sphinx's `PEP`, `RFC`, `CVE` and `CWE` roles (`SP/sphinx/roles.py`).
@@ -173,22 +207,87 @@ pub(crate) enum RoleFn {
     /// `domain:name`, whatever the document wrote
     /// (`SP/sphinx/domains/__init__.py:157-181`).
     Domain(DomainId, &'static str),
-    /// A Sphinx role whose function T17a ports (`kbd`, `guilabel`, the
-    /// generic docroles, `download`, …), by its registered name. Until
-    /// then the parser gives it the std `pending_xref` it has always
-    /// given it.
-    Unported(&'static str),
     /// `IntersphinxRole`, for the `external:`/`external+` names.
     External,
+    /// docutils `generic_custom_role`: what `.. role:: name` with no base
+    /// registers (`SP/docutils/parsers/rst/roles.py:246-253`).
+    GenericCustom,
+    /// docutils `CustomRole`: what `.. role:: name(base)` registers
+    /// ([`CustomRole`]).
+    Custom(Arc<CustomRole>),
+}
+
+impl RoleFn {
+    /// Whether the role is a `SphinxRole`, whose `__call__` takes its name
+    /// from the document's default role when it is called as the default
+    /// role, and raises `SphinxError('cannot determine default role!')`
+    /// when the document has none (`SP/sphinx/util/docutils.py:650-659`).
+    /// A domain role is one too, but its adapter always calls it with its
+    /// full name.
+    pub(crate) fn is_sphinx_role(&self) -> bool {
+        matches!(
+            self,
+            RoleFn::Kbd
+                | RoleFn::GuiLabel
+                | RoleFn::MenuSelection
+                | RoleFn::EmphasizedLiteral
+                | RoleFn::Abbr
+                | RoleFn::Manpage
+                | RoleFn::Download
+                | RoleFn::Index
+                | RoleFn::Pep
+                | RoleFn::Rfc
+                | RoleFn::Cve
+                | RoleFn::Cwe
+                | RoleFn::Any
+                | RoleFn::Eq
+                | RoleFn::External
+        )
+    }
+}
+
+/// One call of a role function, `role_fn(name, rawtext, text, lineno,
+/// inliner, options)` (`SP/docutils/parsers/rst/states.py:996-1007`).
+pub(crate) struct RoleCall<'a> {
+    /// The name the role receives: for a Sphinx role, the one
+    /// `SphinxRole.__call__` settles on (the name written, lowercased, or
+    /// the document's default role); for any other, the name written
+    /// (`domain:name` for a domain's role, empty for the default role).
+    pub(crate) name: &'a str,
+    /// `rawtext`: the whole interpreted text construct, role included,
+    /// with its backslashes restored (`unescape(rawsource, True)`).
+    pub(crate) rawtext: &'a str,
+    /// The interpreted text, with docutils' null escapes.
+    pub(crate) escaped: &'a str,
+    /// The options a custom role passes ([`RoleOptions`]).
+    pub(crate) options: &'a RoleOptions,
+    pub(crate) span: crate::doctree::Span,
 }
 
 /// docutils' role registries as a build sees them: the local registry
-/// `_roles` (checked first, by lowercased name) and the canonical
-/// registry, in which a Sphinx build replaces docutils' `code`.
-#[derive(Clone, Debug)]
-pub(crate) struct RoleTable {
+/// `_roles` (checked first, by lowercased name), which the `role` and
+/// `default-role` directives add to and a document's `default_role`
+/// fills for the document's parse, and the canonical registry, in which a
+/// Sphinx build replaces docutils' `code`.
+///
+/// Docutils keeps `_roles` for the whole process, and Sphinx reads the
+/// documents of a build in sorted docname order, so what a document adds
+/// stays for every later one (decision 14): a parse starts from the
+/// table the build hands it ([`crate::rst::ParseOptions::roles`]) and
+/// leaves the one the next document starts from
+/// ([`crate::rst::ParseOutput::roles_after`]). Two tables are equal when
+/// they register the same roles under the same names.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RoleTable {
     local: BTreeMap<String, RoleFn>,
     code: RoleFn,
+}
+
+impl Default for RoleTable {
+    /// docutils' own registries ([`Self::docutils`]).
+    fn default() -> Self {
+        RoleTable::docutils()
+    }
 }
 
 impl RoleTable {
@@ -196,30 +295,31 @@ impl RoleTable {
     /// roles of `sphinx.roles`, `sphinx.domains.index` and
     /// `sphinx.domains.math` (probe P01, [RC §2.1]) and Sphinx's `code`.
     pub(crate) fn sphinx() -> RoleTable {
+        let generic = |name: &'static str| (name, RoleFn::SphinxGeneric(name));
         let local = [
-            ("abbr", RoleFn::Unported("abbr")),
+            ("abbr", RoleFn::Abbr),
             ("any", RoleFn::Any),
-            ("command", RoleFn::Unported("command")),
+            generic("command"),
             ("cve", RoleFn::Cve),
             ("cwe", RoleFn::Cwe),
-            ("dfn", RoleFn::Unported("dfn")),
-            ("download", RoleFn::Unported("download")),
+            generic("dfn"),
+            ("download", RoleFn::Download),
             ("eq", RoleFn::Eq),
-            ("file", RoleFn::Unported("file")),
-            ("guilabel", RoleFn::Unported("guilabel")),
+            ("file", RoleFn::EmphasizedLiteral),
+            ("guilabel", RoleFn::GuiLabel),
             ("index", RoleFn::Index),
-            ("kbd", RoleFn::Unported("kbd")),
-            ("mailheader", RoleFn::Unported("mailheader")),
-            ("makevar", RoleFn::Unported("makevar")),
-            ("manpage", RoleFn::Unported("manpage")),
-            ("menuselection", RoleFn::Unported("menuselection")),
-            ("mimetype", RoleFn::Unported("mimetype")),
-            ("newsgroup", RoleFn::Unported("newsgroup")),
+            ("kbd", RoleFn::Kbd),
+            generic("mailheader"),
+            generic("makevar"),
+            ("manpage", RoleFn::Manpage),
+            ("menuselection", RoleFn::MenuSelection),
+            generic("mimetype"),
+            generic("newsgroup"),
             ("pep", RoleFn::Pep),
-            ("program", RoleFn::Unported("program")),
-            ("regexp", RoleFn::Unported("regexp")),
+            generic("program"),
+            generic("regexp"),
             ("rfc", RoleFn::Rfc),
-            ("samp", RoleFn::Unported("samp")),
+            ("samp", RoleFn::EmphasizedLiteral),
         ]
         .into_iter()
         .map(|(name, role)| (name.to_string(), role))
@@ -238,15 +338,30 @@ impl RoleTable {
         }
     }
 
-    /// The registries every parse in this mode starts from and keeps: no
-    /// document adds a role yet (`.. role::` is T17a's).
-    pub(crate) fn builtin(sphinx: bool) -> &'static RoleTable {
-        static SPHINX: LazyLock<RoleTable> = LazyLock::new(RoleTable::sphinx);
-        static DOCUTILS: LazyLock<RoleTable> = LazyLock::new(RoleTable::docutils);
-        if sphinx {
-            &SPHINX
-        } else {
-            &DOCUTILS
+    /// The registries a build in this mode starts from: Sphinx's or
+    /// docutils' ([`Self::sphinx`], [`Self::docutils`]), shared.
+    pub(crate) fn builtin(sphinx: bool) -> Arc<RoleTable> {
+        static SPHINX: LazyLock<Arc<RoleTable>> = LazyLock::new(|| Arc::new(RoleTable::sphinx()));
+        static DOCUTILS: LazyLock<Arc<RoleTable>> =
+            LazyLock::new(|| Arc::new(RoleTable::docutils()));
+        Arc::clone(if sphinx { &SPHINX } else { &DOCUTILS })
+    }
+
+    /// docutils `register_local_role(name, role)`: `_roles[name.lower()]`.
+    pub(crate) fn register_local(&mut self, name: &str, role: RoleFn) {
+        self.local.insert(name.to_lowercase(), role);
+    }
+
+    /// The default role, `_roles['']`: registered (`Some`) or removed
+    /// (`None`, docutils' `title-reference` fallback again).
+    pub(crate) fn set_default(&mut self, role: Option<RoleFn>) {
+        match role {
+            Some(role) => {
+                self.local.insert(String::new(), role);
+            }
+            None => {
+                self.local.remove("");
+            }
         }
     }
 
@@ -261,7 +376,7 @@ impl RoleTable {
             "subscript" => RoleFn::Generic(kinds::SUBSCRIPT),
             "superscript" => RoleFn::Generic(kinds::SUPERSCRIPT),
             "title-reference" => RoleFn::Generic(kinds::TITLE_REFERENCE),
-            "code" => self.code,
+            "code" => self.code.clone(),
             "math" => RoleFn::Math,
             "pep-reference" => RoleFn::PepReference,
             "rfc-reference" => RoleFn::RfcReference,
@@ -279,6 +394,111 @@ impl RoleTable {
         })
     }
 }
+
+/// An input Sphinx 9.1.0 crashes on (decision 13): the build fails, with
+/// exit status 2 and a report naming the exception Sphinx raises, where
+/// Sphinx raises it. Raised during the parse, it is kept as the
+/// document's first crash ([`crate::rst::ParseOutput::crash`]), and the
+/// build reports the crash of the first document in Sphinx's read order.
+///
+/// One outcome for every crash kind: the exception's class as Sphinx's
+/// traceback names it and its message, never Sphinx's whole report (its
+/// version table and traceback cannot be reproduced).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoleCrash {
+    /// The exception's class as the last line of Sphinx's traceback names
+    /// it: `IndexError`, `ValueError`, `sphinx.errors.SphinxError`.
+    pub exception: &'static str,
+    /// `SphinxError.category` for one of Sphinx's own errors (`Sphinx
+    /// error`), which Sphinx's report opens with, followed by `!`; `None`
+    /// for a Python exception, whose report opens with nothing.
+    pub category: Option<&'static str>,
+    /// The exception's message.
+    pub message: String,
+    /// Where the build was when it crashed: the document's source, and
+    /// the line of the input that crashes it. Rendered by the build,
+    /// which knows the source directory ([`Self::located`]).
+    pub location: LogLocation,
+    /// The rendered location, once the build has filled it in.
+    pub rendered_location: Option<String>,
+}
+
+impl RoleCrash {
+    /// A crash raised as a Python exception (no category line).
+    pub(crate) fn python(exception: &'static str, message: String, location: LogLocation) -> Self {
+        RoleCrash {
+            exception,
+            category: None,
+            message,
+            location,
+            rendered_location: None,
+        }
+    }
+
+    /// `SphinxError(message)`, whose category is `Sphinx error`.
+    pub(crate) fn sphinx_error(message: &str, location: LogLocation) -> Self {
+        RoleCrash {
+            exception: "sphinx.errors.SphinxError",
+            category: Some("Sphinx error"),
+            message: message.to_string(),
+            location,
+            rendered_location: None,
+        }
+    }
+
+    /// The crash, its location rendered the way a warning's is, against
+    /// the document's source table and the project's source directory
+    /// ([`LogLocation::render`]).
+    pub fn located(
+        mut self,
+        sources: &[String],
+        srcdir: &std::path::Path,
+        docname: &str,
+    ) -> RoleCrash {
+        use crate::diagnostics::Location;
+        self.rendered_location = match self.location.render(sources, srcdir, docname) {
+            Location::None => None,
+            Location::Verbatim(location) => Some(location.trim_end_matches(':').to_string()),
+            Location::Path { path, line: None } => Some(path),
+            Location::Path {
+                path,
+                line: Some(line),
+            } => Some(format!("{path}:{line}")),
+        };
+        self
+    }
+
+    /// The report the build prints, to stderr and the `-w` file, before
+    /// it exits 2: what Sphinx's report (`handle_exception`,
+    /// `SP/sphinx/_cli/util/errors.py:162-245`) opens with, the category
+    /// line of a `SphinxError`, then the last line of its traceback, the
+    /// exception and its message, indented as Sphinx indents it; then
+    /// where the input is.
+    pub fn report(&self) -> String {
+        let category = self
+            .category
+            .map(|category| format!("{category}!\n"))
+            .unwrap_or_default();
+        let location = self
+            .rendered_location
+            .as_deref()
+            .map(|location| format!("{location}: "))
+            .unwrap_or_default();
+        format!(
+            "\n{category}\n    {}: {}\n\n{location}Sphinx 9.1.0 crashes on this input; \
+             sphinx-ultra stops the build as it does.\n",
+            self.exception, self.message
+        )
+    }
+}
+
+impl std::fmt::Display for RoleCrash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.exception, self.message)
+    }
+}
+
+impl std::error::Error for RoleCrash {}
 
 /// docutils' English role aliases (`languages/en.py`, `roles`): the
 /// canonical name of a language-dependent one.
@@ -406,7 +626,7 @@ fn docutils_role(table: &RoleTable, role_name: &str, written: &str) -> Resolutio
     let normname = role_name.to_lowercase();
     if let Some(role) = table.local.get(&normname) {
         return Resolution::Found {
-            role: *role,
+            role: role.clone(),
             call_name: written.to_string(),
             info: None,
         };

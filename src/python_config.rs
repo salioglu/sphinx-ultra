@@ -176,6 +176,11 @@ pub struct ConfPyConfig {
     pub primary_domain: Option<Option<String>>,
     /// `highlight_language`, `None` when conf.py said nothing.
     pub highlight_language: Option<String>,
+    /// `default_role`: `None` when conf.py said nothing, `Some(None)` for
+    /// an explicit `default_role = None`.
+    pub default_role: Option<Option<String>>,
+    /// `math_numsep`, `None` when conf.py said nothing.
+    pub math_numsep: Option<String>,
 
     // Object-signature / py-domain family. `None` means "conf.py did not
     // mention it", which is what keeps sphinx's own default in place —
@@ -415,6 +420,7 @@ impl PythonConfigParser {
 
         // Extract build options
         config.needs_sphinx = extract_string("needs_sphinx");
+        config.manpages_url = extract_string("manpages_url");
         config.nitpicky = extract_bool("nitpicky");
         config.nitpick_ignore = extract_pair_list("nitpick_ignore");
         config.nitpick_ignore_regex = extract_pair_list("nitpick_ignore_regex");
@@ -491,6 +497,12 @@ impl PythonConfigParser {
             None => None,
         };
         config.highlight_language = extract_string("highlight_language");
+        config.default_role = match self.conf_namespace.get("default_role") {
+            Some(serde_json::Value::Null) => Some(None),
+            Some(value) => value.as_str().map(|name| Some(name.to_string())),
+            None => None,
+        };
+        config.math_numsep = extract_string("math_numsep");
 
         // The values `check_confval_types` reports
         // (`crate::config::BuildConfig::confval_type_mismatches`).
@@ -661,6 +673,7 @@ impl PythonConfigParser {
                 | "numfig"
                 | "numfig_format"
                 | "numfig_secnum_depth"
+                | "manpages_url"
                 | "math_number_all"
                 | "math_eqref_format"
                 | "math_numfig"
@@ -676,6 +689,8 @@ impl PythonConfigParser {
                 | "smartquotes_excludes"
                 | "primary_domain"
                 | "highlight_language"
+                | "default_role"
+                | "math_numsep"
                 | "intersphinx_mapping"
                 | "intersphinx_disabled_reftypes"
                 | "intersphinx_resolve_self"
@@ -1260,6 +1275,8 @@ impl Default for ConfPyConfig {
             smartquotes_excludes: None,
             primary_domain: None,
             highlight_language: None,
+            default_role: None,
+            math_numsep: None,
             // `None` = "conf.py said nothing", which leaves
             // `BuildConfig::default()`'s sphinx defaults untouched.
             maximum_signature_line_length: None,
@@ -1481,6 +1498,24 @@ impl ConfPyConfig {
         }
         if let Some(highlight_language) = &self.highlight_language {
             config.highlight_language = highlight_language.clone();
+        }
+        if let Some(default_role) = &self.default_role {
+            config.default_role = default_role.clone();
+        }
+        if self.manpages_url.is_some() {
+            config.manpages_url = self.manpages_url.clone();
+        }
+        if let Some(math_number_all) = self.math_number_all {
+            config.math_number_all = math_number_all;
+        }
+        if self.math_eqref_format.is_some() {
+            config.math_eqref_format = self.math_eqref_format.clone();
+        }
+        if let Some(math_numfig) = self.math_numfig {
+            config.math_numfig = math_numfig;
+        }
+        if let Some(math_numsep) = &self.math_numsep {
+            config.math_numsep = math_numsep.clone();
         }
         if let Some(keep_warnings) = self.keep_warnings {
             config.keep_warnings = keep_warnings;
@@ -1942,6 +1977,62 @@ e = 'esc\n'
             .unwrap();
         assert_eq!(config.primary_domain.as_deref(), Some("py"));
         assert_eq!(config.highlight_language, "default");
+    }
+
+    /// The read-side keys of wave 5a T17a — `default_role` (`config.py:247`,
+    /// `None` allowed), `manpages_url` (`:271`) and the math domain's
+    /// `math_number_all`, `math_eqref_format`, `math_numfig` and
+    /// `math_numsep` (`:282-285`) — are standard keys read into the build
+    /// configuration; unset, each keeps Sphinx's default.
+    #[test]
+    fn role_and_math_keys_reach_the_build_config() {
+        let p = parse(
+            "default_role = 'any'\nmanpages_url = 'https://man/{page}'\n\
+             math_number_all = True\nmath_eqref_format = 'Eq. {number}'\n\
+             math_numfig = False\nmath_numsep = '-'\n",
+        );
+        let config = p.extract_configuration().unwrap();
+        for key in [
+            "default_role",
+            "manpages_url",
+            "math_number_all",
+            "math_eqref_format",
+            "math_numfig",
+            "math_numsep",
+        ] {
+            assert!(!config.custom_configs.contains_key(key), "{key}");
+        }
+        let config = config.to_build_config().unwrap();
+        assert_eq!(config.default_role.as_deref(), Some("any"));
+        assert_eq!(config.manpages_url.as_deref(), Some("https://man/{page}"));
+        assert!(config.math_number_all);
+        assert_eq!(config.math_eqref_format.as_deref(), Some("Eq. {number}"));
+        assert!(!config.math_numfig);
+        assert_eq!(config.math_numsep, "-");
+
+        let config = parse("default_role = None\n")
+            .extract_configuration()
+            .unwrap()
+            .to_build_config()
+            .unwrap();
+        assert_eq!(config.default_role, None);
+
+        let config = parse("project = 'x'\n")
+            .extract_configuration()
+            .unwrap()
+            .to_build_config()
+            .unwrap();
+        assert_eq!(
+            (
+                config.default_role,
+                config.manpages_url,
+                config.math_number_all,
+                config.math_eqref_format,
+                config.math_numfig,
+                config.math_numsep.as_str()
+            ),
+            (None, None, false, None, true, ".")
+        );
     }
 
     #[test]

@@ -13,12 +13,11 @@
 //! records in sorted docname order: a label another equation already took
 //! warns as Sphinx's parse warns, among the document's parse records.
 //!
-//! Three configuration values the domain reads are taken at Sphinx's
-//! defaults, which no oracle corpus changes and the build configuration
-//! does not carry: `math_numfig` (`True`), `math_numsep` (`'.'`) and
-//! `math_eqref_format` (`None`, which formats `({number})`)
-//! (`SP/sphinx/config.py:283-285`). So is the directive's `math_number_all`
-//! (`False`, `:282`).
+//! The three configuration values the resolution reads come from the
+//! build configuration ([`MathConfig`]): `math_numfig`, `math_numsep` and
+//! `math_eqref_format` (`SP/sphinx/config.py:283-285`); the directive's
+//! `math_number_all` (`:282`) reaches the parse
+//! ([`crate::rst::ReadConfig::math_number_all`]).
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -103,6 +102,42 @@ pub fn process_doc(
     warnings
 }
 
+/// The configuration values `MathDomain.resolve_xref` reads
+/// (`SP/sphinx/config.py:283-285`), Sphinx's defaults unless the build's
+/// configuration says otherwise.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MathConfig {
+    /// `math_numfig` (default `True`): with `numfig`, an equation's number
+    /// is the one the toctree's figure numbering gave its `displaymath`.
+    pub numfig: bool,
+    /// `math_numsep` (default `'.'`): what joins that number's last part
+    /// to the rest.
+    pub numsep: String,
+    /// `math_eqref_format` (default `None`, which is `({number})`): the
+    /// reference's text, the number formatted into it.
+    pub eqref_format: Option<String>,
+}
+
+impl Default for MathConfig {
+    fn default() -> Self {
+        MathConfig {
+            numfig: true,
+            numsep: ".".to_string(),
+            eqref_format: None,
+        }
+    }
+}
+
+impl From<&crate::config::BuildConfig> for MathConfig {
+    fn from(config: &crate::config::BuildConfig) -> Self {
+        MathConfig {
+            numfig: config.math_numfig,
+            numsep: config.math_numsep.clone(),
+            eqref_format: config.math_eqref_format.clone(),
+        }
+    }
+}
+
 /// What a reference to an equation resolves to
 /// ([`resolve_xref`]).
 #[derive(Debug, PartialEq, Eq)]
@@ -112,28 +147,35 @@ pub struct EquationTarget<'e> {
     /// The id of the equation's target, `equation-<label>` as docutils'
     /// `make_id` spells it.
     pub node_id: String,
-    /// The reference's text: the equation's number in `({number})`.
+    /// The reference's text: the equation's number formatted into
+    /// `math_eqref_format`.
     pub title: String,
+    /// `Invalid math_eqref_format: KeyError(...)`, which Sphinx logs at
+    /// the reference when the format names a field other than `number`;
+    /// the text is then `(N)` with the equation's own number.
+    pub warning: Option<String>,
 }
 
 /// `MathDomain.resolve_xref` (`SP/sphinx/domains/math.py:99-134`), for
 /// both of the domain's roles, `eq` and `numref`: the equation `target`
-/// labels, if any. Its number is the document's own count when `numfig`
-/// is off, and otherwise the number the toctree's figure numbering gave
-/// its `displaymath` (`env.toc_fignumbers`), dotted, or none for a
-/// document the numbering did not reach. A numbered document without a
-/// `displaymath` table, which raises `KeyError` in Sphinx, is read as one
-/// without the equation's number (decision 13: a crash is not modelled).
+/// labels, if any. Its number is the document's own count unless both
+/// `numfig` and `math_numfig` are on, and then the number the toctree's
+/// figure numbering gave its `displaymath` (`env.toc_fignumbers`), dotted,
+/// its last dot `math_numsep`, or none for a document the numbering did
+/// not reach. A numbered document without a `displaymath` table, which
+/// raises `KeyError` in Sphinx, is read as one without the equation's
+/// number (a decision-13 crash input, which the build does not model
+/// yet). The text is that number in `math_eqref_format`.
 pub fn resolve_xref<'e>(
     env: &'e BuildEnvironment,
     numfig: bool,
+    math: &MathConfig,
     target: &str,
 ) -> Option<EquationTarget<'e>> {
     let (docname, number) = env.math.equations.get(target)?;
     let node_id = make_id(&format!("equation-{target}"));
-    // `math_numfig` is on by default; `math_numsep.join(eqno.rsplit('.',
-    // 1))` with the default `'.'` leaves the dotted number as it is.
-    let eqno = if numfig {
+    // `math_numsep.join(eqno.rsplit('.', 1))`.
+    let eqno = if math.numfig && numfig {
         env.toc_fignumbers
             .get(docname)
             .map(|figtypes| {
@@ -141,11 +183,15 @@ pub fn resolve_xref<'e>(
                     .get("displaymath")
                     .and_then(|numbers| numbers.get(&node_id))
                     .map(|numbers| {
-                        numbers
+                        let eqno = numbers
                             .iter()
                             .map(u32::to_string)
                             .collect::<Vec<_>>()
-                            .join(".")
+                            .join(".");
+                        match eqno.rsplit_once('.') {
+                            Some((head, last)) => format!("{head}{}{last}", math.numsep),
+                            None => eqno,
+                        }
                     })
                     .unwrap_or_default()
             })
@@ -153,11 +199,28 @@ pub fn resolve_xref<'e>(
     } else {
         number.to_string()
     };
+    // `(math_eqref_format or '({number})').format(number=eqno)`, and on
+    // `KeyError` a warning and `'(%d)' % number`.
+    let format = math
+        .eqref_format
+        .as_deref()
+        .filter(|format| !format.is_empty())
+        .unwrap_or("({number})");
+    let (title, warning) = match crate::env::resolve::format_new_style(format, None, &eqno) {
+        Ok(title) => (title, None),
+        Err(crate::env::resolve::KeyError(key)) => (
+            format!("({number})"),
+            Some(format!(
+                "Invalid math_eqref_format: KeyError({})",
+                crate::utils::py_repr_str(&key)
+            )),
+        ),
+    };
     Some(EquationTarget {
         docname,
         node_id,
-        // `(math_eqref_format or '({number})').format(number=eqno)`.
-        title: format!("({eqno})"),
+        title,
+        warning,
     })
 }
 
@@ -351,6 +414,63 @@ mod tests {
         assert_eq!(
             math.equations.into_iter().collect::<Vec<_>>(),
             [("e1".to_string(), ("b".to_string(), 1))]
+        );
+    }
+
+    /// The configuration values `MathDomain.resolve_xref` reads
+    /// ([`MathConfig`]): with `numfig` and `math_numfig` both on, the
+    /// toctree's number joined by `math_numsep` at its last dot, else the
+    /// document's own count; the text `math_eqref_format`, whose field
+    /// other than `number` is a `KeyError` that logs `Invalid
+    /// math_eqref_format` and falls back to `(N)`. Probed on Sphinx 9.1.0
+    /// (a numbered toctree over a document whose labelled equation is its
+    /// first, `(1)` and `(1.1)` by default).
+    #[test]
+    fn math_configuration_shapes_the_equation_reference() {
+        let mut env = BuildEnvironment::default();
+        env.math.note_equation("a", "why", 1);
+        env.toc_fignumbers.insert(
+            "a".to_string(),
+            BTreeMap::from([(
+                "displaymath".to_string(),
+                BTreeMap::from([("equation-why".to_string(), vec![1, 1])]),
+            )]),
+        );
+        let reference = |numfig: bool, math: MathConfig| {
+            let target = resolve_xref(&env, numfig, &math, "why").expect("the label resolves");
+            (target.title, target.warning)
+        };
+        let config = |numfig: bool, numsep: &str, eqref_format: Option<&str>| MathConfig {
+            numfig,
+            numsep: numsep.to_string(),
+            eqref_format: eqref_format.map(str::to_string),
+        };
+        assert_eq!(
+            reference(false, MathConfig::default()),
+            ("(1)".to_string(), None)
+        );
+        assert_eq!(
+            reference(true, MathConfig::default()),
+            ("(1.1)".to_string(), None)
+        );
+        assert_eq!(
+            reference(true, config(true, "-", None)),
+            ("(1-1)".to_string(), None)
+        );
+        assert_eq!(
+            reference(true, config(false, ".", None)),
+            ("(1)".to_string(), None)
+        );
+        assert_eq!(
+            reference(false, config(true, ".", Some("Eq. {number}"))),
+            ("Eq. 1".to_string(), None)
+        );
+        assert_eq!(
+            reference(false, config(true, ".", Some("Eq {foo}"))),
+            (
+                "(1)".to_string(),
+                Some("Invalid math_eqref_format: KeyError('foo')".to_string())
+            )
         );
     }
 }

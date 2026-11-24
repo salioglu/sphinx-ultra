@@ -320,13 +320,16 @@ fn canon_scope8(text: &str) -> String {
 /// [`normalize_source_paths`] over a build's records, rendered with
 /// Sphinx's default `show_warning_types = True`, which no oracle project
 /// overrides, one entry per line of the stream, as the oracle records it: a
-/// multi-line record (a reporter message holding its block) spans several.
+/// multi-line record (a reporter message holding its block) spans several,
+/// and a blank line is dropped, as `tools/gen_env_fixture.py` drops it
+/// (`if line.strip()`).
 fn normalize_warnings(warnings: &[Diagnostic], root: &str) -> Vec<String> {
     warnings
         .iter()
         .flat_map(|warning| {
             normalize_source_paths(&warning.render(true), root)
                 .split('\n')
+                .filter(|line| !line.trim().is_empty())
                 .map(str::to_string)
                 .collect::<Vec<_>>()
         })
@@ -1392,12 +1395,12 @@ fn resolved_doctrees_match_oracle() {
 /// each table names a fixture document (or project) exactly once — so the
 /// table lengths ARE the exemption counts. Update the six constants and
 /// the doc sites together.
-const DOCUMENTED_PROJECTS: usize = 32;
-const DOCUMENTED_DOCUMENTS: usize = 92;
+const DOCUMENTED_PROJECTS: usize = 39;
+const DOCUMENTED_DOCUMENTS: usize = 116;
 const DOCUMENTED_WHOLESALE_EXEMPT_DOCUMENTS: usize = 0;
-const DOCUMENTED_BYTE_EXACT_DOCUMENTS: usize = 92;
+const DOCUMENTED_BYTE_EXACT_DOCUMENTS: usize = 116;
 const DOCUMENTED_WARNING_EXEMPT_PROJECTS: usize = 0;
-const DOCUMENTED_BYTE_EXACT_WARNING_PROJECTS: usize = 32;
+const DOCUMENTED_BYTE_EXACT_WARNING_PROJECTS: usize = 39;
 
 #[test]
 fn exemption_arithmetic_matches_the_documented_numbers() {

@@ -80,6 +80,11 @@ pub struct ParseOptions {
     pub trace_ids: bool,
     /// The configuration the Sphinx-mode read consumes ([`ReadConfig`]).
     pub read: ReadConfig,
+    /// The role registries the document starts from: the table the
+    /// documents read before it in this build left
+    /// ([`ParseOutput::roles_after`], decision 14), or `None` for the
+    /// mode's built-in one, which a document read on its own starts from.
+    pub roles: Option<std::sync::Arc<roles::RoleTable>>,
 }
 
 /// The build configuration a Sphinx-mode parse reads, each field holding
@@ -101,6 +106,19 @@ pub struct ReadConfig {
     /// Whether `sphinx.ext.intersphinx` is in `extensions`: only then is
     /// `:external:` a role ([RC §2.2], [TW F12]).
     pub intersphinx: bool,
+    /// `default_role` (`SP/sphinx/config.py:247`, default `None`): the
+    /// role every document's bare interpreted text starts with, looked up
+    /// as a role name is when the document's parse starts and dropped when
+    /// it ends (`sphinx.util.rst.default_role`); a name no role answers
+    /// warns `default role X not found` ([RC §4.2]).
+    pub default_role: Option<String>,
+    /// `manpages_url` (`config.py:271`, default `None`): the URL the
+    /// `manpage` role links a page to, formatted with its `path`, `page`
+    /// and `section` ([RC §3.7]).
+    pub manpages_url: Option<String>,
+    /// `math_number_all` (`config.py:282`, default `False`): whether the
+    /// `math` directive numbers an equation that has no label.
+    pub math_number_all: bool,
 }
 
 impl Default for ReadConfig {
@@ -109,6 +127,9 @@ impl Default for ReadConfig {
             primary_domain: Some("py".to_string()),
             highlight_language: "default".to_string(),
             intersphinx: false,
+            default_role: None,
+            manpages_url: None,
+            math_number_all: false,
         }
     }
 }
@@ -119,7 +140,39 @@ impl From<&crate::config::BuildConfig> for ReadConfig {
             primary_domain: config.primary_domain.clone(),
             highlight_language: config.highlight_language.clone(),
             intersphinx: config.intersphinx_enabled(),
+            default_role: config.default_role.clone(),
+            manpages_url: config.manpages_url.clone(),
+            math_number_all: config.math_number_all,
         }
+    }
+}
+
+impl ReadConfig {
+    /// Sets the key `key` of an oracle fixture's `conf` dict (JSON, the
+    /// confoverrides its generator applied) on this configuration, when it
+    /// is one of its keys: `Ok(true)` once set, `Ok(false)` for a key that
+    /// is not, and an error naming the key for a value of the wrong shape.
+    /// `primary_domain`, `default_role` and `manpages_url` may be JSON
+    /// `null`, Python's `None`.
+    pub fn apply_conf_key(&mut self, key: &str, value: &serde_json::Value) -> Result<bool, String> {
+        let string = || {
+            value
+                .as_str()
+                .map(str::to_string)
+                .ok_or_else(|| format!("conf key {key}: expected string, got {value}"))
+        };
+        let optional = || match value {
+            serde_json::Value::Null => Ok(None),
+            _ => string().map(Some),
+        };
+        match key {
+            "primary_domain" => self.primary_domain = optional()?,
+            "highlight_language" => self.highlight_language = string()?,
+            "default_role" => self.default_role = optional()?,
+            "manpages_url" => self.manpages_url = optional()?,
+            _ => return Ok(false),
+        }
+        Ok(true)
     }
 }
 
@@ -139,6 +192,7 @@ impl Default for ParseOptions {
             source_encoding: DEFAULT_SOURCE_ENCODING.to_string(),
             trace_ids: false,
             read: ReadConfig::default(),
+            roles: None,
         }
     }
 }
@@ -708,6 +762,19 @@ pub(crate) struct ParseOnlyState {
     /// [`RegistryExport::dependencies`]); sphinx mode only.
     pub(crate) dependency_records: Vec<String>,
     pub(crate) included_records: Vec<String>,
+    /// docutils' role registries as the document has them now: the table
+    /// it started from ([`ParseOptions::roles`]) with what its `role` and
+    /// `default-role` directives and its `default_role` added; `None` for
+    /// the mode's built-in table, until something changes it.
+    pub(crate) roles: Option<std::sync::Arc<roles::RoleTable>>,
+    /// Sphinx's `env.current_document.default_role`: `default_role` when
+    /// the document starts, then the name a `.. default-role::` registered
+    /// ([RC §4.2]); the name a Sphinx role called as the default role
+    /// takes.
+    pub(crate) default_role: Option<String>,
+    /// The first input of the document that crashes Sphinx 9.1.0
+    /// (decision 13).
+    pub(crate) crash: Option<roles::RoleCrash>,
 }
 
 /// docutils' `Duplicate ID: "<id>" used by <holder's start tag> and <the
@@ -778,7 +845,18 @@ pub struct ParseOutput {
     /// The docutils document state the parse leaves behind, which the read
     /// transforms read beside the tree ([`DocumentState`]).
     pub state: DocumentState,
+    /// The role registries the next document of the build starts from:
+    /// the ones this one started from, with the roles its `role`
+    /// directives defined and the default role its `default-role`
+    /// directives left, unless `default_role` is set, whose registration
+    /// ends with the document (decision 14).
+    pub roles_after: roles::RoleTable,
+    /// The first input of the document that crashes Sphinx 9.1.0
+    /// (decision 13): the build that reads it fails.
+    pub crash: Option<RoleCrash>,
 }
+
+pub use roles::RoleCrash;
 
 /// Parse RST source into a doctree. Never errors — problems become
 /// `system_message` nodes, exactly like docutils — and never panics in
@@ -808,7 +886,55 @@ pub fn parse_rst_full(source: &str, opts: &ParseOptions) -> ParseOutput {
     if opts.trace_ids {
         parser.state.ids.enable_trace();
     }
+    parser.state.parse.roles = opts.roles.clone();
+    if opts.sphinx {
+        start_default_role(&mut parser.state, opts, parser.default_domain);
+    }
     parser.parse_document_full()
+}
+
+/// What a Sphinx read does with `default_role` before it parses the
+/// document ([RC §4.2]): `env.prepare_settings` makes it the document's
+/// default role (`current_document.default_role`), and
+/// `sphinx.util.rst.default_role(docname, name)` looks it up like any role
+/// name — through Sphinx's dispatcher, its INFO going to a reporter that
+/// prints nothing — and registers what it finds as `''`, or warns
+/// `default role X not found` at the document
+/// (`SP/sphinx/util/rst.py:65-77`). The registration ends with the
+/// document ([`ParseOutput::roles_after`]).
+fn start_default_role(
+    state: &mut DocumentState,
+    opts: &ParseOptions,
+    default_domain: Option<roles::DomainId>,
+) {
+    let Some(name) = opts
+        .read
+        .default_role
+        .as_deref()
+        .filter(|name| !name.is_empty())
+    else {
+        return;
+    };
+    state.parse.default_role = Some(name.to_string());
+    let table = opts
+        .roles
+        .clone()
+        .unwrap_or_else(|| roles::RoleTable::builtin(true));
+    let ctx = roles::DispatchCtx {
+        sphinx: true,
+        default_domain,
+        intersphinx: opts.read.intersphinx,
+    };
+    match roles::resolve_role(&table, &ctx, name, state) {
+        roles::Resolution::Found { role, .. } => {
+            let mut table = std::sync::Arc::unwrap_or_clone(table);
+            table.set_default(Some(role));
+            state.parse.roles = Some(std::sync::Arc::new(table));
+        }
+        roles::Resolution::NotFound { .. } => {
+            state.log_warning(format!("default role {name} not found"), LogLocation::Doc);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -3162,51 +3288,37 @@ pub(crate) mod tests {
         );
     }
 
-    /// The `PySigConfig` keys a fixture's `conf` sets; the other keys the
-    /// fixtures carry steer no parse.
-    fn py_config_of(conf: &serde_json::Map<String, Value>) -> crate::py::PySigConfig {
+    /// The parse configuration a fixture's `conf` sets, through the
+    /// crate's own mappers ([`crate::py::PySigConfig::apply_conf_key`],
+    /// [`ReadConfig::apply_conf_key`]); the other keys the fixtures carry
+    /// steer no parse.
+    fn conf_of(conf: &serde_json::Map<String, Value>) -> (crate::py::PySigConfig, ReadConfig) {
         let mut py = crate::py::PySigConfig::default();
-        let flag = |key: &str, value: &Value| {
-            value
-                .as_bool()
-                .unwrap_or_else(|| panic!("conf key {key}: expected a bool, got {value}"))
-        };
+        let mut read = ReadConfig::default();
         for (key, value) in conf {
-            match key.as_str() {
-                "maximum_signature_line_length" => {
-                    py.maximum_signature_line_length = value.as_i64()
-                }
-                "python_maximum_signature_line_length" => {
-                    py.python_maximum_signature_line_length = value.as_i64();
-                }
-                "python_trailing_comma_in_multi_line_signatures" => {
-                    py.python_trailing_comma_in_multi_line_signatures = flag(key, value);
-                }
-                "python_display_short_literal_types" => {
-                    py.python_display_short_literal_types = flag(key, value);
-                }
-                "python_use_unqualified_type_names" => {
-                    py.python_use_unqualified_type_names = flag(key, value);
-                }
-                "toc_object_entries" => py.toc_object_entries = flag(key, value),
-                "toc_object_entries_show_parents" => {
-                    py.toc_object_entries_show_parents =
-                        value.as_str().expect("a string value").to_string();
-                }
-                "add_function_parentheses" => py.add_function_parentheses = flag(key, value),
-                "add_module_names" => py.add_module_names = flag(key, value),
-                "strip_signature_backslash" => py.strip_signature_backslash = flag(key, value),
+            let mapped = py
+                .apply_conf_key(key, value)
+                .and_then(|mapped| match mapped {
+                    true => Ok(true),
+                    false => read.apply_conf_key(key, value),
+                })
+                .unwrap_or_else(|error| panic!("{error}"));
+            let inert = matches!(
+                key.as_str(),
                 "smartquotes"
-                | "keep_warnings"
-                | "nitpicky"
-                | "numfig"
-                | "numfig_format"
-                | "numfig_secnum_depth"
-                | "modindex_common_prefix" => {}
-                other => panic!("unmapped conf key {other:?}: map it onto the parse options"),
-            }
+                    | "keep_warnings"
+                    | "nitpicky"
+                    | "numfig"
+                    | "numfig_format"
+                    | "numfig_secnum_depth"
+                    | "modindex_common_prefix"
+            );
+            assert!(
+                mapped || inert,
+                "unmapped conf key {key:?}: map it onto the parse options"
+            );
         }
-        py
+        (py, read)
     }
 
     fn fixture(name: &str) -> Value {
@@ -3260,11 +3372,10 @@ pub(crate) mod tests {
         for case in sphinx["cases"].as_array().expect("cases") {
             let name = case["name"].as_str().expect("name");
             let source = case["rst"].as_str().expect("rst");
+            let (py, read) = case["conf"].as_object().map(conf_of).unwrap_or_default();
             let options = ParseOptions {
-                py: case["conf"]
-                    .as_object()
-                    .map(py_config_of)
-                    .unwrap_or_default(),
+                py,
+                read,
                 ..sphinx_options()
             };
             visit(Corpus::Sphinx, name, parse_rst_full(source, &options));
@@ -3293,7 +3404,7 @@ pub(crate) mod tests {
             }
             let found_docs: std::collections::BTreeSet<String> = files.keys().cloned().collect();
             let found_docs = std::sync::Arc::new(found_docs);
-            let py = py_config_of(project["conf"].as_object().expect("conf"));
+            let (py, read) = conf_of(project["conf"].as_object().expect("conf"));
             for (docname, body) in files {
                 let path = srcdir.join(format!("{docname}.rst"));
                 let options = ParseOptions {
@@ -3302,6 +3413,7 @@ pub(crate) mod tests {
                     docname: docname.clone(),
                     found_docs: Some(std::sync::Arc::clone(&found_docs)),
                     py: py.clone(),
+                    read: read.clone(),
                     srcdir: Some(srcdir.to_path_buf()),
                     ..Default::default()
                 };
@@ -3724,6 +3836,44 @@ pub(crate) mod tests {
             .doctree()
             .root
             .pformat()
+    }
+
+    /// `math_number_all` (`config.py:282`): the math directive labels an
+    /// equation that has no label `<docname>:<n>` and numbers it, as it
+    /// does one whose label is empty; off, it stays unlabelled. Probed on
+    /// Sphinx 9.1.0 (post-read: `label="index:0"`, `number="1"`, its
+    /// target, and the labelled one after it numbered 2).
+    #[test]
+    fn math_number_all_labels_every_equation() {
+        let source = ".. math:: x^2\n\n.. math:: y^2\n   :label: why\n";
+        let on = read_post(
+            source,
+            ReadConfig {
+                math_number_all: true,
+                ..ReadConfig::default()
+            },
+        );
+        assert!(
+            on.contains(
+                "    <target refid=\"equation-index-0\">\n    <math_block docname=\"index\" \
+                 ids=\"equation-index-0\" label=\"index:0\" no-wrap=\"0\" nowrap=\"0\" \
+                 number=\"1\" xml:space=\"preserve\">"
+            ),
+            "{on}"
+        );
+        assert!(
+            on.contains("label=\"why\" no-wrap=\"0\" nowrap=\"0\" number=\"2\""),
+            "{on}"
+        );
+        let off = read_post(source, ReadConfig::default());
+        assert!(
+            off.contains("<math_block docname=\"index\" label=\"True\" no-wrap=\"0\" nowrap=\"0\" number=\"True\""),
+            "{off}"
+        );
+        assert!(
+            off.contains("label=\"why\" no-wrap=\"0\" nowrap=\"0\" number=\"1\""),
+            "{off}"
+        );
     }
 
     /// The `ParseLogWarning`s of a parse, as `(message, location)`.
