@@ -26,8 +26,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::diagnostics::{Category, Diagnostic};
 use crate::doctree::ids::make_id;
-use crate::env::resolve::FormatError;
 use crate::env::BuildEnvironment;
+use crate::pyformat::FormatError;
 use crate::rst::{EquationRecord, LogLocation, SphinxCrash};
 
 /// `env.domaindata['math']['objects']`
@@ -171,7 +171,7 @@ pub struct EquationTarget<'e> {
 /// code blocks it numbered while no numbered equation stands in it
 /// (`KeyError: 'displaymath'`), and a `math_eqref_format` that
 /// `str.format` raises anything but `KeyError` for
-/// ([`crate::env::resolve::format_new_style`]).
+/// ([`crate::pyformat::format_new_style`]).
 pub fn resolve_xref<'e>(
     env: &'e BuildEnvironment,
     numfig: bool,
@@ -222,7 +222,7 @@ pub fn resolve_xref<'e>(
         .as_deref()
         .filter(|format| !format.is_empty())
         .unwrap_or("({number})");
-    let (title, warning) = match crate::env::resolve::format_new_style(format, None, &eqno) {
+    let (title, warning) = match crate::pyformat::format_new_style(format, None, &eqno) {
         Ok(title) => (title, None),
         Err(FormatError::KeyError(key)) => (
             format!("({number})"),
