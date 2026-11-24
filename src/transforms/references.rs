@@ -1246,7 +1246,9 @@ mod tests {
                  which does not exist. [docutils]"
             )
         };
-        let rows: Vec<(&str, Vec<(&str, &str)>, Vec<String>)> = vec![
+        /// The document, its included files and the expected records.
+        type Row<'a> = (&'a str, Vec<(&'a str, &'a str)>, Vec<String>);
+        let rows: Vec<Row> = vec![
             (
                 "Title\n=====\n\n.. include:: part.rst\n\n.. _x: y_\n",
                 vec![("part.rst", "Part.\n")],
