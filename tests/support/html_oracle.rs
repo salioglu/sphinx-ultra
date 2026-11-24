@@ -66,7 +66,10 @@ pub struct InventoryRecord {
     /// re-join, `{name} {domain_role} {priority} {uri} {display_name}`, equals
     /// the line. `Some(line)`, verbatim, for every other line, a raw record
     /// compared byte for byte; its other fields are then empty and its
-    /// priority 0.
+    /// priority 0. Each line is read on its own: the loader's skip of a
+    /// `py:module` line whose module an earlier line already recorded
+    /// (`SP/sphinx/util/inventory.py:129-134`) is not modelled, so that line
+    /// is parsed too.
     pub raw: Option<String>,
 }
 
@@ -1030,7 +1033,10 @@ fn compare_inventory_file(logical_path: &str, expected: &[u8], actual: &[u8]) ->
 /// re-join, `{name} {domain_role} {priority} {uri} {display_name}`, equals the
 /// line; every other line is kept verbatim as an opaque raw record compared
 /// byte for byte (`parse_inventory_record`). Either way two records are equal
-/// exactly when their lines are.
+/// exactly when their lines are. Lines are read one at a time: the loader's
+/// skip of a `py:module` line whose module an earlier line already recorded
+/// (`:129-134`) is not modelled, and such a line is parsed here like any
+/// other.
 pub fn parse_inventory(bytes: &[u8]) -> Result<(Vec<u8>, Vec<InventoryRecord>), String> {
     const HEADER: &[u8] = b"# Sphinx inventory version 2\n# Project: ";
     if !bytes.starts_with(HEADER) {

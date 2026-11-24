@@ -614,6 +614,67 @@ fn inventory_lines_that_do_not_rejoin_compare_byte_for_byte() {
     }
 }
 
+/// The payload lines `parse_inventory` reads, and which of them stay raw,
+/// for the shapes no reference holds (`SP/sphinx/util/inventory.py:113-128`):
+/// `str.splitlines()` breaks at every Unicode line boundary and at a CRLF
+/// pair once, a final break opens no line and a blank line inside is one
+/// (raw `""`); the loader's `\s` and `rstrip()` take U+001F for whitespace,
+/// so the fields it reads from a line holding one do not re-join to the
+/// line; a role without a `:` and a priority past an `i32` stay raw.
+#[test]
+fn parse_inventory_splits_and_strips_lines_as_the_loader_does() {
+    let records = |payload: &str| -> Vec<(String, Option<String>)> {
+        let (_, records) = parse_inventory(&inventory_bytes(payload))
+            .expect("no record line makes an inventory invalid");
+        records
+            .into_iter()
+            .map(|record| (record.name, record.raw))
+            .collect()
+    };
+    let parsed = |names: &str| -> Vec<(String, Option<String>)> {
+        names.chars().map(|name| (name.to_string(), None)).collect()
+    };
+    let raw = |line: &str| (String::new(), Some(line.to_string()));
+
+    let separators = [
+        "\r", "\x0b", "\x0c", "\x1c", "\x1d", "\x1e", "\u{85}", "\u{2028}", "\u{2029}", "\r\n",
+        "\n",
+    ];
+    let payload = ('a'..='k')
+        .zip(separators)
+        .map(|(name, separator)| format!("{name} py:function 1 {name}.html -{separator}"))
+        .collect::<String>();
+    assert_eq!(records(&payload), parsed("abcdefghijk"));
+
+    let line = |name: &str| format!("{name} py:function 1 api.html -\n");
+    assert_eq!(
+        records(&format!("{}\n{}", line("a"), line("b"))),
+        [vec![raw("")], parsed("ab")].concat()
+    );
+
+    for (shape, payload) in [
+        ("U+001F the strip drops", "f py:function 1 api.html -\u{1f}"),
+        ("U+001F between fields", "f\u{1f}py:function 1 api.html -"),
+        (
+            "U+001F ending the name",
+            "term\u{1f} std:term -1 index.html#term-term -",
+        ),
+        ("a role without a colon", "f function 1 api.html -"),
+        ("a priority past i32", "f py:function 2147483648 api.html -"),
+        (
+            "a priority below i32",
+            "f py:function -2147483649 api.html -",
+        ),
+    ] {
+        assert_eq!(records(payload), [raw(payload)], "{shape}");
+    }
+    assert_eq!(
+        records("f py:function -2147483648 api.html -\ng py:function 2147483647 api.html -"),
+        parsed("fg"),
+        "the priorities an i32 holds"
+    );
+}
+
 #[test]
 fn comparator_reports_missing_and_unexpected_files() {
     let expected = BTreeMap::from([(String::from("index.html"), b"same".to_vec())]);
