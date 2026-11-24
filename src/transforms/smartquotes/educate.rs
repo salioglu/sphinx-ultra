@@ -756,6 +756,20 @@ mod tests {
         );
     }
 
+    /// `combinations` against Python 3.12's `itertools.combinations`:
+    /// `list(combinations("abc", 2))`, `list(combinations("ab", 0))` and
+    /// `list(combinations("ab", 3))`. `normalize_language_tag` never asks for
+    /// more items than it has, so only this test pins the empty result.
+    #[test]
+    fn combinations_follow_itertools() {
+        assert_eq!(
+            combinations(&["a", "b", "c"], 2),
+            vec![vec!["a", "b"], vec!["a", "c"], vec!["b", "c"]]
+        );
+        assert_eq!(combinations(&["a", "b"], 0), vec![Vec::<&str>::new()]);
+        assert!(combinations(&["a", "b"], 3).is_empty());
+    }
+
     /// `processEscapes` and its restore, and the backslash Sphinx's
     /// `get_tokens` inserts after a `\x00` escape marker (a real
     /// `SphinxSmartQuotes.get_tokens` call made each row).
