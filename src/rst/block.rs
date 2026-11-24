@@ -623,17 +623,9 @@ impl BlockParser {
             self.sources.path(0)
         );
         // The parse-only half of the state ends with the parse: its record
-        // streams become the output's own fields, and the name table is
-        // also exported as the nameids snapshot wave 4's std-domain label
-        // harvest reads.
+        // streams become the output's own fields.
         let parse = std::mem::take(&mut self.state.parse);
         let registry = super::RegistryExport {
-            nameids: self
-                .state
-                .names
-                .iter()
-                .map(|(name, entry)| (name.to_string(), entry.id.clone(), entry.explicit))
-                .collect(),
             index_serial: parse.index_serial,
             program_options: parse.program_option_records,
             std_objects: parse.std_object_records,

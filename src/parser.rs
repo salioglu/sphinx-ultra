@@ -477,45 +477,6 @@ mod tests {
         );
     }
 
-    /// The id registry's nameids table (name -> (id, explicit)) must
-    /// survive parse_document_full as `ParseOutput.registry` — wave 4's
-    /// std-domain label harvest needs it after the registry itself drops.
-    #[test]
-    fn registry_export_carries_nameids_with_explicitness() {
-        let output = rst::parse_rst_full(
-            "Section\n=======\n\n.. _tgt:\n\nBody.\n",
-            &rst::ParseOptions {
-                source_path: "<snippet>".to_string(),
-                sphinx: true,
-                docname: "index".to_string(),
-                exclude_patterns: Vec::new(),
-                py: Default::default(),
-                srcdir: None,
-                found_docs: None,
-                ..Default::default()
-            },
-        );
-
-        let tgt = output
-            .registry
-            .nameids
-            .iter()
-            .find(|(name, _, _)| name == "tgt")
-            .expect("tgt registered");
-        assert_eq!(tgt, &("tgt".to_string(), Some("tgt".to_string()), true));
-
-        let section = output
-            .registry
-            .nameids
-            .iter()
-            .find(|(name, _, _)| name == "section")
-            .expect("section registered");
-        assert_eq!(
-            section,
-            &("section".to_string(), Some("section".to_string()), false)
-        );
-    }
-
     /// A parsed file carries its read for the merge: the doctree, stamped
     /// as every Sphinx document is, and the docutils document state beside
     /// it (here the reporter's record of the short underline), while the

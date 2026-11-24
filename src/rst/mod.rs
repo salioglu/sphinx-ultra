@@ -363,19 +363,18 @@ pub struct EquationRecord {
 }
 
 /// What the parse layer hands the environment besides the doctree itself:
-/// state that lives in the parser (the docutils id/name registry, Sphinx's
-/// `env.ref_context`) and dies with it, but that env collectors need.
+/// what Sphinx registers while the parse runs, against state that dies
+/// with it (`env.ref_context`, the serial counters), and that the env
+/// collectors need. It rides the document cache
+/// ([`crate::document::Document::registry`]), so it stays
+/// serde-serializable and cheap to clone.
 ///
-/// Named for its original single job — the `document.nameids` snapshot of
-/// the parse's name table ([`DocumentState::names`]), which wave 4's
-/// std-domain label harvest reads. Intended to eventually ride the document
-/// cache, so it stays serde-serializable and cheap to clone.
+/// The name table, which the std domain's label harvest reads, is not
+/// here: it is [`DocumentState::names`], which the read keeps. A cache
+/// entry that still carries the `nameids` snapshot this export once held
+/// decodes, the key ignored.
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct RegistryExport {
-    /// `(name, id, explicit)`, one entry per registered name, in
-    /// registration order. `id` is `None` once a name has been duplicated
-    /// away.
-    pub nameids: Vec<(String, Option<String>, bool)>,
     /// sphinx `env.new_serialno('index')` counter value at the end of the
     /// parse (shared by the index directive and index-entry-emitting roles).
     pub index_serial: u32,
@@ -791,7 +790,7 @@ pub(crate) mod tests {
     /// The complete current [`RegistryExport`] shape, with one record of
     /// every kind, so that a guard below can remove exactly ONE field and
     /// know the decode failed for no other reason.
-    const COMPLETE_REGISTRY: &str = r#"{"nameids":[],"index_serial":0,
+    const COMPLETE_REGISTRY: &str = r#"{"index_serial":0,
         "program_options":[{"source":0,"program":null,"name":"-f","node_id":"a","seq":0}],
         "std_objects":[{"source":0,"objtype":"envvar","name":"P","node_id":"b","line":1,
             "seq":1}],
@@ -869,6 +868,19 @@ pub(crate) mod tests {
         ] {
             must_miss(&[], field);
         }
+    }
+
+    /// The `nameids` snapshot the export once carried is gone (nothing read
+    /// it once the std domain read the name table), and a cache entry that
+    /// still holds it decodes, the key ignored: its other fields are the
+    /// current shape, so retiring the snapshot costs no re-read.
+    #[test]
+    fn a_registry_with_the_retired_nameids_snapshot_still_decodes() {
+        let mut value: Value = serde_json::from_str(COMPLETE_REGISTRY).unwrap();
+        value["nameids"] = json!([["tgt", "tgt", true]]);
+        let registry =
+            serde_json::from_value::<RegistryExport>(value).expect("the retired key is ignored");
+        assert_eq!(registry.program_options.len(), 1);
     }
 
     /// The per-record `source` fields added by the provenance wave follow
