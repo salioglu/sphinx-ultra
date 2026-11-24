@@ -1429,10 +1429,14 @@ mod tests {
     #[test]
     fn nodes_directives_return_unlocated_take_the_machine_position() {
         let head = "Z\n=\n\n.. _dup:\n\n";
+        let generated = format!("<SRCDIR>{}<generated text>:", std::path::MAIN_SEPARATOR);
         let rows = [
+            // The caption's '<generated text>' source is made absolute
+            // against the project the way os.path.abspath joins it, with
+            // the platform's separator.
             (
                 ".. code-block:: python\n   :caption: C\n\n   x = 1\n",
-                "<SRCDIR>/<generated text>:",
+                generated.as_str(),
             ),
             (".. toctree::\n   :caption: C\n\n   a\n", "<SRCDIR>/z.rst:"),
             (
