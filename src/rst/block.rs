@@ -5570,7 +5570,13 @@ impl BlockParser {
                 };
                 // `self.parse_inline(term_, lineno=lineno)` with the content
                 // item's 0-based offset (`domains/std/__init__.py:518-521`):
-                // its messages print one line before the term's own.
+                // its messages print one line before the term's own. The
+                // reporter reads that offset back through the combined
+                // top-level input, so after an include, or in an included
+                // file, Sphinx prints another line, often of another file
+                // (a term on `index.rst:8` after a three-line include:
+                // `part.inc:1`); here they keep the term's own file, a known
+                // divergence (probed on Sphinx 9.1.0).
                 let inline = self.inline(&term_text, term_span, tl.lineno.saturating_sub(1));
                 let mut term = Node::elem(kinds::TERM, term_span);
                 term.children = inline.nodes;

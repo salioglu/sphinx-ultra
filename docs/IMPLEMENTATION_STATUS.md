@@ -281,7 +281,12 @@ each found by probing Sphinx 9.1.0 and documented at its code site:
 - Line arithmetic: directive-line messages inside grid and simple table
   cells print one line low; a duplicate `:name:` on `include :literal:` is
   located at the directive line (Sphinx: the included file's start line + 1);
-  the line-block directive's line arithmetic after an earlier include; a
+  the line-block directive's line arithmetic after an earlier include;
+  inline messages in a glossary term after an include, or in an included
+  file, print the term's own file and the line before the term's (as with
+  no include), where Sphinx reads the term's 0-based offset back through the
+  combined top-level input (a term on `index.rst:8` after an include prints
+  `part.inc:1` in Sphinx, `index.rst:7` here); a
   line-block directive or glossary inside a cell takes the cell offset once
   (docutils twice); INFO records in cells keep the true line (pure-docutils
   doctrees only); `Title underline too short.` is missing before `Unexpected
