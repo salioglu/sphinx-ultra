@@ -38,8 +38,11 @@ use crate::transforms::state::DocumentState;
 use crate::transforms::tags::Tags;
 use crate::transforms::{Transform, TransformId};
 
-/// The configuration the read consumes. Every field holds Sphinx's default
-/// unless the configuration says otherwise ([`Self::from_config`]).
+/// The configuration a document's read consumes, and one setting of the
+/// resolve pass after it: `trim_doctest_flags`, which
+/// [`resolve_standalone`] takes from here (a build's resolve pass reads its
+/// configuration). Every field holds Sphinx's default unless the
+/// configuration says otherwise ([`Self::from_config`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReadSettings {
     /// `keep_warnings` (`SP/sphinx/config.py:261`, default `False`): whether
@@ -534,8 +537,10 @@ pub fn resolve_standalone(
 
     // Then the document's own toctrees, as the builder's resolve pass
     // resolves them. Every entry naming a document was dropped by the
-    // read, so the patterns, the snippets' `conf.py` leaving them at
-    // Sphinx's defaults, word no warning here.
+    // read, so none reaches the missing-entry warning, the one the
+    // patterns word: Sphinx's default patterns stand in for the snippets'
+    // `exclude_patterns = ['_build']` (`tools/gen_sphinx_fixture.py`,
+    // `tools/gen_html_oracle.py`) and change nothing.
     let doc2path = |docname: &str| read.source_dir.join(format!("{docname}.rst"));
     let sources = |docname: &str| (docname == read.docname).then_some(post_read.sources.as_slice());
     let include_patterns = ["**".to_string()];
