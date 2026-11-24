@@ -2768,6 +2768,8 @@ pub(crate) mod tests {
             (".. topic:: T\n   :name: a\n\n   Body.\n\nAfter.\n", 5),
             (".. container:: c\n   :name: a\n\n   Body.\n\nAfter.\n", 5),
             (".. line-block::\n   :name: a\n\n   one\n\nAfter.\n", 5),
+            // The toctree's wrapper: no location of its own.
+            (".. toctree::\n   :name: a\n\n\n\nAfter.\n", 9),
         ] {
             assert_eq!(
                 printed_heads(&format!("{head}{body}")),
@@ -2775,6 +2777,16 @@ pub(crate) mod tests {
                 "{body:?}"
             );
         }
+        // `self.add_name(wrappernode)` names the wrapper, not the toctree.
+        let out = parse_rst_full(
+            &format!("{head}.. toctree::\n   :name: a\n\n\n\nAfter.\n"),
+            &sphinx_options(),
+        );
+        let wrapper = first(&out.doctree.root, "compound").expect("the toctree's wrapper");
+        assert_eq!(
+            wrapper.pformat().lines().next(),
+            Some("<compound classes=\"toctree-wrapper\" dupnames=\"a\" ids=\"id1\">")
+        );
         // docutils 0.22 parses sections in the top-level machine.
         assert_eq!(
             printed_heads(".. _a:\n\nTitle\n=====\n\n.. note:: b\n   :name: a\n\nAfter.\n"),
