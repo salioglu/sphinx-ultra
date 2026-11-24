@@ -553,7 +553,7 @@ enum Expr {
 /// link however long it is, deeper than any stack.
 impl Drop for Expr {
     fn drop(&mut self) {
-        let mut pending: Vec<Box<Expr>> = Vec::new();
+        let mut pending: Vec<Expr> = Vec::new();
         self.take_children(&mut pending);
         while let Some(mut node) = pending.pop() {
             node.take_children(&mut pending);
@@ -563,19 +563,23 @@ impl Drop for Expr {
 
 impl Expr {
     /// Moves the node's children out onto `into`, leaving it a leaf.
-    fn take_children(&mut self, into: &mut Vec<Box<Expr>>) {
-        let leaf = || Box::new(Expr::Const);
+    fn take_children(&mut self, into: &mut Vec<Expr>) {
+        let mut take = |child: &mut Box<Expr>| {
+            into.push(std::mem::replace(child.as_mut(), Expr::Const));
+        };
         match self {
             Expr::Cond { test, then, orelse } => {
-                into.push(std::mem::replace(test, leaf()));
-                into.push(std::mem::replace(then, leaf()));
-                into.extend(orelse.take());
+                take(test);
+                take(then);
+                if let Some(orelse) = orelse {
+                    take(orelse);
+                }
             }
             Expr::And(left, right) | Expr::Or(left, right) => {
-                into.push(std::mem::replace(left, leaf()));
-                into.push(std::mem::replace(right, leaf()));
+                take(left);
+                take(right);
             }
-            Expr::Not(operand) => into.push(std::mem::replace(operand, leaf())),
+            Expr::Not(operand) => take(operand),
             Expr::Name(_) | Expr::Const => {}
         }
     }

@@ -20424,7 +20424,10 @@ mod include_tests {
         let empty = "Substitution definition \"x\" empty or invalid.";
         let emphasis = "Inline emphasis start-string without end-string.";
         let circular = "circular inclusion in \"include\" directive:\np.inc\n> p.inc\n> ";
-        let rows: [(&str, &str, &[(i64, &str)]); 4] = [
+        /// The document, the included file, and the parse's messages as
+        /// `(line, text)`, each text a prefix.
+        type Row<'a> = (&'a str, &'a str, &'a [(i64, &'a str)]);
+        let rows: [Row; 4] = [
             (
                 "Title\n=====\n\nUse |x|.\n\n.. |x| include:: p.inc\n\nAfter *z.\n",
                 "Inc *a.\n\n.. bogus::\n\nMore *b.\n",
