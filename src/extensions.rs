@@ -135,8 +135,9 @@ impl SphinxApp {
 
     /// Call an extension's setup function
     fn call_extension_setup(&self, extension: &SphinxExtension, _setup_fn: &str) -> Result<()> {
-        // Stub implementation - in a real version this would call the Python setup function
-        println!("Setting up extension: {}", extension.name);
+        // Stub implementation - in a real version this would call the Python setup function.
+        // Sphinx sets an extension up silently: a progress note, not stdout.
+        log::debug!("Setting up extension: {}", extension.name);
         Ok(())
     }
 

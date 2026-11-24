@@ -109,7 +109,7 @@ sphinx-ultra -M clean SOURCEDIR OUTPUTDIR     # empties OUTPUTDIR
 | `-A name=value` | Set an `html_context` value. Repeatable |
 | `-t TAG` | Define a tag (hashed into `.buildinfo`); `.. only::` expressions are evaluated against it and the builder's `html`, `format_html` and `builder_html` |
 | `-n` | Nitpicky: warn about every unresolved reference |
-| `-q` | Quiet: no progress output |
+| `-q` | Quiet: nothing on stdout (the closing summary goes) |
 | `-E` | Discard the saved environment and re-read every document |
 | `-a` | Write all files (here: re-read everything, see below) |
 | `-T` | Show a traceback on an unhandled error |
@@ -117,7 +117,7 @@ sphinx-ultra -M clean SOURCEDIR OUTPUTDIR     # empties OUTPUTDIR
 | `-W` | Turn warnings into errors: exit 1 after the build if any warning was logged |
 | `--keep-going` | Accepted; collect-all is already the default, as in Sphinx 8.1+ |
 | `-w FILE` | Also write warnings and errors to FILE |
-| `-v`, `-vv`, … | More logging. A pre-set `RUST_LOG` wins over `-v`/`-q` |
+| `-v`, `-vv`, … | The build's progress log on stderr (`-vv` and up: debug, trace). Without it stderr carries the warning stream alone. A pre-set `RUST_LOG` wins |
 
 sphinx-build mode is **incremental by default**: the environment and every
 document's doctree are saved under the cache directory, and the next build
@@ -194,8 +194,8 @@ inside the doctree (a missing or circular include, an unknown directive) are
 not printed yet. This is a known limitation, listed in
 [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md#known-divergences-from-sphinx-910-m2-wave-45).
 
-**`Setting up extension: …` on stdout.** Listing an extension has no effect
-yet; the line is a stub and will go away with the extension ABI (M4).
+**Listed extensions do nothing yet.** Listing an extension has no effect
+until the extension ABI (M4).
 
 **Markdown pages are empty.** `.md` files are discovered and get a placeholder
 page, but no Markdown structure is parsed yet (MyST is M2 wave 6).

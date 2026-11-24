@@ -1130,7 +1130,9 @@ fn operational_flags_do_not_invalidate_the_cache() {
         stderr_of(&run1)
     );
 
-    let run2 = sphinx_build(&[&s, &o]);
+    // The build's progress log, `Cache hits` among it, prints with `-v`:
+    // without it sphinx-build mode's stderr is the warning stream alone.
+    let run2 = sphinx_build(&[&s, &o, "-v"]);
     assert!(
         stderr_of(&run2).contains("Cache hits: 3"),
         "an unchanged project reads nothing, stderr: {}",
@@ -1139,7 +1141,7 @@ fn operational_flags_do_not_invalidate_the_cache() {
 
     // Adding -W must not wipe the cache, and must not fail the build over
     // warnings a warm build never re-emits.
-    let run3 = sphinx_build(&[&s, &o, "-W"]);
+    let run3 = sphinx_build(&[&s, &o, "-W", "-v"]);
     assert!(
         stderr_of(&run3).contains("Cache hits: 3"),
         "-W must not invalidate the cache, stderr: {}",
@@ -1162,13 +1164,13 @@ fn operational_flags_do_not_invalidate_the_cache() {
     );
 
     // Same for -n, and dropping the flags again is likewise free.
-    let run5 = sphinx_build(&[&s, &o, "-n"]);
+    let run5 = sphinx_build(&[&s, &o, "-n", "-v"]);
     assert!(
         stderr_of(&run5).contains("Cache hits: 3"),
         "-n must not invalidate the cache, stderr: {}",
         stderr_of(&run5)
     );
-    let run6 = sphinx_build(&[&s, &o]);
+    let run6 = sphinx_build(&[&s, &o, "-v"]);
     assert!(
         stderr_of(&run6).contains("Cache hits: 3"),
         "dropping the flags must not invalidate the cache either, stderr: {}",
@@ -1555,21 +1557,23 @@ fn sphinx_build_incremental_by_default_and_fresh_env() {
     let run1 = sphinx_build(&[s, out.to_str().unwrap()]);
     assert!(run1.status.success(), "stderr: {}", stderr_of(&run1));
 
-    let run2 = sphinx_build(&[s, out.to_str().unwrap()]);
+    // The build's progress log, `Cache hits` among it, prints with `-v`:
+    // without it sphinx-build mode's stderr is the warning stream alone.
+    let run2 = sphinx_build(&[s, out.to_str().unwrap(), "-v"]);
     assert!(
         stderr_of(&run2).contains("Cache hits: 2"),
         "compat mode is incremental by default (sphinx-build parity), stderr: {}",
         stderr_of(&run2)
     );
 
-    let run3 = sphinx_build(&[s, out.to_str().unwrap(), "-E"]);
+    let run3 = sphinx_build(&[s, out.to_str().unwrap(), "-E", "-v"]);
     assert!(
         stderr_of(&run3).contains("Cache hits: 0"),
         "-E discards the saved environment, stderr: {}",
         stderr_of(&run3)
     );
 
-    let run4 = sphinx_build(&[s, out.to_str().unwrap(), "-a"]);
+    let run4 = sphinx_build(&[s, out.to_str().unwrap(), "-a", "-v"]);
     assert!(
         stderr_of(&run4).contains("Cache hits: 0"),
         "-a rewrites all files, stderr: {}",
@@ -1900,6 +1904,51 @@ fn sphinx_build_mode_stderr_equals_warning_file() {
         )
     );
     assert_eq!(String::from_utf8(result.stderr).unwrap(), written);
+}
+
+/// Decision 8 holds without `-q` too: Sphinx writes its status to stdout,
+/// so its stderr is the warning stream alone, byte for byte the `-w` file,
+/// and empty for a project with no warnings. `-q` empties stdout even with
+/// extensions configured (Sphinx sets them up silently). The build's own
+/// progress log needs `-v`.
+#[test]
+fn sphinx_build_mode_stderr_is_the_warning_stream_without_q() {
+    let src = temp_source(
+        "sb-stderr-noq",
+        &[("index.rst", "Title\n=====\n\n.. toctree::\n\n   missing\n")],
+    );
+    let out = out_dir("sb-stderr-noq");
+    let warnings = out_dir("sb-stderr-noq-log").join("warnings.txt");
+    let result = sphinx_build(&[
+        src.to_str().unwrap(),
+        out.to_str().unwrap(),
+        "-w",
+        warnings.to_str().unwrap(),
+    ]);
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    let written = String::from_utf8(std::fs::read(&warnings).unwrap()).unwrap();
+    assert!(written.contains("[toc.not_readable]"), "{written}");
+    assert_eq!(String::from_utf8(result.stderr).unwrap(), written);
+
+    let clean = temp_source(
+        "sb-stderr-clean",
+        &[
+            (
+                "conf.py",
+                "extensions = ['sphinx.ext.autodoc', 'sphinx.ext.intersphinx']\n",
+            ),
+            ("index.rst", "Title\n=====\n\nBody.\n"),
+        ],
+    );
+    let out = out_dir("sb-stderr-clean");
+    let result = sphinx_build(&[clean.to_str().unwrap(), out.to_str().unwrap()]);
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert_eq!(stderr_of(&result), "");
+    let out = out_dir("sb-stderr-clean-q");
+    let result = sphinx_build(&[clean.to_str().unwrap(), out.to_str().unwrap(), "-q"]);
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "");
+    assert_eq!(stderr_of(&result), "");
 }
 
 /// A logger warning raised inside an included file prints the path Sphinx's
@@ -2636,7 +2685,9 @@ fn nitpicky_resolves_python_refs_and_counts_cross_domain_ones() {
         )],
     );
     let out = out_dir("nitpicky-py-domain");
-    let result = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap(), "-n"]);
+    // `-v` for the cross-domain notice, which is this crate's progress log,
+    // not a record.
+    let result = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap(), "-n", "-v"]);
 
     assert!(result.status.success(), "stderr: {}", stderr_of(&result));
     let stderr = stderr_of(&result);

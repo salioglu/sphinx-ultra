@@ -719,14 +719,14 @@ async fn run_build(args: RunArgs) -> Result<i32> {
 
 /// sphinx-build compatible mode entry point. Returns the process exit code.
 async fn run_sphinx_build_mode(sb: SphinxBuildCli) -> i32 {
-    let default_level = if sb.quiet {
-        "warn"
-    } else {
-        match sb.verbose {
-            0 => "info",
-            1 => "debug",
-            _ => "trace",
-        }
+    // Sphinx writes its status to stdout, so its stderr carries the warning
+    // stream alone (decision 8): this crate's own progress log stays off it
+    // unless `-v` asks for it (`-q` or not), and `RUST_LOG` still wins.
+    let default_level = match sb.verbose {
+        0 => "warn",
+        1 => "info",
+        2 => "debug",
+        _ => "trace",
     };
     init_logging(default_level);
 
