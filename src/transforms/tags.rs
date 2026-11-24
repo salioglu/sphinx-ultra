@@ -99,16 +99,18 @@ const INVALID_NODE: &str = "invalid node, check parsing";
 /// condition too deep for Jinja2's recursive parser or Sphinx's recursive
 /// evaluator raises, and the only directive warns with its text
 /// ([`RECURSION_ERROR`]). The port counts the frames those calls would
-/// stand in, so it fails where Sphinx does, and recurses at most as deep.
+/// stand in under `sphinx-build` ([`EVAL_CONDITION_FRAME`]), so it fails
+/// where Sphinx does, and recurses at most as deep.
 const RECURSION_LIMIT: usize = 1000;
 
 /// The frame `Tags.eval_condition` runs in when Sphinx 9.1.0's
-/// `OnlyNodeTransform` calls it, under `-b html` and `-b dummy` alike
+/// `OnlyNodeTransform` calls it under the `sphinx-build` console script,
+/// which this CLI stands in for, with `-b html` and `-b dummy` alike
 /// (probed: the thresholds in
-/// `a_condition_past_pythons_recursion_limit_fails_as_sphinx_does`). The
-/// toctree's call stands elsewhere in Sphinx's stack; it is counted the
-/// same.
-const EVAL_CONDITION_FRAME: usize = 21;
+/// `a_condition_past_pythons_recursion_limit_fails_as_sphinx_does`);
+/// `python -m sphinx` runs it two frames deeper. The toctree's call stands
+/// elsewhere in Sphinx's stack, at the same depth (probed the same way).
+const EVAL_CONDITION_FRAME: usize = 19;
 
 /// The frames `next(stream)` adds while the lexer reads the next token:
 /// `TokenStream.__next__`, `Lexer.wrap` and `Lexer.tokeniter`, the last
@@ -701,13 +703,17 @@ mod tests {
 
     /// Python's recursion limit (1000 frames) stops Sphinx's parse or its
     /// evaluation of a deep condition with `RecursionError`, whose text the
-    /// only directive's warning prints. Probed on Sphinx 9.1.0
-    /// (`-b html` and `-b dummy`, an `only` in `index.rst`): 161
-    /// parentheses evaluate and 162 do not (Jinja2's parser spends six
-    /// frames a level), 970 `not`s and not 971 (one parser frame each), and
-    /// chains of 979 `and` or `or` operands and not 980 (the evaluator
-    /// recurses down the left-deep chain). Far deeper ones fail the same
-    /// way, without exhausting the stack.
+    /// only directive's warning prints. Probed on Sphinx 9.1.0's
+    /// `sphinx-build` console script, which this CLI stands in for (`-b
+    /// html` and `-b dummy`, an `only` in `index.rst`, and one in a
+    /// document a toctree lists, which the toctree evaluates at the same
+    /// depth): 162 parentheses evaluate and 163 do not (Jinja2's parser
+    /// spends six frames a level), 972 `not`s and not 973 (one parser frame
+    /// each), and chains of 981 `and` or `or` operands and not 982 (the
+    /// evaluator recurses down the left-deep chain). `python -m sphinx`
+    /// runs two frames deeper, and fails at 162 parentheses, 971 `not`s
+    /// and 980 operands. Far deeper ones fail the same way, without
+    /// exhausting the stack.
     #[test]
     fn a_condition_past_pythons_recursion_limit_fails_as_sphinx_does() {
         let tags = Tags::new(["html".to_string()]);
@@ -716,14 +722,14 @@ mod tests {
         let nots = |n: usize| format!("{}html", "not ".repeat(n));
         let chain = |n: usize, op: &str| vec!["html"; n].join(op);
         let rows: Vec<(String, Result<bool, String>)> = vec![
-            (parens(161), Ok(true)),
-            (parens(162), recursion.clone()),
-            (nots(970), Ok(true)),
-            (nots(971), recursion.clone()),
-            (chain(979, " and "), Ok(true)),
-            (chain(980, " and "), recursion.clone()),
-            (chain(979, " or "), Ok(true)),
-            (chain(980, " or "), recursion.clone()),
+            (parens(162), Ok(true)),
+            (parens(163), recursion.clone()),
+            (nots(972), Ok(true)),
+            (nots(973), recursion.clone()),
+            (chain(981, " and "), Ok(true)),
+            (chain(982, " and "), recursion.clone()),
+            (chain(981, " or "), Ok(true)),
+            (chain(982, " or "), recursion.clone()),
             (parens(20_000), recursion.clone()),
             (nots(20_000), recursion.clone()),
             (chain(200_000, " and "), recursion.clone()),
