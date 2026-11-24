@@ -694,6 +694,11 @@ pub(crate) struct ParseOnlyState {
     /// the node that holds the id, which the parse spells once its tree
     /// is complete ([`DuplicateId`]).
     pub(crate) duplicate_ids: Vec<DuplicateId>,
+    /// By id, the start tag of the first node holding it in a subtree the
+    /// parse dropped ([`DocumentState::detach`]), as the node was then:
+    /// docutils' `document.ids` keeps such a node, and a later `Duplicate
+    /// ID` names it ([`DocumentState::spell_duplicate_ids`]).
+    pub(crate) dropped_id_holders: HashMap<String, String>,
     /// The nodes docutils stamps with `abs_line_number()`, whose line the
     /// parse knows once the top-level input is complete ([`AbsoluteLine`]).
     pub(crate) absolute_lines: Vec<AbsoluteLine>,
@@ -2484,6 +2489,49 @@ pub(crate) mod tests {
                 "index-0",
                 "<section ids=\"index-0\" names=\"index\\ 0\">"
             )]
+        );
+    }
+
+    /// The node holding the id may sit in content the parse rejected (a
+    /// malformed `list-table`), which no tree keeps: docutils' `document.ids`
+    /// still holds the node, and `Duplicate ID` spells its start tag as the
+    /// node is. Probed on Sphinx 9.1.0 (`-w`).
+    #[test]
+    fn a_duplicate_id_names_a_holder_in_rejected_content() {
+        let rejected = |cell: &str| {
+            format!("Title\n=====\n\n.. list-table::\n\n   * - {cell}\n     - b\n   * - c\n\n.. index:: foo\n")
+        };
+        let table = at(
+            4,
+            "ERROR: Error parsing content block for the \"list-table\" directive: uniform \
+             two-level bullet list expected, but row 2 does not contain the same number of items \
+             as row 1 (1 vs 2).",
+        );
+        let duplicate = |line: u32, holder: &str| {
+            at(
+                line,
+                &format!(
+                    "ERROR: Duplicate ID: \"index-0\" used by {holder} and \
+                     <target ids=\"index-0\"> [docutils]"
+                ),
+            )
+        };
+        assert_eq!(
+            printed_heads(&rejected(".. _index-0:\n\n       para")),
+            [
+                table.clone(),
+                duplicate(11, "<target ids=\"index-0\" names=\"index-0\">")
+            ]
+        );
+        assert_eq!(
+            printed_heads(&rejected(".. image:: x.png\n          :name: index-0")),
+            [
+                table,
+                duplicate(
+                    10,
+                    "<image ids=\"index-0\" names=\"index-0\" uri=\"x.png\">"
+                )
+            ]
         );
     }
 

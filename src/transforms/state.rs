@@ -762,23 +762,25 @@ impl DocumentState {
     /// alone keeps nothing alive. Docutils drops such a subtree too, except
     /// a node of it that `set_id` registered, which `document.ids` keeps:
     /// its id is taken ([`Self::ids`]) but names no node in the read
-    /// transforms' arena ([`crate::transforms::tree::TxTree::by_id`]).
+    /// transforms' arena ([`crate::transforms::tree::TxTree::by_id`]), and
+    /// its start tag is what a later `Duplicate ID` names it by
+    /// ([`ParseOnlyState::dropped_id_holders`]).
     pub(crate) fn detach(&mut self, nodes: impl IntoIterator<Item = Node>) {
         let mut held: Option<HashSet<Uid>> = None;
         for node in nodes {
             let mut uids = Vec::new();
             identities(&node, &mut uids);
-            if uids.is_empty() {
-                continue;
-            }
-            let held = held.get_or_insert_with(|| self.held_uids().collect());
-            if uids.iter().any(|uid| held.contains(uid)) {
-                self.detached.push(node);
-            } else {
+            if !uids.is_empty() {
+                let held = held.get_or_insert_with(|| self.held_uids().collect());
+                if uids.iter().any(|uid| held.contains(uid)) {
+                    self.detached.push(node);
+                    continue;
+                }
                 for uid in &uids {
                     self.loc_overrides.remove(uid);
                 }
             }
+            note_id_holders(&node, &mut self.parse.dropped_id_holders);
         }
     }
 
@@ -912,6 +914,19 @@ fn identities(node: &Node, out: &mut Vec<Uid>) {
     out.extend(node.uid());
     for child in &node.children {
         identities(child, out);
+    }
+}
+
+/// Records, for each id a node of the subtree at `node` carries, the start
+/// tag of the first node carrying it, unless `holders` has one already.
+fn note_id_holders(node: &Node, holders: &mut HashMap<String, String>) {
+    for id in &node.attrs.ids {
+        if !holders.contains_key(id) {
+            holders.insert(id.clone(), crate::doctree::pformat::starttag(node));
+        }
+    }
+    for child in &node.children {
+        note_id_holders(child, holders);
     }
 }
 

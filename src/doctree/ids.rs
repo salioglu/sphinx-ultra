@@ -266,25 +266,39 @@ impl DocumentState {
     /// Completes each `Duplicate ID` record [`Self::set_id_at`] logged with
     /// the start tag of the node that holds the id: the first node in the
     /// tree under `root`, or in a detached subtree, that carries it and is
-    /// not the node the id was preset on.
+    /// not the node the id was preset on, else the node a subtree the parse
+    /// dropped held it by ([`crate::rst::ParseOnlyState::dropped_id_holders`]).
+    /// A record no node completes leaves the log rather than print half a
+    /// sentence: every node docutils' `document.ids` can name is in one of
+    /// those places, so the parse found no node holding the id.
     pub(crate) fn spell_duplicate_ids(&mut self, root: &Node) {
+        let mut unspelled = Vec::new();
         for duplicate in std::mem::take(&mut self.parse.duplicate_ids) {
             let holder = std::iter::once(root)
                 .chain(self.detached.iter())
-                .find_map(|tree| find_holder(tree, &duplicate.id, duplicate.node));
+                .find_map(|tree| find_holder(tree, &duplicate.id, duplicate.node))
+                .map(super::pformat::starttag)
+                .or_else(|| self.parse.dropped_id_holders.get(&duplicate.id).cloned());
             let Some(holder) = holder else {
+                unspelled.push(duplicate.record);
                 continue;
             };
             let text = format!(
-                "Duplicate ID: \"{}\" used by {} and {}",
-                duplicate.id,
-                super::pformat::starttag(holder),
-                duplicate.starttag
+                "Duplicate ID: \"{}\" used by {holder} and {}",
+                duplicate.id, duplicate.starttag
             );
             if let Some(LogRecord::Reporter { text: logged, .. }) =
                 self.log.get_mut(duplicate.record)
             {
                 *logged = text;
+            }
+        }
+        // The records hold their place in the log by index: remove the
+        // last first.
+        unspelled.sort_unstable();
+        for record in unspelled.into_iter().rev() {
+            if record < self.log.len() {
+                self.log.remove(record);
             }
         }
     }
@@ -711,6 +725,23 @@ mod tests {
         // Empty term likewise.
         state.ids.register("id2", None);
         assert_eq!(state.sphinx_make_id("", ""), "id3");
+    }
+
+    /// A `Duplicate ID` record no node completes, its holder in no tree, no
+    /// detached subtree and no subtree the parse dropped, leaves the log
+    /// rather than print the text it was logged with, which lacks the
+    /// holder's start tag ([`DocumentState::spell_duplicate_ids`]).
+    #[test]
+    fn an_unspelled_duplicate_id_leaves_the_log() {
+        let mut state = DocumentState::default();
+        // Another node registered the id, and the parse kept it nowhere.
+        assert!(state.ids.register("index-0", None));
+        let mut target = Node::elem(kinds::TARGET, Span::ZERO);
+        target.attrs.ids.push("index-0".into());
+        state.set_id_at(&mut target, DocLoc::at(0, 5));
+        assert_eq!(state.log.len(), 1);
+        state.spell_duplicate_ids(&Node::elem(kinds::DOCUMENT, Span::ZERO));
+        assert!(state.log.is_empty());
     }
 
     #[test]
