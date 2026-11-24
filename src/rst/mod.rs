@@ -3239,10 +3239,11 @@ pub(crate) mod tests {
         }
     }
 
-    /// The end-of-parse assertion ([DS §8.2]: every registered `Uid` is
-    /// reachable exactly once from the root or from `detached`), checked
-    /// explicitly on every input of the four parse corpora
-    /// ([`for_each_corpus_parse`]).
+    /// The end-of-parse assertions ([DS §8.2]: every registered `Uid` is
+    /// reachable exactly once from the root or from `detached`, and every
+    /// node a location override names at least once), checked explicitly on
+    /// every input of the four parse corpora ([`for_each_corpus_parse`]).
+    /// The corpora hold 444 location overrides.
     ///
     /// Only the docutils and read-state corpora register nodes: the other
     /// two hold no reference, footnote, citation or substitution definition
@@ -3260,23 +3261,27 @@ pub(crate) mod tests {
     #[test]
     fn every_registered_uid_is_reachable_once() {
         /// Per corpus: parses checked, distinct nodes registered, detached
-        /// subtrees kept.
+        /// subtrees kept, location overrides held.
         #[derive(Debug, Default)]
         struct Tally {
             parses: usize,
             registered: usize,
             detached: usize,
+            overrides: usize,
         }
         let mut tallies: [Tally; 4] = Default::default();
         for_each_corpus_parse(|corpus, label, output| {
             let state = &output.state;
             let misplaced = state.misplaced_registrations(&output.doctree.root);
             assert!(misplaced.is_empty(), "{label}: {misplaced:?}");
+            let unreachable = state.unreachable_overrides(&output.doctree.root);
+            assert_eq!(unreachable, 0, "{label}: overrides of dropped nodes");
             let tally = &mut tallies[corpus as usize];
             tally.parses += 1;
             let registered: std::collections::HashSet<Uid> = state.held_uids().collect();
             tally.registered += registered.len();
             tally.detached += state.detached.len();
+            tally.overrides += state.loc_overrides.len();
         });
 
         // 735 docutils cases twice, 489 sphinx cases, 84 env documents, 89
@@ -3297,6 +3302,38 @@ pub(crate) mod tests {
             read_state.registered >= 95 && read_state.detached >= 5,
             "the read-state corpus stopped exercising the check: {tallies:?}"
         );
+        assert!(
+            tallies.iter().map(|tally| tally.overrides).sum::<usize>() >= 444,
+            "the corpora stopped exercising the override check: {tallies:?}"
+        );
+    }
+
+    /// A subtree the parse discards takes the location overrides of its
+    /// nodes with it unless it holds a registered node
+    /// ([`DocumentState::detach`]), so every override still names a node
+    /// the tree or the detached forest holds. No corpus input discards
+    /// such a subtree: a rejected `table`'s content holding a target, which
+    /// stands at docutils' absolute line (an override), does.
+    #[test]
+    fn a_discarded_subtree_takes_its_location_overrides_with_it() {
+        let source = ".. table:: Cap\n\n   .. _t:\n\n   Para.\n";
+        for sphinx in [false, true] {
+            let out = parse_rst_full(
+                source,
+                &ParseOptions {
+                    source_path: "<snippet>".into(),
+                    sphinx,
+                    ..Default::default()
+                },
+            );
+            assert!(out.state.detached.is_empty(), "{sphinx}: nothing is kept");
+            assert_eq!(
+                out.state.unreachable_overrides(&out.doctree.root),
+                0,
+                "{sphinx}"
+            );
+            assert!(out.state.loc_overrides.is_empty(), "{sphinx}");
+        }
     }
 
     /// IdEvents raised inside a detached sub-parse (a csv-table cell is

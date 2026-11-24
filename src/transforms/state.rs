@@ -888,6 +888,19 @@ impl DocumentState {
         misplaced.sort_by_key(|&(uid, _)| uid);
         misplaced
     }
+
+    /// How many [`Self::loc_overrides`] entries name a node neither the tree
+    /// under `root` nor [`Self::detached`] holds. None at the end of a
+    /// parse: [`Self::detach`] drops a dropped node's override with it, so
+    /// an override always has its node. One that had not would be inert,
+    /// since nothing reaches it, but it is state the parse lost track of.
+    pub fn unreachable_overrides(&self, root: &Node) -> usize {
+        let reached = Reached::of(root, &self.detached);
+        self.loc_overrides
+            .keys()
+            .filter(|&&uid| reached.count(uid) == 0)
+            .count()
+    }
 }
 
 /// Every identity in the subtree, in pre-order.

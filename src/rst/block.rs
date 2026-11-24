@@ -622,6 +622,14 @@ impl BlockParser {
             "registered nodes the parse dropped (0) or copied (2+) in {}",
             self.sources.path(0)
         );
+        // So is every node a location override names: the parse drops a
+        // dropped node's override with it.
+        debug_assert_eq!(
+            self.state.unreachable_overrides(&root),
+            0,
+            "location overrides of nodes the parse dropped in {}",
+            self.sources.path(0)
+        );
         // The parse-only half of the state ends with the parse: its record
         // streams become the output's own fields.
         let parse = std::mem::take(&mut self.state.parse);
