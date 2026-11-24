@@ -508,6 +508,35 @@ mod tests {
         );
     }
 
+    /// A condition too deep for Python's recursion limit is an exception
+    /// like any other: the only directive warns with its text and keeps
+    /// the content ([`crate::transforms::tags`]). Probed on Sphinx 9.1.0
+    /// (`-b html`): 300 parentheses and 20000 `not`s.
+    #[test]
+    fn an_only_condition_too_deep_for_python_warns_and_keeps_its_content() {
+        for expr in [
+            format!("{}html{}", "(".repeat(300), ")".repeat(300)),
+            format!("{}html", "not ".repeat(20_000)),
+        ] {
+            let (body, records) = resolved(
+                &format!("Title\n=====\n\n.. only:: {expr}\n\n   Body.\n"),
+                BuilderKind::Html,
+            );
+            assert_eq!(
+                body,
+                "    <section ids=\"title\" names=\"title\">\n        <title>\n            \
+                 Title\n        <paragraph>\n            Body.\n"
+            );
+            assert_eq!(
+                records,
+                [
+                    "<SRCDIR>/index.rst:4: WARNING: exception while evaluating only directive \
+                  expression: maximum recursion depth exceeded"
+                ]
+            );
+        }
+    }
+
     /// `HighlightLanguageTransform` (400) stamps every `literal_block`
     /// without a `language` with the setting in force, in document order
     /// whatever the nesting: `highlight_language` until a `.. highlight::`

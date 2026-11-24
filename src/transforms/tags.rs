@@ -54,31 +54,38 @@ impl Tags {
         let mut parser = Parser {
             stream: TokenStream::new(expr).map_err(SyntaxError::into_text)?,
         };
-        let parsed = parser.parse_expression().map_err(SyntaxError::into_text)?;
+        let parsed = parser
+            .parse_expression(EVAL_CONDITION_FRAME + 1)
+            .map_err(SyntaxError::into_text)?;
         if parser.stream.current.kind != TokenKind::Eof {
             return Err("chunk after expression".to_string());
         }
-        self.eval(&parsed)
+        self.eval(&parsed, EVAL_CONDITION_FRAME + 1)
     }
 
     /// `Tags._eval_node` (`:85-101`): `and` and `or` short-circuit, a
     /// name is a tag test, and anything else (a constant, a missing
-    /// `else`) is an invalid node.
-    fn eval(&self, expr: &Expr) -> Result<bool, String> {
+    /// `else`) is an invalid node. `depth` is the Python frame the call
+    /// runs in ([`RECURSION_LIMIT`]).
+    fn eval(&self, expr: &Expr, depth: usize) -> Result<bool, String> {
+        if depth > RECURSION_LIMIT {
+            return Err(RECURSION_ERROR.to_string());
+        }
+        let deeper = depth + 1;
         match expr {
             Expr::Cond { test, then, orelse } => {
-                if self.eval(test)? {
-                    self.eval(then)
+                if self.eval(test, deeper)? {
+                    self.eval(then, deeper)
                 } else {
                     match orelse {
-                        Some(orelse) => self.eval(orelse),
+                        Some(orelse) => self.eval(orelse, deeper),
                         None => Err(INVALID_NODE.to_string()),
                     }
                 }
             }
-            Expr::And(left, right) => Ok(self.eval(left)? && self.eval(right)?),
-            Expr::Or(left, right) => Ok(self.eval(left)? || self.eval(right)?),
-            Expr::Not(operand) => Ok(!self.eval(operand)?),
+            Expr::And(left, right) => Ok(self.eval(left, deeper)? && self.eval(right, deeper)?),
+            Expr::Or(left, right) => Ok(self.eval(left, deeper)? || self.eval(right, deeper)?),
+            Expr::Not(operand) => Ok(!self.eval(operand, deeper)?),
             Expr::Name(name) => Ok(self.names.contains(name)),
             Expr::Const => Err(INVALID_NODE.to_string()),
         }
@@ -87,25 +94,71 @@ impl Tags {
 
 const INVALID_NODE: &str = "invalid node, check parsing";
 
+/// Python's recursion limit (`sys.getrecursionlimit()`, 1000): a call
+/// that would run in a deeper frame raises `RecursionError`, which a
+/// condition too deep for Jinja2's recursive parser or Sphinx's recursive
+/// evaluator raises, and the only directive warns with its text
+/// ([`RECURSION_ERROR`]). The port counts the frames those calls would
+/// stand in, so it fails where Sphinx does, and recurses at most as deep.
+const RECURSION_LIMIT: usize = 1000;
+
+/// The frame `Tags.eval_condition` runs in when Sphinx 9.1.0's
+/// `OnlyNodeTransform` calls it, under `-b html` and `-b dummy` alike
+/// (probed: the thresholds in
+/// `a_condition_past_pythons_recursion_limit_fails_as_sphinx_does`). The
+/// toctree's call stands elsewhere in Sphinx's stack; it is counted the
+/// same.
+const EVAL_CONDITION_FRAME: usize = 21;
+
+/// The frames `next(stream)` adds while the lexer reads the next token:
+/// `TokenStream.__next__`, `Lexer.wrap` and `Lexer.tokeniter`, the last
+/// two generators it resumes.
+const LEXER_FRAMES: usize = 3;
+
+/// `str()` of Python 3.12's `RecursionError`.
+const RECURSION_ERROR: &str = "maximum recursion depth exceeded";
+
 /// `jinja2.TemplateSyntaxError(message, lineno)`, the error lexing or
 /// parsing a condition raises.
 struct SyntaxError {
     message: String,
-    lineno: usize,
+    /// `None` for Python's `RecursionError`, whose text has no line.
+    lineno: Option<usize>,
 }
 
 impl SyntaxError {
     fn new(message: impl Into<String>, lineno: usize) -> SyntaxError {
         SyntaxError {
             message: message.into(),
-            lineno,
+            lineno: Some(lineno),
+        }
+    }
+
+    /// The `RecursionError` a call past [`RECURSION_LIMIT`] raises.
+    fn recursion() -> SyntaxError {
+        SyntaxError {
+            message: RECURSION_ERROR.to_string(),
+            lineno: None,
+        }
+    }
+
+    /// Fails with [`Self::recursion`] when a frame at `depth` would pass
+    /// [`RECURSION_LIMIT`].
+    fn check_depth(depth: usize) -> Result<(), SyntaxError> {
+        if depth > RECURSION_LIMIT {
+            Err(SyntaxError::recursion())
+        } else {
+            Ok(())
         }
     }
 
     /// `str()` of the error: the message, then `  line <lineno>` on a line
     /// of its own (the condition has no template name and no source).
     fn into_text(self) -> String {
-        format!("{}\n  line {}", self.message, self.lineno)
+        match self.lineno {
+            Some(lineno) => format!("{}\n  line {}", self.message, lineno),
+            None => self.message,
+        }
     }
 }
 
@@ -496,23 +549,73 @@ enum Expr {
     Const,
 }
 
+/// Dropped without recursion: a chain of `and`s or `or`s nests one node a
+/// link however long it is, deeper than any stack.
+impl Drop for Expr {
+    fn drop(&mut self) {
+        let mut pending: Vec<Box<Expr>> = Vec::new();
+        self.take_children(&mut pending);
+        while let Some(mut node) = pending.pop() {
+            node.take_children(&mut pending);
+        }
+    }
+}
+
+impl Expr {
+    /// Moves the node's children out onto `into`, leaving it a leaf.
+    fn take_children(&mut self, into: &mut Vec<Box<Expr>>) {
+        let leaf = || Box::new(Expr::Const);
+        match self {
+            Expr::Cond { test, then, orelse } => {
+                into.push(std::mem::replace(test, leaf()));
+                into.push(std::mem::replace(then, leaf()));
+                into.extend(orelse.take());
+            }
+            Expr::And(left, right) | Expr::Or(left, right) => {
+                into.push(std::mem::replace(left, leaf()));
+                into.push(std::mem::replace(right, leaf()));
+            }
+            Expr::Not(operand) => into.push(std::mem::replace(operand, leaf())),
+            Expr::Name(_) | Expr::Const => {}
+        }
+    }
+}
+
 /// Jinja2's `Parser.parse_expression` (`SP/jinja2/parser.py:512-558`)
 /// with Sphinx's `BooleanParser.parse_compare`.
 struct Parser {
     stream: TokenStream,
 }
 
+/// Each parse method takes the Python frame its Jinja2 counterpart runs
+/// in, `depth`, and fails as a call past [`RECURSION_LIMIT`] does: on
+/// entry, and before reading a token, which `next(stream)` reads
+/// [`LEXER_FRAMES`] deeper, or two deeper again through `skip_if`'s
+/// `next_if` (`SP/jinja2/lexer.py:381-394`) and one through `expect`.
 impl Parser {
-    fn parse_expression(&mut self) -> Result<Expr, SyntaxError> {
-        self.parse_condexpr()
+    fn parse_expression(&mut self, depth: usize) -> Result<Expr, SyntaxError> {
+        SyntaxError::check_depth(depth)?;
+        self.parse_condexpr(depth + 1)
     }
 
-    fn parse_condexpr(&mut self) -> Result<Expr, SyntaxError> {
-        let mut expr = self.parse_or()?;
-        while self.stream.skip_name("if")? {
-            let test = self.parse_or()?;
-            let orelse = if self.stream.skip_name("else")? {
-                Some(Box::new(self.parse_condexpr()?))
+    /// `stream.skip_if('name:<keyword>')`, from a method running in frame
+    /// `depth`: `skip_if`, `next_if` and `Token.test` above it, and the
+    /// lexer above `next_if` when it reads on.
+    fn skip_name(&mut self, keyword: &str, depth: usize) -> Result<bool, SyntaxError> {
+        SyntaxError::check_depth(depth + 3)?;
+        if self.stream.current.is_name(keyword) {
+            SyntaxError::check_depth(depth + 2 + LEXER_FRAMES)?;
+        }
+        self.stream.skip_name(keyword)
+    }
+
+    fn parse_condexpr(&mut self, depth: usize) -> Result<Expr, SyntaxError> {
+        SyntaxError::check_depth(depth)?;
+        let mut expr = self.parse_or(depth + 1)?;
+        while self.skip_name("if", depth)? {
+            let test = self.parse_or(depth + 1)?;
+            let orelse = if self.skip_name("else", depth)? {
+                Some(Box::new(self.parse_condexpr(depth + 1)?))
             } else {
                 None
             };
@@ -525,33 +628,41 @@ impl Parser {
         Ok(expr)
     }
 
-    fn parse_or(&mut self) -> Result<Expr, SyntaxError> {
-        let mut left = self.parse_and()?;
-        while self.stream.skip_name("or")? {
-            left = Expr::Or(Box::new(left), Box::new(self.parse_and()?));
+    fn parse_or(&mut self, depth: usize) -> Result<Expr, SyntaxError> {
+        SyntaxError::check_depth(depth)?;
+        let mut left = self.parse_and(depth + 1)?;
+        while self.skip_name("or", depth)? {
+            left = Expr::Or(Box::new(left), Box::new(self.parse_and(depth + 1)?));
         }
         Ok(left)
     }
 
-    fn parse_and(&mut self) -> Result<Expr, SyntaxError> {
-        let mut left = self.parse_not()?;
-        while self.stream.skip_name("and")? {
-            left = Expr::And(Box::new(left), Box::new(self.parse_not()?));
+    fn parse_and(&mut self, depth: usize) -> Result<Expr, SyntaxError> {
+        SyntaxError::check_depth(depth)?;
+        let mut left = self.parse_not(depth + 1)?;
+        while self.skip_name("and", depth)? {
+            left = Expr::And(Box::new(left), Box::new(self.parse_not(depth + 1)?));
         }
         Ok(left)
     }
 
-    fn parse_not(&mut self) -> Result<Expr, SyntaxError> {
-        if self.stream.skip_name("not")? {
-            return Ok(Expr::Not(Box::new(self.parse_not()?)));
+    /// `parse_not` tests the token itself and reads on with `next(stream)`.
+    fn parse_not(&mut self, depth: usize) -> Result<Expr, SyntaxError> {
+        SyntaxError::check_depth(depth)?;
+        SyntaxError::check_depth(depth + 1)?;
+        if self.stream.current.is_name("not") {
+            SyntaxError::check_depth(depth + LEXER_FRAMES)?;
+            self.stream.advance()?;
+            return Ok(Expr::Not(Box::new(self.parse_not(depth + 1)?)));
         }
-        self.parse_compare()
+        self.parse_compare(depth + 1)
     }
 
     /// `BooleanParser.parse_compare` (`SP/sphinx/util/tags.py:17-38`): a
     /// name (a constant for `true`, `false`, `none` and their capitalized
     /// forms) or a parenthesized expression; anything else fails.
-    fn parse_compare(&mut self) -> Result<Expr, SyntaxError> {
+    fn parse_compare(&mut self, depth: usize) -> Result<Expr, SyntaxError> {
+        SyntaxError::check_depth(depth)?;
         let token = self.stream.current.clone();
         match &token.kind {
             TokenKind::Name(name) => {
@@ -559,12 +670,16 @@ impl Parser {
                     "true" | "True" | "false" | "False" | "none" | "None" => Expr::Const,
                     _ => Expr::Name(name.clone()),
                 };
+                SyntaxError::check_depth(depth + LEXER_FRAMES)?;
                 self.stream.advance()?;
                 Ok(expr)
             }
             TokenKind::Operator("(") => {
+                SyntaxError::check_depth(depth + LEXER_FRAMES)?;
                 self.stream.advance()?;
-                let expr = self.parse_expression()?;
+                let expr = self.parse_expression(depth + 1)?;
+                // `expect` and the lexer above it.
+                SyntaxError::check_depth(depth + 1 + LEXER_FRAMES)?;
                 self.stream.expect_rparen()?;
                 Ok(expr)
             }
@@ -579,6 +694,46 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Python's recursion limit (1000 frames) stops Sphinx's parse or its
+    /// evaluation of a deep condition with `RecursionError`, whose text the
+    /// only directive's warning prints. Probed on Sphinx 9.1.0
+    /// (`-b html` and `-b dummy`, an `only` in `index.rst`): 161
+    /// parentheses evaluate and 162 do not (Jinja2's parser spends six
+    /// frames a level), 970 `not`s and not 971 (one parser frame each), and
+    /// chains of 979 `and` or `or` operands and not 980 (the evaluator
+    /// recurses down the left-deep chain). Far deeper ones fail the same
+    /// way, without exhausting the stack.
+    #[test]
+    fn a_condition_past_pythons_recursion_limit_fails_as_sphinx_does() {
+        let tags = Tags::new(["html".to_string()]);
+        let recursion = Err("maximum recursion depth exceeded".to_string());
+        let parens = |n: usize| format!("{}html{}", "(".repeat(n), ")".repeat(n));
+        let nots = |n: usize| format!("{}html", "not ".repeat(n));
+        let chain = |n: usize, op: &str| vec!["html"; n].join(op);
+        let rows: Vec<(String, Result<bool, String>)> = vec![
+            (parens(161), Ok(true)),
+            (parens(162), recursion.clone()),
+            (nots(970), Ok(true)),
+            (nots(971), recursion.clone()),
+            (chain(979, " and "), Ok(true)),
+            (chain(980, " and "), recursion.clone()),
+            (chain(979, " or "), Ok(true)),
+            (chain(980, " or "), recursion.clone()),
+            (parens(20_000), recursion.clone()),
+            (nots(20_000), recursion.clone()),
+            (chain(200_000, " and "), recursion.clone()),
+        ];
+        for (expr, expected) in rows {
+            let head: String = expr.chars().take(40).collect();
+            assert_eq!(
+                tags.eval_condition(&expr),
+                expected,
+                "{head}… ({} bytes)",
+                expr.len()
+            );
+        }
+    }
 
     /// `Tags.eval_condition` over Sphinx 9.1.0's truth table, probed with
     /// `Tags(['html', 'format_html', 'builder_html', 'mytag'])`: each row is
