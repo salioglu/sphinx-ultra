@@ -16,7 +16,7 @@ use crate::rst::LogLocation;
 use crate::transforms::state::DocumentState;
 
 use super::reference::{explicit_title, ReferenceParts};
-use super::{DomainId, RoleCall, RoleCrash};
+use super::{DomainId, RoleCall, SphinxCrash};
 
 /// `nodes.literal`, `nodes.inline`, … over `rawtext` with these classes:
 /// the shape most of Sphinx's roles build.
@@ -186,7 +186,7 @@ pub(crate) fn guilabel(
     call: &RoleCall<'_>,
     menuselection: bool,
     location: LogLocation,
-) -> Result<Node, RoleCrash> {
+) -> Result<Node, SphinxCrash> {
     let mut text = unescape(call.escaped, false);
     if menuselection {
         text = text.replace("-->", "\u{2023}");
@@ -201,7 +201,7 @@ pub(crate) fn guilabel(
         let span = span.replace("&&", "&");
         let mut letters = span.chars();
         let Some(letter) = letters.next() else {
-            return Err(RoleCrash::python(
+            return Err(SphinxCrash::python(
                 "IndexError",
                 "string index out of range".to_string(),
                 location,
@@ -366,9 +366,9 @@ fn format_manpages_url(
     url: &str,
     info: &(String, String, Option<String>),
     location: LogLocation,
-) -> Result<String, RoleCrash> {
+) -> Result<String, SphinxCrash> {
     let value_error = |message: &str| {
-        Err(RoleCrash::python(
+        Err(SphinxCrash::python(
             "ValueError",
             message.to_string(),
             location,
@@ -405,7 +405,7 @@ fn format_manpages_url(
                         return value_error("Format string contains positional fields")
                     }
                     _ => {
-                        return Err(RoleCrash::python(
+                        return Err(SphinxCrash::python(
                             "KeyError",
                             crate::utils::py_repr_str(name),
                             location,
@@ -429,7 +429,7 @@ pub(crate) fn manpage(
     call: &RoleCall<'_>,
     manpages_url: Option<&str>,
     location: LogLocation,
-) -> Result<Node, RoleCrash> {
+) -> Result<Node, SphinxCrash> {
     let parts = ReferenceParts::parse(call.escaped);
     let info = manpage_info(&collapse_whitespace(&parts.target));
     let text = if parts.disabled {
@@ -532,12 +532,12 @@ pub(crate) fn index_role(
     call: &RoleCall<'_>,
     state: &mut DocumentState,
     location: LogLocation,
-) -> Result<Vec<Node>, RoleCrash> {
+) -> Result<Vec<Node>, SphinxCrash> {
     let target_id = format!("index-{}", state.new_index_serialno());
     let (title, entries) = match explicit_title(call.escaped) {
         Some((title, target)) => {
             if let Some(message) = removed_index_entry(&target) {
-                return Err(RoleCrash::python("ValueError", message, location));
+                return Err(SphinxCrash::python("ValueError", message, location));
             }
             (
                 title,

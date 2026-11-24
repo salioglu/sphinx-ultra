@@ -409,7 +409,7 @@ impl RoleTable {
 /// traceback names it and its message, never Sphinx's whole report (its
 /// version table and traceback cannot be reproduced).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RoleCrash {
+pub struct SphinxCrash {
     /// The exception's class as the last line of Sphinx's traceback names
     /// it: `IndexError`, `ValueError`, `sphinx.errors.SphinxError`.
     pub exception: &'static str,
@@ -427,10 +427,10 @@ pub struct RoleCrash {
     pub rendered_location: Option<String>,
 }
 
-impl RoleCrash {
+impl SphinxCrash {
     /// A crash raised as a Python exception (no category line).
     pub(crate) fn python(exception: &'static str, message: String, location: LogLocation) -> Self {
-        RoleCrash {
+        SphinxCrash {
             exception,
             category: None,
             message,
@@ -441,7 +441,7 @@ impl RoleCrash {
 
     /// `SphinxError(message)`, whose category is `Sphinx error`.
     pub(crate) fn sphinx_error(message: &str, location: LogLocation) -> Self {
-        RoleCrash {
+        SphinxCrash {
             exception: "sphinx.errors.SphinxError",
             category: Some("Sphinx error"),
             message: message.to_string(),
@@ -458,7 +458,7 @@ impl RoleCrash {
         sources: &[String],
         srcdir: &std::path::Path,
         docname: &str,
-    ) -> RoleCrash {
+    ) -> SphinxCrash {
         use crate::diagnostics::Location;
         self.rendered_location = match self.location.render(sources, srcdir, docname) {
             Location::None => None,
@@ -495,7 +495,7 @@ impl RoleCrash {
     }
 }
 
-impl std::fmt::Display for RoleCrash {
+impl std::fmt::Display for SphinxCrash {
     /// The last line of Python's traceback: `Exception: message`, or the
     /// bare `Exception` when the message is empty (an `assert` with none).
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -507,7 +507,7 @@ impl std::fmt::Display for RoleCrash {
     }
 }
 
-impl std::error::Error for RoleCrash {}
+impl std::error::Error for SphinxCrash {}
 
 /// docutils' English role aliases (`languages/en.py`, `roles`): the
 /// canonical name of a language-dependent one.

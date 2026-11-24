@@ -1237,7 +1237,7 @@ impl SphinxBuilder {
     /// `BuildErrorReport`s (and a non-zero exit) while the rest continue.
     /// An input that crashes Sphinx does abort it (decision 13): the read
     /// fails with the crash of the first document, in sorted docname
-    /// order, that has one ([`crate::rst::RoleCrash`]). Results keep the
+    /// order, that has one ([`crate::rst::SphinxCrash`]). Results keep the
     /// discovery order of `files`.
     fn read_phase(&self, files: &[PathBuf], to_read: &BTreeSet<String>) -> Result<Vec<ReadResult>> {
         info!(

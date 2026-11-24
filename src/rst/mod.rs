@@ -774,7 +774,7 @@ pub(crate) struct ParseOnlyState {
     pub(crate) default_role: Option<String>,
     /// The first input of the document that crashes Sphinx 9.1.0
     /// (decision 13).
-    pub(crate) crash: Option<roles::RoleCrash>,
+    pub(crate) crash: Option<roles::SphinxCrash>,
 }
 
 /// docutils' `Duplicate ID: "<id>" used by <holder's start tag> and <the
@@ -853,10 +853,10 @@ pub struct ParseOutput {
     pub roles_after: roles::RoleTable,
     /// The first input of the document that crashes Sphinx 9.1.0
     /// (decision 13): the build that reads it fails.
-    pub crash: Option<RoleCrash>,
+    pub crash: Option<SphinxCrash>,
 }
 
-pub use roles::RoleCrash;
+pub use roles::SphinxCrash;
 
 /// Parse RST source into a doctree. Never errors — problems become
 /// `system_message` nodes, exactly like docutils — and never panics in

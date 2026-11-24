@@ -22,7 +22,7 @@ use std::sync::Arc;
 use super::punctuation;
 use super::roles::sphinx::{XrefEnv, XrefRole};
 use super::roles::{
-    self, DispatchCtx, Resolution, RoleCall, RoleCrash, RoleFn, RoleOptions, RoleTable,
+    self, DispatchCtx, Resolution, RoleCall, RoleFn, RoleOptions, RoleTable, SphinxCrash,
 };
 use crate::rst::LogLocation;
 
@@ -814,7 +814,7 @@ impl<'a> Inliner<'a> {
 
     /// Keeps the document's first crash (decision 13); the parse goes on,
     /// and the build fails with it.
-    fn crash(&mut self, crash: RoleCrash) {
+    fn crash(&mut self, crash: SphinxCrash) {
         self.state.parse.crash.get_or_insert(crash);
     }
 
@@ -986,7 +986,7 @@ impl<'a> Inliner<'a> {
                     settled.as_str()
                 }
                 (true, None) => {
-                    self.crash(RoleCrash::sphinx_error(
+                    self.crash(SphinxCrash::sphinx_error(
                         "cannot determine default role!",
                         location,
                     ));
@@ -1108,7 +1108,11 @@ impl<'a> Inliner<'a> {
                 if call.name == orig_name.to_lowercase() {
                     self.emit_external_xref(orig_name, &call);
                 } else {
-                    self.crash(RoleCrash::python("AssertionError", String::new(), location));
+                    self.crash(SphinxCrash::python(
+                        "AssertionError",
+                        String::new(),
+                        location,
+                    ));
                 }
             }
         }
