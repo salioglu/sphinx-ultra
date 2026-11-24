@@ -285,6 +285,15 @@ pub(crate) struct BlockParser {
     /// high in a cell as well: there they print one line low (probed on
     /// Sphinx 9.1.0, a known divergence).
     line_bias: u32,
+    /// `Some(bias)` while parsing a glossary definition, `bias` being
+    /// [`Self::line_bias`] as the definition starts. Sphinx parses each
+    /// definition as a `StringList` of its own, numbered from its first
+    /// line's offset in its file (`definition.items[0][1]`,
+    /// `SP/sphinx/domains/std/__init__.py:540-545`), so the machine that
+    /// reads it, and every machine nested in it, counts a line by its line
+    /// in its own file rather than by its place in the top-level input
+    /// ([`Self::note_absolute_line`]).
+    own_line_count: Option<u32>,
     /// Innermost container node kind during nested content parses (docutils
     /// `state_machine.node`); None at document/section level. Directives
     /// like topic/sidebar validate their direct parent against this.
@@ -581,6 +590,7 @@ impl BlockParser {
             styles: Vec::new(),
             depth: 0,
             line_bias: 0,
+            own_line_count: None,
             nested_node_kind: None,
             attached: true,
             generated_text: None,
@@ -5612,9 +5622,12 @@ impl BlockParser {
             item.children.extend(term_messages);
             let mut definition = Node::elem(kinds::DEFINITION, input.span);
             // `Glossary.run` copies each definition into a `StringList` of
-            // its own.
+            // its own, numbered from its first line's offset in its file
+            // ([`Self::own_line_count`]).
+            let saved_count = self.own_line_count.replace(self.line_bias);
             definition.children =
                 self.parse_disconnected(|me| me.parse_nested_attached(&def_lines, "definition"));
+            self.own_line_count = saved_count;
             item.children.push(definition);
             dl.children.push(item);
         }
@@ -8164,7 +8177,9 @@ impl BlockParser {
     /// [`Self::resolve_absolute_lines`] makes it the absolute one. Until
     /// then the override marks the node's location as the parse's, so
     /// that a subtree the parse discards drops it
-    /// ([`DocumentState::detach`]).
+    /// ([`DocumentState::detach`]). In a glossary definition the machine
+    /// counts the line in its own file, and adds only the bias that
+    /// accrued inside the definition ([`Self::own_line_count`]).
     fn note_absolute_line(&mut self, node: &mut Node, line: LineRec) {
         let uid = self.state.identify(node);
         self.state
@@ -8174,19 +8189,23 @@ impl BlockParser {
             node: uid,
             source: line.source,
             lineno: line.lineno,
-            bias: self.line_bias,
+            bias: self
+                .line_bias
+                .saturating_sub(self.own_line_count.unwrap_or(0)),
+            own_line: self.own_line_count.is_some(),
             attached: self.attached,
         });
     }
 
     /// Gives each node [`Self::note_absolute_line`] recorded its docutils
     /// location, now that the top-level input ([`Self::input`]) is
-    /// complete: the 1-based index of its line there, plus the machine's
-    /// count over it, with its file as the source when its container has
-    /// `document` set and no source when not. A line the input does not
-    /// hold, one an include in a table cell or a detached parse read, keeps
-    /// its own location, which is what the reporter reads the absolute
-    /// line back to.
+    /// complete: the 1-based index of its line there, or its line in its
+    /// own file in a glossary definition ([`Self::own_line_count`]), plus
+    /// the machine's count over it, with its file as the source when its
+    /// container has `document` set and no source when not. A line the
+    /// input does not hold, one an include in a table cell or a detached
+    /// parse read, keeps its own location, which is what the reporter reads
+    /// the absolute line back to.
     fn resolve_absolute_lines(&mut self) {
         let pending = std::mem::take(&mut self.state.parse.absolute_lines);
         if pending.is_empty() {
@@ -8205,12 +8224,17 @@ impl BlockParser {
             // Not in the input: its own line, which is where the reporter
             // reads the absolute line back to, and which a csv cell's
             // location would otherwise move ([`DocumentState::span_remaps`]).
+            // A glossary definition's line too, though its machine does not
+            // count by the input.
             let Some(&offset) = offsets.get(&(line.source, line.lineno)) else {
                 continue;
             };
-            let absolute = u32::try_from(offset)
-                .unwrap_or(u32::MAX)
-                .saturating_add(1 + line.bias);
+            let counted = if line.own_line {
+                line.lineno
+            } else {
+                u32::try_from(offset).unwrap_or(u32::MAX).saturating_add(1)
+            };
+            let absolute = counted.saturating_add(line.bias);
             if line.attached && absolute == line.lineno {
                 // The default rule's own: the span's.
                 self.state.loc_overrides.remove(&line.node);

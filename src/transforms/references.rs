@@ -1365,49 +1365,167 @@ mod tests {
         assert!(mismatches.is_empty(), "{}", mismatches.join("\n\n"));
     }
 
+    /// Sphinx parses each glossary definition as a `StringList` of its own,
+    /// numbered from its first line's offset in its file
+    /// (`definition.items[0][1]`, `SP/sphinx/domains/std/__init__.py:540-545`),
+    /// into a container that has `document` (`nested_parse_to_nodes`,
+    /// `SP/sphinx/util/parsing.py:62-71`). The machine that stamps a
+    /// target there counts the definition's lines by their line in their
+    /// own file, not by their place in the top-level input, so a target in
+    /// a definition prints its own line: after an include, in an included
+    /// file, in a note around the glossary and in a table cell alike. A
+    /// target in a container without `document` there (a note, a list
+    /// item) keeps no source, and the reporter reads that count back
+    /// against the top-level input, where an include before the glossary
+    /// has moved the lines: the line it finds there is what Sphinx prints.
+    /// Each row is a Sphinx 9.1.0 build (`-w`).
+    #[test]
+    fn glossary_definition_targets_count_their_own_file_s_lines() {
+        let missing = |location: &str, naming: &str| {
+            format!(
+                "{location}: ERROR: Indirect hyperlink target {naming} refers to target \
+                 \"missing\", which does not exist. [docutils]"
+            )
+        };
+        let part = [("part.inc", "One.\n\nTwo.\n")];
+        let after_include =
+            |glossary: &str| format!("Title\n=====\n\n.. include:: part.inc\n\n{glossary}");
+        let x = "\"x\" (id=\"x\")";
+        /// The document, the files beside it and the expected records.
+        type Row<'a> = (String, &'a [(&'a str, &'a str)], Vec<String>);
+        let rows: Vec<Row> = vec![
+            (
+                after_include(".. glossary::\n\n   term\n      See x_.\n\n      .. _x: missing_\n"),
+                &part,
+                vec![missing("<SRCDIR>/index.rst:11", x)],
+            ),
+            (
+                after_include(".. glossary::\n\n   term\n      See `y`__.\n\n      __ missing_\n"),
+                &part,
+                vec![missing("<SRCDIR>/index.rst:11", "(id=\"id1\")")],
+            ),
+            (
+                "Title\n=====\n\n.. include:: gl.inc\n".to_string(),
+                &[(
+                    "gl.inc",
+                    "Intro.\n\n.. glossary::\n\n   term\n      See x_.\n\n      .. _x: missing_\n",
+                )],
+                vec![missing("gl.inc:8", x)],
+            ),
+            (
+                after_include(
+                    ".. glossary::\n\n   one\n      First.\n\n   two\n      See x_.\n\n      \
+                     .. _x: missing_\n",
+                ),
+                &part,
+                vec![missing("<SRCDIR>/index.rst:14", x)],
+            ),
+            (
+                after_include(
+                    ".. note::\n\n   .. glossary::\n\n      term\n         See x_.\n\n         \
+                     .. _x: missing_\n",
+                ),
+                &part,
+                vec![missing("<SRCDIR>/index.rst:13", x)],
+            ),
+            (
+                "Title\n=====\n\n+--------------------------+\n| .. glossary::            |\n\
+                 |                          |\n|    term                  |\n\
+                 |       See x_.            |\n|                          |\n\
+                 |       .. _x: missing_    |\n+--------------------------+\n"
+                    .to_string(),
+                &[],
+                vec![missing("<SRCDIR>/index.rst:10", x)],
+            ),
+            (
+                after_include(
+                    ".. glossary::\n\n   term\n      See x_.\n\n      .. note::\n\n         \
+                     .. _x: missing_\n",
+                ),
+                &part,
+                vec![missing("<SRCDIR>/index.rst:6", x)],
+            ),
+            (
+                after_include(".. glossary::\n\n   term\n      See x_.\n\n      - .. _x: missing_\n"),
+                &part,
+                vec![missing("part.inc:5", x)],
+            ),
+            (
+                "Title\n=====\n\n.. glossary::\n\n   term\n      See x_.\n\n      .. _x: missing_\n"
+                    .to_string(),
+                &[],
+                vec![missing("<SRCDIR>/index.rst:9", x)],
+            ),
+        ];
+        let mut mismatches = Vec::new();
+        for (index, files, expected) in rows {
+            let records = crate::transforms::test_support::read_beside(&index, files);
+            if records != expected {
+                mismatches.push(format!("{index:?}\n{records:#?}\n{expected:#?}"));
+            }
+        }
+        assert!(mismatches.is_empty(), "{}", mismatches.join("\n\n"));
+    }
+
     /// The std domain's `duplicate label` warning is `location=node`
     /// (`SP/sphinx/domains/std/__init__.py:959-965`): Sphinx's
     /// `get_node_location` over docutils' location for the label's node,
     /// as the transforms locate it, not the node's span. A rubric stands
     /// where its block ended (line 7), or has no line after an option
     /// block or in a container without `document`; a bare target in a note
-    /// keeps no source (`<unknown>:line`). Probed on Sphinx 9.1.0 (`-w`),
-    /// `a.rst` labelling `dup` first.
+    /// keeps no source (`<unknown>:line`); one in a glossary definition
+    /// after an include, its line in its file
+    /// ([`glossary_definition_targets_count_their_own_file_s_lines`]).
+    /// Probed on Sphinx 9.1.0 (`-w`), `a.rst` labelling `dup` first.
     #[test]
     fn duplicate_labels_are_located_as_get_node_location_locates_their_node() {
         let warning = |location: &str| {
             format!("{location}: WARNING: duplicate label dup, other instance in <SRCDIR>/a.rst")
         };
-        let rows = [
+        let part = [("part.inc", "One.\n\nTwo.\n")];
+        /// `z.rst`, the files beside it and where the warning is located.
+        type Row<'a> = (&'a str, &'a [(&'a str, &'a str)], &'a str);
+        let rows: [Row; 6] = [
             (
                 "Z\n=\n\n.. _dup:\n\n.. rubric:: R\n\nText.\n",
+                &[],
                 "<SRCDIR>/z.rst:7",
             ),
             (
                 "Z\n=\n\n.. _dup:\n\n.. rubric:: R\n   :class: x\n\nText.\n",
+                &[],
                 "<SRCDIR>/z.rst:",
             ),
             (
                 "Z\n=\n\nPara.\n\n   .. _dup:\n\n   .. rubric:: R\n\n   Text.\n",
+                &[],
                 "<SRCDIR>/z.rst:",
             ),
             (
                 "Z\n=\n\n+-------------------+\n| .. _dup:          |\n|                   |\n\
                  | .. rubric:: R     |\n|                   |\n| Text.             |\n\
                  +-------------------+\n",
+                &[],
                 "<SRCDIR>/z.rst:",
             ),
             (
                 "Z\n=\n\n.. note::\n\n   Text.\n\n   .. _dup:\n",
+                &[],
                 "<unknown>:8",
+            ),
+            (
+                "Z\n=\n\n.. include:: part.inc\n\n.. glossary::\n\n   term\n      Text.\n\n      \
+                 .. _dup:\n",
+                &part,
+                "<SRCDIR>/z.rst:11",
             ),
         ];
         let mut mismatches = Vec::new();
-        for (z, location) in rows {
-            let project = crate::transforms::test_support::merge_project(&[
-                ("a", ".. _dup:\n\nA\n=\n"),
-                ("z", z),
-            ]);
+        for (z, files, location) in rows {
+            let project = crate::transforms::test_support::merge_project_beside(
+                &[("a", ".. _dup:\n\nA\n=\n"), ("z", z)],
+                files,
+            );
             let expected = [warning(location)];
             if project.records != expected {
                 mismatches.push(format!("{z:?}\n{:#?}\n{expected:#?}", project.records));

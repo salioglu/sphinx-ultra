@@ -134,6 +134,46 @@ pub(crate) struct Project {
 /// in sorted docname order. The project's documents are the parse's
 /// `env.found_docs`, against which a toctree resolves its entries.
 pub(crate) fn merge_project(documents: &[(&str, &str)]) -> Project {
+    merge_project_in(documents, None)
+}
+
+/// [`merge_project`] with `files`, `(path, text)` pairs, written into a
+/// temporary source directory, the parse's `srcdir`, against which an
+/// `include` in a document resolves; the documents keep their
+/// `<SRCDIR>/<docname>.rst` paths.
+pub(crate) fn merge_project_beside(documents: &[(&str, &str)], files: &[(&str, &str)]) -> Project {
+    let srcdir = tempfile::tempdir().expect("a temporary source directory");
+    for (path, text) in files {
+        std::fs::write(srcdir.path().join(path), text).expect("a file beside the documents");
+    }
+    merge_project_in(documents, Some(srcdir.path()))
+}
+
+/// [`read_standalone`] of `rst` as `index.rst` in a temporary source
+/// directory that holds `files`, `(path, text)` pairs, beside it (the
+/// parse's `srcdir`, against which an `include` resolves), read the way
+/// [`read_snippet`] reads one with `keep_warnings` off: the read's records,
+/// rendered with that directory spelled `<SRCDIR>/`.
+pub(crate) fn read_beside(rst: &str, files: &[(&str, &str)]) -> Vec<String> {
+    let srcdir = tempfile::tempdir().expect("a temporary source directory");
+    for (path, text) in files {
+        std::fs::write(srcdir.path().join(path), text).expect("a file beside the document");
+    }
+    let parse = ParseOptions {
+        source_path: srcdir.path().join("index.rst").display().to_string(),
+        srcdir: Some(srcdir.path().to_path_buf()),
+        ..index_rst()
+    };
+    let read = read_standalone(rst, &parse, &harness_settings(false));
+    let root = format!("{}{}", srcdir.path().display(), std::path::MAIN_SEPARATOR);
+    read.diagnostics
+        .iter()
+        .map(|record| record.render(true).replace(&root, "<SRCDIR>/"))
+        .collect()
+}
+
+/// [`merge_project`] with `srcdir` as the parse's source directory, if any.
+fn merge_project_in(documents: &[(&str, &str)], srcdir: Option<&Path>) -> Project {
     let settings = ReadSettings::sphinx_defaults();
     let doc2path = |docname: &str| PathBuf::from(format!("<SRCDIR>/{docname}.rst"));
     let found_docs: BTreeSet<String> = documents
@@ -152,6 +192,7 @@ pub(crate) fn merge_project(documents: &[(&str, &str)]) -> Project {
             source_path: path.display().to_string(),
             docname: docname.to_string(),
             found_docs: Some(Arc::clone(&found_docs)),
+            srcdir: srcdir.map(Path::to_path_buf),
             ..index_rst()
         };
         let mut read = read_document(source, &parse, &settings);
