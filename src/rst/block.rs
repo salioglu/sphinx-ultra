@@ -8232,11 +8232,17 @@ impl BlockParser {
             // Not in the input: its own line, which is where the reporter
             // reads the absolute line back to, and which a csv cell's
             // location would otherwise move ([`DocumentState::span_remaps`]).
-            // The guard means the same for a glossary definition's lines
-            // (`own_line`): their count below does not use the offset, but
-            // a line the input does not hold, read by an include in the
-            // definition, a csv cell or another detached parse, keeps its
-            // own location too.
+            // The guard applies to a glossary definition's lines (`own_line`)
+            // too, though their count below does not use the offset: a line
+            // the input does not hold, read by an include in the definition,
+            // a csv cell or another detached parse, keeps its own location.
+            // For an include in the definition that is a known divergence:
+            // Sphinx prints the definition machine's `abs_line_number()`,
+            // which counts the inserted lines as the definition's, after the
+            // include's own line and `insert_input`'s padding line (probe
+            // `bare_target_from_include_in_definition`, Sphinx 9.1.0: a bare
+            // target on `part.inc:5`, included on `z.rst:9`, prints
+            // `part.inc:15` there, 9 + 1 + 5, and `part.inc:5` here).
             let Some(&offset) = offsets.get(&(line.source, line.lineno)) else {
                 continue;
             };

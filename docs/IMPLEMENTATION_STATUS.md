@@ -239,13 +239,15 @@ decision of the wave's plan.
   case's pending serials).
 - T18a, found while classifying CPython's records: inline markup next to a
   non-ASCII dash or ellipsis is rejected. An end-string followed by one
-  (`*b*—but`), or a start-string preceded by one, prints `Inline …
-  start-string without end-string` where docutils accepts the markup,
-  because `tools/gen_punctuation_tables.py` does not expand the ranges in
-  docutils' regex-class strings (`src/rst/punctuation.rs`' `DELIMITERS`
-  holds `‐` and `‗` but not `‑`-`‖`). The fix is the generator, the
-  regenerated table and a pin, with a docutils corpus case from T18a's
-  regeneration, the only one that grows that corpus.
+  (`*b*—but`) prints `Inline … start-string without end-string` where
+  docutils accepts the markup. A start-string preceded by one (`x —*b* y`)
+  is a silent divergence: it is not recognized, so the text stays plain,
+  with no emphasis and no record, where docutils makes it emphasis. Both
+  halves come from `tools/gen_punctuation_tables.py` not expanding the
+  ranges in docutils' regex-class strings (`src/rst/punctuation.rs`'
+  `DELIMITERS` holds `‐` and `‗` but not `‑`-`‖`). The fix is the
+  generator, the regenerated table and a pin, with a docutils corpus case
+  from T18a's regeneration, the only one that grows that corpus.
 - T18c: `centered`, `productionlist`, `tabularcolumns`, `acks`,
   `sectionauthor` and the other Sphinx extras.
 
@@ -305,9 +307,15 @@ each found by probing Sphinx 9.1.0 and documented at its code site:
   shifted position (Sphinx `part.inc:2`, here `index.rst:14`); a target after
   an include inside a disconnected list keeps the top-level index; a target
   after an include *inside* a glossary definition prints its line in its file
-  (Sphinx counts the inserted lines); a duplicate explicit target name in a
-  glossary definition after an include prints the target's own line (Sphinx
-  reads the definition's count back against the top-level input);
+  (Sphinx counts the inserted lines); so does a bare target closing a file
+  included inside a glossary definition (Sphinx's definition machine counts
+  the included lines as its own, after the include's line and
+  `insert_input`'s padding line: `part.inc:15`, here `part.inc:5`; code
+  site: the guard in `resolve_absolute_lines`, `src/rst/block.rs`; probe
+  `bare_target_from_include_in_definition`); a duplicate explicit target
+  name in a glossary definition after an include prints the target's own
+  line (Sphinx reads the definition's count back against the top-level
+  input);
   `parsed-literal` line numbers after or through an include (a small
   follow-up with `note_absolute_line`); a bare target ending a csv-table cell
   with a duplicate label prints the document where Sphinx prints
