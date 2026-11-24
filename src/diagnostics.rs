@@ -549,32 +549,38 @@ mod tests {
             .with_category(category.map(str::to_string))
         };
         let rows = [
-            (warning("", None, None), Location::None, Category::None),
+            (
+                warning("", None, None),
+                Location::None,
+                Category::None,
+                "WARNING: message",
+            ),
             (
                 warning("/s/a.rst", Some(4), Some("toc.not_readable")),
                 path("/s/a.rst", Some(4)),
                 typesub("toc", "not_readable"),
+                "/s/a.rst:4: WARNING: message [toc.not_readable]",
             ),
             (
                 warning("/s/a.rst", None, Some("ref")),
                 path("/s/a.rst", None),
                 Category::Type("ref".into()),
+                "/s/a.rst: WARNING: message [ref]",
             ),
             (
                 // Only the first `.` separates the type.
                 warning("/s/a.rst", Some(1), Some("a.b.c")),
                 path("/s/a.rst", Some(1)),
                 typesub("a", "b.c"),
+                "/s/a.rst:1: WARNING: message [a.b.c]",
             ),
         ];
-        for (warning, location, category) in rows {
-            let rendered = warning.render();
-            let diagnostic = Diagnostic::from(warning);
+        for (warning, location, category, rendered) in rows {
+            assert_eq!(warning.render(), rendered);
             assert_eq!(
-                diagnostic,
+                Diagnostic::from(warning),
                 record(location, Severity::Warning, "message", category)
             );
-            assert_eq!(rendered, diagnostic.render(true), "one renderer");
         }
 
         let error = BuildErrorReport::new(
