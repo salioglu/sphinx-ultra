@@ -1416,6 +1416,52 @@ mod tests {
         assert!(mismatches.is_empty(), "{}", mismatches.join("\n\n"));
     }
 
+    /// A directive's node that docutils returns without a location takes
+    /// what `setup_child` stamps on it, the machine's position as it is
+    /// appended: after the content's nested parse, the last line's source
+    /// and no line (`StringList.info` just past the end), or neither after
+    /// a list, which takes the parent's (the section's line); a toctree's
+    /// wrapper takes the position its option block left; a code block's
+    /// caption container the `<generated text>` its caption was parsed
+    /// from; and an epigraph's quote is stamped at its first content line.
+    /// The `duplicate label` warning about each prints that. Probed on
+    /// Sphinx 9.1.0 (`-w`), `a.rst` labelling `dup` first.
+    #[test]
+    fn nodes_directives_return_unlocated_take_the_machine_position() {
+        let head = "Z\n=\n\n.. _dup:\n\n";
+        let rows = [
+            (
+                ".. code-block:: python\n   :caption: C\n\n   x = 1\n",
+                "<SRCDIR>/<generated text>:",
+            ),
+            (".. toctree::\n   :caption: C\n\n   a\n", "<SRCDIR>/z.rst:"),
+            (
+                ".. table:: T\n\n   ===  ===\n   a    b\n   ===  ===\n",
+                "<SRCDIR>/z.rst:",
+            ),
+            (".. list-table:: L\n\n   * - x\n", "<SRCDIR>/z.rst:2"),
+            (".. csv-table::\n\n   a, b\n", "<SRCDIR>/z.rst:"),
+            (".. py:function:: fn()\n\n   Doc.\n", "<SRCDIR>/z.rst:"),
+            (".. hlist::\n\n   * a\n   * b\n", "<SRCDIR>/z.rst:2"),
+            (".. epigraph::\n\n   Quote.\n", "<SRCDIR>/z.rst:8"),
+        ];
+        let mut mismatches = Vec::new();
+        for (directive, location) in rows {
+            let z = format!("{head}{directive}");
+            let project = crate::transforms::test_support::merge_project(&[
+                ("a", ".. _dup:\n\nA\n=\n"),
+                ("z", &z),
+            ]);
+            let expected = [format!(
+                "{location}: WARNING: duplicate label dup, other instance in <SRCDIR>/a.rst"
+            )];
+            if project.records != expected {
+                mismatches.push(format!("{z:?}\n{:#?}\n{expected:#?}", project.records));
+            }
+        }
+        assert!(mismatches.is_empty(), "{}", mismatches.join("\n\n"));
+    }
+
     /// Sphinx's `make_glossary_term` stamps a term with its content item's
     /// 0-based offset (`term.line = lineno`,
     /// `SP/sphinx/domains/std/__init__.py:387-388`, `:518-521`), and the

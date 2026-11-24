@@ -1896,10 +1896,11 @@ pub(crate) mod tests {
         for (source, expected) in &both_modes {
             parses.push((parse_rst_full(source, &docutils), source, expected));
         }
-        // A glossary term and its index node have overrides of their own
-        // (`records_located_through_a_glossary_term_take_its_zero_based_offset`).
+        // A glossary term and its index node, and a node a directive
+        // returns without a location (an object description's `desc`),
+        // have overrides of their own.
         fn glossary_uids(node: &Node, out: &mut Vec<crate::doctree::Uid>) {
-            if matches!(node.kind, kinds::TERM | "index") {
+            if matches!(node.kind, kinds::TERM | "index" | "desc") {
                 out.extend(node.uid());
             }
             node.children

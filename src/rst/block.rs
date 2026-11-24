@@ -409,6 +409,10 @@ pub(crate) struct BlockParser {
     /// How the construct [`Self::parse_element`] parsed last ended; the
     /// document loop keeps the top-level one for [`final_position`].
     ending: Ending,
+    /// The machine's position once the last [`Self::parse_detached`] ended
+    /// ([`current_after`] its lines), which a node appended right after it
+    /// takes ([`Self::note_appended_location`]).
+    detached_end: DocLoc,
     /// Where docutils' top-level state machine stands while the top-level
     /// construct being parsed runs: the last line of the first block the
     /// machine read for it ([`Self::note_top_block`]). docutils binds
@@ -525,6 +529,29 @@ fn final_position(lines: &[LineRec], ending: Option<Ending>) -> DocLoc {
     }
 }
 
+/// docutils' `(document.current_source, document.current_line)` once a
+/// nested state machine over `lines` has ended as `ending`, which
+/// `setup_child` gives a node appended right after it without a location
+/// of its own: what the machine's observers last saw, `input_lines.info(
+/// line_offset)` (`SP/docutils/statemachine.py`, `notify_observers` and
+/// `StringList.info`). Just past the end of the lines that is the last
+/// line's source and no line; further past, neither; on a line, that line
+/// ([`final_position`]'s reading of `ending`). An empty input has neither.
+fn current_after(lines: &[LineRec], ending: Ending) -> DocLoc {
+    let Some(last) = lines.last() else {
+        return DocLoc::default();
+    };
+    let loc = final_position(lines, Some(ending));
+    if loc == DocLoc::at(last.source, last.lineno + 1) {
+        DocLoc {
+            source: Some(SourceRef::Table(last.source)),
+            line: None,
+        }
+    } else {
+        loc
+    }
+}
+
 impl BlockParser {
     /// Parser over one document: the single-source form (entry 0 = the
     /// document, linenos `1..=n`).
@@ -578,6 +605,7 @@ impl BlockParser {
             connected: true,
             content_end: None,
             ending: Ending::PastEnd,
+            detached_end: DocLoc::default(),
             machine_position: None,
             top_block_pending: false,
         }
@@ -915,6 +943,7 @@ impl BlockParser {
         sub.py_modules_key = self.py_modules_key;
         let top = std::mem::take(&mut sub.top);
         let nodes = sub.parse_elements(&top);
+        self.detached_end = current_after(&top, sub.ending);
         self.sources = sub.sources;
         self.state = sub.state;
         nodes
@@ -5012,6 +5041,16 @@ impl BlockParser {
         container.set("literal_block", AttrValue::Int(1));
         container.children.push(caption_node);
         container.children.push(literal_node);
+        // The container has no location of its own: it stands where the
+        // caption's parse of `<generated text>` ended, whose source is that
+        // name (`nested_parse_to_nodes`, `SP/sphinx/util/parsing.py`).
+        let mut end = self.detached_end;
+        if end.source.is_some() {
+            end.source = self
+                .push_source(Arc::from("<generated text>"), "", 1)
+                .map(|(id, _)| SourceRef::Table(id));
+        }
+        self.note_appended_location(&mut container, end);
         Ok(container)
     }
 
@@ -5318,6 +5357,7 @@ impl BlockParser {
             _ => 2,
         };
         let children = self.parse_nested_attached(&input.content, "element");
+        let current = current_after(&input.content, self.ending);
         let one_list = children.len() == 1 && children[0].kind == kinds::BULLET_LIST;
         if !one_list {
             // logger.warning('.. hlist content is not a list') goes to the
@@ -5346,6 +5386,8 @@ impl BlockParser {
             colnode.children.push(bl);
             hlist.children.push(colnode);
         }
+        // The `hlist` has no location of its own ([`Self::note_appended_location`]).
+        self.note_appended_location(&mut hlist, current);
         out.push(hlist);
     }
 
@@ -5714,6 +5756,9 @@ impl BlockParser {
         // `parse_content_to_nodes(allow_section_headings=True)`
         // (`directives/__init__.py:288`).
         (content.children, _) = self.parse_nested_titled(&input.content, "desc_content");
+        // The `desc` has no location of its own: it is appended where the
+        // content's parse ended ([`Self::note_appended_location`]).
+        let current = current_after(&input.content, self.ending);
         if kind == DescDispatch::Std(ObjectDescKind::Confval) {
             self.confval_transform_content(&input, &mut content);
         }
@@ -5759,6 +5804,7 @@ impl BlockParser {
             self.state.detach([desc]);
             return;
         }
+        self.note_appended_location(&mut desc, current);
         out.push(desc);
     }
 
@@ -7071,6 +7117,9 @@ impl BlockParser {
         let mut compound = Node::elem("compound", input.span);
         compound.attrs.classes.push("toctree-wrapper".to_string());
         compound.children.push(toctree);
+        // `wrappernode` has no location of its own: `setup_child` gives it
+        // the machine's position ([`DirectiveInput::current`]).
+        self.note_appended_location(&mut compound, input.current);
         // `self.add_name(wrappernode)` (`directives/other.py:82-86`): the
         // wrapper has no location of its own.
         let loc = self.machine_loc(directive_loc(&input));
@@ -7216,12 +7265,15 @@ impl BlockParser {
     /// align, the colwidths marker class, :name:, then the title at
     /// index 0 (tables.py:141-171).
     #[allow(clippy::too_many_arguments)]
+    /// `current` is the machine's position once the table was built
+    /// ([`Self::note_appended_location`]): the table has no location of
+    /// its own.
     fn finish_table(
         &mut self,
         mut table: Node,
         input: &DirectiveInput<'_>,
-        title: Option<Node>,
-        title_messages: Vec<Node>,
+        (title, title_messages): (Option<Node>, Vec<Node>),
+        current: DocLoc,
         out: &mut Vec<Node>,
     ) {
         if let Some(OptVal::Str(w)) = opt_get(&input.options, "width") {
@@ -7235,6 +7287,7 @@ impl BlockParser {
         if let Some(t) = title {
             table.children.insert(0, t);
         }
+        self.note_appended_location(&mut table, current);
         out.push(table);
         out.extend(title_messages);
     }
@@ -7258,6 +7311,7 @@ impl BlockParser {
         }
         let (title, title_messages) = self.table_make_title(&input);
         let children = self.parse_nested(&input.content, "element");
+        let current = current_after(&input.content, self.ending);
         if children.len() != 1 || children[0].kind != kinds::TABLE {
             out.push(self.directive_block_message(
                 messages::ERROR,
@@ -7328,11 +7382,14 @@ impl BlockParser {
             }
             _ => {}
         }
-        self.finish_table(table, &input, title, title_messages, out);
+        self.finish_table(table, &input, (title, title_messages), current, out);
     }
 
     /// csv-table (tables.py CSVTable:175-403).
     fn run_csv_table(&mut self, input: DirectiveInput<'_>, out: &mut Vec<Node>) {
+        // The position the table is appended at, unless a cell's parse
+        // moves it ([`Self::detached_end`]).
+        self.detached_end = input.current;
         // `title, messages = self.make_title()` runs before
         // `get_csv_data()` (tables.py:286-287): a data error drops a title
         // that is already parsed, its registrations kept.
@@ -7490,7 +7547,8 @@ impl BlockParser {
         if let Some(OptVal::StrList(cls)) = opt_get(&input.options, "class") {
             table.attrs.classes.extend(cls.iter().cloned());
         }
-        self.finish_table(table, &input, title, title_messages, out);
+        let current = self.detached_end;
+        self.finish_table(table, &input, (title, title_messages), current, out);
     }
 
     /// `CSVTable.get_csv_data` (tables.py:321-388): the CSV text from the
@@ -7584,6 +7642,7 @@ impl BlockParser {
         }
         let (title, title_messages) = self.table_make_title(&input);
         let children = self.parse_nested(&input.content, "element");
+        let current = current_after(&input.content, self.ending);
         let header_rows = match opt_get(&input.options, "header-rows") {
             Some(OptVal::Int(n)) => *n as usize,
             _ => 0,
@@ -7648,7 +7707,7 @@ impl BlockParser {
         if let Some(OptVal::StrList(cls)) = opt_get(&input.options, "class") {
             table.attrs.classes.extend(cls.iter().cloned());
         }
-        self.finish_table(table, &input, title, title_messages, out);
+        self.finish_table(table, &input, (title, title_messages), current, out);
     }
 
     /// list-table's checks over its parsed content, in this order: one
@@ -7897,7 +7956,19 @@ impl BlockParser {
             ));
             return;
         }
-        let mut elements = self.block_quote_elements(&input.content, input.span);
+        // `self.state.block_quote(self.content, self.content_offset)`
+        // stamps the quote at `content_offset + 1`, the first content line
+        // (`SP/docutils/parsers/rst/states.py`, `Body.block_quote`).
+        let first = input
+            .content
+            .iter()
+            .position(|line| !line.is_blank())
+            .unwrap_or(0);
+        let span = Span {
+            end: input.span.end,
+            ..self.span_of(&input.content, first, first)
+        };
+        let mut elements = self.block_quote_elements(&input.content, span);
         for el in &mut elements {
             if el.kind == kinds::BLOCK_QUOTE {
                 el.attrs.classes.push(class.to_string());
@@ -8016,6 +8087,20 @@ impl BlockParser {
     fn note_location(&mut self, node: &mut Node, loc: DocLoc) {
         let uid = self.state.identify(node);
         self.state.loc_overrides.insert(uid, loc);
+    }
+
+    /// Records the location docutils gives a node a directive returns
+    /// without one: what `setup_child` stamps when the container has
+    /// `document` set, `current` (the machine's position as the directive
+    /// returns, [`current_after`] a nested parse), and none otherwise
+    /// ([`Self::attached`]).
+    fn note_appended_location(&mut self, node: &mut Node, current: DocLoc) {
+        let loc = if self.attached {
+            current
+        } else {
+            DocLoc::default()
+        };
+        self.note_location(node, loc);
     }
 
     /// Records that docutils stamps `node`, whose line is `line`, with the
