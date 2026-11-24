@@ -255,7 +255,18 @@ impl WarningFilter {
 
     /// Port of `is_suppressed_warning` (`sphinx/util/logging.py:415-426`):
     /// a pattern names the record's `type`, `type.*` or `type.subtype`. A
-    /// record without a `type` is never suppressed.
+    /// record without a `type` is never suppressed, whatever its subtype,
+    /// as Sphinx's `logger.warning` records are: it passes `type=None` when
+    /// it is given none (`SphinxLoggerAdapter.warning`, `:157-200`), and
+    /// `is_suppressed_warning` returns early for `None` (`:419`).
+    ///
+    /// One divergence: a record Sphinx logs with no `type` attribute at
+    /// all, as `validate_intersphinx_mapping`'s `LOGGER.error`s are
+    /// (`SP/sphinx/ext/intersphinx/_load.py:64-125`), is read as type and
+    /// subtype `''` (`WarningSuppressor.filter`, `:436-446`), so `''`, `.`
+    /// and `.*` suppress it there. This crate prints those `ERROR`s all,
+    /// before the configuration error that stops the build either way.
+    /// Probed on Sphinx 9.1.0.
     pub fn is_suppressed(&self, category: &Category) -> bool {
         let (ty, subtype) = match category {
             Category::None => return false,
@@ -489,7 +500,7 @@ mod tests {
                 ..BuildConfig::default()
             })
         };
-        let rows: [(&[&str], Category, bool); 11] = [
+        let rows: [(&[&str], Category, bool); 12] = [
             (&["docutils"], docutils(), true),
             (&["ref.*"], typesub("ref", "footnote"), true),
             (&["ref.*"], Category::Type("ref".into()), true),
@@ -509,6 +520,10 @@ mod tests {
                 Category::None,
                 false,
             ),
+            // `logger.warning`'s `type=None`: not even the patterns a `''`
+            // type would match (probed with the malformed option
+            // description, which has no type, and a subtype-only record).
+            (&["", ".", ".*", ".empty_glob"], Category::None, false),
         ];
         for (patterns, category, suppressed) in rows {
             assert_eq!(
