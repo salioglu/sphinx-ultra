@@ -2600,7 +2600,11 @@ fn parse_records_print_in_creation_order() {
 /// warning stream: the summary is not a record. Bytes probed on Sphinx
 /// 9.1.0: `build succeeded.` or `build succeeded, N warning(s).`, then a
 /// blank line and the final location; under `-W` with a record,
-/// `build finished with problems, …` and no final location.
+/// `build finished with problems, …` and no final location. The final
+/// location names the output directory as it was given, where Sphinx
+/// names it relative to the working directory (`relpath(self.outdir)`,
+/// `:483-490`): the absolute path the test passes prints as given here and
+/// as `../…` there, a stdout-only divergence.
 #[test]
 fn closing_summary_goes_to_the_status_stream() {
     let run = |name: &str, body: &str, extra: &[&str]| {

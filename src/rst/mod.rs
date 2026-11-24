@@ -3999,23 +3999,31 @@ pub(crate) mod tests {
             assert_eq!(node.pformat(), expected, "{source}");
             assert_eq!(tree_messages(&out).len(), 1, "{source}");
         }
-        // An admonition and `seealso` hold it first too. Sphinx locates it
-        // at the end of the directive block (lines 6, 10 and 8), as
-        // `duplicate_name_messages_follow_the_node_location_rule` pins; the
-        // tree position is checked here.
-        for (source, kind, paragraphs) in [
-            (".. _x:\n\nPara.\n\n.. note:: b\n   :name: x\n", "note", 1),
+        // An admonition and `seealso` hold it first too, and Sphinx locates
+        // it at the end of the directive block: lines 6, 10 and 8 (probed
+        // on Sphinx 9.1.0).
+        let duplicate = "WARNING: Duplicate explicit target name: \"x\". [docutils]";
+        for (source, kind, paragraphs, line) in [
+            (
+                ".. _x:\n\nPara.\n\n.. note:: b\n   :name: x\n",
+                "note",
+                1,
+                6,
+            ),
             (
                 ".. _x:\n\nPara.\n\n.. note::\n   :name: x\n\n   Body one.\n\n   Body two.\n",
                 "note",
                 2,
+                10,
             ),
             (
                 ".. _x:\n\nPara.\n\n.. seealso::\n   :name: x\n\n   Body.\n",
                 "seealso",
                 1,
+                8,
             ),
         ] {
+            assert_eq!(printed_heads(source), [at(line, duplicate)], "{source}");
             let out = read_parse(source, ReadConfig::default());
             let node = first(&out.doctree.root, kind).expect("the named node");
             let children: Vec<&str> = node.children.iter().map(|child| child.kind).collect();
