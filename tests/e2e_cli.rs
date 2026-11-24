@@ -2186,18 +2186,22 @@ const TOUCHED_B_RECORDS: &str = "\
 <SRCDIR>/b.rst:8: WARNING: Inline emphasis start-string without end-string. [docutils]
 ";
 
-/// The resolve record of `d.rst` in [`touched_document_reemits_its_records`].
-const UNDEFINED_LABEL_RECORD: &str =
-    "<SRCDIR>/d.rst:4: WARNING: undefined label: 'nowhere' [ref.ref]\n";
+/// The resolve records of `a.rst` and `d.rst`, in that docname order, in
+/// [`touched_document_reemits_its_records`].
+const UNDEFINED_LABEL_RECORDS: &str = "\
+<SRCDIR>/a.rst:4: WARNING: undefined label: 'elsewhere' [ref.ref]
+<SRCDIR>/d.rst:4: WARNING: undefined label: 'nowhere' [ref.ref]
+";
 
 /// Review Focus 1: a warm build re-reads the touched document and prints
 /// its read records — all of them, in the cold build's order — and none of
 /// the untouched documents' read records. Resolve records are recomputed
-/// for every document on every build, so `d`'s `undefined label` follows,
-/// in sorted docname order: decision 6's documented divergence from
-/// `-b html`, which writes, and so resolves, only the outdated `b`
-/// (probed: Sphinx 9.1.0's warm `-b html` prints `b`'s two records alone,
-/// its `-b dummy` prints them and then `d`'s, as here).
+/// for every document on every build, so `a`'s and `d`'s `undefined
+/// label`s follow, in sorted docname order: decision 6's documented
+/// divergence from `-b html`, which writes, and so resolves, only the
+/// outdated `b` (probed: Sphinx 9.1.0's warm `-b html` prints `b`'s two
+/// records alone, its `-b dummy` prints them and then `a`'s and `d`'s, as
+/// here).
 #[test]
 fn touched_document_reemits_its_records() {
     let src = temp_source(
@@ -2207,7 +2211,7 @@ fn touched_document_reemits_its_records() {
                 "index.rst",
                 "Index\n=====\n\n.. toctree::\n\n   a\n   b\n   d\n\nSee *this.\n",
             ),
-            ("a.rst", "A title\n=====\n\nBody.\n"),
+            ("a.rst", "A title\n=====\n\nSee :ref:`elsewhere`.\n"),
             ("b.rst", "B\n=\n\nPara\nmore\n   indented.\n\nAnd *more.\n"),
             ("d.rst", "D\n=\n\nSee :ref:`nowhere`.\n"),
         ],
@@ -2221,7 +2225,7 @@ fn touched_document_reemits_its_records() {
         format!(
             "<SRCDIR>/a.rst:2: WARNING: Title underline too short.\n\nA title\n===== \
              [docutils]\n{TOUCHED_B_RECORDS}<SRCDIR>/index.rst:10: WARNING: Inline emphasis \
-             start-string without end-string. [docutils]\n{UNDEFINED_LABEL_RECORD}"
+             start-string without end-string. [docutils]\n{UNDEFINED_LABEL_RECORDS}"
         )
     );
 
@@ -2230,7 +2234,7 @@ fn touched_document_reemits_its_records() {
     assert!(warm.status.success(), "stderr: {}", stderr_of(&warm));
     assert_eq!(
         written,
-        format!("{TOUCHED_B_RECORDS}{UNDEFINED_LABEL_RECORD}")
+        format!("{TOUCHED_B_RECORDS}{UNDEFINED_LABEL_RECORDS}")
     );
 }
 
