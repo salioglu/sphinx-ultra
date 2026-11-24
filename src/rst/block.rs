@@ -268,7 +268,7 @@ pub(crate) struct BlockParser {
     styles: Vec<(char, bool)>,
     depth: usize,
     /// +1 inside grid- and simple-table cell parses: docutils starts a
-    /// cell's machine at `tableline + offset` (`states.py:1855-1856`), one
+    /// cell's machine at `tableline + offset` (`states.py:1951-1952`), one
     /// past the 0-based offset it stands for, so every line number the
     /// machine counts runs one high there — every message located at
     /// `abs_line_number()` (the unindent warnings through
@@ -278,6 +278,12 @@ pub(crate) struct BlockParser {
     /// ([`Self::inline`]), probe-verified on Sphinx 9.1.0 — while a message
     /// located at a line's own source and offset (a paragraph's
     /// `Unexpected indentation.`) does not.
+    ///
+    /// The messages a directive reports at its own line (`Unknown
+    /// directive type`, `Error in "x" directive:`, `Content block
+    /// expected`) do not take it, though docutils counts their line one
+    /// high in a cell as well: there they print one line low (probed on
+    /// Sphinx 9.1.0, a known divergence).
     line_bias: u32,
     /// Innermost container node kind during nested content parses (docutils
     /// `state_machine.node`); None at document/section level. Directives
@@ -7530,7 +7536,7 @@ impl BlockParser {
                     if !cell.is_empty() {
                         // `build_table(table, self.content_offset)`: every
                         // cell's machine starts at the first content line
-                        // (`tables.py:325-327`, `states.py:1855-1856`).
+                        // (`tables.py:310-311`, `states.py:1951-1952`).
                         let cell_source = u16::try_from(self.sources.len()).ok();
                         entry.children = self.parse_detached(
                             cell,

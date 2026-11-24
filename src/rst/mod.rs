@@ -2526,20 +2526,21 @@ pub(crate) mod tests {
     }
 
     /// A grid or simple table cell is parsed at docutils' `tableline +
-    /// offset` (`build_table_row`, `states.py:1855-1856`), one past the
+    /// offset` (`build_table_row`, `states.py:1951-1952`), one past the
     /// 0-based offset it stands for, so every line its machine counts —
     /// a paragraph's inline messages, a nested caption's, each line of a
-    /// line block, an explicit target's, and every message located at
-    /// `abs_line_number()`: an unindent warning (`Explicit markup ends
-    /// without a blank line`, a line block's), a quoted literal block's
-    /// messages, `Unexpected section title or transition.`, an explicit
-    /// construct's `MarkupError`, a nested table's `Malformed table.` and
-    /// `Blank line required after table.` — prints one high, while
-    /// a paragraph's `Unexpected indentation.` takes
-    /// the true line from the cell's own lines (`get_text_block`). A
-    /// csv-table cell is parsed at `self.content_offset`, the first content
-    /// line, whichever row (the `:header:` rows included) holds it. Probed
-    /// on Sphinx 9.1.0.
+    /// line block, an explicit target's, a line block's `Line block ends
+    /// without a blank line.` (`reporter.warning(..., line=lineno+1)`,
+    /// `states.py:1727-1729`), and every message located at
+    /// `abs_line_number()`: the unindent warning (`Explicit markup ends
+    /// without a blank line`), a quoted literal block's messages,
+    /// `Unexpected section title or transition.`, an explicit construct's
+    /// `MarkupError`, a nested table's `Malformed table.` and `Blank line
+    /// required after table.` — prints one high, while a paragraph's
+    /// `Unexpected indentation.` takes the true line from the cell's own
+    /// lines (`get_text_block`). A csv-table cell is parsed at
+    /// `self.content_offset`, the first content line, whichever row (the
+    /// `:header:` rows included) holds it. Probed on Sphinx 9.1.0.
     #[test]
     fn table_cell_messages_take_docutils_cell_offset() {
         let indentation = "ERROR: Unexpected indentation. [docutils]";
