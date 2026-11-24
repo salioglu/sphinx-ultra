@@ -1149,8 +1149,14 @@ impl BlockParser {
 
     /// docutils' `reporter.get_source_and_line(None)` during the parse:
     /// the top-level machine's position ([`Self::machine_position`]), or
-    /// `fallback` in a parse that has none.
+    /// `fallback` in a parse that has none. The top-level construct being
+    /// parsed has noted its first block by then ([`Self::note_top_block`]):
+    /// a position read before would be the previous construct's.
     fn machine_loc(&self, fallback: DocLoc) -> DocLoc {
+        debug_assert!(
+            !self.top_block_pending,
+            "the machine position is read before its construct noted its first block"
+        );
         self.machine_position.unwrap_or(fallback)
     }
 
