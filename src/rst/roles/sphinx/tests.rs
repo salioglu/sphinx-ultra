@@ -32,6 +32,18 @@ fn read(rst: &str, read: ReadConfig) -> (String, Vec<String>) {
     (body, warnings)
 }
 
+/// `warning`, a line of Sphinx's POSIX stream, as our read renders it on
+/// this platform. A record located at the document (`LogLocation::Doc`,
+/// Sphinx's `doc2path(docname)`) joins `index.rst` under the source
+/// directory with the platform's separator (`Path::join`), so its
+/// `<SRCDIR>/index.rst: ` reads `<SRCDIR>\index.rst: ` on Windows. Records
+/// located at a node keep the source path as the parse was given it, so
+/// a line-numbered location is left alone.
+fn on_this_platform(warning: &str) -> String {
+    let doc = std::path::Path::new("<SRCDIR>").join("index.rst");
+    warning.replace("<SRCDIR>/index.rst: ", &format!("{}: ", doc.display()))
+}
+
 /// Every row of `rows` whose body differs from ours under `config`, as a
 /// report naming the input.
 fn mismatches(rows: &[(&str, &str)], config: &ReadConfig) -> Vec<String> {
@@ -646,6 +658,7 @@ fn default_role_config_and_directive() {
         ),
         ("any", vec![]),
     ] {
+        let warnings: Vec<String> = warnings.into_iter().map(on_this_platform).collect();
         assert_eq!(read("Text `x`.\n", unknown(role)).1, warnings, "{role}");
     }
 
@@ -665,7 +678,7 @@ fn default_role_config_and_directive() {
         read(rst, external),
         (
             body.to_string(),
-            warnings.iter().map(|warning| warning.to_string()).collect()
+            warnings.iter().copied().map(on_this_platform).collect()
         )
     );
 }
