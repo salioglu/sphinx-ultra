@@ -2020,6 +2020,23 @@ mod tests {
             warnings: &[],
             trace: &[],
         },
+        // The trims strip the Text's null-escaped data: an escaped space
+        // ending the text before goes, and an escaped no-break space
+        // opening the text after stays, its escape standing first.
+        SphinxRead {
+            rst: "A\\ |t| B\n\n.. |t| unicode:: U+2014\n   :trim:\n",
+            body: "    <paragraph>\n        A\n        —\n        B\n    \
+                <substitution_definition ltrim=\"1\" names=\"t\" rtrim=\"1\">\n        —\n",
+            warnings: &[],
+            trace: &[],
+        },
+        SphinxRead {
+            rst: "A |t|\\\u{a0}B\n\n.. |t| unicode:: U+2014\n   :trim:\n",
+            body: "    <paragraph>\n        A\n        —\n        \u{a0}B\n    \
+                <substitution_definition ltrim=\"1\" names=\"t\" rtrim=\"1\">\n        —\n",
+            warnings: &[],
+            trace: &[],
+        },
         SphinxRead {
             rst: "A |Sub  NAME| B.\n\n.. |sub name| replace:: x\n.. |Sub Name| replace:: y\n",
             body: "    <paragraph>\n        A \n        y\n         B.\n    \
