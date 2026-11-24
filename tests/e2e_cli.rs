@@ -4441,6 +4441,8 @@ fn unreadable_source_date_epoch_exits_two() {
     let index = ("index.rst", "Index\n=====\n\nToday :nope:`x` |today|.\n");
     let logo = "WARNING: logo file 'missing.png' does not exist\n";
     let role = "<SRCDIR>/index.rst:4: ERROR: Unknown interpreted text role \"nope\". [docutils]\n";
+    // 4,301 digits, which `float()` reads as 1.
+    let over_the_int_limit = format!("{}1", "0".repeat(4300));
     for (test, epoch, expected) in [
         (
             "t17a2-crash-epoch-float",
@@ -4477,11 +4479,119 @@ fn unreadable_source_date_epoch_exits_two() {
                 )
             ),
         ),
+        // `float()` and `int()` read a decimal digit of any script
+        // (ARABIC-INDIC here) and strip ASCII whitespace alone, not the C0
+        // separators `str.isspace` also admits.
+        (
+            "t17a2-crash-epoch-int-digits",
+            "\u{661}.\u{665}",
+            format!(
+                "{logo}{}",
+                crash_report(
+                    Some("Extension error (sphinx.config)"),
+                    "sphinx.errors.ExtensionError: Handler <function correct_copyright_year at \
+                     0x...> for event 'config-inited' threw an exception (exception: invalid \
+                     literal for int() with base 10: '\u{661}.\u{665}')",
+                    None,
+                )
+            ),
+        ),
+        (
+            "t17a2-crash-epoch-year-digits",
+            "\u{663}\u{660}\u{660}\u{660}\u{660}\u{660}\u{660}\u{660}\u{660}\u{660}\u{660}\u{660}",
+            format!(
+                "{logo}{role}{}",
+                crash_report(
+                    None,
+                    "ValueError: year 11476 is out of range",
+                    Some("<SRCDIR>/index.rst:4"),
+                )
+            ),
+        ),
+        (
+            "t17a2-crash-epoch-separator",
+            "\x1c1700000000",
+            crash_report(
+                None,
+                "ValueError: could not convert string to float: '\\x1c1700000000'",
+                None,
+            ),
+        ),
+        // `int()` reads no more than 4,300 digits, leading zeros among
+        // them, where `float()` reads any number.
+        (
+            "t17a2-crash-epoch-int-limit",
+            over_the_int_limit.as_str(),
+            format!(
+                "{logo}{}",
+                crash_report(
+                    Some("Extension error (sphinx.config)"),
+                    "sphinx.errors.ExtensionError: Handler <function correct_copyright_year at \
+                     0x...> for event 'config-inited' threw an exception (exception: Exceeds the \
+                     limit (4300 digits) for integer string conversion: value has 4301 digits; use \
+                     sys.set_int_max_str_digits() to increase the limit)",
+                    None,
+                )
+            ),
+        ),
     ] {
         assert_eq!(
             crash_stream(test, &[conf, index], &[("SOURCE_DATE_EPOCH", epoch)], &[]),
             expected,
-            "SOURCE_DATE_EPOCH={epoch}"
+            "{test}"
+        );
+    }
+}
+
+/// Python's `float()` and `int()` read a decimal digit of any script as
+/// its ASCII digit, and whitespace past ASCII as a space (CPython's
+/// `_PyUnicode_TransformDecimalAndSpaceToASCII`), so Sphinx 9.1.0 reads a
+/// `SOURCE_DATE_EPOCH` of ARABIC-INDIC or FULLWIDTH digits, grouped or
+/// not, or one between a NO-BREAK SPACE and an IDEOGRAPHIC SPACE, as it
+/// reads `1700000000`: the build succeeds with no record, and `|today|`
+/// is that day. Probed on Sphinx 9.1.0 (`Built on20231114`); the pages
+/// are 5b's, so the date is read from the search index.
+#[test]
+fn a_source_date_epoch_of_any_decimal_digits_dates_the_build() {
+    let src = temp_source(
+        "t17a2-epoch-digits",
+        &[
+            ("conf.py", "project = 'Temp'\ntoday_fmt = 'on%Y%m%d'\n"),
+            ("index.rst", "Index\n=====\n\nBuilt |today|.\n"),
+        ],
+    );
+    for (name, epoch) in [
+        (
+            "arabic",
+            "\u{661}\u{667}\u{660}\u{660}\u{660}\u{660}\u{660}\u{660}\u{660}\u{660}",
+        ),
+        (
+            "fullwidth",
+            "\u{ff11}\u{ff17}\u{ff10}\u{ff10}\u{ff10}\u{ff10}\u{ff10}\u{ff10}\u{ff10}\u{ff10}",
+        ),
+        (
+            "grouped",
+            "\u{661}_\u{667}\u{660}\u{660}_\u{660}\u{660}\u{660}_\u{660}\u{660}\u{660}",
+        ),
+        ("spaced", "\u{a0}1700000000\u{3000}"),
+    ] {
+        let out = out_dir(&format!("t17a2-epoch-digits-{name}"));
+        let log = out.with_extension("w");
+        let _ = std::fs::remove_file(&log);
+        let result = bin()
+            .arg(&src)
+            .arg(&out)
+            .args(["-q", "-w"])
+            .arg(&log)
+            .env("SOURCE_DATE_EPOCH", epoch)
+            .output()
+            .expect("binary should run");
+        assert!(result.status.success(), "{name}: {}", stderr_of(&result));
+        assert_eq!(std::fs::read_to_string(&log).unwrap(), "", "{name}");
+        let terms = search_value(&out)["terms"].clone();
+        assert!(
+            terms.get("on20231114").is_some(),
+            "{name}: no term on20231114 in {terms}"
         );
     }
 }
@@ -4523,6 +4633,132 @@ WARNING: logo file 'missing.png' does not exist
                  int() with base 10: '1.5')",
                 None,
             )
+        )
+    );
+}
+
+/// The configuration of [`configuration_records_follow_the_handler_order`]:
+/// one value for each `config-inited` check that warns.
+const CONFIG_RECORDS_CONF: &str = "project = 'Temp'\nhtml_logo = 'missing.png'\n\
+                                   smartquotes = 'yes'\nprimary_domain = 'nope'\n\
+                                   source_encoding = 'latin-1'\n";
+
+/// The records Sphinx 9.1.0 logs for [`CONFIG_RECORDS_CONF`] up to
+/// `correct_copyright_year`: `deprecate_source_encoding` (790), then the
+/// HTML builder's logo check (800, `sphinx.builders.html` registers it
+/// before `sphinx.config` registers its handlers).
+const CONFIG_RECORDS_BEFORE_THE_COPYRIGHT_YEAR: &str = "\
+WARNING: Support for source encodings other than UTF-8 is deprecated and will be removed in \
+Sphinx 10. Please comment at https://github.com/sphinx-doc/sphinx/issues/13665 if this causes a \
+problem.
+WARNING: logo file 'missing.png' does not exist
+";
+
+/// The `config-inited` records in Sphinx's handler order (priority, then
+/// registration), whatever the order of conf.py: `deprecate_source_encoding`
+/// (790), the HTML builder's logo check (800), then, after
+/// `correct_copyright_year`, `sphinx.config`'s `check_confval_types` and
+/// `check_primary_domain` (800). Probed on Sphinx 9.1.0, which exits 0.
+#[test]
+fn configuration_records_follow_the_handler_order() {
+    let src = temp_source(
+        "t17a2-config-order",
+        &[
+            ("conf.py", CONFIG_RECORDS_CONF),
+            ("index.rst", "Index\n=====\n\nText.\n"),
+        ],
+    );
+    let (result, written) = warning_stream(&src, &out_dir("t17a2-config-order"), &[]);
+    assert!(result.status.success(), "{}", stderr_of(&result));
+    assert_eq!(
+        written,
+        format!(
+            "{CONFIG_RECORDS_BEFORE_THE_COPYRIGHT_YEAR}\
+             WARNING: The config value `smartquotes' has type `str'; expected `bool'.\n\
+             WARNING: primary_domain 'nope' not found, ignored.\n"
+        )
+    );
+}
+
+/// A native build of `files` with `env` set that Sphinx 9.1.0 would crash
+/// on (decision 13): it exits 2, and its `-w` file, returned with the
+/// source directory spelled `<SRCDIR>/`, holds the stream sphinx-build
+/// mode prints.
+fn native_crash_stream(test: &str, files: &[(&str, &str)], env: &[(&str, &str)]) -> String {
+    let src = temp_source(test, files);
+    let src = sphinx_ultra::utils::canonicalize_simplified(&src).unwrap();
+    let out = out_dir(test);
+    let log = out.with_extension("w");
+    let _ = std::fs::remove_file(&log);
+    let mut command = bin();
+    command
+        .arg("build")
+        .arg("--source")
+        .arg(&src)
+        .arg("--output")
+        .arg(&out)
+        .arg("-w")
+        .arg(&log);
+    for (key, value) in env {
+        command.env(key, value);
+    }
+    let result = command.output().expect("binary should run");
+    assert_eq!(
+        result.status.code(),
+        Some(2),
+        "{test}: {}",
+        stderr_of(&result)
+    );
+    srcdir_spelled(&std::fs::read(&log).unwrap(), &src)
+}
+
+/// The native subcommand writes a `config-inited` crash's stream to its
+/// `-w` file as sphinx-build mode prints it: the configuration's records
+/// logged before `correct_copyright_year` raises, which it otherwise
+/// writes once the build is done, then the report; and it exits 2.
+#[test]
+fn a_native_configuration_crash_writes_the_records_before_it() {
+    assert_eq!(
+        native_crash_stream(
+            "t17a2-native-config-crash",
+            &[
+                ("conf.py", CONFIG_RECORDS_CONF),
+                ("index.rst", "Index\n=====\n\nText.\n"),
+            ],
+            &[("SOURCE_DATE_EPOCH", "1.5")],
+        ),
+        format!(
+            "{CONFIG_RECORDS_BEFORE_THE_COPYRIGHT_YEAR}{}",
+            crash_report(
+                Some("Extension error (sphinx.config)"),
+                "sphinx.errors.ExtensionError: Handler <function correct_copyright_year at 0x...> \
+                 for event 'config-inited' threw an exception (exception: invalid literal for \
+                 int() with base 10: '1.5')",
+                None,
+            )
+        )
+    );
+}
+
+/// The native subcommand crashes on a `SOURCE_DATE_EPOCH` `float()`
+/// rejects where Sphinx 9.1.0 does, while it sets its application up,
+/// before it logs anything about the configuration: the `-w` file holds
+/// the report alone, and the build exits 2.
+#[test]
+fn a_native_build_crashes_on_an_unreadable_source_date_epoch_first() {
+    assert_eq!(
+        native_crash_stream(
+            "t17a2-native-epoch-crash",
+            &[
+                ("conf.py", CONFIG_RECORDS_CONF),
+                ("index.rst", "Index\n=====\n\nText.\n"),
+            ],
+            &[("SOURCE_DATE_EPOCH", "soon")],
+        ),
+        crash_report(
+            None,
+            "ValueError: could not convert string to float: 'soon'",
+            None,
         )
     );
 }
@@ -4629,7 +4865,8 @@ fn index_directive_removed_entry_type_exits_two() {
 /// the string's end an `IndexError`, an attribute `str` lacks an
 /// `AttributeError` (with the suggestion Python's traceback adds), and a
 /// name in brackets a `TypeError`, which `MathDomain` does not catch.
-/// Probed on Sphinx 9.1.0.
+/// Python reads a decimal digit of any script as a digit, in a positional
+/// field and in an index alike. Probed on Sphinx 9.1.0.
 #[test]
 fn invalid_new_style_format_exits_two() {
     let equation = "Index\n=====\n\n.. math:: x\n   :label: e1\n\nSee :eq:`e1`.\n";
@@ -4638,6 +4875,16 @@ fn invalid_new_style_format_exits_two() {
     let table = "Index\n=====\n\n.. _tbl:\n\n.. table:: Cap\n\n   ===  ===\n   a    b\n   \
                  ===  ===\n\nSee :numref:`tbl`.\n";
     let titled = table.replace(":numref:`tbl`", ":numref:`Tab {name[3]} {number} <tbl>`");
+    // A decimal digit of any script is a digit (ARABIC-INDIC DIGIT THREE,
+    // twenty ARABIC-INDIC DIGIT NINEs).
+    let nines = "\u{669}".repeat(20);
+    let eqref_many_digits = format!("math_eqref_format = 'Eq {{number[{nines}]}}'\n");
+    let titled_many_digits = table.replace(
+        ":numref:`tbl`",
+        &format!(":numref:`Tab {{name[{nines}]}} {{number}} <tbl>`"),
+    );
+    let titled_positional =
+        table.replace(":numref:`tbl`", ":numref:`Tab {\u{663}} {number} <tbl>`");
     for (test, conf, index, exception, line) in [
         (
             "t17a2-crash-eqref-positional",
@@ -4732,6 +4979,34 @@ fn invalid_new_style_format_exits_two() {
             "IndexError: string index out of range",
             12,
         ),
+        (
+            "t17a2-crash-eqref-arabic-positional",
+            "math_eqref_format = 'Eq {\u{663}}'\n",
+            equation,
+            "IndexError: Replacement index 3 out of range for positional args tuple",
+            7,
+        ),
+        (
+            "t17a2-crash-eqref-many-digits",
+            eqref_many_digits.as_str(),
+            equation,
+            "ValueError: Too many decimal digits in format string",
+            7,
+        ),
+        (
+            "t17a2-crash-numref-title-many-digits",
+            "numfig = True\n",
+            titled_many_digits.as_str(),
+            "ValueError: Too many decimal digits in format string",
+            12,
+        ),
+        (
+            "t17a2-crash-numref-title-arabic-positional",
+            "numfig = True\n",
+            titled_positional.as_str(),
+            "IndexError: Replacement index 3 out of range for positional args tuple",
+            12,
+        ),
     ] {
         let conf = format!("project = 'Temp'\n{conf}");
         assert_eq!(
@@ -4750,9 +5025,11 @@ fn invalid_new_style_format_exits_two() {
 /// `str.format` looks up the rest of a field on the string its keyword
 /// gives (CPython's `FieldNameIterator`): an index of digits is that
 /// string's character, so `Eq {number[0]}` and `Tab {name[0]}{number[0]}`
-/// fill without a record; a name in brackets is a `TypeError`, which
-/// `_resolve_numref_xref` catches and warns about without the exception
-/// (`invalid numfig_format: <title>`), where `MathDomain` crashes
+/// fill without a record, as do their digits of another script (here
+/// ARABIC-INDIC DIGIT ZERO and ONE), which Python reads as decimal digits;
+/// a name in brackets is a `TypeError`, which `_resolve_numref_xref`
+/// catches and warns about without the exception (`invalid numfig_format:
+/// <title>`), where `MathDomain` crashes
 /// (`invalid_new_style_format_exits_two`). Sphinx 9.1.0's streams, probed
 /// on each project.
 #[test]
@@ -4782,6 +5059,18 @@ fn a_format_field_indexes_a_string_as_python_does() {
             "numfig = True\n",
             titled("Tab {name[x]} {number}"),
             "<SRCDIR>/index.rst:12: WARNING: invalid numfig_format: Tab {name[x]} {number}\n",
+        ),
+        (
+            "t17a2-eqref-arabic-index",
+            "math_eqref_format = 'Eq {number[\u{660}]}'\n",
+            equation.to_string(),
+            "",
+        ),
+        (
+            "t17a2-numref-title-arabic-index",
+            "numfig = True\n",
+            titled("Tab {name[\u{661}]}{number[\u{660}]}"),
+            "",
         ),
     ] {
         let conf = format!("project = 'Temp'\n{conf}");
@@ -4840,4 +5129,60 @@ fn figure_name_after_figname_exits_two() {
         written.starts_with(case["warnings"].as_str().unwrap()),
         "{written:?} opens with the oracle's stream"
     );
+}
+
+/// Decision 13, crash input 9's variant: a figure whose `:name:` is its
+/// `:figname:` carries the name twice when Sphinx's `Figure` registers
+/// its names again. docutils' `dupname` removes one occurrence per call,
+/// so the first duplicate's `dupname`s of the figure as the new node and
+/// as the old one both succeed and its `Duplicate explicit target name`
+/// warning is logged; the second duplicate's `dupname` finds the name
+/// gone and raises `ValueError`. So the build prints that warning, after
+/// the document's records before it and before the report; the earlier
+/// implicit target a section title made does not change it. Probed on
+/// Sphinx 9.1.0.
+#[test]
+fn figure_named_as_its_figname_exits_two() {
+    let figure = ".. figure:: pic.png\n   :figname: x\n   :name: x\n\n   Caption.\n";
+    let duplicate = |line: u32| {
+        format!(
+            "<SRCDIR>/index.rst:{line}: WARNING: Duplicate explicit target name: \"x\". \
+             [docutils]\n"
+        )
+    };
+    let crash = |line: u32| {
+        crash_report(
+            None,
+            "ValueError: list.remove(x): x not in list",
+            Some(&format!("<SRCDIR>/index.rst:{line}")),
+        )
+    };
+    for (test, index, expected) in [
+        (
+            "t17a2-crash-figname-twice",
+            figure.to_string(),
+            format!("{}{}", duplicate(1), crash(1)),
+        ),
+        (
+            "t17a2-crash-figname-twice-later",
+            format!("Title\n=====\n\nText :nope:`a`.\n\n{figure}\nLater :nope:`b`.\n"),
+            format!(
+                "<SRCDIR>/index.rst:4: ERROR: Unknown interpreted text role \"nope\". \
+                 [docutils]\n{}{}",
+                duplicate(6),
+                crash(6)
+            ),
+        ),
+        (
+            "t17a2-crash-figname-twice-section",
+            format!("x\n=\n\nText.\n\n{figure}"),
+            format!("{}{}", duplicate(6), crash(6)),
+        ),
+    ] {
+        assert_eq!(
+            crash_stream(test, &[("index.rst", index.as_str())], &[], &[]),
+            expected,
+            "{test}"
+        );
+    }
 }

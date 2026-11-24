@@ -510,6 +510,16 @@ mod tests {
             reference(false, config(true, ".", Some("Eq {number[0]}"))),
             ("Eq 1".to_string(), None)
         );
+        // Digits of any script (ARABIC-INDIC DIGIT ZERO) too, which Python
+        // reads as decimal digits (probed on Sphinx 9.1.0: `Eq 1`, no
+        // record).
+        for format in ["Eq {number[\u{660}]}", "Eq {number[0\u{660}]}"] {
+            assert_eq!(
+                reference(false, config(true, ".", Some(format))),
+                ("Eq 1".to_string(), None),
+                "{format}"
+            );
+        }
         assert_eq!(
             resolve_xref(
                 &env,

@@ -499,26 +499,34 @@ impl DocumentState {
     }
 
     /// `set_id` plus `set_name_id_map`, applying each reported duplicate
-    /// the way `set_duplicate_name_id` does: the node in hand loses the
-    /// name at once, an earlier node (already placed in the parser's tree)
-    /// through a [`DupnameFixup`], and the message is reported here.
+    /// the way `set_duplicate_name_id` does: its `dupname`s, of the node in
+    /// hand first and then of the earlier node, each removing one
+    /// occurrence of the name from that node's `names`, then its message.
+    /// The node in hand loses the name at once, an earlier node (already
+    /// placed in the parser's tree) through a [`DupnameFixup`].
     ///
-    /// A node that binds again a name already bound to it — a figure whose
-    /// `:figname:` registered the name before Sphinx's `Figure` registers
-    /// its names again for `:name:` — is the earlier node too, so docutils
-    /// `dupname`s it twice, and the second `names.remove(name)` raises
-    /// `ValueError` before the message is made: Sphinx 9.1.0 crashes there
-    /// (decision 13), at `loc`, and binds nothing more.
+    /// The earlier node is the node in hand when it binds a name already
+    /// bound to it: a figure whose `:figname:` registered the name before
+    /// Sphinx's `Figure` registers its names again for `:name:`. It then
+    /// loses the name at once for each `dupname`, and when it no longer
+    /// carries the name, `names.remove(name)` raises `ValueError` before
+    /// the duplicate's message is made: Sphinx 9.1.0 crashes there
+    /// (decision 13), at `loc`, after the messages of the duplicates before
+    /// it, and binds nothing more. So `:figname: my fig` with `:name:
+    /// other` crashes on `my fig`, which the figure carries once and loses
+    /// as the new node, while `:figname: x` with `:name: x`, carrying `x`
+    /// twice, reports the first `x`'s duplicate and crashes on the second.
     fn note_target(&mut self, node: &mut Node, explicit: bool, loc: DocLoc) -> Vec<Node> {
         let id = self.set_id_at(node, loc);
         let duplicates = self.names.bind(NodeView::of(node), &id, explicit);
         let mut reported = Vec::with_capacity(duplicates.len());
         for duplicate in duplicates {
-            let own_name = duplicate
+            let own_old = duplicate
                 .dupname_old
                 .as_ref()
                 .is_some_and(|old_id| node.attrs.ids.contains(old_id));
-            if duplicate.dupname_new && own_name {
+            let removals = usize::from(duplicate.dupname_new) + usize::from(own_old);
+            if !(0..removals).all(|_| dupname(node, &duplicate.name)) {
                 let location = match loc {
                     DocLoc {
                         source: Some(SourceRef::Table(source)),
@@ -534,10 +542,7 @@ impl DocumentState {
                 self.raise(crash, 0, 0);
                 break;
             }
-            if duplicate.dupname_new {
-                dupname(node, &duplicate.name);
-            }
-            if let Some(node_id) = duplicate.dupname_old {
+            if let Some(node_id) = duplicate.dupname_old.filter(|_| !own_old) {
                 self.parse.dupname_fixups.push(DupnameFixup {
                     name: duplicate.name.clone(),
                     node_id,
@@ -619,15 +624,17 @@ impl DocumentState {
     }
 }
 
-/// docutils `dupname(node, name)`: the name moves from `names` to
-/// `dupnames`. A name the node does not carry stays put; the one input
-/// that `dupname`s a node of a name it no longer carries, where docutils
-/// raises, crashes the build first ([`DocumentState::note_target`]).
-fn dupname(node: &mut Node, name: &str) {
-    if let Some(pos) = node.attrs.names.iter().position(|n| n == name) {
-        node.attrs.names.remove(pos);
-        node.attrs.dupnames.push(name.to_string());
-    }
+/// docutils `dupname(node, name)`: the first occurrence of the name in
+/// `names` moves to `dupnames`. `false`, and nothing moves, when the node
+/// does not carry the name, where docutils' `names.remove(name)` raises
+/// `ValueError`, which crashes the build ([`DocumentState::note_target`]).
+fn dupname(node: &mut Node, name: &str) -> bool {
+    let Some(pos) = node.attrs.names.iter().position(|n| n == name) else {
+        return false;
+    };
+    node.attrs.names.remove(pos);
+    node.attrs.dupnames.push(name.to_string());
+    true
 }
 
 /// The first node in pre-order under `node` that carries `id` and is not
@@ -914,6 +921,97 @@ mod tests {
             panic!("one WARNING, got {reported:?}");
         };
         assert_eq!(msg.attrs.backrefs, vec!["id1"]); // internal: backrefs
+    }
+
+    /// docutils `dupname(node, name)` removes one occurrence of the name
+    /// per call (`names.remove`) and raises `ValueError` once the node no
+    /// longer carries it (`nodes.py:3036-3038`); `set_duplicate_name_id`
+    /// makes its message after its `dupname`s (`nodes.py:1929-1990`). A
+    /// node bound again, its names now holding a name twice or one it was
+    /// bound by before, is the old node of its own duplicates, and loses
+    /// the name at once, once per `dupname`, with no fixup: the first
+    /// `dupname` that finds the name gone raises, and Sphinx 9.1.0 crashes
+    /// there (decision 13), after the messages of the duplicates before
+    /// it.
+    //
+    // oracle (docutils 0.22.4, the locked core profile): a `figure` with
+    //   each `names` bound by `document.note_*_target(node, node)` in turn,
+    //   the reporter's messages observed: `Duplicate explicit target name:
+    //   "x".` (WARNING) then `ValueError`; `ValueError` alone; `Target name
+    //   overrides implicit target name "x".` (INFO) then `ValueError`;
+    //   that INFO, `names=['y']`, `dupnames=['x']`; that WARNING,
+    //   `names=[]`, `dupnames=['x', 'x']`; that WARNING twice, then
+    //   `ValueError`.
+    #[test]
+    fn a_node_bound_again_loses_one_occurrence_per_duplicate() {
+        let bind = |steps: &[(bool, &[&str])]| {
+            let mut state = DocumentState::default();
+            let mut figure = Node::elem("figure", Span::ZERO);
+            let mut messages = Vec::new();
+            for (explicit, names) in steps {
+                figure
+                    .attrs
+                    .names
+                    .extend(names.iter().map(|name| name.to_string()));
+                let reported = if *explicit {
+                    state.note_explicit_target(&mut figure, DocLoc::at(0, 1))
+                } else {
+                    state.note_implicit_target(&mut figure, DocLoc::at(0, 1))
+                };
+                messages.extend(reported.iter().map(|message| {
+                    let Some(AttrValue::Str(level)) = message.get("type") else {
+                        panic!("a message has a type");
+                    };
+                    format!("{level}: {}", message.element_astext())
+                }));
+            }
+            assert!(
+                state.parse.dupname_fixups.is_empty(),
+                "the old node is the node in hand"
+            );
+            let crash = state.crash.map(|crash| crash.to_string());
+            (messages, crash, figure.attrs.names, figure.attrs.dupnames)
+        };
+        let crash = Some("ValueError: list.remove(x): x not in list".to_string());
+        let (messages, raised, ..) = bind(&[(true, &["x"]), (true, &["x"])]);
+        assert_eq!(
+            (messages, raised),
+            (
+                vec!["WARNING: Duplicate explicit target name: \"x\".".to_string()],
+                crash.clone()
+            )
+        );
+        let (messages, raised, ..) = bind(&[(true, &["my fig"]), (true, &["other"])]);
+        assert_eq!((messages, raised), (Vec::new(), crash.clone()));
+        let overrides = "INFO: Target name overrides implicit target name \"x\".".to_string();
+        let (messages, raised, ..) = bind(&[(false, &["x"]), (true, &["x"])]);
+        assert_eq!((messages, raised), (vec![overrides.clone()], crash.clone()));
+        assert_eq!(
+            bind(&[(false, &["x"]), (true, &["y"])]),
+            (
+                vec![overrides],
+                None,
+                vec!["y".to_string()],
+                vec!["x".to_string()]
+            )
+        );
+        // A node first bound with a name twice is the old node of its own
+        // second occurrence, and loses both.
+        let duplicate = "WARNING: Duplicate explicit target name: \"x\".".to_string();
+        assert_eq!(
+            bind(&[(true, &["x", "x"])]),
+            (
+                vec![duplicate.clone()],
+                None,
+                Vec::new(),
+                vec!["x".to_string(), "x".to_string()]
+            )
+        );
+        let (messages, raised, ..) = bind(&[(true, &["x"]), (true, &["x", "x"])]);
+        assert_eq!(
+            (messages, raised),
+            (vec![duplicate.clone(), duplicate], crash)
+        );
     }
 
     /// docutils `set_id` on a node that already carries ids registers

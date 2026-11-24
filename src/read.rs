@@ -31,6 +31,7 @@ use crate::env::resolve::{NitpickConfig, Resolver};
 use crate::env::toctree::{resolve_body_toctrees, ToctreeLocations};
 use crate::env::BuildEnvironment;
 use crate::intersphinx::Intersphinx;
+use crate::rst::digits::decimal_digit_value;
 use crate::rst::{LogLocation, ParseOptions, ParseOutput, ReadConfig, RegistryExport, SphinxCrash};
 use crate::transforms::post::{apply_post_transforms, PostTransformConfig};
 use crate::transforms::reporter::{render_records, LogRecord};
@@ -206,8 +207,8 @@ fn date_of_epoch(epoch: &str) -> Option<BuildDate> {
 /// year `struct tm` does not hold, whose `OSError` names the platform's
 /// `EOVERFLOW`. The crash `value` makes, if any.
 ///
-/// Not modelled: non-ASCII decimal digits, which Python reads; Windows'
-/// `gmtime`, which also fails before 1970 and after 3000.
+/// Not modelled: Windows' `gmtime`, which also fails before 1970 and
+/// after 3000.
 pub fn source_date_epoch_import_crash(value: &str) -> Option<SphinxCrash> {
     let raise = |exception, message: &str| {
         Some(SphinxCrash::python(
@@ -243,20 +244,17 @@ pub fn source_date_epoch_import_crash(value: &str) -> Option<SphinxCrash> {
 /// `SOURCE_DATE_EPOCH` as Sphinx 9.1.0 reads it next, at `config-inited`:
 /// `correct_copyright_year` (`SP/sphinx/config.py:711-738`) takes
 /// `int(value)`, which raises for what `int()` rejects in base 10, a
-/// fraction or an exponent `float()` reads among them. Sphinx reports the
-/// handler's exception as an `ExtensionError` naming the handler, and
-/// crashes (decision 13). The crash `value` makes, if any.
+/// fraction or an exponent `float()` reads among them, and for more digits
+/// than it reads ([`py_int_error`]). Sphinx reports the handler's
+/// exception as an `ExtensionError` naming the handler, and crashes
+/// (decision 13). The crash `value` makes, if any.
 pub fn source_date_epoch_config_crash(value: &str) -> Option<SphinxCrash> {
-    if py_int_reads(value) {
-        return None;
-    }
-    // `invalid literal for int() with base %d: %.200R`.
-    let literal: String = crate::utils::py_repr_str(value).chars().take(200).collect();
+    let error = py_int_error(value)?;
     Some(SphinxCrash::extension_error(
         "Extension error (sphinx.config)",
         "correct_copyright_year",
         "config-inited",
-        &format!("invalid literal for int() with base 10: {literal}"),
+        &error,
     ))
 }
 
@@ -296,14 +294,46 @@ fn civil_year(seconds: i64) -> i64 {
     yoe + era * 400 + i64::from(month_index >= 10)
 }
 
-/// Python's `float(text)` for a `str`: Python's whitespace around it
-/// stripped, then a sign and `inf`, `infinity` or `nan` in any case, or a
-/// decimal literal whose digits single underscores may group, each between
-/// two digits (PEP 515). `None` for what it rejects. Non-ASCII decimal
-/// digits, which Python reads too, are not read.
+/// The text `float()` and `int()` read in place of the `str` `text`
+/// (CPython's `_PyUnicode_TransformDecimalAndSpaceToASCII`): each
+/// character below DEL as it is, whitespace past ASCII a space, a decimal
+/// digit of any script ([`decimal_digit_value`]) its ASCII digit, and the
+/// first other character a `?`, which ends the text. Neither reads a `?`,
+/// so such a text is rejected.
+fn py_number_ascii(text: &str) -> String {
+    let mut ascii = String::with_capacity(text.len());
+    for c in text.chars() {
+        if u32::from(c) < 127 {
+            ascii.push(c);
+        } else if crate::utils::py_isspace(c) {
+            ascii.push(' ');
+        } else if let Some(digit) =
+            decimal_digit_value(c).and_then(|value| char::from_digit(value, 10))
+        {
+            ascii.push(digit);
+        } else {
+            ascii.push('?');
+            break;
+        }
+    }
+    ascii
+}
+
+/// CPython's `Py_ISSPACE`, the whitespace `float()` and `int()` strip
+/// around the text [`py_number_ascii`] gives: ASCII's six, not the C0
+/// separators `\x1c`-`\x1f` that `str.isspace` also admits.
+fn py_ascii_space(c: char) -> bool {
+    matches!(c, ' ' | '\t' | '\n' | '\x0b' | '\x0c' | '\r')
+}
+
+/// Python's `float(text)` for a `str` (CPython's `PyFloat_FromString`):
+/// the text made ASCII ([`py_number_ascii`]), its single underscores
+/// dropped, each between two digits (PEP 515), ASCII whitespace stripped
+/// around it ([`py_ascii_space`]), then a sign and `inf`, `infinity` or
+/// `nan` in any case, or a decimal literal of any number of digits.
+/// `None` for what it rejects.
 fn py_float(text: &str) -> Option<f64> {
-    let text = text.trim_matches(crate::utils::py_isspace);
-    let chars: Vec<char> = text.chars().collect();
+    let chars: Vec<char> = py_number_ascii(text).chars().collect();
     let grouped = chars.iter().enumerate().all(|(at, &c)| {
         c != '_'
             || (at > 0
@@ -317,20 +347,45 @@ fn py_float(text: &str) -> Option<f64> {
         .into_iter()
         .filter(|&c| c != '_')
         .collect::<String>()
+        .trim_matches(py_ascii_space)
         .parse()
         .ok()
 }
 
-/// Whether Python's `int(text)` reads the `str` `text` in base 10: Python's
-/// whitespace around it, a sign, then ASCII digits that single underscores
-/// may group (PEP 515).
-fn py_int_reads(text: &str) -> bool {
-    let text = text.trim_matches(crate::utils::py_isspace);
-    let digits = text.strip_prefix(['+', '-']).unwrap_or(text);
-    !digits.is_empty()
-        && digits
-            .split('_')
-            .all(|group| !group.is_empty() && group.chars().all(|c| c.is_ascii_digit()))
+/// `sys.get_int_max_str_digits()` on CPython 3.12, which Sphinx leaves at
+/// its default: the most digits `int()` reads in base 10.
+const INT_MAX_STR_DIGITS: usize = 4300;
+
+/// The message of the `ValueError` Python's `int(text)` raises for the
+/// `str` `text` in base 10 (CPython's `PyLong_FromUnicodeObject`), `None`
+/// when it reads it. The text made ASCII ([`py_number_ascii`]) must be
+/// ASCII whitespace ([`py_ascii_space`]), a sign, digits that single
+/// underscores may group (PEP 515), and ASCII whitespace, or it is an
+/// `invalid literal`, named by its `repr()` cut to 200 characters
+/// (`%.200R`); and once it is, more than [`INT_MAX_STR_DIGITS`] digits,
+/// leading zeros among them, are past the limit.
+fn py_int_error(text: &str) -> Option<String> {
+    let ascii = py_number_ascii(text);
+    let unsigned = ascii.trim_start_matches(py_ascii_space);
+    let unsigned = unsigned.strip_prefix(['+', '-']).unwrap_or(unsigned);
+    let end = unsigned
+        .find(|c: char| !c.is_ascii_digit() && c != '_')
+        .unwrap_or(unsigned.len());
+    let (number, rest) = unsigned.split_at(end);
+    let reads = !number.is_empty()
+        && number.split('_').all(|group| !group.is_empty())
+        && rest.chars().all(py_ascii_space);
+    if !reads {
+        let literal: String = crate::utils::py_repr_str(text).chars().take(200).collect();
+        return Some(format!("invalid literal for int() with base 10: {literal}"));
+    }
+    let digits = number.len() - number.matches('_').count();
+    (digits > INT_MAX_STR_DIGITS).then(|| {
+        format!(
+            "Exceeds the limit ({INT_MAX_STR_DIGITS} digits) for integer string conversion: \
+             value has {digits} digits; use sys.set_int_max_str_digits() to increase the limit"
+        )
+    })
 }
 
 /// One document's read: the doctree and the docutils document state beside
@@ -926,9 +981,43 @@ mod tests {
             date("253402300799").as_deref(),
             Some("9999-12-31T23:59:59+00:00")
         );
+        // `float()` makes the text ASCII first: a decimal digit of any
+        // script is its ASCII digit (ARABIC-INDIC, FULLWIDTH, mixed and
+        // grouped), and any whitespace past ASCII a space; it then strips
+        // ASCII whitespace, which `\v` and `\f` are and the C0 separators
+        // `\x1c`-`\x1f` are not.
+        for epoch in [
+            "\u{661}\u{667}\u{660}\u{660}\u{660}\u{660}\u{660}\u{660}\u{660}\u{660}",
+            "\u{ff11}\u{ff17}\u{ff10}\u{ff10}\u{ff10}\u{ff10}\u{ff10}\u{ff10}\u{ff10}\u{ff10}",
+            "1\u{667}00000000",
+            "\u{661}_\u{667}\u{660}\u{660}_\u{660}\u{660}\u{660}_\u{660}\u{660}\u{660}",
+            "\u{a0}1700000000\u{3000}",
+            "\u{85}1700000000\u{2028}",
+            "\x0b1700000000\x0c",
+        ] {
+            assert_eq!(
+                date(epoch).as_deref(),
+                Some("2023-11-14T22:13:20+00:00"),
+                "{epoch:?}"
+            );
+        }
+        assert_eq!(
+            date("\u{661}.\u{665}").as_deref(),
+            Some("1970-01-01T00:00:01.500+00:00")
+        );
+        // Any number of digits, past `int()`'s limit of 4,300.
+        assert_eq!(
+            date(&format!("{}1", "0".repeat(4300))).as_deref(),
+            Some("1970-01-01T00:00:01+00:00")
+        );
         for (epoch, year) in [
             ("253402300800", 10_000),
             ("300000000000", 11_476),
+            (
+                "\u{663}\u{660}\u{660}\u{660}\u{660}\u{660}\
+                 \u{660}\u{660}\u{660}\u{660}\u{660}\u{660}",
+                11_476,
+            ),
             ("1e12", 33_658),
             ("-62135596801", 0),
             ("-99999999999", -1_199),
@@ -940,7 +1029,22 @@ mod tests {
                 "{epoch:?}"
             );
         }
-        for unreadable in ["", "soon", "1__0", "1_.5", "inf", "nan", "1e300", "1e17"] {
+        for unreadable in [
+            "",
+            "soon",
+            "1__0",
+            "1_.5",
+            "inf",
+            "nan",
+            "1e300",
+            "1e17",
+            "\x1c1700000000",
+            "1700000000\x1f",
+            "\u{b2}",
+            "\u{661}\u{66b}\u{665}",
+            "\u{661}__\u{660}",
+            "\u{ff49}\u{ff4e}\u{ff46}",
+        ] {
             assert_eq!(date(unreadable), None, "{unreadable:?}");
         }
     }
@@ -984,6 +1088,12 @@ mod tests {
             ("1e300", overflow),
             ("1e17", Some(format!("OSError: {EOVERFLOW}"))),
             ("-1e17", Some(format!("OSError: {EOVERFLOW}"))),
+            // What `float()` does not make a digit or strip: the C0
+            // separators, SUPERSCRIPT TWO, ARABIC DECIMAL SEPARATOR.
+            ("\x1c1700000000", float("\x1c1700000000")),
+            ("1700000000\x1f", float("1700000000\x1f")),
+            ("\u{b2}", float("\u{b2}")),
+            ("\u{661}\u{66b}\u{665}", float("\u{661}\u{66b}\u{665}")),
         ] {
             assert_eq!(import(epoch), crash, "{epoch:?}");
         }
@@ -996,24 +1106,88 @@ mod tests {
             "-1",
             "300000000000",
             "-6.77680406097408e+16",
+            // A decimal digit of any script, and whitespace past ASCII.
+            "\u{661}\u{667}\u{660}\u{660}\u{660}\u{660}\u{660}\u{660}\u{660}\u{660}",
+            "\u{ff11}\u{ff12}",
+            "\u{661}.\u{665}",
+            "\u{a0}12\u{3000}",
+            "\x0b12\x0c",
         ] {
             assert_eq!(import(readable), None, "{readable:?}");
         }
+        // `float()` reads any number of digits, past `int()`'s limit.
+        assert_eq!(import(&format!("{}1", "0".repeat(4300))), None);
 
         let config =
             |epoch: &str| source_date_epoch_config_crash(epoch).map(|crash| crash.report());
-        let int = |literal: &str| {
+        let raised = |exception: &str| {
             Some(format!(
                 "\nExtension error (sphinx.config)!\n\n    sphinx.errors.ExtensionError: Handler \
                  <function correct_copyright_year at 0x...> for event 'config-inited' threw an \
-                 exception (exception: invalid literal for int() with base 10: {literal})\n\n\
+                 exception (exception: {exception})\n\n\
                  Sphinx 9.1.0 crashes on this input; sphinx-ultra stops the build as it does.\n"
+            ))
+        };
+        let int = |literal: &str| {
+            raised(&format!(
+                "invalid literal for int() with base 10: {literal}"
             ))
         };
         assert_eq!(config("1.5"), int("'1.5'"));
         assert_eq!(config("1e3"), int("'1e3'"));
         assert_eq!(config(" 1.5\n"), int("' 1.5\\n'"));
-        for readable in ["0", " 12 ", "1_000", "-1", "+5", "007"] {
+        // `int()` makes the text ASCII as `float()` does, and names the
+        // text it was given.
+        assert_eq!(config("\u{661}.\u{665}"), int("'\u{661}.\u{665}'"));
+        assert_eq!(config("\u{661}e\u{663}"), int("'\u{661}e\u{663}'"));
+        assert_eq!(config("\x1c12"), int("'\\x1c12'"));
+        // ... cut to the first 200 characters of its `repr()` (`%.200R`).
+        let long_fraction = format!("1.{}", "5".repeat(300));
+        assert_eq!(
+            config(&long_fraction),
+            int(&format!("'1.{}", "5".repeat(197)))
+        );
+        let zeros = |count: usize| "0".repeat(count);
+        assert_eq!(
+            config(&format!("{}x", zeros(4301))),
+            int(&format!("'{}", zeros(199)))
+        );
+        // `int()` reads no more than 4,300 digits
+        // (`sys.get_int_max_str_digits()`), leading zeros and digits of any
+        // script among them, the sign, underscores and whitespace not; it
+        // checks the text first.
+        let limit = |digits: usize| {
+            raised(&format!(
+                "Exceeds the limit (4300 digits) for integer string conversion: value has \
+                 {digits} digits; use sys.set_int_max_str_digits() to increase the limit"
+            ))
+        };
+        for (label, epoch, digits) in [
+            ("zeros then 1", format!("{}1", zeros(4300)), 4301),
+            ("zeros", zeros(4301), 4301),
+            ("ARABIC-INDIC zeros", "\u{660}".repeat(4301), 4301),
+            ("signed", format!("+{}", zeros(4301)), 4301),
+            ("spaced", format!(" {}\n", zeros(4301)), 4301),
+            ("grouped", format!("{}1", "0_".repeat(4300)), 4301),
+            ("ones", "1".repeat(5000), 5000),
+        ] {
+            assert_eq!(config(&epoch), limit(digits), "{label}");
+        }
+        assert_eq!(config(&format!("{}1", zeros(4299))), None);
+        for readable in [
+            "0",
+            " 12 ",
+            "1_000",
+            "-1",
+            "+5",
+            "007",
+            "\u{661}\u{662}",
+            "+\u{ff11}\u{ff12}",
+            "\u{661}_\u{660}\u{660}\u{660}",
+            "1_\u{660}",
+            "\u{a0}12\u{3000}",
+            "\x0b12\x0c",
+        ] {
             assert_eq!(config(readable), None, "{readable:?}");
         }
     }

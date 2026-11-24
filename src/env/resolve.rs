@@ -20,6 +20,7 @@ use crate::env::toctree::docname_join;
 use crate::env::BuildEnvironment;
 use crate::error::{BuildWarning, WarningType};
 use crate::intersphinx::{self, Diagnostic, HookOutcome, Intersphinx, XrefQuery};
+use crate::rst::digits::decimal_digit_value;
 use crate::rst::SphinxCrash;
 use crate::utils::py_repr_str;
 
@@ -798,17 +799,19 @@ struct TypeError;
 ///   that balances its braces; a field that does not close is a
 ///   `ValueError`;
 /// - the name's first part, up to a `.` or `[`, is a positional index
-///   when it is empty or all digits, an `IndexError` here, since no
-///   positional argument is given (`Too many decimal digits` once the
-///   digits read from the left pass `isize::MAX`, a `ValueError`, even
-///   before a character that is no digit); otherwise a keyword, `number`,
-///   `name` when `figname` is given, or a `KeyError`;
+///   when it is empty or all decimal digits, of any script
+///   ([`format_integer`]), an `IndexError` here, since no positional
+///   argument is given (`Too many decimal digits` once the digits read
+///   from the left pass `isize::MAX`, a `ValueError`, even before a
+///   character that is no digit); otherwise a keyword, `number`, `name`
+///   when `figname` is given, or a `KeyError`;
 /// - the rest of the name is looked up on the string the keyword gives,
 ///   one `.attr` or `[item]` at a time, each before the next is read
 ///   (CPython's `FieldNameIterator` and the loop of `get_field_object`):
 ///   an empty `attr` or `item`, or anything but `.` or `[` after a `]`,
-///   is a `ValueError`; an `item` of digits is the string's character at
-///   that index, or an `IndexError` past its end, and any other `item` a
+///   is a `ValueError`; an `item` of decimal digits, of any script, is the
+///   string's character at that index, or an `IndexError` past its end
+///   (or the `ValueError` past `isize::MAX`), and any other `item` a
 ///   `TypeError`; an `attr` that `str` lacks is an `AttributeError`, which
 ///   Python's traceback completes with the closest name `str` has
 ///   ([`str_attribute_error`]).
@@ -819,9 +822,7 @@ struct TypeError;
 /// whose text names its address in memory), each reading as a `KeyError`
 /// of the whole field text once the lookups before it succeed — the
 /// `.attr` or `[item]` after such an `attr` is still read, so a
-/// `ValueError` there is raised, but nothing is looked up on its value;
-/// and non-ASCII decimal digits, which Python takes for an index and
-/// which read here as a name.
+/// `ValueError` there is raised, but nothing is looked up on its value.
 pub(crate) fn format_new_style(
     title: &str,
     figname: Option<&str>,
@@ -1064,17 +1065,18 @@ fn fill_format_field(
 }
 
 /// CPython's `get_integer` over a part of a field name: its value when
-/// it is all digits (ASCII ones: [`format_new_style`]), read from the
-/// left, so that a value past `isize::MAX` is a `ValueError` even before
-/// a character that is no digit; `None` for an empty part or one with a
-/// character that is no digit.
+/// it is all decimal digits, of any script, as `Py_UNICODE_TODECIMAL`
+/// reads them ([`decimal_digit_value`]: `{٣}` is the positional field
+/// 3), read from the left, so that a value past `isize::MAX` is a
+/// `ValueError` even before a character that is no digit; `None` for an
+/// empty part or one with a character that is no digit.
 fn format_integer(part: &[char]) -> Result<Option<i64>, FormatError> {
     if part.is_empty() {
         return Ok(None);
     }
     let mut value: i64 = 0;
-    for c in part {
-        let Some(digit) = c.to_digit(10) else {
+    for &c in part {
+        let Some(digit) = decimal_digit_value(c) else {
             return Ok(None);
         };
         value = value
@@ -1387,13 +1389,13 @@ pub struct DocumentResolution {
 }
 
 impl DocumentResolution {
-    /// Keeps `crash`, raised resolving the reference at `path` and `line`,
-    /// located there as a warning about it is.
-    fn crash(&mut self, crash: SphinxCrash, path: &Path, line: Option<usize>) {
+    /// Keeps `crash` in [`Self::crash`], raised resolving the reference at
+    /// `path` and `line`, located there as a warning about it is.
+    fn raise_at(&mut self, crash: SphinxCrash, path: &Path, line: Option<usize>) {
         self.crash = Some(crash.rendered_at(crate::diagnostics::location_of(path, line)));
     }
 
-    /// Whether a reference's resolution crashed ([`Self::crash`]).
+    /// Whether a reference's resolution crashed ([`Self::raise_at`]).
     fn crashed(&self) -> bool {
         self.crash.is_some()
     }
@@ -1781,7 +1783,7 @@ fn resolve_one(
             contnode.into_iter().collect()
         }
         XrefOutcome::Crash(crash) => {
-            out.crash(crash, path, line);
+            out.raise_at(crash, path, line);
             Vec::new()
         }
         XrefOutcome::Missing => {
@@ -1992,7 +1994,7 @@ fn resolve_any_ref(
         let mut results = match walk {
             Ok(results) => results,
             Err(crash) => {
-                out.crash(crash, path, line);
+                out.raise_at(crash, path, line);
                 return None;
             }
         };
@@ -2913,6 +2915,8 @@ mod tests {
         let index = |n: u32| {
             format!("IndexError: Replacement index {n} out of range for positional args tuple")
         };
+        // Twenty ARABIC-INDIC DIGIT NINEs, then a character that is no digit.
+        let many_digits = format!("{{{}x}}", "\u{669}".repeat(20));
         for (title, expected) in [
             ("{name} {number}", "\"Cap 1\"".to_string()),
             ("}}{{", "\"}{\"".to_string()),
@@ -2977,6 +2981,23 @@ mod tests {
                 "{99999999999999999999x}",
                 "ValueError: Too many decimal digits in format string".to_string(),
             ),
+            // A decimal digit of any script is a digit
+            // (`Py_UNICODE_TODECIMAL`): ARABIC-INDIC DIGIT THREE and ZERO,
+            // MATHEMATICAL BOLD DIGIT ZERO; SUPERSCRIPT TWO is no decimal
+            // digit.
+            ("{\u{663}}", index(3)),
+            ("{\u{660}}", index(0)),
+            ("{1\u{660}}", index(10)),
+            ("{\u{1d7ce}}", index(0)),
+            (
+                many_digits.as_str(),
+                "ValueError: Too many decimal digits in format string".to_string(),
+            ),
+            (
+                "{\u{661}\u{662}x}",
+                "KeyError: '\u{661}\u{662}x'".to_string(),
+            ),
+            ("{\u{b2}}", "KeyError: '\u{b2}'".to_string()),
         ] {
             assert_eq!(outcome(title), expected, "{title:?}");
         }
@@ -3013,7 +3034,22 @@ mod tests {
         let did_you_mean = |name: &str, suggestion: &str| {
             format!("{}. Did you mean: '{suggestion}'?", no_attribute(name))
         };
+        // Twenty ARABIC-INDIC DIGIT NINEs.
+        let many_digits = format!("{{name[{}]}}", "\u{669}".repeat(20));
         for (title, expected) in [
+            // An item of decimal digits of any script is an index
+            // (`Py_UNICODE_TODECIMAL`): ARABIC-INDIC DIGIT ZERO, ONE and
+            // NINE, MATHEMATICAL BOLD DIGIT ZERO; SUPERSCRIPT TWO is no
+            // decimal digit.
+            ("{number[\u{660}]}", "\"1\"".to_string()),
+            ("{number[0\u{660}]}", "\"1\"".to_string()),
+            ("{name[\u{661}]}{number[\u{660}]}", "\"a1\"".to_string()),
+            ("{number[\u{1d7ce}]}", "\"1\"".to_string()),
+            ("{name[\u{669}\u{669}]}", out_of_range.to_string()),
+            (many_digits.as_str(), too_many_digits.to_string()),
+            ("{number[\u{b2}]}", string_index.to_string()),
+            ("{number[\u{660}.]}", string_index.to_string()),
+            ("{number[\u{660}]x}", after_index.to_string()),
             ("{number.}", empty.to_string()),
             ("{number[]}", empty.to_string()),
             ("{number..}", empty.to_string()),
@@ -3303,6 +3339,22 @@ mod tests {
                 },
             })
         );
+        // An index of decimal digits of any script (ARABIC-INDIC DIGIT ONE
+        // and ZERO) is one too.
+        assert_eq!(
+            resolver.resolve_xref(&titled("Tab {name[\u{661}]}{number[\u{660}]}")),
+            XrefOutcome::Resolved(ResolvedXref {
+                kind: "number_reference",
+                refid: Some("tbl".to_string()),
+                refuri: None,
+                title: Some("Tab {name[\u{661}]}{number[\u{660}]}".to_string()),
+                reftitle: None,
+                inner: Inner::Inline {
+                    text: "Tab a1".to_string(),
+                    classes: vec!["std".to_string(), "std-numref".to_string()],
+                },
+            })
+        );
         assert_eq!(
             resolver.resolve_xref(&titled("Tab {name[x]} {number}")),
             XrefOutcome::Kept {
@@ -3312,6 +3364,24 @@ mod tests {
         assert_eq!(
             resolver.resolve_xref(&titled("Tab {name[3]} {number}")),
             crash("IndexError", "string index out of range")
+        );
+        // ARABIC-INDIC DIGIT THREE is the positional field 3, and twenty
+        // ARABIC-INDIC DIGIT NINEs an index past `isize::MAX`.
+        assert_eq!(
+            resolver.resolve_xref(&titled("Tab {\u{663}} {number}")),
+            crash(
+                "IndexError",
+                "Replacement index 3 out of range for positional args tuple"
+            )
+        );
+        let many_digits = format!("Tab {{name[{}]}} {{number}}", "\u{669}".repeat(20));
+        assert_eq!(
+            resolver.resolve_xref(&XrefRequest {
+                refexplicit: true,
+                contnode_text: &many_digits,
+                ..request("index", "numref", "tbl")
+            }),
+            crash("ValueError", "Too many decimal digits in format string")
         );
         assert_eq!(
             resolver.resolve_xref(&titled("Tab {name.real} {number}")),
