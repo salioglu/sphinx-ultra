@@ -24,7 +24,7 @@ use chrono::{DateTime, Utc};
 
 use crate::builder::BuilderKind;
 use crate::config::BuildConfig;
-use crate::diagnostics::{Category, Diagnostic, DiagnosticSink, OrderKey, Severity};
+use crate::diagnostics::{Category, Diagnostic, DiagnosticSink, OrderKey};
 use crate::doctree::{Doctree, Node, Uid};
 use crate::env::numbers as env_numbers;
 use crate::env::resolve::{NitpickConfig, Resolver};
@@ -293,19 +293,7 @@ fn log_parse_warnings(output: &mut ParseOutput, parse: &ParseOptions) {
         .flat_map(|toctree| &toctree.warnings)
         .map(|warning| LogRecord::Logger {
             key: key(warning.seq),
-            diagnostic: Diagnostic {
-                location: LogLocation::Node {
-                    source: warning.source,
-                    line: warning.line,
-                }
-                .render(sources, &srcdir, &parse.docname),
-                severity: Severity::Warning,
-                message: warning.message.clone(),
-                category: warning
-                    .category
-                    .as_deref()
-                    .map_or(Category::None, Category::parse),
-            },
+            diagnostic: warning.diagnostic(sources, &srcdir, &parse.docname),
         });
     let log = &mut output.state.log;
     log.extend(logged.chain(toctree));
@@ -489,15 +477,16 @@ pub fn resolve_standalone(
                 },
                 None => LogLocation::Doc,
             };
-            Diagnostic {
-                location: location.render(&post_read.sources, &read.source_dir, &read.docname),
-                severity: Severity::Warning,
-                message: warning.message.clone(),
-                category: warning
+            location.warning(
+                &post_read.sources,
+                &read.source_dir,
+                &read.docname,
+                warning.message.clone(),
+                warning
                     .category
                     .as_deref()
                     .map_or(Category::None, Category::parse),
-            }
+            )
         })
         .collect();
     env_numbers::assign_figure_numbers(&mut env, false, 1, &load_doctree);
@@ -604,6 +593,7 @@ fn fill_attached(output: &mut ParseOutput) {
 mod tests {
     use super::*;
     use crate::diagnostics::Location;
+    use crate::diagnostics::Severity;
     use crate::doctree::kinds;
 
     fn sphinx_options() -> ParseOptions {

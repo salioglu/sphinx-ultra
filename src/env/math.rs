@@ -25,7 +25,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::diagnostics::{Category, Diagnostic, Severity};
+use crate::diagnostics::{Category, Diagnostic};
 use crate::doctree::ids::make_id;
 use crate::env::BuildEnvironment;
 use crate::rst::{EquationRecord, LogLocation};
@@ -87,15 +87,16 @@ pub fn process_doc(
             };
             warnings.push((
                 record.seq,
-                Diagnostic {
-                    location: location.render(sources, srcdir, docname),
-                    severity: Severity::Warning,
-                    message: format!(
+                location.warning(
+                    sources,
+                    srcdir,
+                    docname,
+                    format!(
                         "duplicate label of equation {}, other instance in {other}",
                         record.label
                     ),
-                    category: Category::from_parts(Some("ref"), Some("equation")),
-                },
+                    Category::from_parts(Some("ref"), Some("equation")),
+                ),
             ));
         }
     }

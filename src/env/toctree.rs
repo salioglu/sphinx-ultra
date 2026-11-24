@@ -143,6 +143,23 @@ pub struct ToctreeWarning {
     pub seq: u32,
 }
 
+impl ToctreeWarning {
+    /// The record Sphinx logs, `location=toctree`: a `WARNING` with the
+    /// warning's category, located at the directive's node
+    /// ([`LogLocation::Node`]).
+    pub fn diagnostic(&self, sources: &[String], srcdir: &Path, docname: &str) -> Diagnostic {
+        let location = LogLocation::Node {
+            source: self.source,
+            line: self.line,
+        };
+        let category = self
+            .category
+            .as_deref()
+            .map_or(Category::None, Category::parse);
+        location.warning(sources, srcdir, docname, self.message.clone(), category)
+    }
+}
+
 /// `toctree['entries']` (title, ref) pairs plus `toctree['includefiles']`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ResolvedEntries {

@@ -21,7 +21,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 
 use super::tags::Tags;
-use crate::diagnostics::{Category, Diagnostic, Severity};
+use crate::diagnostics::{Category, Diagnostic};
 use crate::doctree::{kinds, AttrValue, Doctree, Node, Span};
 use crate::env::resolve::{
     resolve_document, take_basic_atts, update_basic_atts, NitpickConfig, Resolver,
@@ -168,12 +168,13 @@ fn only_warning(cx: &OnlyCx<'_>, only: &Node, error: &str) -> Diagnostic {
             line,
         },
     };
-    Diagnostic {
-        location: location.render(cx.sources, cx.source_dir, cx.docname),
-        severity: Severity::Warning,
-        message: format!("exception while evaluating only directive expression: {error}"),
-        category: Category::None,
-    }
+    location.warning(
+        cx.sources,
+        cx.source_dir,
+        cx.docname,
+        format!("exception while evaluating only directive expression: {error}"),
+        Category::None,
+    )
 }
 
 /// `nodes.comment()`, which an `only` node gives way to.

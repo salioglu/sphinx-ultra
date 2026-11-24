@@ -531,6 +531,25 @@ impl LogLocation {
             }
         }
     }
+
+    /// The `WARNING` record of `logger.warning(message, location=…)` with
+    /// this location, rendered by [`Self::render`], and `category`, the
+    /// record's `type` and `subtype`.
+    pub fn warning(
+        self,
+        sources: &[String],
+        srcdir: &std::path::Path,
+        docname: &str,
+        message: String,
+        category: crate::diagnostics::Category,
+    ) -> crate::diagnostics::Diagnostic {
+        crate::diagnostics::Diagnostic {
+            location: self.render(sources, srcdir, docname),
+            severity: crate::diagnostics::Severity::Warning,
+            message,
+            category,
+        }
+    }
 }
 
 /// `os.path.abspath(source)`: the path Sphinx's `get_node_location`
@@ -606,12 +625,13 @@ impl ParseLogWarning {
         srcdir: &std::path::Path,
         docname: &str,
     ) -> crate::diagnostics::Diagnostic {
-        crate::diagnostics::Diagnostic {
-            location: self.location.render(sources, srcdir, docname),
-            severity: crate::diagnostics::Severity::Warning,
-            message: self.message.clone(),
-            category: crate::diagnostics::Category::None,
-        }
+        self.location.warning(
+            sources,
+            srcdir,
+            docname,
+            self.message.clone(),
+            crate::diagnostics::Category::None,
+        )
     }
 }
 
