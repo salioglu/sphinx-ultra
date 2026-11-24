@@ -53,11 +53,15 @@ Normalization (the ONLY rewrite): the temp srcdir's absolute path ->
 `<SRCDIR>`, the HTML oracle's own token, in every recorded string; generation
 fails if any spelling of the srcdir survives. `translation_progress` is kept.
 
-Cases are appended, never inserted or renamed. Multi-document cases live in
+The case history is append-only: a case is never renamed, and a new one
+goes in a new `CASES +=` block at the end of the case list, never into
+`FINAL_POSITION_ENDINGS`, `LOCATION_CONTEXTS` or an earlier block, which
+would put it before cases already recorded. Multi-document cases live in
 tools/gen_env_fixture.py (`state.label_order`, `state.final_position_include`).
 """
 
 import json
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -566,6 +570,7 @@ def main() -> int:
                 )
         finally:
             app.cleanup()
+            shutil.rmtree(base.parent, ignore_errors=True)
 
     fixture = {
         "docutils_version": docutils.__version__,
