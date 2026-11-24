@@ -4518,6 +4518,24 @@ impl BlockParser {
         }
     }
 
+    /// `settings.record_dependencies.add(path)` for a file `csv-table
+    /// :file:` or `raw :file:` read (`tables.py`, `misc.py`), which
+    /// Sphinx's `DependenciesCollector` notes relative to the srcdir: the
+    /// resolved path of `file`, as an include's
+    /// ([`Self::record_include_dependency`]). Sphinx mode only.
+    fn record_file_dependency(&mut self, file: &std::path::Path) {
+        if !self.sphinx {
+            return;
+        }
+        if let Some(srcdir) = &self.srcdir {
+            let record = crate::utils::relative_path_walk_up(
+                &crate::utils::resolve_path(file),
+                &crate::utils::resolve_path(srcdir),
+            );
+            self.state.parse.dependency_records.push(record);
+        }
+    }
+
     /// The `OverflowError` docutils lets escape from `str.expandtabs`
     /// (see [`c_int_tabsize`]) — sphinx aborts the whole build on it —
     /// as the SEVERE this parser reports instead. Raised exactly where
@@ -7519,7 +7537,12 @@ impl BlockParser {
             .parent()
             .map(|p| p.to_path_buf())
             .unwrap_or_default();
-        std::fs::read_to_string(base.join(path)).map_err(|_| {
+        let full = base.join(path);
+        let read = std::fs::read_to_string(&full);
+        if read.is_ok() {
+            self.record_file_dependency(&full);
+        }
+        read.map_err(|_| {
             // Unlike raw's io.error_string (InputError: prefix), the csv
             // path formats the bare OSError.
             Box::new(self.directive_block_message(
@@ -8606,6 +8629,7 @@ impl BlockParser {
                     // hazard; keep verbatim minus trailing newline.
                     text = t.trim_end_matches('\n').to_string();
                     source_attr = Some(path.clone());
+                    self.record_file_dependency(&full);
                 }
                 Err(_) => {
                     out.push(self.directive_run_message(

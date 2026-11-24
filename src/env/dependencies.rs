@@ -15,9 +15,10 @@
 //! read, makes the document outdated.
 //!
 //! **Scope.** Sphinx notes a dependency for every file-inserting construct:
-//! images, `figure`, `literalinclude`, `include`, `download`, `docutils.conf`
-//! and the gettext catalogs. This crate covers images and — since wave 4.5 —
-//! `include`. The remaining producers are a matter of extending the record
+//! images, `figure`, `literalinclude`, `include`, `csv-table :file:`, `raw
+//! :file:`, `download`, `docutils.conf` and the gettext catalogs. This crate
+//! covers images, `literalinclude`, `include`, and the `csv-table` and `raw`
+//! files. The remaining producers are a matter of extending the record
 //! stream from wherever their nodes are collected.
 
 use std::path::Path;

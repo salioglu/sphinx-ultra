@@ -808,6 +808,68 @@ fn touching_an_embedded_image_re_reads_only_the_page_that_embeds_it() {
     );
 }
 
+/// docutils records the files `csv-table :file:` and `raw :file:` read
+/// (`settings.record_dependencies.add(source)`, `tables.py`, `misc.py`),
+/// which Sphinx's `DependenciesCollector` notes: touching either re-reads
+/// the page that reads it, and only that page. Probed on Sphinx 9.1.0: a
+/// warm build after the edit re-reads the page (`1 changed`) and indexes
+/// the new cell's word.
+#[test]
+fn touching_a_csv_or_raw_file_re_reads_the_page_that_reads_it() {
+    let src = temp_source(
+        "deps-csv-raw",
+        &[
+            ("index.rst", "Index\n=====\n\n.. toctree::\n\n   page\n"),
+            (
+                "page.rst",
+                "Page\n====\n\n.. csv-table:: T\n   :file: data.csv\n\n\
+                 .. raw:: html\n   :file: snippet.html\n",
+            ),
+            ("data.csv", "a, b\n"),
+            ("snippet.html", "<p>raw</p>\n"),
+        ],
+    );
+    let out = out_dir("deps-csv-raw-out");
+    let hits = |run: &Output, expected: &str, why: &str| {
+        assert!(
+            stderr_of(run).contains(expected),
+            "{why}, stderr: {}",
+            stderr_of(run)
+        );
+    };
+    let run1 = build(&src, &out, &["--incremental"]);
+    assert!(run1.status.success(), "stderr: {}", stderr_of(&run1));
+    hits(
+        &build(&src, &out, &["--incremental"]),
+        "Cache hits: 2",
+        "an unchanged project reads nothing",
+    );
+
+    std::fs::write(src.join("data.csv"), "a, uniquecsvword\n").unwrap();
+    hits(
+        &build(&src, &out, &["--incremental"]),
+        "Cache hits: 1",
+        "the csv file's page is re-read",
+    );
+    let terms = search_value(&out)["terms"].clone();
+    assert!(
+        terms.get("uniquecsvword").is_some(),
+        "the new cell is indexed: {terms}"
+    );
+    hits(
+        &build(&src, &out, &["--incremental"]),
+        "Cache hits: 2",
+        "the re-read settled it",
+    );
+
+    std::fs::write(src.join("snippet.html"), "<p>uniquerawword</p>\n").unwrap();
+    hits(
+        &build(&src, &out, &["--incremental"]),
+        "Cache hits: 1",
+        "the raw file's page is re-read",
+    );
+}
+
 /// The include dependency + orphan wiring, end to end (wave 4.5 T12,
 /// [INC PROBE 6] matrix): a cold build records the include targets as
 /// dependencies, a warm build reads nothing, touching an included `.rst`
