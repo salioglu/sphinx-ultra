@@ -31,7 +31,7 @@ use crate::env::resolve::{NitpickConfig, Resolver};
 use crate::env::toctree::{resolve_body_toctrees, ToctreeLocations};
 use crate::env::BuildEnvironment;
 use crate::intersphinx::Intersphinx;
-use crate::rst::digits::decimal_digit_value;
+use crate::pyformat::{py_float, py_int_error};
 use crate::rst::{LogLocation, ParseOptions, ParseOutput, ReadConfig, RegistryExport, SphinxCrash};
 use crate::transforms::post::{apply_post_transforms, PostTransformConfig};
 use crate::transforms::reporter::{render_records, LogRecord};
@@ -292,100 +292,6 @@ fn civil_year(seconds: i64) -> i64 {
     let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
     let month_index = (5 * doy + 2) / 153;
     yoe + era * 400 + i64::from(month_index >= 10)
-}
-
-/// The text `float()` and `int()` read in place of the `str` `text`
-/// (CPython's `_PyUnicode_TransformDecimalAndSpaceToASCII`): each
-/// character below DEL as it is, whitespace past ASCII a space, a decimal
-/// digit of any script ([`decimal_digit_value`]) its ASCII digit, and the
-/// first other character a `?`, which ends the text. Neither reads a `?`,
-/// so such a text is rejected.
-fn py_number_ascii(text: &str) -> String {
-    let mut ascii = String::with_capacity(text.len());
-    for c in text.chars() {
-        if u32::from(c) < 127 {
-            ascii.push(c);
-        } else if crate::utils::py_isspace(c) {
-            ascii.push(' ');
-        } else if let Some(digit) =
-            decimal_digit_value(c).and_then(|value| char::from_digit(value, 10))
-        {
-            ascii.push(digit);
-        } else {
-            ascii.push('?');
-            break;
-        }
-    }
-    ascii
-}
-
-/// CPython's `Py_ISSPACE`, the whitespace `float()` and `int()` strip
-/// around the text [`py_number_ascii`] gives: ASCII's six, not the C0
-/// separators `\x1c`-`\x1f` that `str.isspace` also admits.
-fn py_ascii_space(c: char) -> bool {
-    matches!(c, ' ' | '\t' | '\n' | '\x0b' | '\x0c' | '\r')
-}
-
-/// Python's `float(text)` for a `str` (CPython's `PyFloat_FromString`):
-/// the text made ASCII ([`py_number_ascii`]), its single underscores
-/// dropped, each between two digits (PEP 515), ASCII whitespace stripped
-/// around it ([`py_ascii_space`]), then a sign and `inf`, `infinity` or
-/// `nan` in any case, or a decimal literal of any number of digits.
-/// `None` for what it rejects.
-fn py_float(text: &str) -> Option<f64> {
-    let chars: Vec<char> = py_number_ascii(text).chars().collect();
-    let grouped = chars.iter().enumerate().all(|(at, &c)| {
-        c != '_'
-            || (at > 0
-                && chars[at - 1].is_ascii_digit()
-                && chars.get(at + 1).is_some_and(char::is_ascii_digit))
-    });
-    if !grouped {
-        return None;
-    }
-    chars
-        .into_iter()
-        .filter(|&c| c != '_')
-        .collect::<String>()
-        .trim_matches(py_ascii_space)
-        .parse()
-        .ok()
-}
-
-/// `sys.get_int_max_str_digits()` on CPython 3.12, which Sphinx leaves at
-/// its default: the most digits `int()` reads in base 10.
-const INT_MAX_STR_DIGITS: usize = 4300;
-
-/// The message of the `ValueError` Python's `int(text)` raises for the
-/// `str` `text` in base 10 (CPython's `PyLong_FromUnicodeObject`), `None`
-/// when it reads it. The text made ASCII ([`py_number_ascii`]) must be
-/// ASCII whitespace ([`py_ascii_space`]), a sign, digits that single
-/// underscores may group (PEP 515), and ASCII whitespace, or it is an
-/// `invalid literal`, named by its `repr()` cut to 200 characters
-/// (`%.200R`); and once it is, more than [`INT_MAX_STR_DIGITS`] digits,
-/// leading zeros among them, are past the limit.
-fn py_int_error(text: &str) -> Option<String> {
-    let ascii = py_number_ascii(text);
-    let unsigned = ascii.trim_start_matches(py_ascii_space);
-    let unsigned = unsigned.strip_prefix(['+', '-']).unwrap_or(unsigned);
-    let end = unsigned
-        .find(|c: char| !c.is_ascii_digit() && c != '_')
-        .unwrap_or(unsigned.len());
-    let (number, rest) = unsigned.split_at(end);
-    let reads = !number.is_empty()
-        && number.split('_').all(|group| !group.is_empty())
-        && rest.chars().all(py_ascii_space);
-    if !reads {
-        let literal: String = crate::utils::py_repr_str(text).chars().take(200).collect();
-        return Some(format!("invalid literal for int() with base 10: {literal}"));
-    }
-    let digits = number.len() - number.matches('_').count();
-    (digits > INT_MAX_STR_DIGITS).then(|| {
-        format!(
-            "Exceeds the limit ({INT_MAX_STR_DIGITS} digits) for integer string conversion: \
-             value has {digits} digits; use sys.set_int_max_str_digits() to increase the limit"
-        )
-    })
 }
 
 /// One document's read: the doctree and the docutils document state beside
