@@ -544,10 +544,10 @@ async fn run_build(args: RunArgs) -> Result<i32> {
         // not a record, not in the `-w` file, not counted by `-W`.
         let docutils_conf = confdir.join("docutils.conf");
         if docutils_conf.is_file() {
-            eprintln!(
-                "NOTICE: docutils.conf is not read by sphinx-ultra: {}",
+            to_stderr(&format!(
+                "NOTICE: docutils.conf is not read by sphinx-ultra: {}\n",
                 docutils_conf.display()
-            );
+            ));
         }
     }
 

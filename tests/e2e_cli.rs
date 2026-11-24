@@ -2696,6 +2696,33 @@ fn docutils_conf_prints_a_notice_outside_the_stream() {
     assert_eq!(page, control_page, "the build is otherwise unchanged");
 }
 
+/// The notice is written as the warning stream writes stderr: a stderr
+/// whose reader is gone (a broken pipe) loses it, and the build goes on.
+#[test]
+fn docutils_conf_notice_survives_a_closed_stderr() {
+    let src = temp_source(
+        "docutils-conf-closed-stderr",
+        &[("index.rst", "Title\n=====\n\nBody.\n")],
+    );
+    std::fs::write(src.join("docutils.conf"), "[general]\n").unwrap();
+    let out = out_dir("docutils-conf-closed-stderr");
+    let mut child = bin()
+        .args([src.to_str().unwrap(), out.to_str().unwrap(), "-q"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("binary should run");
+    // Close the pipe's read end before the build writes the notice.
+    drop(child.stderr.take());
+    let status = child.wait().expect("the build ends");
+    assert_eq!(
+        status.code(),
+        Some(0),
+        "a closed stderr does not abort the build"
+    );
+    assert!(out.join("index.html").is_file());
+}
+
 #[test]
 fn nitpicky_flags_broken_refs() {
     let src = temp_source(
