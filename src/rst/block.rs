@@ -2712,7 +2712,16 @@ impl BlockParser {
                         self.state.set_id(&mut target);
                     } else {
                         // `add_target` stamps `target.line = lineno`, the
-                        // machine's count ([`Self::line_bias`]).
+                        // machine's count ([`Self::line_bias`]). In a glossary
+                        // definition Sphinx's count is the definition
+                        // machine's, which the reporter, finding no source on
+                        // the target yet, reads back against the top-level
+                        // input: a duplicate name on `index.rst:13` in a
+                        // definition, after an include that precedes the
+                        // glossary, is located at `index.rst:6` there and at
+                        // `index.rst:13` here, part of the accepted divergence
+                        // "Glossary definitions, one class"
+                        // (`docs/IMPLEMENTATION_STATUS.md`).
                         let reported = self.state.note_explicit_target(
                             &mut target,
                             DocLoc::at(line.source, lineno + self.line_bias),
@@ -8236,14 +8245,34 @@ impl BlockParser {
             // too, though their count below does not use the offset: a line
             // the input does not hold, read by an include in the definition,
             // a csv cell or another detached parse, keeps its own location,
-            // where Sphinx locates it by the line the definition's machine
-            // counts (`abs_line_number()`). For an include in the definition
-            // that is a known divergence: the machine counts the inserted
-            // lines as the definition's, after the include's own line and
-            // `insert_input`'s padding line (probe
-            // `bare_target_from_include_in_definition`, Sphinx 9.1.0: a bare
-            // target on `part.inc:5`, included on `z.rst:9`, prints
-            // `part.inc:15` there, 9 + 1 + 5, and `part.inc:5` here).
+            // where Sphinx locates it by the line the definition's machine,
+            // or one nested in it, counts (`abs_line_number()`), with no
+            // source in a container without `document`. Every such case is
+            // part of the accepted divergence "Glossary definitions, one
+            // class" (`docs/IMPLEMENTATION_STATUS.md`). Its known shapes,
+            // probed on Sphinx 9.1.0:
+            // - a bare target on `part.inc:5`, the file included in the
+            //   definition on `z.rst:9`: the machine counts the included lines
+            //   after the last line of the include's directive block (its
+            //   option lines and any blank lines that close it) and
+            //   `insert_input`'s padding line, so its record is located at
+            //   `part.inc:15` there (9 + 1 + 5), or `part.inc:16` with a blank
+            //   line and a comment after the include, and at `part.inc:5`
+            //   here;
+            // - that file included inside a note in the definition, on
+            //   `z.rst:11`: the note has no `document`, so the record is
+            //   located at `<unknown>:17` there (11 + 1 + 5), and at
+            //   `part.inc:5` here;
+            // - a bare target on `z.rst:11` closing a definition of a glossary
+            //   in a csv-table cell: the definition's machine starts at its
+            //   offset in the cell's own lines, so the record is located at
+            //   `z.rst:6` there (3 + 2 + 1), and at `z.rst:11` here.
+            // A line after such an include, which the input holds, is counted
+            // below by its own line where Sphinx's machine adds the inserted
+            // lines (a target on `index.rst:11` is located at `index.rst:18`
+            // there), the same divergence. The fix is a port of Sphinx's
+            // per-definition nested parse (`nested_parse_to_nodes` with
+            // `offset=definition.items[0][1]`).
             let Some(&offset) = offsets.get(&(line.source, line.lineno)) else {
                 continue;
             };

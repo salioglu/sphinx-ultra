@@ -305,22 +305,40 @@ each found by probing Sphinx 9.1.0 and documented at its code site:
   (final position 8 in Sphinx, 0 here); an empty `line` (line 0 in Sphinx).
 - Targets and includes: an include inside a directive's content reads a
   shifted position (Sphinx `part.inc:2`, here `index.rst:14`); a target after
-  an include inside a disconnected list keeps the top-level index; a target
-  after an include *inside* a glossary definition prints its line in its file
-  (Sphinx counts the inserted lines); so does a bare target closing a file
-  included inside a glossary definition (Sphinx's definition machine counts
-  the included lines as its own, after the include's line and
-  `insert_input`'s padding line: `part.inc:15`, here `part.inc:5`; code
-  site: the guard in `resolve_absolute_lines`, `src/rst/block.rs`; probe
-  `bare_target_from_include_in_definition`); a duplicate explicit target
-  name in a glossary definition after an include prints the target's own
-  line (Sphinx reads the definition's count back against the top-level
-  input);
+  an include inside a disconnected list keeps the top-level index;
   `parsed-literal` line numbers after or through an include (a small
   follow-up with `note_absolute_line`); a bare target ending a csv-table cell
   with a duplicate label prints the document where Sphinx prints
   `<unknown>`; duplicate labels on a plain grid or simple table and an
   `invalid index entry` in a csv cell are located by their spans in stage M.
+- Glossary definitions, one class: records inside a glossary definition
+  that Sphinx locates by the line the definition's own state machine counts,
+  and that are located here at the line's own location. `Glossary.run`
+  parses each definition as a fresh `StringList` at its input offset, the
+  offset of its first line in its own line list, so that machine also counts
+  the lines `insert_input` inserts, padding lines included, after the last
+  line of an include's directive block in the definition (its option lines
+  and any blank lines that close it); a node in a container without
+  `document` keeps no source (`<unknown>`), and the reporter reads a line it
+  gets without a source back against the top-level input. Known shapes: a
+  bare target on `part.inc:5`, the file included in a definition on
+  `z.rst:9` (Sphinx `part.inc:15`, 9 + 1 padding line + 5, or `part.inc:16`
+  with a blank line and a comment after the include; here `part.inc:5`);
+  the same file included inside a note in a definition, on `z.rst:11`
+  (Sphinx `<unknown>:17`, 11 + 1 + 5; here `part.inc:5`); a bare target on
+  `z.rst:11` closing a definition of a glossary inside a csv-table cell
+  (Sphinx `z.rst:6`, that is 3 + 2 + 1, 3 being the definition's offset in
+  the cell's own lines; here `z.rst:11`, and `z.rst:9` at the merge-base
+  `a3c606a`: the value moved in M2 wave 5a-1 and is wrong both times); a
+  target on `index.rst:11` after an include in a definition (Sphinx
+  `index.rst:18`, here `index.rst:11`); a duplicate explicit target name on
+  `index.rst:13` in a definition, after an include that precedes the
+  glossary (Sphinx `index.rst:6`, the reporter reading the definition's
+  count back; here `index.rst:13`). The exact fix is a port of Sphinx's
+  per-definition nested parse (`nested_parse_to_nodes` with
+  `offset=definition.items[0][1]`). Code sites (`src/rst/block.rs`): the
+  guard and the `own_line` count in `resolve_absolute_lines`, and the
+  hyperlink target's `note_explicit_target` call.
 - Messages: duplicate inline-target messages are placed after the paragraph
   (docutils: before) and located at the text's line instead of the top-level
   machine position; a substitution definition reports `Problematic content`
