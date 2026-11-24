@@ -1390,7 +1390,7 @@ fn resolved_doctrees_match_oracle() {
 }
 
 /// The exemption arithmetic the docs quote (docs/IMPLEMENTATION_STATUS.md,
-/// docs/ROADMAP.md, CHANGELOG.md, README.md), computed from the tables and the
+/// docs/ROADMAP.md, README.md), computed from the tables and the
 /// fixture rather than by hand (panel fix round B, [29]): how many
 /// documents' resolved doctrees and how many projects' warning streams are
 /// compared byte-for-byte, and how many documents are skipped wholesale.
@@ -1473,7 +1473,7 @@ fn exemption_arithmetic_matches_the_documented_numbers() {
          ({byte_exact_documents} documents byte-for-byte), {} warning-exempt projects \
          ({byte_exact_warning_projects} warning streams byte-for-byte) — update the \
          constants AND the doc sites (docs/IMPLEMENTATION_STATUS.md, docs/ROADMAP.md, \
-         CHANGELOG.md, README.md)",
+         README.md)",
         projects.len(),
         documents.len(),
         wholesale.len(),

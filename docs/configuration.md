@@ -37,9 +37,14 @@ a warning that names the line:
 conf.py:4: unsupported value for 'html_theme' dropped (unsupported expression): os.environ.get(...)
 ```
 
-These parser warnings are logged but **not** counted toward `-W` and not
-written to the `-w` file yet. Executing a dynamic `conf.py` inside the
-project's virtualenv is the M5 Python sidecar.
+These parser warnings go to stderr (with a log prefix) but are **not** part of
+the warning stream: they are not counted toward `-W` and not written to the
+`-w` file. Executing a dynamic `conf.py` inside the project's virtualenv is the
+M5 Python sidecar.
+
+A `docutils.conf` next to `conf.py` is not read. When one exists, sphinx-build
+mode prints `NOTICE: docutils.conf is not read by sphinx-ultra: <path>` on
+stderr, again outside the warning stream.
 
 Every assignment that parses is kept as its literal in `conf_values`, which is
 what the `.buildinfo` config hash is computed from (so the hash matches
@@ -49,7 +54,13 @@ what the `.buildinfo` config hash is computed from (so the hash matches
 
 | Key | Effect | Since |
 |---|---|---|
-| `project`, `version`, `release`, `copyright`, `author`, `language` | Metadata; `project`/`version` go into `objects.inv`'s header. `version` and `release` default to empty, as in Sphinx | 0.1 / 0.6 |
+| `project`, `version`, `release`, `copyright`, `author`, `language` | Metadata; `project`/`version` go into `objects.inv`'s header. `version` and `release` default to empty, as in Sphinx. `language` picks image language variants (`figure_language_filename` at its default) and `|today|`'s format, which is English-only | 0.1 / 0.6 / wave 5a-1 |
+| `today`, `today_fmt` | The `|today|` substitution: `today` verbatim, else the date (`SOURCE_DATE_EPOCH` honoured) formatted with `today_fmt` | wave 5a-1 |
+| `suppress_warnings` | Warning types (`ref`, `ref.ref`, `docutils`, `toc.not_included`, …) whose records are dropped before they are printed or counted, as in Sphinx | wave 5a-1 |
+| `show_warning_types` | Print the ` [type.subtype]` suffix on records that have one (default on) | wave 5a-1 |
+| `keep_warnings` | Keep docutils' `system_message`s in the doctree, as `FilterSystemMessages` does | wave 5a-1 |
+| `primary_domain` | The domain bare object directives and roles resolve in (default `py`) | wave 5a-1 |
+| `highlight_language`, `trim_doctest_flags` | The `literal_block` language stamp (`HighlightLanguageTransform`) and the doctest-flag trimming | wave 5a-1 |
 | `root_doc` / `master_doc` | Root of the toctree graph | 0.5 |
 | `include_patterns`, `exclude_patterns` | Source discovery, with Sphinx 9.1's exact pattern semantics ([SPHINX_PATTERNS_COMPATIBILITY.md](SPHINX_PATTERNS_COMPATIBILITY.md)) | 0.4 |
 | `source_encoding` | Encoding of files inserted by `include`/`literalinclude` (default `utf-8-sig`); a non-UTF-8 value prints Sphinx's deprecation warning | 0.5 |
@@ -59,12 +70,13 @@ what the `.buildinfo` config hash is computed from (so the hash matches
 | `tls_verify`, `tls_cacerts`, `user_agent` | The HTTP settings used when fetching inventories | 0.5 |
 | `maximum_signature_line_length`, `python_maximum_signature_line_length`, `python_trailing_comma_in_multi_line_signatures`, `python_display_short_literal_types`, `python_use_unqualified_type_names`, `toc_object_entries`, `toc_object_entries_show_parents`, `add_function_parentheses`, `add_module_names`, `strip_signature_backslash` | Object-signature rendering and toc entries for `py:*` objects | 0.5 |
 | `modindex_common_prefix` | `py-modindex` grouping | 0.5 |
-| `validate_directives` | Run the built-in directive/role validators (default on; `-D validate_directives=0` disables) | 0.4 |
+| `validate_directives` | Run the built-in directive/role validators in the native `build` subcommand (default on; `-D validate_directives=0` disables). Always off in sphinx-build mode, which prints docutils' and Sphinx's own diagnostics instead | 0.4 / wave 5a-1 |
 | `fail_on_warning` | Same as `-W` | 0.1 |
 | `parallel_jobs` | Read-phase parallelism (`-j`) | 0.1 |
 | `doctree_dir` | Cache directory (`-d`) | 0.4 |
 | `max_cache_size_mb`, `cache_expiration_hours` | Cache retention | 0.4 |
-| `html_context`, `tags` | Only hashed into `.buildinfo` (no templates, no `only::` evaluation yet) | 0.5 / 0.6 |
+| `tags` | Tags (with `-t`) that `.. only::` expressions are evaluated against, beside the builder's `html`, `format_html` and `builder_html`; also hashed into `.buildinfo` | 0.6 / wave 5a-1 |
+| `html_context` | Only hashed into `.buildinfo` (no templates yet) | 0.5 |
 
 Keys that are **parsed and hashed into `.buildinfo` but otherwise inert**
 until the HTML writer and theme engine land: `html_theme`,
@@ -94,10 +106,14 @@ sphinx-ultra docs _build -D project="My Docs" -D numfig=1 -D exclude_patterns=_b
   (`html_context.name=value`). Keys that Sphinx keeps duplicated
   (`html_theme`/`theme.name`, `templates_path`/`template_dirs`,
   `html_static_path`/`static_dirs`) are synced. An unknown key warns with
-  sphinx-build's text and counts toward `-W`.
+  sphinx-build's text and counts toward `-W`. `keep_warnings` and
+  `trim_doctest_flags` take Sphinx's strict boolean grammar;
+  `suppress_warnings` and `show_warning_types` go through this crate's typed
+  coercion, which is not Sphinx's `convert_overrides` for every spelling.
 - `-A name=value` sets an `html_context` entry.
-- `-t TAG` defines a tag. Tags reach the `.buildinfo` hash; the `only::`
-  directive stores its expression but does not evaluate it yet.
+- `-t TAG` defines a tag. `.. only::` expressions are evaluated against the
+  tags and the builder's `html`, `format_html` and `builder_html`, and the tags
+  reach the `.buildinfo` hash.
 - `-n` sets `nitpicky`.
 
 ## YAML / JSON schema
@@ -124,13 +140,24 @@ source_encoding: "utf-8-sig"
 # Build behaviour
 parallel_jobs: 8              # default: number of cores
 fail_on_warning: false
-validate_directives: true
+validate_directives: true     # native build only; off in sphinx-build mode
 nitpicky: false
 nitpick_ignore: []            # [["py:class", "object"]]
 nitpick_ignore_regex: []
 doctree_dir: null             # default: OUTPUT/.sphinx-ultra-cache
 max_cache_size_mb: 500
 cache_expiration_hours: 24
+
+# Warning stream and reading
+suppress_warnings: []         # ["docutils", "ref.ref", ...]
+show_warning_types: true
+keep_warnings: false
+primary_domain: "py"          # null: no default domain
+highlight_language: "default"
+trim_doctest_flags: true
+today: ""
+today_fmt: null               # default: "%b %d, %Y"
+tags: []                      # also -t; evaluated by .. only::
 
 # Numbering
 numfig: false

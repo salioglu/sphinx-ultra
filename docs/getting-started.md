@@ -7,8 +7,9 @@ today. For the status of every subsystem see
 [configuration.md](configuration.md).
 
 > **Before you start:** the project is pre-1.0. The build environment,
-> cross-references, warnings and the `searchindex.js` / `objects.inv` /
-> `.buildinfo` artifacts are real and verified against Sphinx 9.1.0, but each
+> cross-references, Sphinx's warnings and docutils' diagnostics, and the
+> `searchindex.js` / `objects.inv` / `.buildinfo` artifacts are real and
+> verified against Sphinx 9.1.0, but each
 > HTML page is still a placeholder (the escaped source text). Use sphinx-ultra
 > today to validate a documentation tree the way `sphinx-build -W` does, not to
 > publish a site.
@@ -85,6 +86,11 @@ Everything a project's *references* depend on is computed for real: a
 `:ref:` to a missing label, a toctree entry that does not exist, a duplicate
 label, a `py:function` registered twice, or a dangling `:py:class:` under
 `-n` all warn with Sphinx's text, location and `[type.subtype]` category.
+docutils' own diagnostics — an unknown directive or role, a missing include,
+an unknown target name, a footnote without a reference — are printed too,
+with the same text, location and order as under `sphinx-build`
+(`path:line: ERROR: … [docutils]`). The warning stream goes to stderr and, with
+`-w FILE`, to the file, byte for byte the same.
 
 ## The two command-line modes
 
@@ -111,7 +117,7 @@ sphinx-ultra -M clean SOURCEDIR OUTPUTDIR     # empties OUTPUTDIR
 | `-n` | Nitpicky: warn about every unresolved reference |
 | `-q` | Quiet: nothing on stdout (the closing summary goes) |
 | `-E` | Discard the saved environment and re-read every document |
-| `-a` | Write all files (here: re-read everything, see below) |
+| `-a` | Write all files (here: re-read everything, so every document's read-phase warnings print again, where Sphinx re-reads only outdated documents) |
 | `-T` | Show a traceback on an unhandled error |
 | `-j N` / `-j auto` | Parallel jobs for the read phase |
 | `-W` | Turn warnings into errors: exit 1 after the build if any warning was logged |
@@ -125,11 +131,17 @@ re-reads only documents that are new, changed, removed, or that depend on a
 file that changed (an image, an included file). `-E` discards the saved
 environment; `-a` re-reads everything.
 
-Exit codes follow sphinx-build: `0` on success (with or without warnings),
-`1` on build errors or on `-W` with warnings, `2` on usage errors, a missing
-`conf.py`, an unsupported builder, or an invalid configuration. One
-deliberate difference: a document that cannot be read is a build error here
-and exits 1, where sphinx-build logs an error and still exits 0.
+Exit codes follow sphinx-build: `0` on success (with or without warnings —
+docutils `ERROR` and `CRITICAL` records included, as in Sphinx), `1` on `-W`
+with any warning or record, `2` on usage errors, a missing `conf.py`, an
+unsupported builder, or an invalid configuration. One deliberate difference:
+a document that cannot be read or decoded is a build error here and exits 1,
+where sphinx-build logs an error and still exits 0.
+
+Two kinds of stderr lines are not warnings and never reach `-w` or `-W`: the
+`conf.py` parser's notes about constructs it dropped, and a one-line notice
+when a `docutils.conf` (which is not read) sits next to `conf.py`.
+`suppress_warnings` and `show_warning_types` in `conf.py` work as in Sphinx.
 
 Two caveats. A source directory literally named `build`, `clean` or `stats`
 must be written with a path prefix (`sphinx-ultra ./build _build`), because
@@ -173,6 +185,17 @@ entries are deliberately excluded from the fingerprint. Cached documents
 still write their page on every build, so a warm build always produces a
 complete output tree.
 
+A document that is not re-read prints none of its read-phase warnings again;
+a re-read one prints all of them. Consistency and cross-reference warnings,
+though, are recomputed for every document on every build, where
+`sphinx-build -b html` prints them only for the documents it rewrites, so a
+warm `-W` build with a dangling reference fails where Sphinx's passes. A
+`-t` tag, a configuration change Sphinx does not rebuild the environment for,
+`-a`, and cache entries older than `cache_expiration_hours` re-read documents
+Sphinx would keep. Both differences go with the builder work of M2 wave 5c.
+Upgrading to a version with a new cache format makes the next build a cold
+one.
+
 ## Troubleshooting
 
 **More detail.** `sphinx-ultra docs _build -vv`, or `RUST_LOG=debug
@@ -189,13 +212,15 @@ may not equal or contain the source directory, as in sphinx-build.
 **`unknown config value 'x' in override, ignoring`.** `-D` keys are checked
 against the configuration schema; this warning counts toward `-W`.
 
-**A broken `include` path builds clean.** Diagnostics that docutils records
-inside the doctree (a missing or circular include, an unknown directive) are
-not printed yet. This is a known limitation, listed in
-[IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md#known-divergences-from-sphinx-910-m2-wave-45).
+**`Unknown directive type` / `Unknown interpreted text role` errors.**
+Listing an extension has no effect until the extension ABI (M4), so the
+directives and roles an extension provides are unknown, and docutils reports
+each use, as `sphinx-build` would without the extension.
 
-**Listed extensions do nothing yet.** Listing an extension has no effect
-until the extension ABI (M4).
+**`Unknown target name` or `Undefined substitution referenced` for a name
+your `rst_epilog` or `rst_prolog` defines.** Neither is applied yet (M2 wave
+5a-2); Sphinx resolves those names. The open divergences are listed in
+[IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md#known-divergences-from-sphinx-910-m2-wave-5a-1).
 
 **Markdown pages are empty.** `.md` files are discovered and get a placeholder
 page, but no Markdown structure is parsed yet (MyST is M2 wave 6).
