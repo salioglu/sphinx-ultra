@@ -392,7 +392,12 @@ def test_discovery_ignores_appended_cases(tmp_path):
         def one_fewer(entry, items, short=short, pin=pin):
             return items[: pin - 1] if entry is short else items
 
-        with pytest.raises(DiscoveryError, match=short["name"]):
+        # `_pinned`'s own message: the env set's short copy also trips its
+        # document floor, whose message names the set too.
+        with pytest.raises(
+            DiscoveryError,
+            match=rf"^{re.escape(short['name'])}: expected at least {pin} (?:cases|projects), found {pin - 1}$",
+        ):
             discovered(copied_sources(f"short-{short['name']}", one_fewer))
 
 
