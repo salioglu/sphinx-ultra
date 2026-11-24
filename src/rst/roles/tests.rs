@@ -327,7 +327,7 @@ fn resolve_role_matches_sphinx_domains_role() {
             resolve(sphinx_ctx(Some(DomainId::Py), true), written),
             (
                 Resolution::Found {
-                    role: External,
+                    role: External(written.to_string()),
                     call_name: written.to_string(),
                     info: None,
                 },

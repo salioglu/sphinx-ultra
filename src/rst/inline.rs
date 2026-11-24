@@ -824,9 +824,19 @@ impl<'a> Inliner<'a> {
     /// is loaded ([`roles::resolve_role`]); without it the name is an
     /// unknown domain's.
     ///
-    /// The name is the one the author wrote, not the lowercased one: the
-    /// inventory name inside it is case-sensitive
-    /// (`IntersphinxRole.orig_name`).
+    /// `IntersphinxRole.run` (`_resolve.py:378-485`) reads the inventory,
+    /// domain and role names from `orig_name`, the name the dispatcher was
+    /// given as the document wrote it ([`RoleFn::External`]), not from the
+    /// lowercased name `call` settled on: all three are case-sensitive
+    /// (`:external+MyInv:` names the inventory `MyInv`, and
+    /// `:external:Py:class:` a domain `Py` there is none of). It calls the
+    /// domain's role with `self.text`, the text unescaped, so there an
+    /// escaped `\<` opens an explicit target and an escaped `\!` disables
+    /// the reference (both probed against Sphinx 9.1.0). `run` opens with
+    /// `assert self.name == self.orig_name.lower()`, which crashes Sphinx
+    /// with an `AssertionError` when the role is called by another name —
+    /// through a custom role, or as a default role named with capitals;
+    /// that crash is not modelled.
     ///
     /// A name that does not name a usable role produces no content at all in
     /// Sphinx, and a warning located at the role. Here the warning text is
@@ -834,22 +844,25 @@ impl<'a> Inliner<'a> {
     /// grammar but not which inventories loaded, and Sphinx checks the
     /// inventory *first* — so deferring the whole report to resolution is
     /// what keeps the precedence between the two right.
-    fn emit_external_xref(&mut self, call: &RoleCall<'_>) {
-        match crate::intersphinx::external_role(call.name) {
+    fn emit_external_xref(&mut self, orig_name: &str, call: &RoleCall<'_>) {
+        match crate::intersphinx::external_role(orig_name) {
             crate::intersphinx::ExternalRole::Xref {
                 inventory,
                 domain,
                 role,
             } => {
-                // `IntersphinxRole.invoke_role` calls the domain's role with
-                // its full name.
+                // `role_func(f'{domain_name}:{role_name}', self.rawtext,
+                // self.text, ...)` (`_resolve.py:465-473`): the domain's
+                // role, called with its full name and the unescaped text.
                 let xref_role = roles::DomainId::from_name(&domain)
                     .map_or(XrefRole::base(), |domain| {
                         XrefRole::of_domain(domain, &role)
                     });
                 let name = format!("{domain}:{role}");
+                let text = unescape(call.escaped, false);
                 let call = RoleCall {
                     name: &name,
+                    escaped: &text,
                     ..*call
                 };
                 let nodes = roles::sphinx::xref(
@@ -1086,7 +1099,7 @@ impl<'a> Inliner<'a> {
                 let nodes = roles::sphinx::xref(&call, &xref_role, &env, self.state, None);
                 self.push_nodes(nodes);
             }
-            RoleFn::External => self.emit_external_xref(&call),
+            RoleFn::External(orig_name) => self.emit_external_xref(orig_name, &call),
         }
     }
 
@@ -1769,6 +1782,84 @@ mod tests {
             attr(xref, "inventory"),
             None,
             "`external:` names no inventory"
+        );
+    }
+
+    /// `IntersphinxRole` reads its inventory, domain and role names from
+    /// the name as written (`orig_name`, `_resolve.py:378-380`), not the
+    /// lowercased one: an inventory keeps its capitals, and a capital in
+    /// the domain or the role name names neither (probed against Sphinx
+    /// 9.1.0: with an `intersphinx_mapping` key `MyInv`, the first
+    /// resolves, and the other two warn in these words).
+    #[test]
+    fn an_external_role_reads_its_names_as_written() {
+        let nodes = sphinx_nodes(":external+MyInv:py:class:`int`");
+        assert_eq!(nodes.len(), 1);
+        let xref = &nodes[0];
+        assert_eq!(xref.kind, "pending_xref");
+        assert_eq!(
+            attr(xref, "inventory"),
+            Some(&AttrValue::Str("MyInv".into()))
+        );
+        assert_eq!(attr(xref, "refdomain"), Some(&AttrValue::Str("py".into())));
+        assert_eq!(attr(xref, "reftype"), Some(&AttrValue::Str("class".into())));
+        for (text, expected) in [
+            (
+                ":external:Py:class:`int`",
+                "domain for external cross-reference not found: 'Py'",
+            ),
+            (
+                ":external:py:Class:`int`",
+                "role for external cross-reference not found in domain 'py': 'Class'",
+            ),
+        ] {
+            let nodes = sphinx_nodes(text);
+            assert_eq!(nodes.len(), 1, "{text}");
+            assert_eq!(
+                attr(&nodes[0], "intersphinx_role_error"),
+                Some(&AttrValue::Str(expected.to_string())),
+                "{text}"
+            );
+        }
+    }
+
+    /// The domain's role gets `IntersphinxRole.text`, the text unescaped
+    /// (`_resolve.py:465-473`), so there an escaped `\<` opens an explicit
+    /// target and an escaped `\!` disables the reference, where the same
+    /// role called directly keeps both literal (probed against Sphinx
+    /// 9.1.0: `x \<int>` links `int` titled `x`, `\!int` is a plain
+    /// `literal`).
+    #[test]
+    fn an_external_role_gives_the_domain_role_the_unescaped_text() {
+        let nodes = sphinx_nodes(":external+myinv:py:class:`x \\<int>`");
+        assert_eq!(nodes.len(), 1);
+        let xref = &nodes[0];
+        assert_eq!(xref.kind, "pending_xref");
+        assert_eq!(attr(xref, "refexplicit"), Some(&AttrValue::Int(1)));
+        assert_eq!(attr(xref, "reftarget"), Some(&AttrValue::Str("int".into())));
+        assert_eq!(xref.astext(), "x");
+        assert_eq!(
+            attr(xref, "inventory"),
+            Some(&AttrValue::Str("myinv".into()))
+        );
+
+        let direct = sphinx_nodes(":py:class:`x \\<int>`");
+        assert_eq!(attr(&direct[0], "refexplicit"), Some(&AttrValue::Int(0)));
+        assert_eq!(
+            attr(&direct[0], "reftarget"),
+            Some(&AttrValue::Str("x <int>".into()))
+        );
+
+        let nodes = sphinx_nodes(":external+myinv:py:class:`\\!int`");
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].kind, kinds::LITERAL);
+        assert_eq!(nodes[0].astext(), "int");
+        assert_eq!(attr(&nodes[0], "intersphinx"), None);
+        let direct = sphinx_nodes(":py:class:`\\!int`");
+        assert_eq!(direct[0].kind, "pending_xref");
+        assert_eq!(
+            attr(&direct[0], "reftarget"),
+            Some(&AttrValue::Str("!int".into()))
         );
     }
 

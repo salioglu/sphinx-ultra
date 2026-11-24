@@ -80,7 +80,7 @@ impl RoleOptionSpec {
     /// called.
     pub(crate) fn of(role: &RoleFn) -> RoleOptionSpec {
         match role {
-            RoleFn::Domain(..) | RoleFn::External => RoleOptionSpec::None,
+            RoleFn::Domain(..) | RoleFn::External(_) => RoleOptionSpec::None,
             RoleFn::DocutilsCode | RoleFn::SphinxCode => RoleOptionSpec::ClassLanguage,
             RoleFn::Raw => RoleOptionSpec::FormatClass,
             // `CustomRole.options` is the base role's dict, or a new one

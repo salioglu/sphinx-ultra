@@ -2981,6 +2981,49 @@ fn intersphinx_resolves_a_cross_project_ref_and_reports_a_missing_external() {
     );
 }
 
+/// `IntersphinxRole` reads its inventory name as written and calls the
+/// domain's role with the text unescaped (`_resolve.py:378-473`): an
+/// `intersphinx_mapping` key with a capital is found under that spelling
+/// only, and an escaped `\<` opens an explicit target there. Sphinx 9.1.0,
+/// probed on this project: exit 0 and the lowercase spelling's warning
+/// alone, the two other references linking into the inventory. The stream
+/// pins both halves: a lowercased inventory name warns on lines 4 and 6
+/// too, and a target read through the escape warns `external std:ref
+/// reference target not found: x <example>` on line 6.
+#[test]
+fn an_external_role_keeps_its_inventory_case_and_unescapes_its_text() {
+    let src = temp_source(
+        "external-role-case",
+        &[
+            (
+                "conf.py",
+                "extensions = ['sphinx.ext.intersphinx']\n\
+                 intersphinx_mapping = {'Other': ('https://example.org/', 'local.inv')}\n",
+            ),
+            (
+                "index.rst",
+                "Title\n=====\n\nUpper :external+Other:ref:`example`.\n\n\
+                 Escaped :external+Other:ref:`x \\<example>` here.\n\n\
+                 Lower :external+other:ref:`example`.\n",
+            ),
+        ],
+    );
+    std::fs::copy(
+        fixture("intersphinx").join("local.inv"),
+        src.join("local.inv"),
+    )
+    .unwrap();
+    let out = out_dir("external-role-case");
+    let (result, written) = warning_stream(&src, &out, &[]);
+
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert_eq!(
+        written,
+        "<SRCDIR>/index.rst:8: WARNING: inventory for external cross-reference not found: \
+         'other' [intersphinx.external]\n"
+    );
+}
+
 #[test]
 fn disabling_the_labels_objtype_takes_the_cross_project_ref_away_again() {
     // The control for the test above: with `std:label` disabled, the very
@@ -3752,6 +3795,38 @@ fn index_role_removed_entry_type_exits_two() {
          os'). Use 'pair: module; os' instead.",
         "<SRCDIR>/index.rst:4",
     );
+}
+
+/// Decision 13: `Manpage` builds its link with
+/// `manpages_url.format_map(info)` over the page's `path`, `page` and
+/// `section`, so a field naming none of them raises `KeyError` out of the
+/// role, and a positional field `ValueError` (Sphinx 9.1.0, probed: exit 2
+/// with each).
+#[test]
+fn manpages_url_unknown_field_exits_two() {
+    for (test, url, exception) in [
+        (
+            "t17a-crash-manpages-url-key",
+            "https://man.example/{foo}",
+            "KeyError: 'foo'",
+        ),
+        (
+            "t17a-crash-manpages-url-positional",
+            "https://man.example/{}",
+            "ValueError: Format string contains positional fields",
+        ),
+    ] {
+        let conf = format!("manpages_url = '{url}'\n");
+        assert_crash_exits_two(
+            test,
+            &[
+                ("conf.py", conf.as_str()),
+                ("index.rst", "Title\n=====\n\nSee :manpage:`ls(1)`.\n"),
+            ],
+            exception,
+            "<SRCDIR>/index.rst:4",
+        );
+    }
 }
 
 /// Decision 13: with no `default_role`, a `.. default-role::` of a Sphinx

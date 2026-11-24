@@ -207,8 +207,12 @@ pub(crate) enum RoleFn {
     /// `domain:name`, whatever the document wrote
     /// (`SP/sphinx/domains/__init__.py:157-181`).
     Domain(DomainId, &'static str),
-    /// `IntersphinxRole`, for the `external:`/`external+` names.
-    External,
+    /// `IntersphinxRole(orig_name)`, for the `external:`/`external+`
+    /// names: `orig_name` is the name the dispatcher was given, as the
+    /// document wrote it, and the role reads its inventory, domain and
+    /// role names from it, case kept, not from the name it is called by
+    /// (`SP/sphinx/ext/intersphinx/_resolve.py:357-380`).
+    External(String),
     /// docutils `generic_custom_role`: what `.. role:: name` with no base
     /// registers (`SP/docutils/parsers/rst/roles.py:246-253`).
     GenericCustom,
@@ -241,7 +245,7 @@ impl RoleFn {
                 | RoleFn::Cwe
                 | RoleFn::Any
                 | RoleFn::Eq
-                | RoleFn::External
+                | RoleFn::External(_)
         )
     }
 }
@@ -574,7 +578,7 @@ pub(crate) fn resolve_role(
     }
     if ctx.intersphinx && crate::intersphinx::is_external_role(written) {
         return Resolution::Found {
-            role: RoleFn::External,
+            role: RoleFn::External(written.to_string()),
             call_name: written.to_string(),
             info: None,
         };

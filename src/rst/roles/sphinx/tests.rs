@@ -378,6 +378,15 @@ const DEFAULT_ROLE_DIRECTIVE: &[(&str, &str)] = &[
      "    <paragraph>\n        G \n        <inline classes=\"guilabel\" rawtext=\"`&x`\">\n            <inline classes=\"accelerator\">\n                x\n         here.\n    <paragraph>\n        H \n        <pending_xref py:class=\"True\" py:module=\"True\" refdoc=\"index\" refdomain=\"py\" refexplicit=\"0\" reftarget=\"f\" reftype=\"func\" refwarn=\"0\">\n            <literal classes=\"xref py py-func\">\n                f()\n         here.\n    <paragraph>\n        I \n        <pending_xref py:class=\"True\" py:module=\"True\" refdoc=\"index\" refdomain=\"py\" refexplicit=\"0\" reftarget=\"g\" reftype=\"func\" refwarn=\"0\">\n            <literal classes=\"xref py py-func\">\n                g()\n         here.\n"),
 ];
 
+/// `.. default-role::` of an `:external:` role, read with
+/// `sphinx.ext.intersphinx` loaded and an `intersphinx_mapping` key
+/// `myinv` (Sphinx 9.1.0's post-read tree, probed).
+#[rustfmt::skip]
+const EXTERNAL_DEFAULT_ROLE: &[(&str, &str)] = &[
+    (".. default-role:: external+myinv:py:class\n\nDefault `int` and `x \\<int>` and `\\!int`.\n",
+     "    <paragraph>\n        Default \n        <pending_xref intersphinx=\"1\" inventory=\"myinv\" py:class=\"True\" py:module=\"True\" refdoc=\"index\" refdomain=\"py\" refexplicit=\"0\" reftarget=\"int\" reftype=\"class\" refwarn=\"0\">\n            <literal classes=\"xref py py-class\">\n                int\n         and \n        <pending_xref intersphinx=\"1\" inventory=\"myinv\" py:class=\"True\" py:module=\"True\" refdoc=\"index\" refdomain=\"py\" refexplicit=\"1\" reftarget=\"int\" reftype=\"class\" refwarn=\"0\">\n            <literal classes=\"xref py py-class\">\n                x\n         and \n        <literal classes=\"xref py py-class\">\n            int\n        .\n"),
+];
+
 #[rustfmt::skip]
 const MANPAGES_URL: &[(&str, &str, &str)] = &[
     ("https://man.example/{page}.{section}", ":manpage:`ls(1)`\n",
@@ -616,6 +625,19 @@ fn default_role_config_and_directive() {
     ] {
         assert_eq!(read("Text `x`.\n", unknown(role)).1, warnings, "{role}");
     }
+}
+
+/// An `:external:` role registered as the default role reads its names
+/// from the directive's argument, the name its dispatcher was given, and
+/// gives the domain's role the unescaped text, as when it is named
+/// (`IntersphinxRole`, `_resolve.py:378-473`).
+#[test]
+fn external_default_role_matches_sphinx() {
+    let config = ReadConfig {
+        intersphinx: true,
+        ..ReadConfig::default()
+    };
+    check(EXTERNAL_DEFAULT_ROLE, config);
 }
 
 /// Decision 13: the role inputs that crash Sphinx 9.1.0 — a trailing `&`
