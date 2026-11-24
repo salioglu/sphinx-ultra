@@ -706,48 +706,14 @@ fn based_digits_to_decimal(digits: &str, base: u32) -> String {
     dec.iter().rev().map(|d| char::from(b'0' + d)).collect()
 }
 
-/// Python `repr(float)` (shortest round trip + `%.17g`-style placement:
-/// fixed notation iff the decimal exponent is in `-4..16`, else scientific
-/// with a signed, two-digit-minimum exponent). Infinities — only reachable
-/// via overflowing literals like `1e400` — print as `ast._Unparser`'s
-/// `_INFSTR`, `1e309`. Callers pass magnitudes only: a Python float
-/// literal has no sign (negatives are `UnaryOp`), and the digit-placement
-/// arithmetic below is only correct for non-negative inputs.
+/// `ast.unparse`'s text of a float constant (`_Unparser._write_constant`):
+/// Python's `repr()` of it ([`crate::pyformat::float_repr`]), an infinity
+/// — only reachable via overflowing literals like `1e400` — written as
+/// `_INFSTR`, `1e309`, and a NaN as `(1e309-1e309)`.
 fn py_float_repr(v: f64) -> String {
-    debug_assert!(
-        v >= 0.0 || v.is_nan(),
-        "py_float_repr takes magnitudes only"
-    );
-    if v.is_infinite() {
-        return "1e309".to_string();
-    }
-    // Rust's LowerExp is shortest-round-trip, same as CPython repr digits.
-    let sci = format!("{v:e}");
-    let (mantissa, exp_text) = sci.split_once('e').unwrap_or((sci.as_str(), "0"));
-    let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
-    let exp10: i32 = exp_text.parse().unwrap_or(0);
-    if (-4..16).contains(&exp10) {
-        if exp10 >= 0 {
-            let int_len = exp10.unsigned_abs() as usize + 1;
-            if digits.len() > int_len {
-                format!("{}.{}", &digits[..int_len], &digits[int_len..])
-            } else {
-                let zeros = "0".repeat(int_len - digits.len());
-                format!("{digits}{zeros}.0")
-            }
-        } else {
-            let zeros = "0".repeat(exp10.unsigned_abs() as usize - 1);
-            format!("0.{zeros}{digits}")
-        }
-    } else {
-        let mantissa_out = if digits.len() == 1 {
-            digits
-        } else {
-            format!("{}.{}", &digits[..1], &digits[1..])
-        };
-        let sign = if exp10 < 0 { '-' } else { '+' };
-        format!("{mantissa_out}e{sign}{:02}", exp10.unsigned_abs())
-    }
+    crate::pyformat::float_repr(v)
+        .replace("inf", "1e309")
+        .replace("nan", "(1e309-1e309)")
 }
 
 fn take_hex(chars: &[char], i: &mut usize, n: usize, kind: &str) -> Result<u32, PyExprError> {

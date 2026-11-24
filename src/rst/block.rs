@@ -14635,18 +14635,16 @@ fn format_choice_values(values: &[&str]) -> String {
 }
 
 /// unicode_code (directives/__init__.py:330-352): decimal, hex forms
-/// (0x/x/\x/U+/\u/&#x...;), or the text itself when neither matches.
+/// (0x/x/\x/U+/\u/&#x...;), or the text itself when neither matches. A
+/// code is read with `chr(int(code))` or `chr(int(value, 16))`
+/// ([`pyformat::int`], [`pyformat::chr`]), whose messages
+/// [`unicode_character`] passes on.
 fn unicode_code(code: &str) -> Result<String, String> {
     // Python gates on str.isdigit() (Nd digits AND digit-typed No chars
     // like '²'), then int() — which only accepts the Nd ones.
     if !code.is_empty() && code.chars().all(super::digits::is_python_digit) {
         let (_, digits) = pyformat::int(code)?;
-        let n: u32 = digits
-            .parse()
-            .map_err(|_| format!("code too large ({code})"))?;
-        return char::from_u32(n)
-            .map(|c| c.to_string())
-            .ok_or_else(|| "chr() arg not in range(0x110000)".to_string());
+        return unicode_character(pyformat::chr(&digits, 10));
     }
     let lower = code.to_lowercase();
     let hex = ["0x", "x", "\\x", "u+", "u", "\\u"]
@@ -14662,13 +14660,25 @@ fn unicode_code(code: &str) -> Result<String, String> {
                 .map(|h| h.to_string())
         });
     match hex {
-        Some(h) => {
-            let n = u32::from_str_radix(&h, 16).map_err(|_| format!("code too large ({h})"))?;
-            char::from_u32(n)
-                .map(|c| c.to_string())
-                .ok_or_else(|| "chr() arg not in range(0x110000)".to_string())
-        }
+        Some(h) => unicode_character(pyformat::chr(&h, 16)),
         None => Ok(code.to_string()),
+    }
+}
+
+/// The character of `chr()`'s code point in `unicode_code`, or the
+/// message of the `ValueError` it raises: `chr`'s own, and for `chr`'s
+/// `OverflowError` `code too large (<its message>)`. A surrogate, which
+/// Python makes a `str` of and a Rust `char` cannot hold, is not modelled:
+/// it keeps the `chr() arg not in range(0x110000)` it has always read as.
+fn unicode_character(code_point: Result<u32, pyformat::ChrError>) -> Result<String, String> {
+    match code_point {
+        Ok(point) => char::from_u32(point)
+            .map(String::from)
+            .ok_or_else(|| pyformat::ChrError::NotInRange.message().to_string()),
+        Err(error @ pyformat::ChrError::Overflow) => {
+            Err(format!("code too large ({})", error.message()))
+        }
+        Err(error) => Err(error.message().to_string()),
     }
 }
 
@@ -14750,11 +14760,12 @@ fn get_measure(argument: &str, units: &[&str]) -> Result<String, String> {
         return Err(no_valid());
     }
     // Python: int() first (arbitrary precision — exact digits preserved),
-    // float() second; negative or unlisted unit is the units-list error.
+    // float() second, printed as `f'{value}{unit}'` prints a float
+    // (`repr()`); negative or unlisted unit is the units-list error.
     let (negative, norm) = if let Ok((neg, digits)) = pyformat::int(number) {
         (neg, py_int_display(neg, &digits))
     } else if let Ok(f) = pyformat::float(number) {
-        (f < 0.0, py_float_str(f))
+        (f < 0.0, pyformat::float_repr(f))
     } else {
         return Err(no_valid());
     };
@@ -14770,15 +14781,6 @@ fn get_measure(argument: &str, units: &[&str]) -> Result<String, String> {
         ));
     }
     Ok(format!("{norm}{unit}"))
-}
-
-/// Python float repr for simple decimals (1.0 -> "1.0", 1.5 -> "1.5").
-fn py_float_str(f: f64) -> String {
-    if f == f.trunc() && f.abs() < 1e16 {
-        format!("{f:.1}")
-    } else {
-        format!("{f}")
-    }
 }
 
 /// directives.uri (directives/__init__.py:209-221): unescaped whitespace is
@@ -15625,6 +15627,25 @@ mod tests {
         assert_eq!(
             length(format!("{}1px", "0".repeat(4299))),
             Ok(OptVal::Str("1px".to_string()))
+        );
+    }
+
+    /// docutils prints a length that `int()` cannot read and `float()` can
+    /// as Python prints the float (`get_measure`'s `f'{value}{unit}'`,
+    /// `repr()`: [`pyformat::float_repr`]), in exponent form from 1e16 up
+    /// and below 1e-4. docutils 0.22.4's trees, probed (`publish_doctree`
+    /// with the source path `<snippet>`).
+    #[test]
+    fn a_length_read_as_a_float_prints_as_python_prints_it() {
+        assert_eq!(
+            pf(".. image:: x.png\n   :width: 12345678901234567.5px\n   :height: 0.00001em\n"),
+            "<document source=\"<snippet>\">\n    <image height=\"1e-05em\" uri=\"x.png\" \
+             width=\"1.2345678901234568e+16px\">\n"
+        );
+        assert_eq!(
+            pf(".. figure:: x.png\n   :figwidth: 100000000000000000.5\n"),
+            "<document source=\"<snippet>\">\n    <figure width=\"1e+17px\">\n        \
+             <image uri=\"x.png\">\n"
         );
     }
 

@@ -46,6 +46,12 @@ The fixture's sections:
 - `code_points`: over every code point `c` but the surrogates, the inclusive
   runs where `int(c + "1" + c)` and `float(c + "1" + c)` succeed, and where
   they give 1: the whitespace both strip, and the decimal digits both read.
+- `chr`: `chr(int(text, base))`, as docutils' `unicode_code` reads a
+  character code, in base 10 and 16; a row's `text` is pieces as for `int`,
+  and its outcome the code point `chr` gives (an int), or what it raises.
+- `float_repr`: `repr(value)` of a float, given by its IEEE 754 bits: the
+  hand-picked values of `FLOAT_REPR_VALUES`, then seeded random bit patterns
+  and random decimals.
 
 A row's outcome is `{"ok": text}`, or `{"raises": line}`, where `line` is
 what `traceback.format_exception_only` prints for the exception, its class
@@ -67,6 +73,7 @@ Two kinds of row are refused, not recorded:
 
 import _string
 import json
+import math
 import random
 import struct
 import sys
@@ -330,6 +337,69 @@ RANDOM_FORMAT_ARGS = ["numref", "math", "wide"]
 RANDOM_FORMAT_MAP_ARGS = ["section", "none", "empty"]
 RANDOM_PERCENT_ARGS = ["1.2", "\u00e9", ""]
 
+# docutils' `unicode_code` (`SP/docutils/parsers/rst/directives/__init__.py:
+# 330-352`) reads a character code with `chr(int(code))` when
+# `code.isdigit()`, and with `chr(int(value, 16))` for the `[0-9a-f]+` (any
+# case) of a hexadecimal one, and words `chr`'s `OverflowError` as its own
+# `ValueError`. CPython 3.12's `chr` takes a C `int`: past `INT_MAX` it is
+# `OverflowError`, and from 0x110000 up to `INT_MAX` `ValueError`; a
+# surrogate is a code point it gives. `int()` in base 16 has no digit limit.
+CHR_TEXTS = [
+    # Base 10: the boundaries 0x10FFFF, 0x110000, 2**31-1, 2**31, 2**32-1,
+    # 2**32, 2**63-1, 2**63 and 2**64, leading zeros, the surrogates, decimal
+    # digits of another script, and a digit `isdigit` admits and `int()`
+    # does not.
+    ("0", 10), ("65", 10), ("0065", 10), ("55296", 10), ("57343", 10),
+    ("1114111", 10), ("1114112", 10), ("2147483647", 10), ("2147483648", 10),
+    ("4294967295", 10), ("4294967296", 10), ("9223372036854775807", 10),
+    ("9223372036854775808", 10), ("18446744073709551616", 10),
+    ("00000000000000000000001114111", 10), ("\u0661\u0662", 10), ("\u00b2", 10),
+    # Base 16: the same boundaries, both cases, leading zeros.
+    ("0", 16), ("41", 16), ("d800", 16), ("DFFF", 16), ("10ffff", 16),
+    ("10FFFF", 16), ("110000", 16), ("7fffffff", 16), ("80000000", 16),
+    ("ffffffff", 16), ("100000000", 16), ("7FFFFFFFFFFFFFFF", 16),
+    ("8000000000000000", 16), ("10000000000000000", 16),
+    ("0000000000000000000010ffff", 16), ("000000000000000000000110000", 16),
+]
+
+# Codes of thousands of digits: `int()`'s limit holds in base 10 (leading
+# zeros counted), not in base 16.
+CHR_PIECES = [
+    ([["1", 4300]], 10),
+    ([["1", 4301]], 10),
+    ([["0", 4293], ["1114111", 1]], 10),
+    ([["1", 4301]], 16),
+    ([["0", 5000], ["41", 1]], 16),
+]
+
+# Floats as docutils' `get_measure` prints a length `float()` reads
+# (`f'{value}{unit}'`, `repr()`), and as `ast.unparse` prints a float
+# constant: the shortest digits that read back as the value, in exponent form
+# when the decimal exponent is below -4 or at least 16.
+FLOAT_REPR_VALUES = [
+    0.0, -0.0, 1.0, -1.0, 2.0, 10.0, 100.0, 0.5, 0.1, 0.2, 0.1 + 0.2, 1 / 3,
+    2 / 3, 2.675, 4.35, 1.1, 1e-7, 1e7,
+    # Tiny and huge: the least subnormal, the least normal, the greatest.
+    5e-324, 1e-323, 2.2250738585072014e-308, 2.225073858507201e-308, 1e-300,
+    1e-100, 1e100, 1e300, 1.7976931348623157e308,
+    # Integral values.
+    1e15, 1e16, 1e17, 1e22, 1e23, 2.0 ** 53, 2.0 ** 53 + 2, 9007199254740993.0,
+    123456789012345678.0, 9999999999999998.0, 1234567890123456.0,
+    12345678901234567.0, 4503599627370496.5,
+    # The decimal exponents -5, -4, 15, 16 and 17.
+    1.5e-5, 9.99e-5, 1.5e-4, 0.00012345678901234567, 1.5e15, 1.5e16, 1.5e17,
+    # Seventeen significant digits.
+    12345678901234567.5, 1.2345678901234567, 123456789.12345678,
+    1234567890123456.7, 0.1234567890123456789, 9.876543210987654e-5,
+    # Negative values, the infinities and NaN.
+    -1.5, -1e-5, -1e16, -12345678901234567.5, -5e-324,
+    float("inf"), float("-inf"), float("nan"), -float("nan"),
+]
+# Each of these exponents, the float of 1eN and its two neighbours.
+FLOAT_REPR_EXPONENTS = [-5, -4, 15, 16, 17]
+FLOAT_REPR_RANDOM_BITS = 1000
+FLOAT_REPR_RANDOM_DECIMALS = 1000
+
 
 def exception_line(exc):
     """What `traceback.format_exception_only` prints, as Sphinx's crash
@@ -523,6 +593,38 @@ def code_points():
     }
 
 
+def chr_rows():
+    rows = []
+    for pieces, base in [([[text, 1]], base) for text, base in CHR_TEXTS] + CHR_PIECES:
+        text = joined(pieces)
+        check_inputs(text)
+        rows.append({"base": base, "text": pieces, **outcome(lambda: ord(chr(int(text, base))))})
+    return rows
+
+
+def float_bits(value):
+    return f"{struct.unpack('<Q', struct.pack('<d', value))[0]:016x}"
+
+
+def float_repr_rows():
+    """`repr(value)` for the values of `FLOAT_REPR_VALUES`, 1eN and its two
+    neighbours for each N of `FLOAT_REPR_EXPONENTS`, then random bit patterns
+    and random decimals of one to seventeen digits, drawn with
+    `random.Random(3)`."""
+    values = list(FLOAT_REPR_VALUES)
+    for exponent in FLOAT_REPR_EXPONENTS:
+        value = float(f"1e{exponent}")
+        values += [math.nextafter(value, 0.0), value, math.nextafter(value, math.inf)]
+    rng = random.Random(3)
+    for _ in range(FLOAT_REPR_RANDOM_BITS):
+        values.append(struct.unpack("<d", struct.pack("<Q", rng.getrandbits(64)))[0])
+    for _ in range(FLOAT_REPR_RANDOM_DECIMALS):
+        digits = rng.randint(1, 17)
+        mantissa = rng.randrange(10 ** (digits - 1), 10 ** digits)
+        values.append(float(f"{'-' if rng.random() < 0.25 else ''}{mantissa}e{rng.randint(-30, 30)}"))
+    return [{"bits": float_bits(value), "ok": repr(value)} for value in values]
+
+
 def main():
     for args in FORMAT_ARGS.values():
         check_inputs(*args.values())
@@ -591,12 +693,15 @@ def main():
     for text in FLOAT_TEXTS:
         check_inputs(text)
         fixture["float"].append({"text": [[text, 1]], **float_outcome(text)})
+    fixture["chr"] = chr_rows()
+    fixture["float_repr"] = float_repr_rows()
     FIXTURE_PATH.write_text(dump(fixture) + "\n", encoding="utf-8")
     random_rows = sum(len(fixture[key]["rows"]) for key in ("random_format", "random_format_map", "random_percent"))
     print(
         f"wrote {FIXTURE_PATH}: {len(fixture['format'])} format rows, "
         f"{len(fixture['format_map'])} format_map rows, {len(fixture['percent'])} percent rows, "
-        f"{random_rows} random formats, {len(fixture['int'])} int rows, {len(fixture['float'])} float rows"
+        f"{random_rows} random formats, {len(fixture['int'])} int rows, {len(fixture['float'])} float rows, "
+        f"{len(fixture['chr'])} chr rows, {len(fixture['float_repr'])} float_repr rows"
     )
 
 

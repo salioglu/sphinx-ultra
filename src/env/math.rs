@@ -534,6 +534,18 @@ mod tests {
                 LogLocation::None
             ))
         );
+        // The value of an attribute the number's string has is not
+        // modelled (`FormatError::NotModelled`, T19b's divergence list):
+        // the warning of the `KeyError` it stands in for, and `(N)`, where
+        // Sphinx 9.1.0 renders the bound method's text (probed: exit 0, no
+        // record).
+        assert_eq!(
+            reference(false, config(true, ".", Some("{number.upper}"))),
+            (
+                "(1)".to_string(),
+                Some("Invalid math_eqref_format: KeyError('number.upper')".to_string())
+            )
+        );
     }
 
     /// `MathDomain.resolve_any_xref` is the domain's `resolve_xref`

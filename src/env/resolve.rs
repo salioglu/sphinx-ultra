@@ -2286,69 +2286,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn numref_renders_both_format_styles_and_reports_broken_ones() {
-        let format_new_style = |title: &str, figname: Option<&str>, fignum: &str| match figname {
-            Some(figname) => pyformat::format(
-                title,
-                &[
-                    ("name", Value::Str(figname)),
-                    ("number", Value::Str(fignum)),
-                ],
-            ),
-            None => pyformat::format(title, &[("number", Value::Str(fignum))]),
-        };
-        assert_eq!(pyformat::percent("Fig. %s", "1.2").unwrap(), "Fig. 1.2");
-        assert!(
-            matches!(
-                pyformat::percent("Fig.", "1"),
-                Err(FormatError::TypeError(_))
-            ),
-            "no conversion: TypeError"
-        );
-        assert!(
-            matches!(
-                pyformat::percent("%s %s", "1"),
-                Err(FormatError::TypeError(_))
-            ),
-            "two conversions for one argument: TypeError"
-        );
-        assert_eq!(
-            format_new_style("Custom {name} number {number}", Some("Cap"), "1").unwrap(),
-            "Custom Cap number 1"
-        );
-        assert_eq!(
-            format_new_style("Table {number}", None, "3").unwrap(),
-            "Table 3"
-        );
-        assert!(matches!(
-            format_new_style("{nope}", Some("Cap"), "1"),
-            Err(FormatError::KeyError(key)) if key == "nope"
-        ));
-        // `{{` and `}}` are a literal brace, as Python's `str.format`
-        // reads them.
-        for (title, figname, expected) in [
-            ("Tab. {{x}} {number}", None, "Tab. {x} 1"),
-            ("Pic {{n}} {number}}}", None, "Pic {n} 1}"),
-            (
-                "Custom {{name}} {name} {number}",
-                Some("Cap"),
-                "Custom {name} Cap 1",
-            ),
-            ("}}{{", None, "}{"),
-        ] {
-            assert_eq!(
-                format_new_style(title, figname, "1").unwrap(),
-                expected,
-                "{title}"
-            );
-        }
-        assert!(matches!(
-            format_new_style("{nope}}}", None, "1"),
-            Err(FormatError::KeyError(key)) if key == "nope"
-        ));
-    }
-
     /// `_resolve_numref_xref` formats a `numfig_format` and an explicit
     /// title with `str.format`, which reads `{{` and `}}` as a literal brace
     /// (`SP/sphinx/domains/std/__init__.py:1087-1170`). Probed on Sphinx
@@ -2532,6 +2469,19 @@ mod tests {
         assert_eq!(
             resolver.resolve_xref(&titled("Tab {name.real} {number}")),
             crash("AttributeError", "'str' object has no attribute 'real'")
+        );
+        // The value of an attribute the string has is not modelled
+        // (`FormatError::NotModelled`, T19b's divergence list): the warning
+        // of the `KeyError` it stands in for, where Sphinx 9.1.0 renders the
+        // bound method's text (probed: exit 0, no record).
+        assert_eq!(
+            resolver.resolve_xref(&titled("Tab {number.upper}")),
+            XrefOutcome::Kept {
+                warning: Some(
+                    "invalid numfig_format: Tab {number.upper} (KeyError('number.upper'))"
+                        .to_string()
+                )
+            }
         );
         assert_eq!(
             resolver.resolve_xref(&request("index", "numref", "tbl")),

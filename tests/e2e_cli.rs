@@ -5380,6 +5380,108 @@ fn manpages_url_with_a_valid_spec_renders() {
     assert_eq!(written, "");
 }
 
+/// Decision 13: Python formats the value of an attribute a string has
+/// (`{page.upper}`, a bound method whose text names its address, which
+/// sphinx-ultra does not model) and reads on, so a later field raises what
+/// it raises: in `manpages_url`, a `KeyError` for a key `info` lacks and
+/// the `ValueError` of a positional field, at parse time; in
+/// `math_eqref_format`, a format spec a `str` does not take, at resolve
+/// time. Sphinx 9.1.0 crashes on each. Probed.
+#[test]
+fn a_field_after_an_attribute_value_exits_two() {
+    for (test, url, exception) in [
+        (
+            "t17a3-crash-manpages-url-after-attribute-key",
+            "https://m/{page.upper}/{nope}",
+            "KeyError: 'nope'",
+        ),
+        (
+            "t17a3-crash-manpages-url-after-attribute-positional",
+            "https://m/{page.upper}/{0}",
+            "ValueError: Format string contains positional fields",
+        ),
+    ] {
+        let conf = format!("manpages_url = '{url}'\n");
+        assert_crash_exits_two(
+            test,
+            &[
+                ("conf.py", conf.as_str()),
+                ("index.rst", "Title\n=====\n\nSee :manpage:`ls(1)`.\n"),
+            ],
+            exception,
+            "<SRCDIR>/index.rst:4",
+        );
+    }
+    let test = "t17a3-crash-eqref-after-attribute";
+    assert_eq!(
+        crash_stream(
+            test,
+            &[
+                (
+                    "conf.py",
+                    "project = 'Temp'\nmath_eqref_format = 'Eq {number.upper} {number:d}'\n",
+                ),
+                ("index.rst", EQUATION),
+            ],
+            &[],
+            &[],
+        ),
+        crash_report(
+            None,
+            "ValueError: Unknown format code 'd' for object of type 'str'",
+            Some("<SRCDIR>/index.rst:7")
+        ),
+        "{test}"
+    );
+}
+
+/// docutils reads a `unicode` directive's character code with
+/// `chr(int(code))`, or `chr(int(value, 16))` for a hexadecimal one, and
+/// CPython 3.12's `chr` takes a C `int`: up to `2**31 - 1` a code past
+/// 0x10FFFF is `ValueError: chr() arg not in range(0x110000)`, and past it
+/// `OverflowError: Python int too large to convert to C int`, which
+/// `unicode_code` words as its own `ValueError`, `code too large (...)`.
+/// `csv-table`'s `:delim:` reads a code the same way. Sphinx 9.1.0's
+/// stream, probed.
+#[test]
+fn character_codes_past_chr_range_read_as_python_words_them() {
+    let test = "t17a3-unicode-code-chr-bounds";
+    let index = "Title\n=====\n\n\
+                 .. |c| unicode:: 2147483647\n.. |d| unicode:: 2147483648\n\
+                 .. |e| unicode:: U+7FFFFFFF\n.. |f| unicode:: U+80000000\n\n\
+                 .. csv-table::\n   :delim: 2147483648\n\n   a, b\n";
+    let not_in_range = "ValueError: chr() arg not in range(0x110000)";
+    let too_large = "code too large (Python int too large to convert to C int)";
+    let src = temp_source(test, &[("index.rst", index)]);
+    let (result, written) = warning_stream(&src, &out_dir(test), &[]);
+    assert!(result.status.success(), "{}", stderr_of(&result));
+    assert_eq!(
+        written,
+        format!(
+            "<SRCDIR>/index.rst:4: ERROR: Invalid character code: 2147483647\n\
+             {not_in_range} [docutils]\n\
+             <SRCDIR>/index.rst:4: WARNING: Substitution definition \"c\" empty or invalid.\n\n\
+             .. |c| unicode:: 2147483647 [docutils]\n\
+             <SRCDIR>/index.rst:5: ERROR: Invalid character code: 2147483648\n\
+             ValueError: {too_large} [docutils]\n\
+             <SRCDIR>/index.rst:5: WARNING: Substitution definition \"d\" empty or invalid.\n\n\
+             .. |d| unicode:: 2147483648 [docutils]\n\
+             <SRCDIR>/index.rst:6: ERROR: Invalid character code: U+7FFFFFFF\n\
+             {not_in_range} [docutils]\n\
+             <SRCDIR>/index.rst:6: WARNING: Substitution definition \"e\" empty or invalid.\n\n\
+             .. |e| unicode:: U+7FFFFFFF [docutils]\n\
+             <SRCDIR>/index.rst:7: ERROR: Invalid character code: U+80000000\n\
+             ValueError: {too_large} [docutils]\n\
+             <SRCDIR>/index.rst:7: WARNING: Substitution definition \"f\" empty or invalid.\n\n\
+             .. |f| unicode:: U+80000000 [docutils]\n\
+             <SRCDIR>/index.rst:9: ERROR: Error in \"csv-table\" directive:\n\
+             invalid option value: (option: \"delim\"; value: '2147483648')\n\
+             {too_large}.\n\n\
+             .. csv-table::\n   :delim: 2147483648\n\n   a, b [docutils]\n"
+        )
+    );
+}
+
 /// docutils reads `:header-rows:` with `int()`, which reads no more than
 /// 4,300 digits, leading zeros among them: 4,300 zeros and a 1 is the
 /// option error Python's message words, not a table of one header row.

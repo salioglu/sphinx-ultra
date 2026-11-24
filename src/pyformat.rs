@@ -13,7 +13,13 @@
 //! - `%` with one `str` argument ([`percent`]): `title % fignum`, for a
 //!   title that holds neither `{name}` nor `number`;
 //! - `int()` and `float()` over a `str` ([`int`], [`float`]): directive
-//!   options and the PEP and RFC roles (docutils), and `SOURCE_DATE_EPOCH`.
+//!   options and the PEP and RFC roles (docutils), and `SOURCE_DATE_EPOCH`;
+//! - `chr()` of a code `int()` reads in base 10 or 16 ([`chr`]): docutils'
+//!   `unicode_code`, for the `unicode` directive and the options that take
+//!   a character;
+//! - `repr()` of a `float` ([`float_repr`]): a length docutils reads with
+//!   `float()` (`get_measure`), and a float constant `ast.unparse` writes
+//!   (the Python domain's signatures).
 //!
 //! Each raises what CPython raises, with CPython's message, which Sphinx's
 //! crash report prints (decision 13); each caller decides which of those
@@ -64,9 +70,14 @@ pub(crate) enum FormatError {
     /// The value of an attribute that the value has (`{number.upper}`, a
     /// bound method mostly, whose text names its address in memory), which
     /// Python goes on with and the port does not model (T19b's divergence
-    /// list), reached where the next step needs it: a lookup on it, or
-    /// rendering it. Carries the field's whole text, which the callers that
-    /// catch `KeyError` report as one.
+    /// list). Rendered without a spec, it is read past, as Python reads
+    /// past it, and the rest of the format raises what it raises; this is
+    /// the outcome where the next step needs the value itself (a lookup on
+    /// it, a spec built from its text, or rendering it with a spec, after
+    /// a conversion or not), or where the format otherwise completes.
+    /// Carries the whole text of the first field of the format that
+    /// reaches such a value or builds its spec from one, which the callers
+    /// that catch `KeyError` report as one.
     NotModelled(String),
 }
 
@@ -105,7 +116,7 @@ pub(crate) fn format(format: &str, keywords: &[(&str, Value<'_>)]) -> Result<Str
         keywords,
         mapping: false,
     };
-    build_string(&chars, &arguments, MAX_STRING_RECURSION)
+    format_string(&chars, &arguments)
 }
 
 /// `format.format_map(mapping)`: Python's `str.format_map`, as `Manpage`
@@ -121,12 +132,32 @@ pub(crate) fn format_map(
         keywords: mapping,
         mapping: true,
     };
-    build_string(&chars, &arguments, MAX_STRING_RECURSION)
+    format_string(&chars, &arguments)
+}
+
+/// CPython's `do_string_format`: [`build_string`] from the recursion
+/// limit, its text, or [`FormatError::NotModelled`] for a format whose
+/// text the port does not know.
+fn format_string(chars: &[char], arguments: &Arguments<'_, '_>) -> Result<String, FormatError> {
+    match build_string(chars, arguments, MAX_STRING_RECURSION)? {
+        Built::Text(text) => Ok(text),
+        Built::NotModelled(field) => Err(not_modelled(field)),
+    }
 }
 
 /// The depth `do_string_format` starts `build_string` at: a format spec
 /// may hold fields, and theirs may not.
 const MAX_STRING_RECURSION: u32 = 2;
+
+/// What [`build_string`] makes of a format it reads to its end without
+/// an exception.
+enum Built<'f> {
+    Text(String),
+    /// The whole text of the first field that renders a value the port
+    /// does not model ([`FormatError::NotModelled`]), without which the
+    /// format's text is not known.
+    NotModelled(&'f [char]),
+}
 
 /// What a format looks a field's first part up in.
 struct Arguments<'k, 'v> {
@@ -140,19 +171,22 @@ struct Arguments<'k, 'v> {
 /// unicode_format.h`) over `chars`, `depth` levels from the recursion
 /// limit: the format read from the left (`MarkupIterator`), where `{{`
 /// and `}}` are a literal brace, and a single `}`, or a `{` that ends the
-/// format, is a `ValueError`; each field parsed ([`parse_field`]), looked
-/// up ([`get_field_object`]), converted ([`convert`]), its spec expanded
-/// with the same arguments when it holds a field, then rendered
-/// ([`render_field`]), all before the next is read.
-fn build_string(
-    chars: &[char],
+/// format, is a `ValueError`; each field parsed ([`parse_field`]) and
+/// filled ([`output_field`]) before the next is read. A field that renders
+/// a value the port does not model is read past, as Python reads past
+/// it, so that the rest of the format raises what it raises; the first
+/// such field names the format's [`FormatError::NotModelled`], whether the
+/// format completes ([`Built::NotModelled`]) or a later field stops it.
+fn build_string<'f>(
+    chars: &'f [char],
     arguments: &Arguments<'_, '_>,
     depth: u32,
-) -> Result<String, FormatError> {
+) -> Result<Built<'f>, FormatError> {
     if depth == 0 {
         return Err(value_error("Max string recursion exceeded"));
     }
     let mut out = String::with_capacity(chars.len());
+    let mut unmodelled = None;
     let mut at = 0;
     while let Some(&c) = chars.get(at) {
         at += 1;
@@ -172,19 +206,44 @@ fn build_string(
             return Err(value_error("Single '{' encountered in format string"));
         }
         let field = parse_field(chars, &mut at)?;
-        let object = convert(get_field_object(&field, arguments)?, field.conversion)?;
-        let spec: Cow<'_, [char]> = if field.spec_needs_expanding {
-            Cow::Owned(
-                build_string(field.spec, arguments, depth - 1)?
-                    .chars()
-                    .collect(),
-            )
-        } else {
-            Cow::Borrowed(field.spec)
-        };
-        out.push_str(&render_field(object, &spec, &field)?);
+        match output_field(&field, arguments, depth) {
+            Ok(Some(text)) => out.push_str(&text),
+            Ok(None) => {
+                unmodelled.get_or_insert(field.text);
+            }
+            Err(FormatError::NotModelled(_)) => {
+                return Err(not_modelled(unmodelled.unwrap_or(field.text)))
+            }
+            Err(error) => return Err(error),
+        }
     }
-    Ok(out)
+    Ok(match unmodelled {
+        Some(field) => Built::NotModelled(field),
+        None => Built::Text(out),
+    })
+}
+
+/// CPython's `output_markup`, one field of [`build_string`] at `depth`:
+/// looked up ([`get_field_object`]), converted ([`convert`]), its spec
+/// expanded with the same arguments when it holds a field, then rendered
+/// ([`render_field`]). `None` for a value the port does not model,
+/// rendered without a spec, whose text Python writes and the port does not
+/// know. A spec built from such a value is [`FormatError::NotModelled`].
+fn output_field(
+    field: &FormatField<'_>,
+    arguments: &Arguments<'_, '_>,
+    depth: u32,
+) -> Result<Option<String>, FormatError> {
+    let object = convert(get_field_object(field, arguments)?, field.conversion)?;
+    let spec: Cow<'_, [char]> = if field.spec_needs_expanding {
+        match build_string(field.spec, arguments, depth - 1)? {
+            Built::Text(spec) => Cow::Owned(spec.chars().collect()),
+            Built::NotModelled(_) => return Err(not_modelled(field.text)),
+        }
+    } else {
+        Cow::Borrowed(field.spec)
+    };
+    render_field(object, &spec, field)
 }
 
 /// One `{field}` of a format, as CPython's `parse_field` splits it.
@@ -293,9 +352,10 @@ enum Object {
     NotModelled,
 }
 
-/// The [`FormatError::NotModelled`] of `field`.
-fn not_modelled(field: &FormatField<'_>) -> FormatError {
-    FormatError::NotModelled(field.text.iter().collect())
+/// The [`FormatError::NotModelled`] of a field whose whole text is
+/// `field`.
+fn not_modelled(field: &[char]) -> FormatError {
+    FormatError::NotModelled(field.iter().collect())
 }
 
 /// CPython's `get_field_object`: the name's first part, up to a `.` or
@@ -422,7 +482,7 @@ fn get_attribute(
     let (type_name, attributes): (&str, &[&str]) = match object {
         Object::Str(_) => ("str", &STR_ATTRIBUTES),
         Object::None => ("NoneType", &NONE_ATTRIBUTES),
-        Object::NotModelled => return Err(not_modelled(field)),
+        Object::NotModelled => return Err(not_modelled(field.text)),
     };
     if attributes.contains(&name) {
         return Ok(Object::NotModelled);
@@ -457,7 +517,7 @@ fn get_item(
             .ok_or_else(|| index_error("string index out of range")),
         (Object::Str(_), None) => Err(type_error("string indices must be integers, not 'str'")),
         (Object::None, _) => Err(type_error("'NoneType' object is not subscriptable")),
-        (Object::NotModelled, _) => Err(not_modelled(field)),
+        (Object::NotModelled, _) => Err(not_modelled(field.text)),
     }
 }
 
@@ -711,19 +771,22 @@ fn convert(object: Object, conversion: Option<char>) -> Result<Object, FormatErr
 
 /// CPython's `render_field`: a `str` by `str.__format__` ([`format_str`]),
 /// and `None` by `object.__format__`, which gives `'None'` for an empty
-/// spec and raises `TypeError` for any other.
+/// spec and raises `TypeError` for any other. A value the port does not
+/// model gives `None` for an empty spec, its text, which the port does not
+/// know, and is [`FormatError::NotModelled`] for any other.
 fn render_field(
     object: Object,
     spec: &[char],
     field: &FormatField<'_>,
-) -> Result<String, FormatError> {
+) -> Result<Option<String>, FormatError> {
     match object {
-        Object::Str(text) => format_str(&text, spec),
-        Object::None if spec.is_empty() => Ok("None".to_string()),
+        Object::Str(text) => format_str(&text, spec).map(Some),
+        Object::None if spec.is_empty() => Ok(Some("None".to_string())),
         Object::None => Err(type_error(
             "unsupported format string passed to NoneType.__format__",
         )),
-        Object::NotModelled => Err(not_modelled(field)),
+        Object::NotModelled if spec.is_empty() => Ok(None),
+        Object::NotModelled => Err(not_modelled(field.text)),
     }
 }
 
@@ -1247,6 +1310,103 @@ pub(crate) fn float(text: &str) -> Result<f64, String> {
         .ok_or_else(|| format!("could not convert string to float: {}", py_repr_str(text)))
 }
 
+/// What `chr()` raises for an `int` it makes no character of (CPython
+/// 3.12's `builtin_chr`, which reads a C `int` with `PyLong_AsInt`, then
+/// `PyUnicode_FromOrdinal`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ChrError {
+    /// `OverflowError: Python int too large to convert to C int`: past
+    /// `INT_MAX`, `2**31 - 1`.
+    Overflow,
+    /// `ValueError: chr() arg not in range(0x110000)`: from 0x110000 up to
+    /// `INT_MAX`.
+    NotInRange,
+}
+
+impl ChrError {
+    /// The exception's message.
+    pub(crate) fn message(self) -> &'static str {
+        match self {
+            ChrError::Overflow => "Python int too large to convert to C int",
+            ChrError::NotInRange => "chr() arg not in range(0x110000)",
+        }
+    }
+}
+
+/// Python's `chr(i)` for a non-negative `int` written as `digits` in
+/// `radix`: ASCII digits, as many as they come, leading zeros among them,
+/// as [`int`] gives them in base 10, or as docutils' `unicode_pattern`
+/// matches a hexadecimal code for `int(value, 16)`, which has no digit
+/// limit. The code point, a surrogate among them, which Python makes a
+/// `str` of and a Rust `char` cannot hold; or what `chr` raises
+/// ([`ChrError`]).
+pub(crate) fn chr(digits: &str, radix: u32) -> Result<u32, ChrError> {
+    debug_assert!(
+        !digits.is_empty() && digits.chars().all(|c| c.is_digit(radix)),
+        "chr() takes the digits of an int"
+    );
+    // Read saturating: a value past `u64::MAX` is past `INT_MAX` as well.
+    let value = digits.chars().fold(0u64, |value, c| {
+        value
+            .saturating_mul(u64::from(radix))
+            .saturating_add(u64::from(c.to_digit(radix).unwrap_or(0)))
+    });
+    match u32::try_from(value) {
+        Ok(point) if point <= 0x10_FFFF => Ok(point),
+        Ok(point) if point <= 0x7FFF_FFFF => Err(ChrError::NotInRange),
+        _ => Err(ChrError::Overflow),
+    }
+}
+
+/// Python's `repr()` of a `float`, which `str()` and an f-string's
+/// `{value}` give too (CPython's `float_repr`: `PyOS_double_to_string(x,
+/// 'r', 0, Py_DTSF_ADD_DOT_0)`): the shortest digits that read back as the
+/// value, as Rust's `{:e}` writes them; in exponent form when the decimal
+/// exponent is below -4 or at least 16, the digits after the first behind
+/// a `.` and the exponent signed, of two digits at least (`1e+16`,
+/// `1.5e-05`); in fixed form otherwise, with `.0` after an integral value
+/// (`1000.0`). The sign of a negative zero is kept, and the special values
+/// are `inf`, `-inf` and `nan`, whatever the sign of a NaN.
+pub(crate) fn float_repr(value: f64) -> String {
+    if value.is_nan() {
+        return "nan".to_string();
+    }
+    if value.is_infinite() {
+        return if value < 0.0 { "-inf" } else { "inf" }.to_string();
+    }
+    let scientific = format!("{value:e}");
+    let (mantissa, exponent) = scientific
+        .split_once('e')
+        .unwrap_or((scientific.as_str(), "0"));
+    let exponent: i32 = exponent.parse().unwrap_or(0);
+    let (sign, mantissa) = match mantissa.strip_prefix('-') {
+        Some(magnitude) => ("-", magnitude),
+        None => ("", mantissa),
+    };
+    let digits: String = mantissa.chars().filter(|&c| c != '.').collect();
+    if !(-4..16).contains(&exponent) {
+        let mantissa = match digits.split_at(1) {
+            (first, "") => first.to_string(),
+            (first, rest) => format!("{first}.{rest}"),
+        };
+        let exponent_sign = if exponent < 0 { '-' } else { '+' };
+        return format!(
+            "{sign}{mantissa}e{exponent_sign}{:02}",
+            exponent.unsigned_abs()
+        );
+    }
+    if exponent < 0 {
+        let zeros = "0".repeat(exponent.unsigned_abs() as usize - 1);
+        return format!("{sign}0.{zeros}{digits}");
+    }
+    let whole = exponent.unsigned_abs() as usize + 1;
+    if digits.len() > whole {
+        format!("{sign}{}.{}", &digits[..whole], &digits[whole..])
+    } else {
+        format!("{sign}{digits}{}.0", "0".repeat(whole - digits.len()))
+    }
+}
+
 /// The text `float()` and `int()` read in place of the `str` `text`
 /// (CPython's `_PyUnicode_TransformDecimalAndSpaceToASCII`): each
 /// character below DEL as it is, whitespace past ASCII a space, a decimal
@@ -1585,66 +1745,266 @@ mod tests {
         }
     }
 
-    /// Not modelled (T19b's divergence list): the value of an attribute
-    /// that the value has (`{number.upper}`, `{number.__class__}`), which
-    /// Python goes on with, a bound method mostly, whose text names its
-    /// address in memory. The port stops with the field's text where the
-    /// next step needs that value: a lookup on it, or rendering it, with or
-    /// without a conversion or a spec. What Python raises before then
-    /// without the value, it raises: an empty part after it, an unknown
-    /// conversion, a nested field of the spec, the recursion limit. CPython
-    /// 3.12 gives, in order: `<built-in method upper of str object at
-    /// 0x…>`, `TypeError: 'builtin_function_or_method' object is not
-    /// subscriptable`, `AttributeError: 'builtin_function_or_method' object
-    /// has no attribute 'x'`, the method's text again (`!r`), `TypeError:
-    /// unsupported format string passed to
-    /// builtin_function_or_method.__format__`, `<class 'str'>` and
-    /// `<class 'NoneType'>`; then the four lines asserted below.
-    //
-    // oracle (CPython 3.12, the locked core profile): each title below
-    //   `.format(number='1', name='Cap')`, the last one
-    //   `.format_map({'section': None})`.
+    /// `_resolve_numref_xref`'s two styles, as it calls them: `title %
+    /// fignum`, a `TypeError` for a title with no conversion or with two;
+    /// and `title.format(name=figname, number=fignum)`, or
+    /// `title.format(number=fignum)` for an empty caption, where `{{` and
+    /// `}}` are a literal brace and a field that names neither is a
+    /// `KeyError`. Moved from `src/env/resolve.rs` with the port; the
+    /// resolver's own tests drive `Resolver::resolve_xref`.
     #[test]
-    fn the_value_of_an_attribute_a_value_has_is_not_modelled() {
-        for title in [
-            "{number.upper}",
-            "{number.upper[0]}",
-            "{number.upper.x}",
-            "{number.upper!r}",
-            "{number.upper:>3}",
-            "{number.__class__}",
+    fn numref_titles_format_in_both_styles() {
+        let numref_format = |title: &str, figname: Option<&str>, fignum: &str| match figname {
+            Some(figname) => format(
+                title,
+                &[
+                    ("name", Value::Str(figname)),
+                    ("number", Value::Str(fignum)),
+                ],
+            ),
+            None => format(title, &[("number", Value::Str(fignum))]),
+        };
+        assert_eq!(percent("Fig. %s", "1.2").unwrap(), "Fig. 1.2");
+        assert!(
+            matches!(percent("Fig.", "1"), Err(FormatError::TypeError(_))),
+            "no conversion: TypeError"
+        );
+        assert!(
+            matches!(percent("%s %s", "1"), Err(FormatError::TypeError(_))),
+            "two conversions for one argument: TypeError"
+        );
+        assert_eq!(
+            numref_format("Custom {name} number {number}", Some("Cap"), "1").unwrap(),
+            "Custom Cap number 1"
+        );
+        assert_eq!(
+            numref_format("Table {number}", None, "3").unwrap(),
+            "Table 3"
+        );
+        assert!(matches!(
+            numref_format("{nope}", Some("Cap"), "1"),
+            Err(FormatError::KeyError(key)) if key == "nope"
+        ));
+        for (title, figname, expected) in [
+            ("Tab. {{x}} {number}", None, "Tab. {x} 1"),
+            ("Pic {{n}} {number}}}", None, "Pic {n} 1}"),
+            (
+                "Custom {{name}} {name} {number}",
+                Some("Cap"),
+                "Custom {name} Cap 1",
+            ),
+            ("}}{{", None, "}{"),
         ] {
-            assert!(
-                matches!(
-                    cap_format(title),
-                    Err(FormatError::NotModelled(text)) if text == title[1..title.len() - 1]
-                ),
+            assert_eq!(
+                numref_format(title, figname, "1").unwrap(),
+                expected,
                 "{title}"
             );
         }
         assert!(matches!(
-            format_map("{section.__class__}", &[("section", Value::None)]),
-            Err(FormatError::NotModelled(text)) if text == "section.__class__"
+            numref_format("{nope}}}", None, "1"),
+            Err(FormatError::KeyError(key)) if key == "nope"
         ));
+    }
+
+    /// Not modelled (T19b's divergence list): the value of an attribute
+    /// that the value has (`{number.upper}`, `{number.__class__}`), which
+    /// Python goes on with, a bound method mostly, whose text names its
+    /// address in memory. Rendered without a spec, the port reads on past
+    /// it as Python does, so that what the rest of the format raises,
+    /// which does not depend on that text, is raised: a later field's
+    /// lookup, conversion, spec and rendering, the parser's errors, a
+    /// nested field of the spec. It stops at once where the next step needs
+    /// the value itself: a lookup on it, a spec built from its text, or
+    /// rendering it with a spec, after a conversion or not. Each of those,
+    /// and a format that otherwise completes, is [`FormatError::NotModelled`]
+    /// with the whole text of the first field of the format that reaches
+    /// such a value or builds its spec from one. CPython 3.12 gives, for
+    /// the rows not modelled, in order: the method's text; `TypeError:
+    /// 'builtin_function_or_method' object is not subscriptable`;
+    /// `AttributeError: 'builtin_function_or_method' object has no
+    /// attribute 'x'`; the method's text (`!r`); `TypeError: unsupported
+    /// format string passed to builtin_function_or_method.__format__`;
+    /// `<class 'str'>`; `1 ` and the method's text; that `TypeError` again,
+    /// after the method's text; `ValueError: Invalid format specifier '<the
+    /// method's text>' for object of type 'str'`; that `TypeError` again;
+    /// `ValueError: Unknown format code 'd' for object of type 'str'` and
+    /// `KeyError: 'nope'`, which the port does not reach, as it stops
+    /// where `repr()`'s text takes a spec; `s`, the first character of
+    /// `str.__doc__`; then `<class 'NoneType'>`, and the manual-page URL
+    /// with the method's text and `  1`.
+    //
+    // oracle (CPython 3.12, the locked core profile): each title below
+    //   `.format(number='1', name='Cap')`, and each URL
+    //   `.format_map({'page': 'ls', 'path': 'ls(1)', 'section': '1'})`,
+    //   or over a `section` of `None`.
+    #[test]
+    fn the_value_of_an_attribute_a_value_has_is_not_modelled() {
+        let not_modelled = |text: &str| format!("not modelled: {text}");
         for (title, expected) in [
+            ("{number.upper}", not_modelled("number.upper")),
+            ("{number.upper[0]}", not_modelled("number.upper[0]")),
+            ("{number.upper.x}", not_modelled("number.upper.x")),
+            ("{number.upper!r}", not_modelled("number.upper!r")),
+            ("{number.upper:>3}", not_modelled("number.upper:>3")),
+            ("{number.__class__}", not_modelled("number.__class__")),
+            ("{number} {number.upper!r}", not_modelled("number.upper!r")),
+            (
+                "{number.upper} {number.lower:>3}",
+                not_modelled("number.upper"),
+            ),
+            (
+                "{number:{number.upper}}",
+                not_modelled("number:{number.upper}"),
+            ),
+            (
+                "{number.upper:{number.upper}}",
+                not_modelled("number.upper:{number.upper}"),
+            ),
+            ("{number.upper!r:d}", not_modelled("number.upper!r:d")),
+            (
+                "{number.upper!r:>3} {nope}",
+                not_modelled("number.upper!r:>3"),
+            ),
+            ("{number.__doc__[0]}", not_modelled("number.__doc__[0]")),
+            // What Python raises before it needs the value.
             (
                 "{number.upper.}",
-                "ValueError: Empty attribute in format string",
+                "ValueError: Empty attribute in format string".to_string(),
             ),
             (
                 "{number.upper!z}",
-                "ValueError: Unknown conversion specifier z",
+                "ValueError: Unknown conversion specifier z".to_string(),
             ),
             (
                 "{number.upper:{0}}",
-                "IndexError: Replacement index 0 out of range for positional args tuple",
+                "IndexError: Replacement index 0 out of range for positional args tuple"
+                    .to_string(),
             ),
+            ("{number.upper:{nope}}", "KeyError: 'nope'".to_string()),
             (
                 "{number.upper:{number:{number}}}",
-                "ValueError: Max string recursion exceeded",
+                "ValueError: Max string recursion exceeded".to_string(),
+            ),
+            (
+                "{number:{number.upper:{0}}}",
+                "ValueError: Max string recursion exceeded".to_string(),
+            ),
+            // What the rest of the format raises, read past the value.
+            ("{number.upper} {nope}", "KeyError: 'nope'".to_string()),
+            (
+                "{number.upper} {0}",
+                "IndexError: Replacement index 0 out of range for positional args tuple"
+                    .to_string(),
+            ),
+            (
+                "{number.upper} {}",
+                "IndexError: Replacement index 0 out of range for positional args tuple"
+                    .to_string(),
+            ),
+            (
+                "Eq {number.upper} {number:d}",
+                "ValueError: Unknown format code 'd' for object of type 'str'".to_string(),
+            ),
+            (
+                "{number.upper} {number!z}",
+                "ValueError: Unknown conversion specifier z".to_string(),
+            ),
+            (
+                "{number.upper} {number:{0}}",
+                "IndexError: Replacement index 0 out of range for positional args tuple"
+                    .to_string(),
+            ),
+            (
+                "{number.upper} {name.real}",
+                "AttributeError: 'str' object has no attribute 'real'".to_string(),
+            ),
+            (
+                "{number.upper} {number[x]}",
+                "TypeError: string indices must be integers, not 'str'".to_string(),
+            ),
+            (
+                "{number.upper} {number[5]}",
+                "IndexError: string index out of range".to_string(),
+            ),
+            (
+                "{number.upper} {number:9223372036854775808}",
+                "ValueError: Too many decimal digits in format string".to_string(),
+            ),
+            (
+                "{number.upper} {number:1000000000000000000}",
+                "MemoryError".to_string(),
+            ),
+            (
+                "{number.upper}}",
+                "ValueError: Single '}' encountered in format string".to_string(),
+            ),
+            (
+                "{number.upper} {",
+                "ValueError: Single '{' encountered in format string".to_string(),
+            ),
+            (
+                "{number.upper} {number",
+                "ValueError: expected '}' before end of string".to_string(),
+            ),
+            ("{nope} {number.upper}", "KeyError: 'nope'".to_string()),
+            (
+                "{number:{number.upper}{nope}}",
+                "KeyError: 'nope'".to_string(),
             ),
         ] {
             assert_eq!(cap(title), expected, "{title}");
+        }
+        let man = |url: &str, section: Value<'_>| {
+            let info = [
+                ("page", Value::Str("ls")),
+                ("path", Value::Str("ls(1)")),
+                ("section", section),
+            ];
+            match format_map(url, &info) {
+                Ok(text) => format!("{text:?}"),
+                Err(error) => error_line(error),
+            }
+        };
+        let section = Value::Str("1");
+        for (url, section, expected) in [
+            (
+                "{section.__class__}",
+                Value::None,
+                not_modelled("section.__class__"),
+            ),
+            (
+                "https://m/{page.upper}/{section:>3}",
+                section,
+                not_modelled("page.upper"),
+            ),
+            (
+                "https://m/{page.upper}/{nope}",
+                section,
+                "KeyError: 'nope'".to_string(),
+            ),
+            (
+                "https://m/{page.upper}/{0}",
+                section,
+                "ValueError: Format string contains positional fields".to_string(),
+            ),
+            (
+                "https://m/{page.upper}/{}",
+                section,
+                "ValueError: Format string contains positional fields".to_string(),
+            ),
+            (
+                "https://m/{page.upper}/{section!z}",
+                section,
+                "ValueError: Unknown conversion specifier z".to_string(),
+            ),
+            (
+                "https://m/{page.upper}/{section:>3}",
+                Value::None,
+                "TypeError: unsupported format string passed to NoneType.__format__".to_string(),
+            ),
+        ] {
+            assert_eq!(man(url, section), expected, "{url}");
         }
     }
 
@@ -1760,9 +2120,10 @@ mod tests {
     /// Every row of `tests/fixtures/pyformat_units.json` through the port:
     /// `str.format` with keywords and `str.format_map` over a manual-page
     /// `info`, each hand-written format under each argument set and the
-    /// random ones under theirs; `%` with one `str`; `int()` and `float()`.
-    /// The text Python renders, or the exception it raises, its class and
-    /// its message, which also decides the error's kind
+    /// random ones under theirs; `%` with one `str`; `int()` and `float()`;
+    /// `chr()` of a code `int()` reads in base 10 or 16; `repr()` of a
+    /// float. The text Python renders, or the exception it raises, its
+    /// class and its message, which also decides the error's kind
     /// ([`FormatError`]).
     #[test]
     fn every_fixture_row_matches_cpython() {
@@ -1856,6 +2217,42 @@ mod tests {
                 None => expected(row),
             };
             check(format!("float({text:?})"), ours, python);
+        }
+        for row in rows(&fixture["chr"]) {
+            let text = joined(&row["text"]);
+            let base = row["base"]
+                .as_u64()
+                .and_then(|base| u32::try_from(base).ok())
+                .unwrap_or_else(|| panic!("a base: {row}"));
+            // `code.isdigit()` lets no sign through to `int()`.
+            let digits = if base == 10 {
+                int(&text).map(|(_, digits)| digits)
+            } else {
+                Ok(text.clone())
+            };
+            let ours = match digits.map(|digits| chr(&digits, base)) {
+                Err(message) => json!({ "raises": format!("ValueError: {message}") }),
+                Ok(Ok(point)) => json!({ "ok": point }),
+                Ok(Err(error)) => {
+                    let exception = match error {
+                        ChrError::Overflow => "OverflowError",
+                        ChrError::NotInRange => "ValueError",
+                    };
+                    json!({ "raises": format!("{exception}: {}", error.message()) })
+                }
+            };
+            check(format!("chr(int({text:?}, {base}))"), ours, expected(row));
+        }
+        for row in rows(&fixture["float_repr"]) {
+            let bits = str_of(&row["bits"]);
+            let value = u64::from_str_radix(bits, 16)
+                .map(f64::from_bits)
+                .unwrap_or_else(|_| panic!("IEEE 754 bits: {row}"));
+            check(
+                format!("repr(float.fromhex bits {bits})"),
+                json!({ "ok": float_repr(value) }),
+                expected(row),
+            );
         }
         assert!(
             mismatches.is_empty(),
