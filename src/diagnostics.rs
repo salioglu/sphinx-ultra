@@ -157,7 +157,7 @@ impl Diagnostic {
 
 /// Builds a record's location from a producer's `(file, line)`: an empty
 /// file is a record logged with no location at all, which prints bare.
-fn location_of(file: &Path, line: Option<usize>) -> Location {
+pub(crate) fn location_of(file: &Path, line: Option<usize>) -> Location {
     if file.as_os_str().is_empty() {
         return Location::None;
     }
@@ -201,7 +201,7 @@ impl From<&BuildErrorReport> for Diagnostic {
 /// `(priority, serial)` is the docutils transformer's sort key for the
 /// transform that logged the record; `seq` keeps records of one emitter in
 /// emission order.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct OrderKey {
     pub priority: u16,
     pub serial: u16,

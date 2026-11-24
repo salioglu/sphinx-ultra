@@ -401,9 +401,13 @@ impl RoleTable {
 
 /// An input Sphinx 9.1.0 crashes on (decision 13): the build fails, with
 /// exit status 2 and a report naming the exception Sphinx raises, where
-/// Sphinx raises it. Raised during the parse, it is kept as the
-/// document's first crash ([`crate::rst::ParseOutput::crash`]), and the
-/// build reports the crash of the first document in Sphinx's read order.
+/// Sphinx raises it: while it reads the configuration, while it reads a
+/// document (the parse, the read transforms), or while it resolves one.
+/// Raised in a document's read, it is kept as the document's first crash
+/// ([`crate::transforms::state::DocumentState::crash`]), with its place
+/// among the document's records ([`Self::at`]), and the build reports the
+/// crash of the first document in Sphinx's read order, after the records
+/// Sphinx prints before it.
 ///
 /// One outcome for every crash kind: the exception's class as Sphinx's
 /// traceback names it and its message, never Sphinx's whole report (its
@@ -414,8 +418,9 @@ pub struct SphinxCrash {
     /// it: `IndexError`, `ValueError`, `sphinx.errors.SphinxError`.
     pub exception: &'static str,
     /// `SphinxError.category` for one of Sphinx's own errors (`Sphinx
-    /// error`), which Sphinx's report opens with, followed by `!`; `None`
-    /// for a Python exception, whose report opens with nothing.
+    /// error`, `Extension error (sphinx.config)`), which Sphinx's report
+    /// opens with, followed by `!`; `None` for a Python exception, whose
+    /// report opens with nothing.
     pub category: Option<&'static str>,
     /// The exception's message.
     pub message: String,
@@ -423,8 +428,16 @@ pub struct SphinxCrash {
     /// the line of the input that crashes it. Rendered by the build,
     /// which knows the source directory ([`Self::located`]).
     pub location: LogLocation,
-    /// The rendered location, once the build has filled it in.
+    /// The rendered location, once the build has filled it in or the
+    /// crash was raised where the location is rendered
+    /// ([`Self::rendered_at`]).
     pub rendered_location: Option<String>,
+    /// Where a crash in a document's read stands among the document's
+    /// records ([`crate::diagnostics::OrderKey`]): the parse's `(0, 0)`
+    /// or the raising transform's row, and the seq the next record would
+    /// have drawn. Sphinx logged the records keyed before it, and none
+    /// after.
+    pub at: crate::diagnostics::OrderKey,
 }
 
 impl SphinxCrash {
@@ -436,31 +449,50 @@ impl SphinxCrash {
             message,
             location,
             rendered_location: None,
+            at: crate::diagnostics::OrderKey::default(),
         }
     }
 
     /// `SphinxError(message)`, whose category is `Sphinx error`.
     pub(crate) fn sphinx_error(message: &str, location: LogLocation) -> Self {
         SphinxCrash {
-            exception: "sphinx.errors.SphinxError",
             category: Some("Sphinx error"),
-            message: message.to_string(),
-            location,
-            rendered_location: None,
+            ..SphinxCrash::python("sphinx.errors.SphinxError", message.to_string(), location)
         }
     }
 
-    /// The crash, its location rendered the way a warning's is, against
-    /// the document's source table and the project's source directory
-    /// ([`LogLocation::render`]).
-    pub fn located(
-        mut self,
-        sources: &[String],
-        srcdir: &std::path::Path,
-        docname: &str,
-    ) -> SphinxCrash {
+    /// An `ExtensionError` Sphinx's event manager raises for a handler of
+    /// one of its own modules that raised `exception` (`EventManager.emit`,
+    /// `SP/sphinx/events.py:430-452`): its category names the module,
+    /// `Extension error (sphinx.config)`, and its message the handler, the
+    /// event and the exception. Python names the handler with its address
+    /// in memory, which no build can repeat; the address is elided as
+    /// `0x...`.
+    pub(crate) fn extension_error(
+        category: &'static str,
+        handler: &str,
+        event: &str,
+        exception: &str,
+    ) -> Self {
+        SphinxCrash {
+            category: Some(category),
+            ..SphinxCrash::python(
+                "sphinx.errors.ExtensionError",
+                format!(
+                    "Handler <function {handler} at 0x...> for event '{event}' threw an \
+                     exception (exception: {exception})"
+                ),
+                LogLocation::None,
+            )
+        }
+    }
+
+    /// The crash, located at `location`, rendered the way a warning's is:
+    /// for a crash raised where its location is already rendered (a read
+    /// transform's node, a reference the resolve pass reaches).
+    pub(crate) fn rendered_at(mut self, location: crate::diagnostics::Location) -> SphinxCrash {
         use crate::diagnostics::Location;
-        self.rendered_location = match self.location.render(sources, srcdir, docname) {
+        self.rendered_location = match location {
             Location::None => None,
             Location::Verbatim(location) => Some(location.trim_end_matches(':').to_string()),
             Location::Path { path, line: None } => Some(path),
@@ -470,6 +502,23 @@ impl SphinxCrash {
             } => Some(format!("{path}:{line}")),
         };
         self
+    }
+
+    /// The crash, its location rendered the way a warning's is, against
+    /// the document's source table and the project's source directory
+    /// ([`LogLocation::render`]), unless it was rendered where the crash
+    /// was raised.
+    pub fn located(
+        self,
+        sources: &[String],
+        srcdir: &std::path::Path,
+        docname: &str,
+    ) -> SphinxCrash {
+        if self.rendered_location.is_some() {
+            return self;
+        }
+        let location = self.location.render(sources, srcdir, docname);
+        self.rendered_at(location)
     }
 
     /// The report the build prints, to stderr and the `-w` file, before

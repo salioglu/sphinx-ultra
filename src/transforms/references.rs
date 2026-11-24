@@ -34,7 +34,8 @@ use super::tree::{Findall, TxId, TxNode, TxTree};
 use super::{Transform, TransformCx};
 use crate::doctree::messages::{self, ERROR, INFO};
 use crate::doctree::{is_text_element, kinds, unescape, AttrValue};
-use crate::utils::py_isspace;
+use crate::rst::{LogLocation, SphinxCrash};
+use crate::utils::{py_isspace, py_repr_str};
 
 /// `isinstance(node, nodes.Invisible)`: docutils' `comment`,
 /// `substitution_definition`, `target` and `pending`, and Sphinx's `index`
@@ -163,6 +164,9 @@ impl Transform for Substitutions {
         while let Some(&reference) = run.references.get(next) {
             next += 1;
             substitute(cx, reference, &mut run);
+            if cx.crashed() {
+                return;
+            }
         }
     }
 }
@@ -181,6 +185,10 @@ impl Transform for Substitutions {
 /// found in, a circular definition ([`circular_definition`]). The copy's
 /// children then take the reference's place, and its top-level references
 /// with a `refname` are noted (`note_refname`).
+///
+/// A reference in the copy that names no definition crashes Sphinx 9.1.0
+/// (decision 13): `normed[nested_ref['refname'].lower()]` raises
+/// `KeyError` while the copy is made, at `reference`.
 fn substitute(cx: &mut TransformCx<'_>, reference: TxId, run: &mut SubstitutionRun) {
     let refname = cx
         .tree
@@ -243,27 +251,25 @@ fn substitute(cx: &mut TransformCx<'_>, reference: TxId, run: &mut SubstitutionR
     let copy = cx.tree.deepcopy(definition, cx.state);
     let is_reference = |node: &TxNode| node.kind == kinds::SUBSTITUTION_REFERENCE;
     for nested in cx.tree.findall(copy, is_reference) {
-        let nested_refname = cx.tree.node(nested).str_attr("refname").unwrap_or_default();
-        // `normed[nested_ref['refname'].lower()]` raises `KeyError` for a
-        // name no definition has, which crashes Sphinx (decision 13: not
-        // modelled); here the reference is substituted in its turn, as
-        // undefined.
-        let nested_name = cx
-            .state
-            .registries
-            .substitution_names
-            .get(&nested_refname.to_lowercase())
-            .cloned();
-        if let Some(nested_name) = nested_name {
-            // `nested_name in nested.setdefault(nested_name, [])`: a copy
-            // of the definition `nested_name` itself referred to it before.
-            let referrers = run.nested.entry(nested_name.clone()).or_default();
-            if referrers.contains(&nested_name) {
-                circular_definition(cx, reference, &refname, run);
-                return;
-            }
-            referrers.push(key.clone());
+        let normed = cx
+            .tree
+            .node(nested)
+            .str_attr("refname")
+            .unwrap_or_default()
+            .to_lowercase();
+        let Some(nested_name) = cx.state.registries.substitution_names.get(&normed).cloned() else {
+            let crash = SphinxCrash::python("KeyError", py_repr_str(&normed), LogLocation::None);
+            cx.crash(crash, reference);
+            return;
+        };
+        // `nested_name in nested.setdefault(nested_name, [])`: a copy of
+        // the definition `nested_name` itself referred to it before.
+        let referrers = run.nested.entry(nested_name.clone()).or_default();
+        if referrers.contains(&nested_name) {
+            circular_definition(cx, reference, &refname, run);
+            return;
         }
+        referrers.push(key.clone());
         run.origin.insert(nested, reference);
         run.references.push(nested);
     }
@@ -306,11 +312,15 @@ fn substitution_def(cx: &TransformCx<'_>, key: &str) -> Option<TxId> {
 /// with its block, at its location), and the message takes its place and
 /// its names, with no id; any other reports the reference the chain of
 /// copies started from (`Circular substitution definition referenced`)
-/// and becomes a problematic. A definition with no place to give the
-/// message — one a message took the place of already, or a copy a
-/// circular reference stopped before it was placed, whose nested
-/// references the loop still reaches — crashes Sphinx in `replace_self`
-/// (decision 13: not modelled); it is reported and left as it is.
+/// and becomes a problematic.
+///
+/// A definition with no place to give the message crashes Sphinx 9.1.0 in
+/// `replace_self`, once the message is logged (decision 13): one a message
+/// took the place of already is looked up among its former parent's
+/// children (`ValueError`, naming it as docutils' `repr` does,
+/// [`element_repr`]); a copy a circular reference stopped before it was
+/// placed, whose nested references the loop still reaches, has no parent
+/// (`AttributeError`).
 fn circular_definition(
     cx: &mut TransformCx<'_>,
     reference: TxId,
@@ -333,12 +343,23 @@ fn circular_definition(
             Some(definition),
             vec![messages::literal_block(&rawsource)],
         );
-        let placed = match cx.tree.parent(definition) {
-            Some(parent) => cx.tree.node(parent).children.contains(&definition),
-            None => cx.tree.detached().contains(&definition),
+        let crash = match cx.tree.parent(definition) {
+            Some(parent) if cx.tree.node(parent).children.contains(&definition) => None,
+            Some(_) => Some(SphinxCrash::python(
+                "ValueError",
+                format!("{} is not in list", element_repr(cx.tree, definition)),
+                LogLocation::None,
+            )),
+            None if cx.tree.detached().contains(&definition) => None,
+            None => Some(SphinxCrash::python(
+                "AttributeError",
+                "'NoneType' object has no attribute 'replace'".to_string(),
+                LogLocation::None,
+            )),
         };
-        if placed {
-            cx.tree.replace_self(definition, vec![message]);
+        match crash {
+            Some(crash) => cx.crash(crash, definition),
+            None => cx.tree.replace_self(definition, vec![message]),
         }
         return;
     }
@@ -350,6 +371,52 @@ fn circular_definition(
     let message = cx.system_message(ERROR, &text, Some(origin), Vec::new());
     let msgid = cx.set_id(message);
     replace_with_problematic(cx, reference, message, &msgid);
+}
+
+/// docutils' `repr()` of the element at `node` (`Element.__repr__`,
+/// `SP/docutils/nodes.py:630-641`): its tag, its names when it has any,
+/// and its children's short reprs ([`short_repr`]), cut to 56 characters
+/// and ` ...` once they pass 60.
+fn element_repr(tree: &TxTree, node: TxId) -> String {
+    let element = tree.node(node);
+    let mut data = String::new();
+    for &child in &element.children {
+        data.push_str(&short_repr(tree, child));
+        if data.chars().count() > 60 {
+            data = data.chars().take(56).collect::<String>() + " ...";
+            break;
+        }
+    }
+    match element.attrs.names.as_slice() {
+        [] => format!("<{}: {data}>", element.kind),
+        names => format!("<{} \"{}\": {data}>", element.kind, names.join("; ")),
+    }
+}
+
+/// docutils' `shortrepr()` of the node at `node` (`nodes.py:431-435`,
+/// `:643-647`): an element's tag and its names, or `<#text: …>` with the
+/// `repr()` of a Text's data (`str(Text)`, null-escaped), cut to 14
+/// characters and ` ...` when it passes 18.
+fn short_repr(tree: &TxTree, node: TxId) -> String {
+    let node = tree.node(node);
+    if node.kind == kinds::TEXT {
+        let data = node
+            .ext
+            .as_deref()
+            .and_then(|ext| ext.raw.as_deref())
+            .or(node.text.as_deref())
+            .unwrap_or_default();
+        let data = if data.chars().count() > 18 {
+            data.chars().take(14).collect::<String>() + " ..."
+        } else {
+            data.to_string()
+        };
+        return format!("<#text: {}>", py_repr_str(&data));
+    }
+    match node.attrs.names.as_slice() {
+        [] => format!("<{}...>", node.kind),
+        names => format!("<{} \"{}\"...>", node.kind, names.join("; ")),
+    }
 }
 
 /// `parent[index] = parent[index].rstrip()` (or `.lstrip()`) for the Text
@@ -2276,41 +2343,92 @@ mod tests {
         assert!(differences.is_empty(), "{}", differences.join("\n\n"));
     }
 
-    /// Two inputs on which Sphinx 9.1.0 crashes in Substitutions, which
-    /// are not modelled (decision 13), read to the end: a definition that
-    /// refers to an undefined substitution (`normed[...]` raises
-    /// `KeyError`), whose nested reference is then reported as undefined
-    /// where its copy stands, after the definition's own; and a definition
-    /// reported circular a second time after the first message took its
-    /// place (`replace_self` raises `ValueError`), which stays replaced by
-    /// the first.
+    /// Three inputs on which Sphinx 9.1.0 crashes in Substitutions (220,
+    /// decision 13), each where docutils raises, after the records it
+    /// logged before: a definition that refers to an undefined
+    /// substitution (`normed[...]` raises `KeyError` while the referring
+    /// reference's copy is made, at that reference); a definition reported
+    /// circular a second time after the first message took its place
+    /// (`replace_self` raises `ValueError`, naming the definition by
+    /// docutils' `repr`, its children's short reprs cut once they pass 60
+    /// characters, a Text's once it passes 18); and a copy a circular
+    /// reference stopped before it was placed, reached through a reference
+    /// it holds (`replace_self` on a node with no parent raises
+    /// `AttributeError`), at the definition it copies.
+    //
+    // oracle (Sphinx 9.1.0): each input built as the project's index.
     #[test]
-    fn substitutions_read_through_what_crashes_sphinx() {
-        let read = read_snippet("Use |a| here.\n\n.. |a| replace:: x |nope| y\n", true);
-        let mut warnings = error("3", "Undefined substitution referenced: \"nope\".");
-        warnings.extend(error("1", "Undefined substitution referenced: \"nope\"."));
-        assert_eq!(read.warnings, warnings);
-
-        let read = read_snippet(
-            "P3 |b| q.\n\nP0 |b| q.\n\n.. |b| replace:: |a| |b|\n.. |a| replace:: |b| |b| t1\n",
-            true,
-        );
-        assert!(
-            !read.body.contains("<substitution_definition"),
-            "{}",
-            read.body
-        );
-        for name in ["b", "a"] {
-            let message = format!(
-                "<system_message level=\"3\" line=\"{}\" names=\"{name}\"",
-                if name == "b" { 5 } else { 6 }
+    fn substitutions_crash_where_sphinx_does() {
+        let crash = |rst: &str| {
+            let read = crate::read::read_standalone(
+                rst,
+                &crate::transforms::test_support::index_rst(),
+                &crate::transforms::test_support::harness_settings(true),
             );
-            assert_eq!(read.body.matches(&message).count(), 1, "{}", read.body);
-        }
+            let records: Vec<String> = read
+                .diagnostics
+                .iter()
+                .map(|record| record.render(true))
+                .collect();
+            let crash = read.outcome.state().crash.clone().expect("Sphinx crashes");
+            (records, crash.to_string(), crash.rendered_location)
+        };
+        let at = |line: u32| Some(format!("<SRCDIR>/index.rst:{line}"));
         assert_eq!(
-            read.warnings[0],
-            "<SRCDIR>/index.rst:3: ERROR: Circular substitution definition referenced: \"b\". \
-             [docutils]"
+            crash("Use |a| here.\n\n.. |a| replace:: x |Nope| y\n"),
+            (Vec::new(), "KeyError: 'nope'".to_string(), at(1))
+        );
+        let detected = |line: u32, definition: &str| {
+            format!(
+                "<SRCDIR>/index.rst:{line}: ERROR: Circular substitution definition detected:\n\n\
+                 {definition} [docutils]"
+            )
+        };
+        let referenced = |name: &str, line: u32| {
+            format!(
+                "<SRCDIR>/index.rst:{line}: ERROR: Circular substitution definition referenced: \
+                 \"{name}\". [docutils]"
+            )
+        };
+        let b = ".. |b| replace:: |a| |b|";
+        assert_eq!(
+            crash(
+                "P3 |b| q.\n\nP0 |b| q.\n\n.. |b| replace:: |a| |b|\n.. |a| replace:: |b| |b| t1\n"
+            ),
+            (
+                vec![referenced("b", 3), detected(5, b), detected(5, b)],
+                "ValueError: <substitution_definition \"b\": <substitution_reference...><#text: \
+                 ' '><substitution_ref ...> is not in list"
+                    .to_string(),
+                at(5)
+            )
+        );
+        let c = ".. |c| replace:: a long text of many words |c| |c|";
+        assert_eq!(
+            crash(&format!("P0 |c| q.\n\n{c}\n")),
+            (
+                vec![referenced("c", 1), detected(3, c), detected(3, c)],
+                "ValueError: <substitution_definition \"c\": <#text: 'a long text of ...'>\
+                 <substitution_reference...> ...> is not in list"
+                    .to_string(),
+                at(3)
+            )
+        );
+        let a = ".. |a| replace:: |b| |a|";
+        assert_eq!(
+            crash("P0 |a| q.\n\nP1 |a| q.\n\n.. |a| replace:: |b| |a|\n.. |b| replace:: |b|\n"),
+            (
+                vec![
+                    referenced("a", 3),
+                    detected(5, a),
+                    detected(6, ".. |b| replace:: |b|"),
+                    referenced("b", 1),
+                    referenced("a", 1),
+                    detected(5, a),
+                ],
+                "AttributeError: 'NoneType' object has no attribute 'replace'".to_string(),
+                at(5)
+            )
         );
     }
 

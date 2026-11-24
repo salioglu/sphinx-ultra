@@ -26,8 +26,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::diagnostics::{Category, Diagnostic};
 use crate::doctree::ids::make_id;
+use crate::env::resolve::FormatError;
 use crate::env::BuildEnvironment;
-use crate::rst::{EquationRecord, LogLocation};
+use crate::rst::{EquationRecord, LogLocation, SphinxCrash};
 
 /// `env.domaindata['math']['objects']`
 /// (`SP/sphinx/domains/math.py:50-54`, `equations`): an equation's label
@@ -162,26 +163,39 @@ pub struct EquationTarget<'e> {
 /// `numfig` and `math_numfig` are on, and then the number the toctree's
 /// figure numbering gave its `displaymath` (`env.toc_fignumbers`), dotted,
 /// its last dot `math_numsep`, or none for a document the numbering did
-/// not reach. A numbered document without a `displaymath` table, which
-/// raises `KeyError` in Sphinx, is read as one without the equation's
-/// number (a decision-13 crash input, which the build does not model
-/// yet). The text is that number in `math_eqref_format`.
+/// not reach. The text is that number in `math_eqref_format`.
+///
+/// Two inputs crash Sphinx 9.1.0 here (decision 13), which the build
+/// fails with, located at the reference by the caller: a document the
+/// numbering reached with no `displaymath` table, whose figures, tables or
+/// code blocks it numbered while no numbered equation stands in it
+/// (`KeyError: 'displaymath'`), and a `math_eqref_format` that
+/// `str.format` raises anything but `KeyError` for
+/// ([`crate::env::resolve::format_new_style`]).
 pub fn resolve_xref<'e>(
     env: &'e BuildEnvironment,
     numfig: bool,
     math: &MathConfig,
     target: &str,
-) -> Option<EquationTarget<'e>> {
-    let (docname, number) = env.math.equations.get(target)?;
+) -> Result<Option<EquationTarget<'e>>, SphinxCrash> {
+    let Some((docname, number)) = env.math.equations.get(target) else {
+        return Ok(None);
+    };
     let node_id = make_id(&format!("equation-{target}"));
     // `math_numsep.join(eqno.rsplit('.', 1))`.
     let eqno = if math.numfig && numfig {
-        env.toc_fignumbers
-            .get(docname)
-            .map(|figtypes| {
-                figtypes
-                    .get("displaymath")
-                    .and_then(|numbers| numbers.get(&node_id))
+        match env.toc_fignumbers.get(docname) {
+            Some(figtypes) => {
+                // `env.toc_fignumbers[docname]['displaymath']`.
+                let Some(numbers) = figtypes.get("displaymath") else {
+                    return Err(SphinxCrash::python(
+                        "KeyError",
+                        "'displaymath'".to_string(),
+                        LogLocation::None,
+                    ));
+                };
+                numbers
+                    .get(&node_id)
                     .map(|numbers| {
                         let eqno = numbers
                             .iter()
@@ -194,13 +208,15 @@ pub fn resolve_xref<'e>(
                         }
                     })
                     .unwrap_or_default()
-            })
-            .unwrap_or_default()
+            }
+            None => String::new(),
+        }
     } else {
         number.to_string()
     };
     // `(math_eqref_format or '({number})').format(number=eqno)`, and on
-    // `KeyError` a warning and `'(%d)' % number`.
+    // `KeyError` a warning and `'(%d)' % number`; whatever else it raises
+    // is not caught.
     let format = math
         .eqref_format
         .as_deref()
@@ -208,20 +224,21 @@ pub fn resolve_xref<'e>(
         .unwrap_or("({number})");
     let (title, warning) = match crate::env::resolve::format_new_style(format, None, &eqno) {
         Ok(title) => (title, None),
-        Err(crate::env::resolve::KeyError(key)) => (
+        Err(FormatError::KeyError(key)) => (
             format!("({number})"),
             Some(format!(
                 "Invalid math_eqref_format: KeyError({})",
                 crate::utils::py_repr_str(&key)
             )),
         ),
+        Err(FormatError::Crash(crash)) => return Err(crash),
     };
-    Some(EquationTarget {
+    Ok(Some(EquationTarget {
         docname,
         node_id,
         title,
         warning,
-    })
+    }))
 }
 
 #[cfg(test)]
@@ -437,7 +454,9 @@ mod tests {
             )]),
         );
         let reference = |numfig: bool, math: MathConfig| {
-            let target = resolve_xref(&env, numfig, &math, "why").expect("the label resolves");
+            let target = resolve_xref(&env, numfig, &math, "why")
+                .expect("the reference does not crash")
+                .expect("the label resolves");
             (target.title, target.warning)
         };
         let config = |numfig: bool, numsep: &str, eqref_format: Option<&str>| MathConfig {

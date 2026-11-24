@@ -595,6 +595,19 @@ impl TransformCx<'_> {
     /// and no source; and nowhere, a bare record, with neither.
     pub fn warn(&mut self, node: TxId, message: String, category: Category) {
         let location = node_location(self.tree, node, self.state, self.srcdir, self.docname);
+        self.warn_at(location, message, category);
+    }
+
+    /// Sphinx's `logger.warning(message, type=…, subtype=…)` with no
+    /// `location` while this transform applies: [`Self::warn`]'s record,
+    /// bare.
+    pub fn warn_unlocated(&mut self, message: String, category: Category) {
+        self.warn_at(Location::None, message, category);
+    }
+
+    /// The WARNING record [`Self::warn`] and [`Self::warn_unlocated`] log,
+    /// at `location`.
+    fn warn_at(&mut self, location: Location, message: String, category: Category) {
         let seq = self.state.draw_seq();
         self.state.log.push(LogRecord::Logger {
             key: self.key.order_key(seq),
@@ -605,6 +618,26 @@ impl TransformCx<'_> {
                 category,
             },
         });
+    }
+
+    /// Raises `crash`, an exception Sphinx 9.1.0 raises out of this
+    /// transform (decision 13), located where Sphinx's `get_node_location`
+    /// locates `node` ([`node_location`]): the read stops after this
+    /// transform, which returns at once, as Sphinx's does
+    /// ([`DocumentState::raise`]).
+    pub fn crash(&mut self, crash: crate::rst::SphinxCrash, node: TxId) {
+        let location = node_location(self.tree, node, self.state, self.srcdir, self.docname);
+        self.state.raise(
+            crash.rendered_at(location),
+            self.key.priority,
+            self.key.serial,
+        );
+    }
+
+    /// Whether this read has crashed ([`Self::crash`]): a transform that
+    /// raised in a helper returns at once.
+    pub fn crashed(&self) -> bool {
+        self.state.crash.is_some()
     }
 
     /// docutils `document.set_id(node)` for a node without ids, as every
@@ -738,11 +771,12 @@ pub(crate) fn read_transforms_with(
         registry,
         mut state,
         roles_after,
-        crash,
     } = parsed;
     let mut tree = TxTree::from_parse(doctree, &mut state);
     for (key, id) in schedule(&state) {
-        if key >= SPHINX_DOMAINS {
+        // Sphinx's read stops where it raises (decision 13): no transform
+        // runs after a parse that crashed, and none after one that did.
+        if key >= SPHINX_DOMAINS || state.crash.is_some() {
             break;
         }
         apply(
@@ -766,7 +800,6 @@ pub(crate) fn read_transforms_with(
             registry,
             state,
             roles_after,
-            crash,
         },
     }
 }

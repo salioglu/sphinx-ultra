@@ -28,6 +28,7 @@ use crate::inventory::InventoryFile;
 use crate::matching;
 use crate::parser::Parser;
 use crate::read::{merge_document, MergeInputs, ReadOutcome, ReadSettings};
+use crate::rst::SphinxCrash;
 use crate::transforms::post;
 use crate::transforms::tags::Tags;
 use crate::utils;
@@ -825,6 +826,13 @@ impl SphinxBuilder {
         );
     }
 
+    /// The records the build has put in the stream so far, in the order
+    /// Sphinx emits them: after a build that crashed Sphinx (decision 13),
+    /// the ones Sphinx prints before the crash's report.
+    pub fn recorded_warnings(&self) -> Vec<Diagnostic> {
+        self.records.lock().unwrap().clone()
+    }
+
     /// Add an error to the collection
     #[allow(dead_code)]
     pub fn add_error(&self, error: BuildErrorReport) {
@@ -897,17 +905,22 @@ impl SphinxBuilder {
         let to_read = self.plan_read(&env, &source_files);
         let mut read_results = match self.read_phase(&source_files, &to_read) {
             Ok(read_results) => read_results,
-            // A read that crashes Sphinx (decision 13) ends the build with
-            // the environment as it was.
             Err(error) => {
                 self.env = env;
                 return Err(error);
             }
         };
 
-        self.merge_phase(&mut env, &mut read_results);
-        self.resolve_phase(&mut env, &read_results);
+        // An input that crashes Sphinx (decision 13), in a document's read
+        // or as it is resolved, ends the build with that crash
+        // ([`SphinxCrash`]), once the records Sphinx prints before it are
+        // in the stream ([`Self::recorded_warnings`]). The environment
+        // keeps what the documents merged before it left, and is not saved.
+        let crashed = self
+            .merge_phase(&mut env, &mut read_results)
+            .and_then(|()| self.resolve_phase(&mut env, &read_results));
         self.env = env;
+        crashed?;
 
         let files_skipped = read_results
             .iter()
@@ -1235,10 +1248,10 @@ impl SphinxBuilder {
     ///
     /// One file failing must not abort the build: failures become
     /// `BuildErrorReport`s (and a non-zero exit) while the rest continue.
-    /// An input that crashes Sphinx does abort it (decision 13): the read
-    /// fails with the crash of the first document, in sorted docname
-    /// order, that has one ([`crate::rst::SphinxCrash`]). Results keep the
-    /// discovery order of `files`.
+    /// A read that crashes Sphinx keeps its crash
+    /// ([`crate::transforms::state::DocumentState::crash`]), which
+    /// [`Self::merge_phase`] fails the build with, in Sphinx's read order.
+    /// Results keep the discovery order of `files`.
     fn read_phase(&self, files: &[PathBuf], to_read: &BTreeSet<String>) -> Result<Vec<ReadResult>> {
         info!(
             "Processing {} files with {} parallel jobs",
@@ -1322,21 +1335,6 @@ impl SphinxBuilder {
                     }
                 });
             });
-        }
-
-        // Decision 13: the first document in Sphinx's read order whose
-        // read crashes Sphinx fails the build.
-        for (docname, index) in &parsed {
-            if let Ok(read) = &results[*index].1 {
-                if let Some(crash) = &read.outcome.output.crash {
-                    let crash = crash.clone().located(
-                        &read.outcome.output.doctree.sources,
-                        &self.source_dir,
-                        docname,
-                    );
-                    return Err(anyhow::Error::new(crash));
-                }
-            }
         }
 
         let mut read_results = Vec::with_capacity(results.len());
@@ -1480,7 +1478,19 @@ impl SphinxBuilder {
     /// a time in sorted docname order, whatever order the parallel reads
     /// finished in. A document recovered from the cache prints none
     /// (decision 6).
-    fn merge_phase(&self, env: &mut BuildEnvironment, results: &mut [ReadResult]) {
+    ///
+    /// A document whose read crashed Sphinx (decision 13) ends the phase
+    /// with its crash, located: the first such document in this sorted
+    /// order is the one Sphinx's read crashes on, whatever stage of its
+    /// read raised, and whatever `-j` read it. Its records before the
+    /// crash print, as the earlier documents' did; it is not merged and
+    /// its doctree is not persisted, and the documents after it are not
+    /// merged.
+    fn merge_phase(
+        &self,
+        env: &mut BuildEnvironment,
+        results: &mut [ReadResult],
+    ) -> Result<(), SphinxCrash> {
         env.root_doc = self
             .config
             .root_doc
@@ -1568,6 +1578,13 @@ impl SphinxBuilder {
                 sink.push_next(record);
             }
             self.flush(sink);
+            if let Some(crash) = &result.outcome.state().crash {
+                return Err(crash.clone().located(
+                    &result.outcome.doctree().sources,
+                    &self.source_dir,
+                    docname,
+                ));
+            }
 
             // Persist the doctree *after* stage M has had it, the way Sphinx
             // writes its pickle after the read's transforms and
@@ -1591,6 +1608,7 @@ impl SphinxBuilder {
                 ));
             }
         }
+        Ok(())
     }
 
     /// Resolve phase: whole-project state that only exists once every
@@ -1613,7 +1631,15 @@ impl SphinxBuilder {
     /// cache directory is optional infrastructure, the output this build
     /// produced is valid without it, and the only consequence is that the
     /// next build starts cold. It is reported and the build goes on.
-    fn resolve_phase(&self, env: &mut BuildEnvironment, results: &[ReadResult]) {
+    ///
+    /// A reference that crashes Sphinx as it is resolved (decision 13)
+    /// ends the phase with that crash ([`Self::xref_phase`]): the general
+    /// index is not assembled and the environment is not saved.
+    fn resolve_phase(
+        &self,
+        env: &mut BuildEnvironment,
+        results: &[ReadResult],
+    ) -> Result<(), SphinxCrash> {
         info!("Resolving build environment");
 
         let sources: HashMap<&str, &Path> = results
@@ -1671,7 +1697,7 @@ impl SphinxBuilder {
         }
         self.flush(consistency);
 
-        self.xref_phase(env, results, &doc2path);
+        self.xref_phase(env, results, &doc2path)?;
         self.genindex_phase(env, &sources);
         self.py_modindex_phase(env);
 
@@ -1682,6 +1708,7 @@ impl SphinxBuilder {
                 self.cache.cache_dir().display()
             );
         }
+        Ok(())
     }
 
     /// Assemble the general index (`IndexEntries.create_index`).
@@ -1747,7 +1774,7 @@ impl SphinxBuilder {
         env: &BuildEnvironment,
         results: &[ReadResult],
         doc2path: &dyn Fn(&str) -> PathBuf,
-    ) {
+    ) -> Result<(), SphinxCrash> {
         let in_memory: HashMap<&str, &Doctree> = results
             .iter()
             .map(|result| (result.docname.as_str(), result.outcome.doctree()))
@@ -1829,6 +1856,13 @@ impl SphinxBuilder {
             for record in post.records {
                 sink.push_next(record);
             }
+            // A reference that crashes Sphinx (decision 13) ends the
+            // phase, after the records Sphinx logged before it: those of
+            // the documents written before this one, and this one's.
+            if let Some(crash) = post.crash {
+                self.flush(sink);
+                return Err(crash);
+            }
             env_toctree::resolve_body_toctrees(
                 env,
                 &result.docname,
@@ -1878,6 +1912,7 @@ impl SphinxBuilder {
                  (domain not implemented until M5)"
             );
         }
+        Ok(())
     }
 
     /// Section and figure numbering (`TocTreeCollector.get_updated_docs`,

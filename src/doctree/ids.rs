@@ -21,7 +21,7 @@ use unicode_normalization::UnicodeNormalization;
 use super::pending::PendingTransform;
 use super::{AttrValue, Node, Uid};
 use crate::transforms::reporter::LogRecord;
-use crate::transforms::state::{DocLoc, DocumentState, NodeView, PendingRecord};
+use crate::transforms::state::{DocLoc, DocumentState, NodeView, PendingRecord, SourceRef};
 use crate::utils::py_isspace;
 
 /// docutils `_non_id_translate_digraphs` (applied after lowercasing).
@@ -502,11 +502,38 @@ impl DocumentState {
     /// the way `set_duplicate_name_id` does: the node in hand loses the
     /// name at once, an earlier node (already placed in the parser's tree)
     /// through a [`DupnameFixup`], and the message is reported here.
+    ///
+    /// A node that binds again a name already bound to it — a figure whose
+    /// `:figname:` registered the name before Sphinx's `Figure` registers
+    /// its names again for `:name:` — is the earlier node too, so docutils
+    /// `dupname`s it twice, and the second `names.remove(name)` raises
+    /// `ValueError` before the message is made: Sphinx 9.1.0 crashes there
+    /// (decision 13), at `loc`, and binds nothing more.
     fn note_target(&mut self, node: &mut Node, explicit: bool, loc: DocLoc) -> Vec<Node> {
         let id = self.set_id_at(node, loc);
         let duplicates = self.names.bind(NodeView::of(node), &id, explicit);
         let mut reported = Vec::with_capacity(duplicates.len());
         for duplicate in duplicates {
+            let own_name = duplicate
+                .dupname_old
+                .as_ref()
+                .is_some_and(|old_id| node.attrs.ids.contains(old_id));
+            if duplicate.dupname_new && own_name {
+                let location = match loc {
+                    DocLoc {
+                        source: Some(SourceRef::Table(source)),
+                        line: Some(line),
+                    } => crate::rst::LogLocation::Node { source, line },
+                    _ => crate::rst::LogLocation::None,
+                };
+                let crash = crate::rst::SphinxCrash::python(
+                    "ValueError",
+                    "list.remove(x): x not in list".to_string(),
+                    location,
+                );
+                self.raise(crash, 0, 0);
+                break;
+            }
             if duplicate.dupname_new {
                 dupname(node, &duplicate.name);
             }
@@ -593,8 +620,9 @@ impl DocumentState {
 }
 
 /// docutils `dupname(node, name)`: the name moves from `names` to
-/// `dupnames`. A name the node does not carry stays put (docutils
-/// raises).
+/// `dupnames`. A name the node does not carry stays put; the one input
+/// that `dupname`s a node of a name it no longer carries, where docutils
+/// raises, crashes the build first ([`DocumentState::note_target`]).
 fn dupname(node: &mut Node, name: &str) {
     if let Some(pos) = node.attrs.names.iter().position(|n| n == name) {
         node.attrs.names.remove(pos);

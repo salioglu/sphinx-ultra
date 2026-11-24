@@ -488,7 +488,7 @@ pub(crate) fn sphinx_code(call: &RoleCall<'_>) -> Node {
 /// The index entry types `process_index_entry` no longer accepts
 /// (`SP/sphinx/util/nodes.py:441-460`): the `ValueError` it raises for
 /// `entry`, `None` for any other.
-fn removed_index_entry(entry: &str) -> Option<String> {
+pub(crate) fn removed_index_entry(entry: &str) -> Option<String> {
     let entry = entry.trim_matches(crate::utils::py_isspace);
     let entry = match entry.strip_prefix('!') {
         Some(rest) => rest.trim_start_matches(crate::utils::py_isspace),

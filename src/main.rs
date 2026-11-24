@@ -367,11 +367,20 @@ fn to_stderr(text: &str) {
 
 /// A loaded configuration, the directory it was read from, and the records
 /// Sphinx logs while setting it up: ignored `-D` overrides, then the
-/// `config-inited` checks.
+/// `config-inited` checks, up to a `config-inited` handler that crashes
+/// Sphinx (decision 13), if one does.
 struct Configured {
     config: BuildConfig,
     confdir: PathBuf,
     records: Vec<Diagnostic>,
+    /// The crash of a `config-inited` handler, which ends the records.
+    crash: Option<SphinxCrash>,
+}
+
+/// `SOURCE_DATE_EPOCH`, when it is set, as Python's `os.getenv` reads it
+/// (a value that is not UTF-8 read lossily).
+fn source_date_epoch() -> Option<String> {
+    std::env::var_os("SOURCE_DATE_EPOCH").map(|value| value.to_string_lossy().into_owned())
 }
 
 /// A configuration-time record: Sphinx logs these with neither a location
@@ -470,12 +479,6 @@ fn configure(args: &RunArgs) -> Result<Configured> {
         config.fail_on_warning = true;
     }
 
-    // Sphinx type-checks the finished configuration once at `config-inited`,
-    // i.e. after conf.py AND after every override — a rejected value only
-    // warns, and the build continues with it.
-    records.extend(config.validate().into_iter().map(config_record));
-    // ... and checks that a configured logo/favicon exists, also at
-    // `config-inited`, dropping the setting when it does not.
     let confdir = match (&args.config_file, &args.confdir) {
         (Some(config_file), _) => config_file
             .parent()
@@ -488,16 +491,44 @@ fn configure(args: &RunArgs) -> Result<Configured> {
             .unwrap_or_else(|| args.source.clone()),
         (None, None) => args.source.clone(),
     };
+    // The `config-inited` handlers, in Sphinx's order (priority, then
+    // registration), over the finished configuration — after conf.py AND
+    // after every override; a rejected value only warns, and the build
+    // continues with it: `deprecate_source_encoding` (790), then, at 800,
+    // the HTML builder's logo and favicon checks, which drop a missing
+    // file's setting (`sphinx.builders.html` registers them before
+    // `sphinx.config` registers its own), ...
+    records.extend(
+        config
+            .validate_source_encoding()
+            .into_iter()
+            .map(config_record),
+    );
     records.extend(
         config
             .validate_html_logo_and_favicon(&confdir)
             .into_iter()
             .map(config_record),
     );
+    // ... `correct_copyright_year`, which crashes on a `SOURCE_DATE_EPOCH`
+    // `int()` cannot read, ending the records ...
+    let crash = source_date_epoch()
+        .as_deref()
+        .and_then(sphinx_ultra::read::source_date_epoch_config_crash);
+    // ... then the type checks and `check_primary_domain`.
+    if crash.is_none() {
+        records.extend(
+            config
+                .validate_confval_types()
+                .into_iter()
+                .map(config_record),
+        );
+    }
     Ok(Configured {
         config,
         confdir,
         records,
+        crash,
     })
 }
 
@@ -516,6 +547,7 @@ async fn run_build(args: RunArgs) -> Result<i32> {
         mut config,
         confdir,
         records: config_records,
+        crash: config_crash,
     } = match configure(&args) {
         Ok(configured) => configured,
         Err(error) if sphinx_mode => {
@@ -524,6 +556,20 @@ async fn run_build(args: RunArgs) -> Result<i32> {
         }
         Err(error) => return Err(error),
     };
+
+    // Sphinx reads `SOURCE_DATE_EPOCH` first while it sets its application
+    // up, before it logs anything about the configuration: a value it
+    // cannot read crashes it with no record before the report (decision
+    // 13), in both modes.
+    if let Some(crash) = source_date_epoch()
+        .and_then(|epoch| sphinx_ultra::read::source_date_epoch_import_crash(&epoch))
+    {
+        if !sphinx_mode {
+            stream.open(args.warning_file.as_deref())?;
+        }
+        stream.raw(&crash.report())?;
+        return Ok(2);
+    }
 
     let filter = WarningFilter::from_config(&config);
     stream.show_warning_types = filter.show_warning_types();
@@ -560,6 +606,18 @@ async fn run_build(args: RunArgs) -> Result<i32> {
         } else {
             warn!("{}", record.message);
         }
+    }
+    // A `config-inited` handler that crashed Sphinx ends the build after
+    // the records logged before it (decision 13).
+    if let Some(crash) = config_crash {
+        if !sphinx_mode {
+            stream.open(args.warning_file.as_deref())?;
+            for record in &config_records {
+                stream.write_record(record)?;
+            }
+        }
+        stream.raw(&crash.report())?;
+        return Ok(2);
     }
 
     // `config-inited`'s last handler, the one `sphinx.ext.intersphinx`
@@ -616,12 +674,19 @@ async fn run_build(args: RunArgs) -> Result<i32> {
             return Ok(2);
         }
         // An input that crashes Sphinx 9.1.0 fails the build as Sphinx's
-        // crash does, with exit status 2 and a report naming the exception
-        // (decision 13), in both modes.
+        // crash does (decision 13), in both modes: the records Sphinx
+        // prints before the crash — the configuration's, then the build's
+        // so far — then a report naming the exception, and exit status 2.
         Err(error) if error.downcast_ref::<SphinxCrash>().is_some() => {
             let crash = error.downcast_ref::<SphinxCrash>().expect("matched above");
             if !sphinx_mode {
                 stream.open(args.warning_file.as_deref())?;
+                for record in &config_records {
+                    stream.write_record(record)?;
+                }
+            }
+            for record in &builder.recorded_warnings() {
+                stream.record(record)?;
             }
             stream.raw(&crash.report())?;
             return Ok(2);

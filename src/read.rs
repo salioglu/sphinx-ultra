@@ -31,7 +31,7 @@ use crate::env::resolve::{NitpickConfig, Resolver};
 use crate::env::toctree::{resolve_body_toctrees, ToctreeLocations};
 use crate::env::BuildEnvironment;
 use crate::intersphinx::Intersphinx;
-use crate::rst::{LogLocation, ParseOptions, ParseOutput, ReadConfig, RegistryExport};
+use crate::rst::{LogLocation, ParseOptions, ParseOutput, ReadConfig, RegistryExport, SphinxCrash};
 use crate::transforms::post::{apply_post_transforms, PostTransformConfig};
 use crate::transforms::reporter::{render_records, LogRecord};
 use crate::transforms::smartquotes::{self, SmartQuotesSettings};
@@ -76,7 +76,7 @@ pub struct ReadSettings {
     /// It is resolved once, when the settings are made ([`build_date`]):
     /// every document of a build reads the same date, and no transform
     /// reads the environment.
-    pub build_date: DateTime<Utc>,
+    pub build_date: BuildDate,
     /// `language` (`SP/sphinx/config.py:230`, default `'en'`): the language
     /// whose variant of an image the image collector prefers
     /// ([`crate::env::collectors::images`]), and the document's language
@@ -138,31 +138,42 @@ impl ReadSettings {
     }
 }
 
+/// The date `|today|` formats ([`ReadSettings::build_date`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuildDate {
+    /// A date Python's `datetime` holds.
+    Date(DateTime<Utc>),
+    /// The year of a `SOURCE_DATE_EPOCH` that `time.gmtime` reads, outside
+    /// the years 1 to 9999 Python's `datetime` holds: `format_date` raises
+    /// `ValueError: year N is out of range` where `|today|` is substituted,
+    /// which crashes Sphinx 9.1.0 (decision 13).
+    OutOfRange(i64),
+}
+
 /// The date `|today|` formats in a build that starts now
 /// ([`ReadSettings::build_date`]): `SOURCE_DATE_EPOCH`, read as Sphinx's
 /// `format_date` reads it ([`date_of_epoch`]), when it is set, and the
-/// current time otherwise. A value Sphinx cannot read crashes it where
-/// `|today|` is used; that input is not modelled (decision 13), and the
-/// build takes the current time instead.
-fn build_date() -> DateTime<Utc> {
+/// current time otherwise. A value that crashes Sphinx before it reads a
+/// document ([`source_date_epoch_import_crash`]) fails a build before
+/// these settings are made; here it is the current time.
+fn build_date() -> BuildDate {
     std::env::var("SOURCE_DATE_EPOCH")
         .ok()
         .and_then(|epoch| date_of_epoch(&epoch))
-        .unwrap_or_else(Utc::now)
+        .unwrap_or_else(|| BuildDate::Date(Utc::now()))
 }
 
 /// `datetime.fromtimestamp(float(epoch), tz=UTC)`
-/// (`SP/sphinx/util/i18n.py:274-276`): the POSIX timestamp `epoch`, which
-/// may have a fraction and surrounding whitespace, its whole seconds taken
+/// (`SP/sphinx/util/i18n.py:274-276`): the POSIX timestamp `epoch`, read
+/// as Python's `float()` reads it ([`py_float`]), its whole seconds taken
 /// toward zero and the fraction rounded half to even to microseconds, a
 /// rounded fraction of a whole second carried into the seconds (CPython's
-/// `_fromtimestamp`). `None` for what `float()` rejects (Python's
-/// underscore-separated digits are not read) and for a date outside
-/// Python's years 1 to 9999.
-fn date_of_epoch(epoch: &str) -> Option<DateTime<Utc>> {
-    use chrono::Datelike;
-    let timestamp: f64 = epoch.trim_matches(crate::utils::py_isspace).parse().ok()?;
-    if !timestamp.is_finite() {
+/// `_fromtimestamp`), and a year outside Python's 1 to 9999
+/// [`BuildDate::OutOfRange`]. `None` for what crashes Sphinx before the
+/// read ([`source_date_epoch_import_crash`]).
+fn date_of_epoch(epoch: &str) -> Option<BuildDate> {
+    let timestamp = py_float(epoch)?;
+    if !timestamp.is_finite() || !holds_in_time_t(timestamp) {
         return None;
     }
     let mut seconds = timestamp.trunc();
@@ -174,13 +185,152 @@ fn date_of_epoch(epoch: &str) -> Option<DateTime<Utc>> {
         seconds -= 1.0;
         micros += 1e6;
     }
-    // Both are whole numbers in range here: `seconds` is bounded below
-    // (more than Python's years allow), and `micros` lies in 0..1_000_000.
-    if seconds.abs() >= 1e15 {
+    // Whole numbers in range here: `time_t` holds `seconds`, which is
+    // within a second of the timestamp, and `micros` lies in 0..1_000_000.
+    let year = civil_year(seconds as i64);
+    if !struct_tm_holds(year) {
         return None;
     }
-    DateTime::from_timestamp(seconds as i64, micros as u32 * 1000)
-        .filter(|date| (1..=9999).contains(&date.year()))
+    if !(1..=9999).contains(&year) {
+        return Some(BuildDate::OutOfRange(year));
+    }
+    DateTime::from_timestamp(seconds as i64, micros as u32 * 1000).map(BuildDate::Date)
+}
+
+/// `SOURCE_DATE_EPOCH` as Sphinx 9.1.0 reads it first, while it sets its
+/// application up, before it logs anything about the configuration:
+/// importing `sphinx.builders.gettext` takes `time.gmtime(float(value))`
+/// (`SP/sphinx/builders/gettext.py:200-206`), which raises, and crashes
+/// Sphinx (decision 13), for what `float()` rejects ([`py_float`]), for
+/// NaN, for a time the platform's `time_t` does not hold, and for one in a
+/// year `struct tm` does not hold, whose `OSError` names the platform's
+/// `EOVERFLOW`. The crash `value` makes, if any.
+///
+/// Not modelled: non-ASCII decimal digits, which Python reads; Windows'
+/// `gmtime`, which also fails before 1970 and after 3000.
+pub fn source_date_epoch_import_crash(value: &str) -> Option<SphinxCrash> {
+    let raise = |exception, message: &str| {
+        Some(SphinxCrash::python(
+            exception,
+            message.to_string(),
+            LogLocation::None,
+        ))
+    };
+    let Some(timestamp) = py_float(value) else {
+        return raise(
+            "ValueError",
+            &format!(
+                "could not convert string to float: {}",
+                crate::utils::py_repr_str(value)
+            ),
+        );
+    };
+    if timestamp.is_nan() {
+        return raise("ValueError", "Invalid value NaN (not a number)");
+    }
+    if !holds_in_time_t(timestamp) {
+        return raise(
+            "OverflowError",
+            "timestamp out of range for platform time_t",
+        );
+    }
+    if !struct_tm_holds(civil_year(timestamp.floor() as i64)) {
+        return raise("OSError", EOVERFLOW);
+    }
+    None
+}
+
+/// `SOURCE_DATE_EPOCH` as Sphinx 9.1.0 reads it next, at `config-inited`:
+/// `correct_copyright_year` (`SP/sphinx/config.py:711-738`) takes
+/// `int(value)`, which raises for what `int()` rejects in base 10, a
+/// fraction or an exponent `float()` reads among them. Sphinx reports the
+/// handler's exception as an `ExtensionError` naming the handler, and
+/// crashes (decision 13). The crash `value` makes, if any.
+pub fn source_date_epoch_config_crash(value: &str) -> Option<SphinxCrash> {
+    if py_int_reads(value) {
+        return None;
+    }
+    // `invalid literal for int() with base %d: %.200R`.
+    let literal: String = crate::utils::py_repr_str(value).chars().take(200).collect();
+    Some(SphinxCrash::extension_error(
+        "Extension error (sphinx.config)",
+        "correct_copyright_year",
+        "config-inited",
+        &format!("invalid literal for int() with base 10: {literal}"),
+    ))
+}
+
+/// Python's `str(OSError(EOVERFLOW))`, `[Errno N] strerror(N)`, on the
+/// platforms the build is probed on: macOS's, and Linux's elsewhere.
+const EOVERFLOW: &str = if cfg!(target_os = "macos") {
+    "[Errno 84] Value too large to be stored in data type"
+} else {
+    "[Errno 75] Value too large for defined data type"
+};
+
+/// Whether CPython's `time_t` conversion takes `timestamp`, whose floor
+/// must lie in `[-2**63, 2**63)` (`_PyTime_ObjectToTime_t`): an infinity
+/// does not.
+fn holds_in_time_t(timestamp: f64) -> bool {
+    const BOUND: f64 = 9_223_372_036_854_775_808.0;
+    (-BOUND..BOUND).contains(&timestamp.floor())
+}
+
+/// Whether `gmtime` gives `year`: `struct tm` holds the year less 1900 in
+/// an `int`, and `EOVERFLOW` is its answer past that.
+fn struct_tm_holds(year: i64) -> bool {
+    (i64::from(i32::MIN) + 1900..=i64::from(i32::MAX) + 1900).contains(&year)
+}
+
+/// The proleptic Gregorian year of the POSIX time `seconds` in UTC, as
+/// `gmtime` counts it (year 0 before year 1), whatever its range (Howard
+/// Hinnant's `civil_from_days`).
+fn civil_year(seconds: i64) -> i64 {
+    let days = seconds.div_euclid(86_400);
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let month_index = (5 * doy + 2) / 153;
+    yoe + era * 400 + i64::from(month_index >= 10)
+}
+
+/// Python's `float(text)` for a `str`: Python's whitespace around it
+/// stripped, then a sign and `inf`, `infinity` or `nan` in any case, or a
+/// decimal literal whose digits single underscores may group, each between
+/// two digits (PEP 515). `None` for what it rejects. Non-ASCII decimal
+/// digits, which Python reads too, are not read.
+fn py_float(text: &str) -> Option<f64> {
+    let text = text.trim_matches(crate::utils::py_isspace);
+    let chars: Vec<char> = text.chars().collect();
+    let grouped = chars.iter().enumerate().all(|(at, &c)| {
+        c != '_'
+            || (at > 0
+                && chars[at - 1].is_ascii_digit()
+                && chars.get(at + 1).is_some_and(char::is_ascii_digit))
+    });
+    if !grouped {
+        return None;
+    }
+    chars
+        .into_iter()
+        .filter(|&c| c != '_')
+        .collect::<String>()
+        .parse()
+        .ok()
+}
+
+/// Whether Python's `int(text)` reads the `str` `text` in base 10: Python's
+/// whitespace around it, a sign, then ASCII digits that single underscores
+/// may group (PEP 515).
+fn py_int_reads(text: &str) -> bool {
+    let text = text.trim_matches(crate::utils::py_isspace);
+    let digits = text.strip_prefix(['+', '-']).unwrap_or(text);
+    !digits.is_empty()
+        && digits
+            .split('_')
+            .all(|group| !group.is_empty() && group.chars().all(|c| c.is_ascii_digit()))
 }
 
 /// One document's read: the doctree and the docutils document state beside
@@ -211,7 +361,6 @@ impl ReadOutcome {
                 registry: RegistryExport::default(),
                 state: DocumentState::default(),
                 roles_after: crate::rst::roles::RoleTable::default(),
-                crash: None,
             },
         }
     }
@@ -362,6 +511,11 @@ pub struct MergeInputs<'a> {
 /// record with no source of its own is located at
 /// [`MergeInputs::source_path`]), stable-sorted by key, keys dropped. The
 /// log itself is left in place.
+///
+/// A read that crashed (decision 13, [`DocumentState::crash`]) is not
+/// merged: Sphinx's read of the document stopped where it raised, so the
+/// records are the ones the read logged before the crash, and `env` is
+/// left as it is.
 pub fn merge_document(
     env: &mut BuildEnvironment,
     docname: &str,
@@ -369,6 +523,10 @@ pub fn merge_document(
     inputs: &MergeInputs<'_>,
     settings: &ReadSettings,
 ) -> Vec<Diagnostic> {
+    if outcome.state().crash.is_some() {
+        let records = outcome.state().log_before_crash();
+        return in_key_order(records, &outcome.doctree().sources, inputs.source_path);
+    }
     let merged = crate::transforms::run_merge_transforms(outcome, env, docname, inputs, settings);
     let mut records = outcome.state().log.clone();
     records.extend(merged);
@@ -544,6 +702,11 @@ pub fn resolve_standalone(
         &mut doctree,
     );
     records.extend(post.records);
+    // A reference that crashes Sphinx ends the write there (decision 13),
+    // as it ends a build's resolve pass; the oracles record no such input.
+    if post.crash.is_some() {
+        return (doctree, records);
+    }
 
     // Then the document's own toctrees, as the builder's resolve pass
     // resolves them. Every entry naming a document was dropped by the
@@ -722,18 +885,27 @@ mod tests {
 
     /// `SOURCE_DATE_EPOCH` read as `datetime.fromtimestamp(float(value),
     /// tz=UTC)` (`SP/sphinx/util/i18n.py:274-276`): whole and fractional
-    /// seconds, Python's surrounding whitespace, the fraction rounded half
-    /// to even to microseconds and carried; what Sphinx cannot read is not
-    /// a date.
+    /// seconds, Python's surrounding whitespace and digit groups, the
+    /// fraction rounded half to even to microseconds and carried; a year
+    /// `datetime` does not hold is out of range; what crashes Sphinx before
+    /// the read is not a date.
     //
     // oracle (CPython 3.12): `datetime.fromtimestamp(float(v), tz=UTC)`
     //   for each value below.
     #[test]
     fn source_date_epoch_reads_as_python_does() {
-        let date = |epoch: &str| date_of_epoch(epoch).map(|date| date.to_rfc3339());
+        let date = |epoch: &str| match date_of_epoch(epoch) {
+            Some(BuildDate::Date(date)) => Some(date.to_rfc3339()),
+            Some(BuildDate::OutOfRange(year)) => Some(format!("year {year} is out of range")),
+            None => None,
+        };
         assert_eq!(date("0").as_deref(), Some("1970-01-01T00:00:00+00:00"));
         assert_eq!(
             date(" 1700000000\n").as_deref(),
+            Some("2023-11-14T22:13:20+00:00")
+        );
+        assert_eq!(
+            date("1_700_000_000").as_deref(),
             Some("2023-11-14T22:13:20+00:00")
         );
         assert_eq!(
@@ -741,6 +913,7 @@ mod tests {
             Some("2023-11-14T22:13:20.250+00:00")
         );
         assert_eq!(date("1.7e9").as_deref(), Some("2023-11-14T22:13:20+00:00"));
+        assert_eq!(date("1e1_0").as_deref(), Some("2286-11-20T17:46:40+00:00"));
         assert_eq!(
             date("1699999999.9999996").as_deref(),
             Some("2023-11-14T22:13:20+00:00")
@@ -749,8 +922,99 @@ mod tests {
             date("-1.5").as_deref(),
             Some("1969-12-31T23:59:58.500+00:00")
         );
-        for unreadable in ["", "soon", "inf", "nan", "1e300", "1e12"] {
+        assert_eq!(
+            date("253402300799").as_deref(),
+            Some("9999-12-31T23:59:59+00:00")
+        );
+        for (epoch, year) in [
+            ("253402300800", 10_000),
+            ("300000000000", 11_476),
+            ("1e12", 33_658),
+            ("-62135596801", 0),
+            ("-99999999999", -1_199),
+            ("-6.77680406097408e+16", -2_147_481_748),
+        ] {
+            assert_eq!(
+                date(epoch),
+                Some(format!("year {year} is out of range")),
+                "{epoch:?}"
+            );
+        }
+        for unreadable in ["", "soon", "1__0", "1_.5", "inf", "nan", "1e300", "1e17"] {
             assert_eq!(date(unreadable), None, "{unreadable:?}");
+        }
+    }
+
+    /// The two readings of `SOURCE_DATE_EPOCH` that crash Sphinx 9.1.0
+    /// before its read (decision 13): `time.gmtime(float(value))` when
+    /// `sphinx.builders.gettext` is imported, and `int(value)` in
+    /// `correct_copyright_year` at `config-inited`, which Sphinx reports
+    /// as an `ExtensionError` naming the handler.
+    //
+    // oracle (CPython 3.12): `time.gmtime(float(v))` and `int(v)` for each
+    //   value below (on macOS; Linux's `EOVERFLOW` is errno 75).
+    #[test]
+    fn source_date_epoch_crashes_as_sphinx_does() {
+        let import =
+            |epoch: &str| source_date_epoch_import_crash(epoch).map(|crash| crash.to_string());
+        let float = |epoch: &str| {
+            Some(format!(
+                "ValueError: could not convert string to float: {}",
+                crate::utils::py_repr_str(epoch)
+            ))
+        };
+        let overflow =
+            Some("OverflowError: timestamp out of range for platform time_t".to_string());
+        for (epoch, crash) in [
+            ("soon", float("soon")),
+            ("", float("")),
+            ("1__0", float("1__0")),
+            ("1_.5", float("1_.5")),
+            (
+                "nan",
+                Some("ValueError: Invalid value NaN (not a number)".to_string()),
+            ),
+            (
+                "+nan",
+                Some("ValueError: Invalid value NaN (not a number)".to_string()),
+            ),
+            ("inf", overflow.clone()),
+            ("-Infinity", overflow.clone()),
+            ("9.3e18", overflow.clone()),
+            ("1e300", overflow),
+            ("1e17", Some(format!("OSError: {EOVERFLOW}"))),
+            ("-1e17", Some(format!("OSError: {EOVERFLOW}"))),
+        ] {
+            assert_eq!(import(epoch), crash, "{epoch:?}");
+        }
+        for readable in [
+            "0",
+            " 12 ",
+            "1_000",
+            "1.5",
+            "1e3",
+            "-1",
+            "300000000000",
+            "-6.77680406097408e+16",
+        ] {
+            assert_eq!(import(readable), None, "{readable:?}");
+        }
+
+        let config =
+            |epoch: &str| source_date_epoch_config_crash(epoch).map(|crash| crash.report());
+        let int = |literal: &str| {
+            Some(format!(
+                "\nExtension error (sphinx.config)!\n\n    sphinx.errors.ExtensionError: Handler \
+                 <function correct_copyright_year at 0x...> for event 'config-inited' threw an \
+                 exception (exception: invalid literal for int() with base 10: {literal})\n\n\
+                 Sphinx 9.1.0 crashes on this input; sphinx-ultra stops the build as it does.\n"
+            ))
+        };
+        assert_eq!(config("1.5"), int("'1.5'"));
+        assert_eq!(config("1e3"), int("'1e3'"));
+        assert_eq!(config(" 1.5\n"), int("' 1.5\\n'"));
+        for readable in ["0", " 12 ", "1_000", "-1", "+5", "007"] {
+            assert_eq!(config(readable), None, "{readable:?}");
         }
     }
 

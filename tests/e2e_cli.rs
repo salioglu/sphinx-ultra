@@ -17,6 +17,9 @@ fn bin() -> Command {
     // Stderr assertions must not depend on the developer/CI environment;
     // the dedicated RUST_LOG test re-sets it explicitly via .env().
     cmd.env_remove("RUST_LOG");
+    // Nor may a build: a `SOURCE_DATE_EPOCH` Sphinx cannot read fails it
+    // (decision 13). The tests that date a build set it via .env().
+    cmd.env_remove("SOURCE_DATE_EPOCH");
     cmd
 }
 
@@ -3726,19 +3729,11 @@ fn custom_roles_under_parallel_reads() {
 }
 
 /// A build of `files` that Sphinx 9.1.0 crashes on (decision 13): exit
-/// status 2, and the report — on stderr and in the `-w` file — naming the
-/// exception Sphinx raises, and where the input is.
+/// status 2, and the report — on stderr and in the `-w` file
+/// ([`crash_stream`]) — naming the exception Sphinx raises, and where the
+/// input is.
 fn assert_crash_exits_two(test: &str, files: &[(&str, &str)], exception: &str, location: &str) {
-    let src = temp_source(test, files);
-    let out = out_dir(test);
-    let (result, written) = warning_stream(&src, &out, &[]);
-    assert_eq!(
-        result.status.code(),
-        Some(2),
-        "stderr: {}",
-        stderr_of(&result)
-    );
-    let stderr = srcdir_spelled(&result.stderr, &src);
+    let stderr = crash_stream(test, files, &[], &[]);
     assert!(
         stderr.contains(&format!("\n    {exception}\n")),
         "the report names the crash: {stderr}"
@@ -3750,7 +3745,6 @@ fn assert_crash_exits_two(test: &str, files: &[(&str, &str)], exception: &str, l
         )),
         "the report says where: {stderr}"
     );
-    assert_eq!(written, stderr, "the -w file holds what stderr does");
 }
 
 /// Decision 13: a trailing `&` leaves `GUILabel` an empty span, whose first
@@ -4007,4 +4001,742 @@ fn a_reference_resolved_with_a_warning_resolves_on_every_path() {
         assert!(result.status.success(), "{test}: {}", stderr_of(&result));
         assert_eq!(written, expected, "{test}");
     }
+}
+
+/// The report a build that Sphinx 9.1.0 crashes on ends its warning stream
+/// with (decision 13, `SphinxCrash::report`): the category line of one of
+/// Sphinx's own errors, the exception, and where the input is, when the
+/// crash has a place in a document.
+fn crash_report(category: Option<&str>, exception: &str, location: Option<&str>) -> String {
+    let category = category
+        .map(|category| format!("{category}!\n"))
+        .unwrap_or_default();
+    let location = location
+        .map(|location| format!("{location}: "))
+        .unwrap_or_default();
+    format!(
+        "\n{category}\n    {exception}\n\n{location}Sphinx 9.1.0 crashes on this input; \
+         sphinx-ultra stops the build as it does.\n"
+    )
+}
+
+/// The warning stream of a sphinx-build of `files` that Sphinx 9.1.0
+/// crashes on (decision 13), run with `env` set and `extra` arguments: the
+/// build exits 2, and stderr holds what the `-w` file does, which is
+/// returned with the source directory spelled `<SRCDIR>/`.
+fn crash_stream(
+    test: &str,
+    files: &[(&str, &str)],
+    env: &[(&str, &str)],
+    extra: &[&str],
+) -> String {
+    let src = temp_source(test, files);
+    let out = out_dir(test);
+    let log = out.with_extension("w");
+    let _ = std::fs::remove_file(&log);
+    let mut command = bin();
+    command
+        .arg(&src)
+        .arg(&out)
+        .args(["-q", "-w"])
+        .arg(&log)
+        .args(extra);
+    for (key, value) in env {
+        command.env(key, value);
+    }
+    let result = command.output().expect("binary should run");
+    assert_eq!(
+        result.status.code(),
+        Some(2),
+        "{test}: {}",
+        stderr_of(&result)
+    );
+    let written = srcdir_spelled(&std::fs::read(&log).unwrap(), &src);
+    assert_eq!(
+        srcdir_spelled(&result.stderr, &src),
+        written,
+        "{test}: the -w file holds what stderr does"
+    );
+    written
+}
+
+/// The project of the stream-before-the-crash pins: a configuration
+/// warning, one in the document read before the crashing one, and the
+/// crashing document's own before and after the input Sphinx crashes on.
+const STREAM_BEFORE_THE_CRASH: [(&str, &str); 5] = [
+    ("conf.py", "project = 'Temp'\nhtml_logo = 'missing.png'\n"),
+    (
+        "index.rst",
+        "Index\n=====\n\n.. toctree::\n\n   a\n   b\n   c\n",
+    ),
+    ("a.rst", "A\n=\n\nSee :nope:`x` here.\n"),
+    (
+        "b.rst",
+        "B\n=\n\nFirst :nope:`y`.\n\nPress :guilabel:`a&`.\n\nLater :nope:`z` and `dangling`_.\n",
+    ),
+    ("c.rst", "C\n=\n\nAlso :nope:`w`.\n"),
+];
+
+/// What Sphinx 9.1.0 prints for [`STREAM_BEFORE_THE_CRASH`], probed under
+/// its default `-j 1`: the configuration's record, the record of `a`, read
+/// before `b`, and the one `b` raised before its role crashed.
+fn stream_before_the_crash() -> String {
+    format!(
+        "\
+WARNING: logo file 'missing.png' does not exist
+<SRCDIR>/a.rst:4: ERROR: Unknown interpreted text role \"nope\". [docutils]
+<SRCDIR>/b.rst:4: ERROR: Unknown interpreted text role \"nope\". [docutils]
+{}",
+        crash_report(
+            None,
+            "IndexError: string index out of range",
+            Some("<SRCDIR>/b.rst:6")
+        )
+    )
+}
+
+/// Decision 13, the stream before the crash: Sphinx 9.1.0 reads the
+/// documents one at a time in sorted docname order and holds their
+/// warnings back until the read ends (`logging.pending_warnings()`), which
+/// flushes them when the read raises. So a crash prints, before its
+/// report, the configuration's records, every record of the documents read
+/// before the crashing one, and the crashing document's records up to the
+/// crash: here a role's, at parse time, so not the document's later ones.
+/// The build prints the same stream whatever its `-j`.
+#[test]
+fn a_crash_prints_the_records_before_it() {
+    for jobs in ["1", "4"] {
+        assert_eq!(
+            crash_stream(
+                &format!("t17a2-stream-parse-j{jobs}"),
+                &STREAM_BEFORE_THE_CRASH,
+                &[],
+                &["-j", jobs],
+            ),
+            stream_before_the_crash(),
+            "-j {jobs}"
+        );
+    }
+}
+
+/// The native subcommand writes the same stream to its `-w` file when the
+/// build crashes: the configuration's records, which it otherwise writes
+/// once the build is done, then the records before the crash, then the
+/// report; and it exits 2.
+#[test]
+fn a_native_crash_writes_the_configuration_records_first() {
+    let src = temp_source("t17a2-stream-native", &STREAM_BEFORE_THE_CRASH);
+    let src = sphinx_ultra::utils::canonicalize_simplified(&src).unwrap();
+    let out = out_dir("t17a2-stream-native");
+    let log = out.with_extension("w");
+    let _ = std::fs::remove_file(&log);
+    let result = build(&src, &out, &["-w", log.to_str().unwrap()]);
+    assert_eq!(
+        result.status.code(),
+        Some(2),
+        "stderr: {}",
+        stderr_of(&result)
+    );
+    assert_eq!(
+        srcdir_spelled(&std::fs::read(&log).unwrap(), &src),
+        stream_before_the_crash()
+    );
+}
+
+/// Decision 13: when several documents would crash, the first in Sphinx's
+/// read order decides, whatever stage it crashes in. Sphinx reads `a`
+/// whole — parse and transforms — before it parses `b`, so `a`'s crash in
+/// `HandleCodeBlocks` (210) wins over `b`'s role crash at parse time, and
+/// `a`'s parse records print before it. Probed on Sphinx 9.1.0 (`-j 1`);
+/// the build's result does not depend on its `-j`.
+#[test]
+fn the_first_crash_in_read_order_decides() {
+    let files = [
+        ("conf.py", "project = 'Temp'\nhtml_logo = 'missing.png'\n"),
+        (
+            "index.rst",
+            "Index\n=====\n\n.. toctree::\n\n   a\n   b\n   c\n",
+        ),
+        (
+            "a.rst",
+            "A\n=\n\nSee :nope:`x`.\n\n.. epigraph::\n\n   .. default-domain:: py\n\nAfter :nope:`z`.\n",
+        ),
+        ("b.rst", "B\n=\n\nPress :guilabel:`a&`.\n"),
+        ("c.rst", "C\n=\n\nAlso :nope:`w`.\n"),
+    ];
+    let expected = format!(
+        "\
+WARNING: logo file 'missing.png' does not exist
+<SRCDIR>/a.rst:4: ERROR: Unknown interpreted text role \"nope\". [docutils]
+<SRCDIR>/a.rst:10: ERROR: Unknown interpreted text role \"nope\". [docutils]
+{}",
+        crash_report(
+            None,
+            "AssertionError: Losing \"classes\" attribute: ['epigraph']",
+            Some("<SRCDIR>/a.rst:8")
+        )
+    );
+    for jobs in ["1", "4"] {
+        assert_eq!(
+            crash_stream(
+                &format!("t17a2-two-crashes-j{jobs}"),
+                &files,
+                &[],
+                &["-j", jobs],
+            ),
+            expected,
+            "-j {jobs}"
+        );
+    }
+}
+
+/// Decision 13, a crash at resolve time: Sphinx 9.1.0 resolves each
+/// document as it writes it, in sorted docname order, after the whole
+/// read and the consistency checks. So the stream holds every read
+/// record, the consistency check's, the resolve records of the documents
+/// written before the crashing one, and the crashing document's up to the
+/// reference that crashes; here an explicit `:numref:` title with a
+/// positional field, which `str.format` cannot fill (`IndexError`, which
+/// `_resolve_numref_xref` does not catch). Probed on Sphinx 9.1.0.
+#[test]
+fn a_crash_at_resolve_time_prints_the_read_records_first() {
+    let table = ".. _tbl:\n\n.. table:: Cap\n\n   ===  ===\n   a    b\n   ===  ===\n\n";
+    let b = format!(
+        "B\n=\n\nFirst :nope:`y` and :ref:`nolabel-b1`.\n\n{table}\
+         See :numref:`Tab {{0}} {{number}} <tbl>` and :ref:`nolabel-b2`.\n"
+    );
+    let files = [
+        (
+            "conf.py",
+            "project = 'Temp'\nhtml_logo = 'missing.png'\nnumfig = True\n",
+        ),
+        (
+            "index.rst",
+            "Index\n=====\n\n.. toctree::\n\n   a\n   b\n   c\n",
+        ),
+        ("a.rst", "A\n=\n\nSee :nope:`x` and :ref:`nolabel-a`.\n"),
+        ("b.rst", b.as_str()),
+        ("c.rst", "C\n=\n\nAlso :nope:`w` and :ref:`nolabel-c`.\n"),
+        ("orphan.rst", "Orphan\n======\n\nText.\n"),
+    ];
+    assert_eq!(
+        crash_stream("t17a2-stream-resolve", &files, &[], &[]),
+        format!(
+            "\
+WARNING: logo file 'missing.png' does not exist
+<SRCDIR>/a.rst:4: ERROR: Unknown interpreted text role \"nope\". [docutils]
+<SRCDIR>/b.rst:4: ERROR: Unknown interpreted text role \"nope\". [docutils]
+<SRCDIR>/c.rst:4: ERROR: Unknown interpreted text role \"nope\". [docutils]
+<SRCDIR>/orphan.rst: WARNING: document isn't included in any toctree [toc.not_included]
+<SRCDIR>/a.rst:4: WARNING: undefined label: 'nolabel-a' [ref.ref]
+<SRCDIR>/b.rst:4: WARNING: undefined label: 'nolabel-b1' [ref.ref]
+{}",
+            crash_report(
+                None,
+                "IndexError: Replacement index 0 out of range for positional args tuple",
+                Some("<SRCDIR>/b.rst:14")
+            )
+        )
+    );
+}
+
+/// Decision 13, crash input 1: `HandleCodeBlocks` (210) replaces an empty
+/// block quote by its no children, and docutils' `replace_self([])`
+/// asserts that no basic attribute is lost, so a quote with a class whose
+/// content makes no node crashes Sphinx 9.1.0 there, where the quote is.
+fn assert_empty_quote_exits_two(test: &str, index: &str, classes: &str) {
+    assert_eq!(
+        crash_stream(test, &[("index.rst", index)], &[], &[]),
+        crash_report(
+            None,
+            &format!("AssertionError: Losing \"classes\" attribute: {classes}"),
+            Some("<SRCDIR>/index.rst:5")
+        )
+    );
+}
+
+/// Crash input 1: an `epigraph` whose content parses to nothing.
+#[test]
+fn empty_epigraph_exits_two() {
+    assert_empty_quote_exits_two(
+        "t17a2-crash-epigraph",
+        "Para.\n\n.. epigraph::\n\n   .. default-domain:: py\n",
+        "['epigraph']",
+    );
+}
+
+/// Crash input 1: a `highlights` whose content parses to nothing.
+#[test]
+fn empty_highlights_exits_two() {
+    assert_empty_quote_exits_two(
+        "t17a2-crash-highlights",
+        "Para.\n\n.. highlights::\n\n   .. default-domain:: py\n",
+        "['highlights']",
+    );
+}
+
+/// Crash input 1: a `pull-quote` whose content parses to nothing.
+#[test]
+fn empty_pull_quote_exits_two() {
+    assert_empty_quote_exits_two(
+        "t17a2-crash-pull-quote",
+        "Para.\n\n.. pull-quote::\n\n   .. default-domain:: py\n",
+        "['pull-quote']",
+    );
+}
+
+/// Crash input 1: `.. rst-class::` gives its classes to each node its
+/// content makes, an indented block that parses to nothing among them.
+#[test]
+fn empty_quote_under_rst_class_exits_two() {
+    assert_empty_quote_exits_two(
+        "t17a2-crash-rst-class",
+        ".. rst-class:: foo bar\n\n   Para.\n\n      .. default-domain:: py\n",
+        "['foo', 'bar']",
+    );
+}
+
+/// Decision 13, crash input 2: `Substitutions` (220) looks a nested
+/// reference's name up with `normed[name.lower()]`, which raises
+/// `KeyError` when no definition has it, while the copy of the reference
+/// that holds it is made.
+#[test]
+fn undefined_nested_substitution_exits_two() {
+    assert_eq!(
+        crash_stream(
+            "t17a2-crash-subst-undefined",
+            &[(
+                "index.rst",
+                "Use |a| here.\n\n.. |a| replace:: x |Nope| y\n"
+            )],
+            &[],
+            &[],
+        ),
+        crash_report(None, "KeyError: 'nope'", Some("<SRCDIR>/index.rst:1"))
+    );
+}
+
+/// Crash input 2: a definition found circular a second time, after the
+/// first message took its place, is replaced again: `replace_self` looks
+/// it up among its former parent's children (`ValueError`, naming it by
+/// docutils' `repr`), after the second message is logged.
+#[test]
+fn circular_substitution_reported_twice_exits_two() {
+    let detected = "<SRCDIR>/index.rst:3: ERROR: Circular substitution definition detected:\n\n\
+                    .. |c| replace:: |c| |c| [docutils]\n";
+    assert_eq!(
+        crash_stream(
+            "t17a2-crash-subst-twice",
+            &[("index.rst", "P0 |c| q.\n\n.. |c| replace:: |c| |c|\n")],
+            &[],
+            &[],
+        ),
+        format!(
+            "<SRCDIR>/index.rst:1: ERROR: Circular substitution definition referenced: \"c\". \
+             [docutils]\n{detected}{detected}{}",
+            crash_report(
+                None,
+                "ValueError: <substitution_definition \"c\": <substitution_reference...><#text: \
+                 ' '><substitution_ref ...> is not in list",
+                Some("<SRCDIR>/index.rst:3")
+            )
+        )
+    );
+}
+
+/// Crash input 2: a reference left in a copy that a circular reference
+/// stopped before it was placed is reached by the loop all the same, and
+/// when its own copy is circular, the copy it stands in is replaced by the
+/// message: that copy has no parent (`AttributeError`).
+#[test]
+fn circular_substitution_in_a_dropped_copy_exits_two() {
+    let detected = |line: u32, definition: &str| {
+        format!(
+            "<SRCDIR>/index.rst:{line}: ERROR: Circular substitution definition detected:\n\n\
+             {definition} [docutils]\n"
+        )
+    };
+    let referenced = |name: &str, line: u32| {
+        format!(
+            "<SRCDIR>/index.rst:{line}: ERROR: Circular substitution definition referenced: \
+             \"{name}\". [docutils]\n"
+        )
+    };
+    let a = ".. |a| replace:: |b| |a|";
+    assert_eq!(
+        crash_stream(
+            "t17a2-crash-subst-dropped",
+            &[(
+                "index.rst",
+                "P0 |a| q.\n\nP1 |a| q.\n\n.. |a| replace:: |b| |a|\n.. |b| replace:: |b|\n",
+            )],
+            &[],
+            &[],
+        ),
+        format!(
+            "{}{}{}{}{}{}{}",
+            referenced("a", 3),
+            detected(5, a),
+            detected(6, ".. |b| replace:: |b|"),
+            referenced("b", 1),
+            referenced("a", 1),
+            detected(5, a),
+            crash_report(
+                None,
+                "AttributeError: 'NoneType' object has no attribute 'replace'",
+                Some("<SRCDIR>/index.rst:5")
+            )
+        )
+    );
+}
+
+/// Decision 13, crash input 3: `today_fmt`'s `%U` and `%W` map to babel's
+/// `WW`, which babel rejects. Sphinx's `babel_format_date` takes the
+/// `ValueError` for an unknown locale, warns `Invalid Babel locale`, and
+/// tries `en`, which raises it again, where `|today|` is substituted
+/// (`DefaultSubstitutions`, 210).
+#[test]
+fn today_fmt_week_number_exits_two() {
+    for (test, today_fmt) in [
+        ("t17a2-crash-today-fmt-u", "%U"),
+        ("t17a2-crash-today-fmt-w", "%Y week %W"),
+    ] {
+        let conf = format!("project = 'Temp'\ntoday_fmt = '{today_fmt}'\n");
+        assert_eq!(
+            crash_stream(
+                test,
+                &[
+                    ("conf.py", conf.as_str()),
+                    ("index.rst", "Index\n=====\n\nToday |today|.\n"),
+                ],
+                &[],
+                &[],
+            ),
+            format!(
+                "WARNING: Invalid Babel locale: 'en'. [i18n.babel]\n{}",
+                crash_report(
+                    None,
+                    "ValueError: Invalid length for field: 'WW'",
+                    Some("<SRCDIR>/index.rst:4")
+                )
+            ),
+            "{today_fmt}"
+        );
+    }
+}
+
+/// Decision 13, crash input 4: Sphinx 9.1.0 reads `SOURCE_DATE_EPOCH`
+/// three times, and each can crash it. `sphinx.builders.gettext`, which
+/// Sphinx loads before it logs anything about the configuration, takes
+/// `time.gmtime(float(value))` when it is imported; `correct_copyright_year`,
+/// a `config-inited` handler, `int(value)`, which Sphinx reports as an
+/// `ExtensionError` naming the handler (its address in memory, which no
+/// build can repeat, is elided), after the records of the handlers before
+/// it; and `format_date`, where `|today|` is substituted,
+/// `datetime.fromtimestamp(float(value))`, which holds only years 1 to
+/// 9999. Probed on Sphinx 9.1.0.
+#[test]
+fn unreadable_source_date_epoch_exits_two() {
+    let conf = ("conf.py", "project = 'Temp'\nhtml_logo = 'missing.png'\n");
+    let index = ("index.rst", "Index\n=====\n\nToday :nope:`x` |today|.\n");
+    let logo = "WARNING: logo file 'missing.png' does not exist\n";
+    let role = "<SRCDIR>/index.rst:4: ERROR: Unknown interpreted text role \"nope\". [docutils]\n";
+    for (test, epoch, expected) in [
+        (
+            "t17a2-crash-epoch-float",
+            "soon",
+            crash_report(
+                None,
+                "ValueError: could not convert string to float: 'soon'",
+                None,
+            ),
+        ),
+        (
+            "t17a2-crash-epoch-int",
+            "1.5",
+            format!(
+                "{logo}{}",
+                crash_report(
+                    Some("Extension error (sphinx.config)"),
+                    "sphinx.errors.ExtensionError: Handler <function correct_copyright_year at \
+                     0x...> for event 'config-inited' threw an exception (exception: invalid \
+                     literal for int() with base 10: '1.5')",
+                    None,
+                )
+            ),
+        ),
+        (
+            "t17a2-crash-epoch-year",
+            "300000000000",
+            format!(
+                "{logo}{role}{}",
+                crash_report(
+                    None,
+                    "ValueError: year 11476 is out of range",
+                    Some("<SRCDIR>/index.rst:4"),
+                )
+            ),
+        ),
+    ] {
+        assert_eq!(
+            crash_stream(test, &[conf, index], &[("SOURCE_DATE_EPOCH", epoch)], &[]),
+            expected,
+            "SOURCE_DATE_EPOCH={epoch}"
+        );
+    }
+}
+
+/// Decision 13, crash input 4, the configuration's records: those Sphinx
+/// logs before `correct_copyright_year` raises — the ignored `-D`
+/// override, `deprecate_source_encoding` (790) and the HTML builder's logo
+/// check (800, registered before `sphinx.config`'s handlers) — print
+/// before the report, and the type and `primary_domain` checks that would
+/// follow it do not. Probed on Sphinx 9.1.0.
+#[test]
+fn a_configuration_crash_prints_the_records_before_it() {
+    assert_eq!(
+        crash_stream(
+            "t17a2-crash-config-records",
+            &[
+                (
+                    "conf.py",
+                    "project = 'Temp'\nhtml_logo = 'missing.png'\nsmartquotes = 'yes'\n\
+                     primary_domain = 'nope'\nsource_encoding = 'latin-1'\n",
+                ),
+                ("index.rst", "Index\n=====\n\nText.\n"),
+            ],
+            &[("SOURCE_DATE_EPOCH", "1.5")],
+            &["-D", "nonexistent_key=1"],
+        ),
+        format!(
+            "\
+WARNING: unknown config value 'nonexistent_key' in override, ignoring
+WARNING: Support for source encodings other than UTF-8 is deprecated and will be removed in \
+             Sphinx 10. Please comment at https://github.com/sphinx-doc/sphinx/issues/13665 if \
+             this causes a problem.
+WARNING: logo file 'missing.png' does not exist
+{}",
+            crash_report(
+                Some("Extension error (sphinx.config)"),
+                "sphinx.errors.ExtensionError: Handler <function correct_copyright_year at 0x...> \
+                 for event 'config-inited' threw an exception (exception: invalid literal for \
+                 int() with base 10: '1.5')",
+                None,
+            )
+        )
+    );
+}
+
+/// Decision 13, crash input 5: `DocInfo` (340) words its warning about a
+/// bibliographic field that is not one paragraph from the body's children
+/// other than system messages, and `content[0]` of a body holding only
+/// messages raises `IndexError`.
+#[test]
+fn bibliographic_field_of_messages_exits_two() {
+    assert_eq!(
+        crash_stream(
+            "t17a2-crash-docinfo",
+            &[("index.rst", ":Author: .. bogus::\n\nText.\n")],
+            &[],
+            &[],
+        ),
+        format!(
+            "<SRCDIR>/index.rst:1: ERROR: Unknown directive type \"bogus\".\n\n.. bogus:: \
+             [docutils]\n{}",
+            crash_report(
+                None,
+                "IndexError: list index out of range",
+                Some("<SRCDIR>/index.rst:1")
+            )
+        )
+    );
+}
+
+/// Decision 13, crash input 6: with `numfig` on, `MathDomain.resolve_xref`
+/// reads an equation's number from `env.toc_fignumbers[docname]
+/// ['displaymath']`, which a numbered document whose figures the toctree
+/// numbered but which holds no numbered equation lacks (`KeyError`): here
+/// the equation's block went with a list-table its parse rejected, while
+/// its label stayed registered. Probed on Sphinx 9.1.0.
+#[test]
+fn numfig_without_displaymath_numbers_exits_two() {
+    let list_table = ".. list-table::\n\n   * - .. math:: x\n          :label: e1\n   \
+                      * - text\n     - more\n\n";
+    let index = format!(
+        "Index\n=====\n\n.. figure:: pic.png\n\n   Caption.\n\n{list_table}See :eq:`e1`.\n"
+    );
+    assert_eq!(
+        crash_stream(
+            "t17a2-crash-displaymath",
+            &[
+                ("conf.py", "project = 'Temp'\nnumfig = True\n"),
+                ("index.rst", index.as_str()),
+            ],
+            &[],
+            &[],
+        ),
+        format!(
+            "<SRCDIR>/index.rst:8: ERROR: Error parsing content block for the \"list-table\" \
+             directive: uniform two-level bullet list expected, but row 2 does not contain the \
+             same number of items as row 1 (2 vs 1).\n\n{}[docutils]\n\
+             <SRCDIR>/index.rst:4: WARNING: image file not readable: pic.png \
+             [image.not_readable]\n{}",
+            list_table.trim_end().to_string() + " ",
+            crash_report(
+                None,
+                "KeyError: 'displaymath'",
+                Some("<SRCDIR>/index.rst:15")
+            )
+        )
+    );
+}
+
+/// Decision 13, crash input 7: the `index` directive hands each entry to
+/// `process_index_entry`, which raises `ValueError` for an entry type it
+/// no longer supports, as for the role (`index_role_removed_entry_type_exits_two`),
+/// at parse time: nothing the document holds after it prints.
+#[test]
+fn index_directive_removed_entry_type_exits_two() {
+    assert_eq!(
+        crash_stream(
+            "t17a2-crash-index-directive",
+            &[(
+                "index.rst",
+                "Title\n=====\n\n.. index::\n   single: ok\n   module: os\n\nText :nope:`x`.\n",
+            )],
+            &[],
+            &[],
+        ),
+        crash_report(
+            None,
+            "ValueError: 'module' is no longer supported for index entries (from entry 'module: \
+             os'). Use 'pair: module; os' instead.",
+            Some("<SRCDIR>/index.rst:4")
+        )
+    );
+}
+
+/// Decision 13, crash input 8: a new-style format that Python's
+/// `str.format` cannot parse (`ValueError`) or fill (`IndexError` for a
+/// positional field) in `math_eqref_format`, in `numfig_format` or in an
+/// explicit `:numref:` title (`a_crash_at_resolve_time_prints_the_read_records_first`):
+/// `MathDomain` catches only `KeyError` and `StandardDomain` `KeyError`
+/// and `TypeError`, so Sphinx 9.1.0 crashes where the reference is
+/// resolved. A doubled brace is a literal one, so `{{x}` ends on a single
+/// `}`. Probed on Sphinx 9.1.0.
+#[test]
+fn invalid_new_style_format_exits_two() {
+    let equation = "Index\n=====\n\n.. math:: x\n   :label: e1\n\nSee :eq:`e1`.\n";
+    let any_equation = equation.replace(":eq:", ":any:");
+    let math_numref = equation.replace(":eq:", ":math:numref:");
+    let table = "Index\n=====\n\n.. _tbl:\n\n.. table:: Cap\n\n   ===  ===\n   a    b\n   \
+                 ===  ===\n\nSee :numref:`tbl`.\n";
+    for (test, conf, index, exception, line) in [
+        (
+            "t17a2-crash-eqref-positional",
+            "math_eqref_format = 'Eq {0}'\n",
+            equation,
+            "IndexError: Replacement index 0 out of range for positional args tuple",
+            7,
+        ),
+        (
+            "t17a2-crash-eqref-single-close",
+            "math_eqref_format = 'Eq }'\n",
+            equation,
+            "ValueError: Single '}' encountered in format string",
+            7,
+        ),
+        (
+            "t17a2-crash-eqref-doubled-open",
+            "math_eqref_format = '{{x} {number}'\n",
+            equation,
+            "ValueError: Single '}' encountered in format string",
+            7,
+        ),
+        (
+            "t17a2-crash-numfig-format-unbalanced",
+            "numfig = True\nnumfig_format = {'table': 'Table {number'}\n",
+            table,
+            "ValueError: expected '}' before end of string",
+            12,
+        ),
+        // `MathDomain.resolve_any_xref` is the domain's `resolve_xref`, and
+        // `:math:numref:` is the domain's other role.
+        (
+            "t17a2-crash-eqref-any",
+            "math_eqref_format = 'Eq {0}'\n",
+            any_equation.as_str(),
+            "IndexError: Replacement index 0 out of range for positional args tuple",
+            7,
+        ),
+        (
+            "t17a2-crash-eqref-math-numref",
+            "math_eqref_format = 'Eq }'\n",
+            math_numref.as_str(),
+            "ValueError: Single '}' encountered in format string",
+            7,
+        ),
+    ] {
+        let conf = format!("project = 'Temp'\n{conf}");
+        assert_eq!(
+            crash_stream(
+                test,
+                &[("conf.py", conf.as_str()), ("index.rst", index)],
+                &[],
+                &[],
+            ),
+            crash_report(None, exception, Some(&format!("<SRCDIR>/index.rst:{line}"))),
+            "{test}"
+        );
+    }
+}
+
+/// Decision 13, crash input 9, the HTML oracle's reference crash
+/// `docutils-0500`: a figure whose `:figname:` registered the name before
+/// Sphinx's `Figure` gives it `:name:` and registers its names again, so
+/// `set_duplicate_name_id` finds the figure's own name taken by the figure
+/// and `dupname` removes it from the figure twice (`ValueError`), before
+/// any message is made. The build's stream opens with Sphinx's own, which
+/// the oracle recorded with its exit status.
+#[test]
+fn figure_name_after_figname_exits_two() {
+    let input = fixture("html_oracle/core/inputs/docutils_snippets/docutils-0500");
+    let files: Vec<(String, String)> = ["conf.py", "index.rst"]
+        .into_iter()
+        .map(|name| {
+            (
+                name.to_string(),
+                std::fs::read_to_string(input.join(name)).unwrap(),
+            )
+        })
+        .collect();
+    let files: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(name, text)| (name.as_str(), text.as_str()))
+        .collect();
+    let index: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(fixture("html_oracle/core/index.json")).unwrap(),
+    )
+    .unwrap();
+    let case = index["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|case| case["case_id"] == "docutils-0500")
+        .expect("the oracle records docutils-0500");
+    assert_eq!(case["status"], "reference-crash");
+    assert_eq!(case["exit_code"], 2);
+    let written = crash_stream("t17a2-crash-figname", &files, &[], &[]);
+    assert_eq!(
+        written,
+        crash_report(
+            None,
+            "ValueError: list.remove(x): x not in list",
+            Some("<SRCDIR>/index.rst:1")
+        )
+    );
+    assert!(
+        written.starts_with(case["warnings"].as_str().unwrap()),
+        "{written:?} opens with the oracle's stream"
+    );
 }

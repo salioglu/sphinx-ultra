@@ -75,6 +75,7 @@ fn crash(rst: &str, read: ReadConfig) -> Option<(String, String)> {
         ..index_rst()
     };
     parse_rst_full(rst, &parse)
+        .state
         .crash
         .map(|crash| (crash.exception.to_string(), crash.message))
 }
@@ -769,7 +770,8 @@ fn role_crashes_are_kept() {
     };
     let out = parse_rst_full("`y` here.\n", &parse);
     assert_eq!(
-        out.crash
+        out.state
+            .crash
             .map(|crash| (crash.exception, crash.category, crash.message)),
         Some((
             "sphinx.errors.SphinxError",
@@ -785,7 +787,7 @@ fn role_crashes_are_kept() {
         },
         ..parse
     };
-    assert_eq!(parse_rst_full("`y` here.\n", &parse).crash, None);
+    assert_eq!(parse_rst_full("`y` here.\n", &parse).state.crash, None);
 
     // `IntersphinxRole.run` opens with `assert self.name ==
     // self.orig_name.lower()` (`_resolve.py:379`). An `:external:` role
@@ -824,6 +826,7 @@ fn role_crashes_are_kept() {
         ".. role:: ext(external+myinv:py:class)\n\nCustom :ext:`int`.\n",
         &parse,
     )
+    .state
     .crash
     .expect("the custom role crashes");
     assert_eq!(

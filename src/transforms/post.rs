@@ -26,7 +26,7 @@ use crate::doctree::{kinds, AttrValue, Doctree, Node, Span};
 use crate::env::resolve::{
     resolve_document, take_basic_atts, update_basic_atts, NitpickConfig, Resolver,
 };
-use crate::rst::LogLocation;
+use crate::rst::{LogLocation, SphinxCrash};
 
 /// What the post-transforms read besides the document and the resolver.
 pub struct PostTransformConfig<'a> {
@@ -53,6 +53,10 @@ pub struct PostTransformed {
     /// References into a domain this build has no resolver for
     /// ([`crate::env::resolve::DocumentResolution`]).
     pub unresolvable_domain_refs: usize,
+    /// The reference whose resolution crashes Sphinx 9.1.0 (decision 13):
+    /// the post-transforms stop there, as Sphinx's do, so `records` hold
+    /// the resolver's records before it alone.
+    pub crash: Option<SphinxCrash>,
 }
 
 /// `env.apply_post_transforms(doctree, docname)` under the html or the
@@ -80,6 +84,13 @@ pub fn apply_post_transforms(
         .into_iter()
         .map(Diagnostic::from)
         .collect();
+    if resolution.crash.is_some() {
+        return PostTransformed {
+            records,
+            unresolvable_domain_refs: resolution.unresolvable_domain_refs,
+            crash: resolution.crash,
+        };
+    }
     let Doctree { root, sources } = doctree;
     let only = OnlyCx {
         tags: config.tags,
@@ -94,6 +105,7 @@ pub fn apply_post_transforms(
     PostTransformed {
         records,
         unresolvable_domain_refs: resolution.unresolvable_domain_refs,
+        crash: None,
     }
 }
 

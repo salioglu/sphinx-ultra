@@ -869,7 +869,21 @@ impl BuildConfig {
     /// `primary_domain` that names no registered domain warns. Sphinx then
     /// sets it to `None`; [`crate::rst::ReadConfig`] reads such a name as
     /// no domain anyway.
+    ///
+    /// The two halves, [`Self::validate_source_encoding`] (790) and
+    /// [`Self::validate_confval_types`] (800, `sphinx.config`'s), are
+    /// apart in a build: the HTML builder's 800 handlers run between them,
+    /// and `correct_copyright_year` before the second.
     pub fn validate(&self) -> Vec<String> {
+        let mut warnings = self.validate_source_encoding();
+        warnings.extend(self.validate_confval_types());
+        warnings
+    }
+
+    /// [`Self::validate`]'s first half: `deprecate_source_encoding`
+    /// (`config-inited` @790), and this crate's own note on a codec it
+    /// cannot decode.
+    pub fn validate_source_encoding(&self) -> Vec<String> {
         let mut warnings = Vec::new();
 
         // config-inited @790: `deprecate_source_encoding`. Byte-exact.
@@ -893,6 +907,14 @@ impl BuildConfig {
                 self.source_encoding
             ));
         }
+        warnings
+    }
+
+    /// [`Self::validate`]'s second half: `check_confval_types`, then
+    /// `check_primary_domain` (`config-inited` @800, registered by
+    /// `sphinx.config` in that order, after `correct_copyright_year`).
+    pub fn validate_confval_types(&self) -> Vec<String> {
+        let mut warnings = Vec::new();
 
         // config-inited @800: `check_confval_types`, in registration order.
         if !TOC_OBJECT_ENTRIES_SHOW_PARENTS.contains(&self.toc_object_entries_show_parents.as_str())

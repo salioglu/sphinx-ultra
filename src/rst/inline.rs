@@ -812,10 +812,11 @@ impl<'a> Inliner<'a> {
         }
     }
 
-    /// Keeps the document's first crash (decision 13); the parse goes on,
-    /// and the build fails with it.
+    /// Keeps the document's first crash (decision 13), after the records
+    /// the parse has logged so far ([`DocumentState::raise`]); the parse
+    /// goes on, and the build fails with it.
     fn crash(&mut self, crash: SphinxCrash) {
-        self.state.parse.crash.get_or_insert(crash);
+        self.state.raise(crash, 0, 0);
     }
 
     /// The `:external:`/`:external+inv:` roles, which

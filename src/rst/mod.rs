@@ -772,9 +772,6 @@ pub(crate) struct ParseOnlyState {
     /// ([RC §4.2]); the name a Sphinx role called as the default role
     /// takes.
     pub(crate) default_role: Option<String>,
-    /// The first input of the document that crashes Sphinx 9.1.0
-    /// (decision 13).
-    pub(crate) crash: Option<roles::SphinxCrash>,
 }
 
 /// docutils' `Duplicate ID: "<id>" used by <holder's start tag> and <the
@@ -851,9 +848,6 @@ pub struct ParseOutput {
     /// directives left, unless `default_role` is set, whose registration
     /// ends with the document (decision 14).
     pub roles_after: roles::RoleTable,
-    /// The first input of the document that crashes Sphinx 9.1.0
-    /// (decision 13): the build that reads it fails.
-    pub crash: Option<SphinxCrash>,
 }
 
 pub use roles::SphinxCrash;

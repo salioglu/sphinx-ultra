@@ -564,6 +564,11 @@ pub struct DocumentState {
     /// order.
     pub citation_notes: Vec<CitationNote>,
     pub citation_reference_targets: Vec<String>,
+    /// The first input of the document that crashes Sphinx 9.1.0
+    /// (decision 13), raised by the parse or a read transform
+    /// ([`Self::raise`]): the read stops there, as Sphinx's does, and the
+    /// build that reads the document fails with it.
+    pub crash: Option<crate::rst::SphinxCrash>,
     /// What only the parse reads ([`ParseOnlyState`]); empty once the
     /// parse has ended.
     pub(crate) parse: ParseOnlyState,
@@ -705,6 +710,36 @@ impl DocumentState {
         let seq = self.next_seq;
         self.next_seq += 1;
         seq
+    }
+
+    /// Keeps `crash`, raised by the parse or by the read transform whose
+    /// row is `(priority, serial)` (the parse's is `(0, 0)`), as the
+    /// document's crash (decision 13), standing after every record logged
+    /// so far ([`crate::rst::SphinxCrash::at`]). The first crash is the
+    /// one Sphinx raises: a later one is dropped.
+    pub fn raise(&mut self, mut crash: crate::rst::SphinxCrash, priority: u16, serial: u16) {
+        if self.crash.is_none() {
+            crash.at = crate::diagnostics::OrderKey {
+                priority,
+                serial,
+                seq: self.next_seq,
+            };
+            self.crash = Some(crash);
+        }
+    }
+
+    /// The records of the document's log the read logged before its crash
+    /// ([`Self::raise`]): all of them when the read did not crash.
+    pub fn log_before_crash(&self) -> Vec<LogRecord> {
+        self.log
+            .iter()
+            .filter(|record| {
+                self.crash
+                    .as_ref()
+                    .is_none_or(|crash| record.key() < crash.at)
+            })
+            .cloned()
+            .collect()
     }
 
     /// A Sphinx `logger.warning` the parse raises: it rides the parse's

@@ -693,7 +693,6 @@ impl BlockParser {
             registry,
             state: self.state,
             roles_after,
-            crash: parse.crash,
         }
     }
 
@@ -5626,6 +5625,18 @@ impl BlockParser {
             let line = line.trim();
             if line.is_empty() {
                 continue;
+            }
+            // `process_index_entry` raises `ValueError` for an entry type
+            // it no longer supports, out of the directive: Sphinx 9.1.0
+            // crashes there (decision 13), as for the `index` role.
+            if let Some(message) = super::roles::sphinx::removed_index_entry(line) {
+                let location = super::LogLocation::Node {
+                    source: input.span.source,
+                    line: input.lineno,
+                };
+                let crash = super::SphinxCrash::python("ValueError", message, location);
+                self.state.raise(crash, 0, 0);
+                return;
             }
             entries.extend(process_index_entry(line, &target_id));
         }
@@ -12158,8 +12169,9 @@ pub(crate) fn index_entry_tuple(
 /// each comma-separated value re-reads its own `!`.
 ///
 /// The legacy `module:`/`keyword:`/... prefixes raise `ValueError` in
-/// sphinx; here they fall through to the shorthand branch (hardening note —
-/// the oracle corpus avoids them).
+/// sphinx, which crashes it (decision 13): the `index` directive and role
+/// raise that crash before they call this
+/// ([`super::roles::sphinx::removed_index_entry`]).
 pub(crate) fn process_index_entry(entry: &str, target_id: &str) -> Vec<String> {
     use crate::utils::py_isspace;
     const TYPES: &[&str] = &["single", "pair", "double", "triple", "see", "seealso"];
