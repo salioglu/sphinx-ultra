@@ -1398,7 +1398,11 @@ impl SphinxBuilder {
             // Stage M reads the parse's registry export and toctree records
             // from the read, where a standalone read keeps them; the read
             // phase moved them on to the `Document`, which the incremental
-            // cache persists, so they are lent back for the merge.
+            // cache persists, so they are lent back for the merge. The
+            // parse's directive and role records, which it moved there too
+            // for the validators, are not: stage M sees them empty in a
+            // build, while `read_standalone` keeps them. No stage-M step
+            // reads them; one that does must be lent them here as well.
             let output = &mut result.outcome.output;
             output.registry = std::mem::take(&mut result.document.registry);
             output.toctrees = std::mem::take(&mut result.document.toctrees);
