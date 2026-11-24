@@ -54,8 +54,8 @@ what the `.buildinfo` config hash is computed from (so the hash matches
 
 | Key | Effect | Since |
 |---|---|---|
-| `project`, `version`, `release`, `copyright`, `author`, `language` | Metadata; `project`/`version` go into `objects.inv`'s header. `version` and `release` default to empty, as in Sphinx. `language` picks image language variants (`figure_language_filename` at its default) and `|today|`'s format, which is English-only | 0.1 / 0.6 / wave 5a-1 |
-| `today`, `today_fmt` | The `|today|` substitution: `today` verbatim, else the date (`SOURCE_DATE_EPOCH` honoured) formatted with `today_fmt` | wave 5a-1 |
+| `project`, `version`, `release`, `copyright`, `author`, `language` | Metadata; `project`/`version` go into `objects.inv`'s header. `version` and `release` default to empty, as in Sphinx. `language` picks image language variants (`figure_language_filename` at its default) and `\|today\|`'s format, which is English-only | 0.1 / 0.6 / wave 5a-1 |
+| `today`, `today_fmt` | The `\|today\|` substitution: `today` verbatim, else the date (`SOURCE_DATE_EPOCH` honoured) formatted with `today_fmt` | wave 5a-1 |
 | `suppress_warnings` | Warning types (`ref`, `ref.ref`, `docutils`, `toc.not_included`, …) whose records are dropped before they are printed or counted, as in Sphinx | wave 5a-1 |
 | `show_warning_types` | Print the ` [type.subtype]` suffix on records that have one (default on) | wave 5a-1 |
 | `keep_warnings` | Keep docutils' `system_message`s in the doctree, as `FilterSystemMessages` does | wave 5a-1 |
