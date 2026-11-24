@@ -532,6 +532,14 @@ pub struct DocumentState {
     /// A node the parse discards keeps its entry only inside a subtree
     /// [`Self::detached`] keeps.
     pub loc_overrides: HashMap<Uid, DocLoc>,
+    /// The source-table entries whose nodes docutils locates elsewhere than
+    /// their spans say, with where: the lines of a csv-table cell, which
+    /// docutils parses as `StringList(cell.splitlines(), source=source)`
+    /// (`SP/docutils/parsers/rst/directives/tables.py:398-399`), so a node
+    /// its nested machine stamps stands at the csv source's line `1 +` its
+    /// index in the cell. Keyed by the cell's entry; the value is the csv
+    /// source and the line the cell's first line has here.
+    pub span_remaps: HashMap<u16, (SourceRef, u32)>,
     /// docutils' node registries ([`Registries`]), by node identity.
     pub registries: Registries,
     /// The transforms `document.note_pending` queued, in parse order.

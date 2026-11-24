@@ -1462,6 +1462,110 @@ mod tests {
         assert!(mismatches.is_empty(), "{}", mismatches.join("\n\n"));
     }
 
+    /// docutils parses each csv-table cell as `StringList(cell.splitlines(),
+    /// source=source)` (`SP/docutils/parsers/rst/directives/tables.py:398-399`):
+    /// what its nested machine stamps (a paragraph, a footnote, a citation,
+    /// an image) stands at the csv source's line `1 +` its index in the
+    /// cell, header cells too, so every record located through it prints
+    /// line 1 of the document, or of the `:file:` it was read from; the
+    /// parse's own records keep the document's lines. Probed on Sphinx
+    /// 9.1.0 (`-w`; the consistency check's `Citation [CIT] is not
+    /// referenced.` prints line 1 too).
+    #[test]
+    fn csv_cell_content_is_located_in_the_cell() {
+        let at = |source: &str, level: &str, text: &str, category: &str| {
+            format!("{source}:1: {level}: {text} [{category}]")
+        };
+        let doc = "<SRCDIR>/index.rst";
+        let unknown = |name: &str| format!("Unknown target name: \"{name}\".");
+        /// The document, the files beside it and the expected records.
+        type Row<'a> = (&'a str, Vec<(&'a str, &'a str)>, Vec<String>);
+        let rows: Vec<Row> = vec![
+            (
+                "Para.\n\n.. csv-table::\n   :header: h1, h2\n\n   a, b\n   c, d\n   e, unknown_\n",
+                vec![],
+                vec![at(doc, "ERROR", &unknown("unknown"), "docutils")],
+            ),
+            (
+                "Para.\n\n.. csv-table::\n   :header: h1, h2\n\n   a, b\n   c, d\n   e, |nope|\n",
+                vec![],
+                vec![at(doc, "ERROR", "Undefined substitution referenced: \"nope\".", "docutils")],
+            ),
+            (
+                "Para.\n\n.. csv-table::\n\n   a, b\n   e, [#]_ [#]_\n\n.. [#] f\n",
+                vec![],
+                vec![at(
+                    doc,
+                    "ERROR",
+                    "Too many autonumbered footnote references: only 1 corresponding footnote \
+                     available.",
+                    "docutils",
+                )],
+            ),
+            (
+                ".. csv-table::\n   :header: h1, unknown_\n\n   a, b\n",
+                vec![],
+                vec![at(doc, "ERROR", &unknown("unknown"), "docutils")],
+            ),
+            (
+                "Para.\n\nMore.\n\n.. csv-table::\n\n   a, b\n   c, \".. [1] note\"\n",
+                vec![],
+                vec![at(doc, "WARNING", "Footnote [1] is not referenced.", "ref.footnote")],
+            ),
+            (
+                "Para.\n\nMore.\n\n.. csv-table::\n\n   a, b\n   c, \".. image:: nothere.png\"\n",
+                vec![],
+                vec![at(doc, "WARNING", "image file not readable: nothere.png", "image.not_readable")],
+            ),
+            (
+                "Title\n=====\n\nIntro.\n\n.. csv-table:: Links\n   :header: Name, Link\n\n   \
+                 Python, python_\n   Rust, rust_\n\n.. _python: https://python.org\n",
+                vec![],
+                vec![at(doc, "ERROR", &unknown("rust"), "docutils")],
+            ),
+            (
+                "Para.\n\n.. csv-table::\n   :file: data.csv\n",
+                vec![("data.csv", "a, b\nc, unknown_\n")],
+                vec![at("data.csv", "ERROR", &unknown("unknown"), "docutils")],
+            ),
+            // The parse's own records keep the document's lines.
+            (
+                "Para.\n\n.. csv-table::\n   :header: h1, h2\n\n   a, b\n   c, d\n   e, *unclosed\n",
+                vec![],
+                vec!["<SRCDIR>/index.rst:6: WARNING: Inline emphasis start-string without \
+                      end-string. [docutils]"
+                    .to_string()],
+            ),
+        ];
+        let mut mismatches = Vec::new();
+        for (index, files, expected) in rows {
+            let tmp = tempfile::tempdir().expect("a temporary source directory");
+            for (name, text) in &files {
+                std::fs::write(tmp.path().join(name), text).expect("a file writes");
+            }
+            let parse = crate::rst::ParseOptions {
+                source_path: tmp.path().join("index.rst").display().to_string(),
+                srcdir: Some(tmp.path().to_path_buf()),
+                ..crate::transforms::test_support::index_rst()
+            };
+            let read = crate::read::read_standalone(
+                index,
+                &parse,
+                &crate::transforms::test_support::harness_settings(false),
+            );
+            let root = format!("{}{}", tmp.path().display(), std::path::MAIN_SEPARATOR);
+            let records: Vec<String> = read
+                .diagnostics
+                .iter()
+                .map(|record| record.render(true).replace(&root, "<SRCDIR>/"))
+                .collect();
+            if records != expected {
+                mismatches.push(format!("{index:?}\n{records:#?}\n{expected:#?}"));
+            }
+        }
+        assert!(mismatches.is_empty(), "{}", mismatches.join("\n\n"));
+    }
+
     /// Sphinx's `make_glossary_term` stamps a term with its content item's
     /// 0-based offset (`term.line = lineno`,
     /// `SP/sphinx/domains/std/__init__.py:387-388`, `:518-521`), and the

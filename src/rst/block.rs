@@ -7447,6 +7447,20 @@ impl BlockParser {
             .unwrap_or(0)
             .max(max_header_cols);
         let row_lens: Vec<usize> = rows.iter().map(Vec::len).collect();
+        // `source = self.content.source(0)`, or the `:file:` as
+        // `adapt_path` spells it (`tables.py:332-355`): where the cells'
+        // content stands ([`DocumentState::span_remaps`]).
+        let csv_source = match input.content.first() {
+            Some(first) => Some(SourceRef::Table(first.source)),
+            None => match opt_get(&input.options, "file") {
+                Some(OptVal::Str(path)) => {
+                    let display = self.csv_file_display(path);
+                    self.push_source(Arc::from(display), "", 1)
+                        .map(|(id, _)| SourceRef::Table(id))
+                }
+                _ => None,
+            },
+        };
         // Each failure below returns the error alone: the parsed title is
         // dropped, its registrations kept (the cells are not parsed yet).
         if let Err(msg) = Self::check_table_dimensions(
@@ -7511,6 +7525,7 @@ impl BlockParser {
                         // `build_table(table, self.content_offset)`: every
                         // cell's machine starts at the first content line
                         // (`tables.py:325-327`, `states.py:1855-1856`).
+                        let cell_source = u16::try_from(self.sources.len()).ok();
                         entry.children = self.parse_detached(
                             cell,
                             input.content_lineno,
@@ -7518,6 +7533,11 @@ impl BlockParser {
                             "entry",
                             false,
                         );
+                        if let (Some(cell_source), Some(csv_source)) = (cell_source, csv_source) {
+                            self.state
+                                .span_remaps
+                                .insert(cell_source, (csv_source, input.content_lineno));
+                        }
                     }
                 }
                 entries.push(entry);
@@ -7547,8 +7567,31 @@ impl BlockParser {
         if let Some(OptVal::StrList(cls)) = opt_get(&input.options, "class") {
             table.attrs.classes.extend(cls.iter().cloned());
         }
-        let current = self.detached_end;
+        // The last cell's parse ended in the csv source.
+        let mut current = self.detached_end;
+        if let Some(SourceRef::Table(cell)) = current.source {
+            if let Some(&(csv_source, _)) = self.state.span_remaps.get(&cell) {
+                current.source = Some(csv_source);
+            }
+        }
         self.finish_table(table, &input, (title, title_messages), current, out);
+    }
+
+    /// The path docutils' `adapt_path` spells a csv-table `:file:` with,
+    /// relative to the cwd, which the build runs in the source directory:
+    /// the file beside the document, relative to the source directory in a
+    /// Sphinx parse (as an included file's path is), as given otherwise.
+    fn csv_file_display(&self, path: &str) -> String {
+        match (&self.srcdir, self.sphinx) {
+            (Some(srcdir), true) => {
+                let base = std::path::Path::new(self.sources.path(0))
+                    .parent()
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_default();
+                crate::utils::relative_path_walk_up(&base.join(path), srcdir)
+            }
+            _ => path.to_string(),
+        }
     }
 
     /// `CSVTable.get_csv_data` (tables.py:321-388): the CSV text from the
@@ -8147,8 +8190,10 @@ impl BlockParser {
             if !self.state.loc_overrides.contains_key(&line.node) {
                 continue;
             }
+            // Not in the input: its own line, which is where the reporter
+            // reads the absolute line back to, and which a csv cell's
+            // location would otherwise move ([`DocumentState::span_remaps`]).
             let Some(&offset) = offsets.get(&(line.source, line.lineno)) else {
-                self.state.loc_overrides.remove(&line.node);
                 continue;
             };
             let absolute = u32::try_from(offset)

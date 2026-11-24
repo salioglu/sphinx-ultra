@@ -126,7 +126,8 @@ pub fn freeze_workaround(tree: &mut TxTree, id: TxId, state: &mut DocumentState)
 ///    as 010 gives an unstamped title its parent's location, it is counted
 ///    with them;
 /// 4. any other node has its span's source and line, and none when the
-///    line is unknown (0).
+///    line is unknown (0); in a csv-table cell, its line there
+///    ([`DocumentState::span_remaps`]).
 fn parse_location(tree: &TxTree, id: TxId, state: &DocumentState) -> DocLoc {
     let node = tree.node(id);
     if let Some(loc) = node.uid().and_then(|uid| state.loc_overrides.get(&uid)) {
@@ -142,7 +143,7 @@ fn parse_location(tree: &TxTree, id: TxId, state: &DocumentState) -> DocLoc {
         kinds::TITLE if matches!(parent, Some(kinds::SECTION | "topic" | "sidebar")) => {
             DocLoc::default()
         }
-        _ => span_location(node.span),
+        _ => span_location(node.span, state),
     }
 }
 
@@ -244,12 +245,18 @@ fn nearest_source(tree: &TxTree, from: Option<TxId>, state: &DocumentState) -> O
 }
 
 /// [DS §8.2] rule 4: the span's source and line; nothing for an unknown
-/// line.
-fn span_location(span: Span) -> DocLoc {
+/// line. A span in a csv-table cell stands at the csv source's line `1 +`
+/// its index in the cell ([`DocumentState::span_remaps`]).
+fn span_location(span: Span, state: &DocumentState) -> DocLoc {
     if span.line == 0 {
-        DocLoc::default()
-    } else {
-        DocLoc::at(span.source, span.line)
+        return DocLoc::default();
+    }
+    match state.span_remaps.get(&span.source) {
+        Some(&(source, first)) => DocLoc {
+            source: Some(source),
+            line: Some(span.line.saturating_sub(first) + 1),
+        },
+        None => DocLoc::at(span.source, span.line),
     }
 }
 
