@@ -9,7 +9,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::cache::BuildCache;
 use crate::config::BuildConfig;
-use crate::diagnostics::{Diagnostic, DiagnosticSink, OrderKey, WarningFilter};
+use crate::diagnostics::{Diagnostic, DiagnosticSink, WarningFilter};
 use crate::doctree::Doctree;
 use crate::document::Document;
 use crate::env;
@@ -713,10 +713,12 @@ impl SphinxBuilder {
             // Sphinx logs these without a location and without a type, so
             // they render as a bare `WARNING: ...` — but they still count
             // toward the build's warning total and toward `-W`.
-            push_in_order(
-                &mut sink,
-                BuildWarning::new(PathBuf::new(), None, message, WarningType::Other),
-            );
+            sink.push_next(BuildWarning::new(
+                PathBuf::new(),
+                None,
+                message,
+                WarningType::Other,
+            ));
         }
         self.flush(sink);
         self.intersphinx = Intersphinx {
@@ -764,13 +766,14 @@ impl SphinxBuilder {
     #[allow(dead_code)]
     pub fn add_warning(&self, warning: BuildWarning) {
         let mut sink = DiagnosticSink::default();
-        push_in_order(&mut sink, warning);
+        sink.push_next(warning);
         self.flush(sink);
     }
 
-    /// Append a sink's records to the stream, in their [`OrderKey`] order,
-    /// dropping the ones `suppress_warnings` names: a suppressed record is
-    /// neither printed nor counted.
+    /// Append a sink's records to the stream, in their
+    /// [`OrderKey`](crate::diagnostics::OrderKey) order, dropping the ones
+    /// `suppress_warnings` names: a suppressed record is neither printed nor
+    /// counted.
     fn flush(&self, sink: DiagnosticSink) {
         let mut records = self.records.lock().unwrap();
         records.extend(
@@ -1031,9 +1034,7 @@ impl SphinxBuilder {
                             .to_string()
                     })
                     .collect();
-                push_in_order(
-                    sink,
-                    BuildWarning::new(
+                sink.push_next(BuildWarning::new(
                         // Logged with no `location`, so it prints bare.
                         PathBuf::new(),
                         None,
@@ -1419,12 +1420,7 @@ impl SphinxBuilder {
             // in it too.
             let mut sink = DiagnosticSink::default();
             for record in records {
-                let key = OrderKey {
-                    priority: 0,
-                    serial: 0,
-                    seq: sink.next_seq(),
-                };
-                sink.push(key, record);
+                sink.push_next(record);
             }
             self.flush(sink);
 
@@ -1505,8 +1501,7 @@ impl SphinxBuilder {
                 .map(|path| path.to_path_buf())
                 .unwrap_or_else(|| PathBuf::from(&message.docname));
             match message.level {
-                ConsistencyLevel::Warning => push_in_order(
-                    &mut consistency,
+                ConsistencyLevel::Warning => consistency.push_next(
                     BuildWarning::new(source, None, message.message, WarningType::OrphanedDocument)
                         .with_category(message.category),
                 ),
@@ -1527,7 +1522,7 @@ impl SphinxBuilder {
                 .unwrap_or_else(|| self.source_dir.join(format!("{docname}.rst")))
         };
         for warning in env_citation::check_consistency(env, &doc2path) {
-            push_in_order(&mut consistency, warning);
+            consistency.push_next(warning);
         }
         self.flush(consistency);
 
@@ -1568,7 +1563,7 @@ impl SphinxBuilder {
                 .get(message.docname.as_str())
                 .map(|path| path.to_path_buf())
                 .unwrap_or_else(|| PathBuf::from(&message.docname));
-            push_in_order(&mut finish, message.into_warning(&source));
+            finish.push_next(message.into_warning(&source));
         }
         self.flush(finish);
         *self.genindex.lock().unwrap() = groups;
@@ -1686,12 +1681,7 @@ impl SphinxBuilder {
             // toctree resolution, logged them.
             let mut sink = DiagnosticSink::default();
             for record in post.records {
-                let key = OrderKey {
-                    priority: 0,
-                    serial: 0,
-                    seq: sink.next_seq(),
-                };
-                sink.push(key, record);
+                sink.push_next(record);
             }
             env_toctree::resolve_body_toctrees(
                 env,
@@ -1822,8 +1812,7 @@ impl SphinxBuilder {
             .or_else(|| document.map(|document| document.source_path.clone()))
             .unwrap_or_else(|| PathBuf::from(&warning.docname));
         let line = toctree.map(|toctree| toctree.line as usize);
-        push_in_order(
-            sink,
+        sink.push_next(
             BuildWarning::new(
                 source,
                 line,
@@ -2161,7 +2150,7 @@ impl SphinxBuilder {
         for (warnings, unknown) in results {
             unknown_total += unknown;
             for warning in warnings {
-                push_in_order(&mut sink, warning);
+                sink.push_next(warning);
             }
         }
         self.flush(sink);
@@ -2216,23 +2205,6 @@ impl SphinxBuilder {
         }
         snapshot
     }
-}
-
-/// Pushes a [`BuildWarning`] — an `src/env` producer's or the builder's own
-/// — into `sink` after everything pushed before it, converting it into its
-/// record at the sink boundary.
-///
-/// Every record keys as a parse record, `(0, 0, seq)`, which keeps a sink in
-/// push order — the order the producers emit their records today. Records
-/// that transforms and collectors log take their `(priority, serial)` key
-/// when those passes key them.
-fn push_in_order(sink: &mut DiagnosticSink, warning: BuildWarning) {
-    let key = OrderKey {
-        priority: 0,
-        serial: 0,
-        seq: sink.next_seq(),
-    };
-    sink.push(key, Diagnostic::from(warning));
 }
 
 /// The bincode blob inside a persisted doctree file, or `None` if the file

@@ -40,7 +40,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use crate::diagnostics::{Category, Diagnostic, DiagnosticSink, Location, OrderKey, Severity};
+use crate::diagnostics::{Category, Diagnostic, DiagnosticSink, Location, Severity};
 use crate::doctree::{kinds, AttrValue, Doctree, Node, Span};
 use crate::env::numbers::clean_astext;
 use crate::env::resolve::{take_basic_atts, update_basic_atts};
@@ -1889,20 +1889,12 @@ fn push_warning(
     message: String,
     category: Category,
 ) {
-    let key = OrderKey {
-        priority: 0,
-        serial: 0,
-        seq: sink.next_seq(),
-    };
-    sink.push(
-        key,
-        Diagnostic {
-            location,
-            severity: Severity::Warning,
-            message,
-            category,
-        },
-    );
+    sink.push_next(Diagnostic {
+        location,
+        severity: Severity::Warning,
+        message,
+        category,
+    });
 }
 
 #[cfg(test)]

@@ -221,6 +221,21 @@ impl DiagnosticSink {
         self.records.push((key, d));
     }
 
+    /// Pushes `record` keyed as a parse record, `(0, 0, seq)` with the next
+    /// seq ([`Self::next_seq`]): after every record of that key the sink
+    /// holds, so a sink filled this way keeps its push order. It is the key
+    /// of a producer that emits its records in the order Sphinx prints them
+    /// (the builder's phases, the toctree resolution); a transform's or a
+    /// collector's records take their own `(priority, serial)`.
+    pub fn push_next(&mut self, record: impl Into<Diagnostic>) {
+        let key = OrderKey {
+            priority: 0,
+            serial: 0,
+            seq: self.next_seq(),
+        };
+        self.push(key, record.into());
+    }
+
     /// A fresh `seq`, counting up from 0 per sink.
     pub fn next_seq(&mut self) -> u32 {
         let seq = self.next_seq;
@@ -488,6 +503,45 @@ mod tests {
             [sink.next_seq(), sink.next_seq(), sink.next_seq()],
             [0, 1, 2]
         );
+    }
+
+    /// `push_next` keys a record as a parse record, `(0, 0, seq)` with the
+    /// sink's next seq, so the records it pushes keep their push order and
+    /// sort before every transform-keyed record; it takes a `BuildWarning`
+    /// as well as a `Diagnostic`.
+    #[test]
+    fn push_next_keys_records_in_push_order() {
+        let record = |message: &str| {
+            Diagnostic::from(BuildWarning::new(
+                PathBuf::new(),
+                None,
+                message.into(),
+                WarningType::Other,
+            ))
+        };
+        let mut sink = DiagnosticSink::default();
+        sink.push(
+            OrderKey {
+                priority: 220,
+                serial: 4,
+                seq: 0,
+            },
+            record("transform"),
+        );
+        sink.push_next(record("first"));
+        sink.push_next(BuildWarning::new(
+            PathBuf::new(),
+            None,
+            "second".into(),
+            WarningType::Other,
+        ));
+        assert_eq!(sink.next_seq(), 2, "each push drew a seq");
+        let ordered: Vec<String> = sink
+            .into_ordered()
+            .into_iter()
+            .map(|diagnostic| diagnostic.message)
+            .collect();
+        assert_eq!(ordered, ["first", "second", "transform"]);
     }
 
     /// `is_suppressed_warning` (`sphinx/util/logging.py:415-426`): a pattern
