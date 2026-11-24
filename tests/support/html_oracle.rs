@@ -3004,19 +3004,28 @@ pub fn mismatch_diagnostics_with_source_root(
     diagnostics
 }
 
+/// The diagnostics of two warning streams: none when they compare equal
+/// ([`compare_warnings_with_roots`]), otherwise one per differing line
+/// ([`diagnose_warnings`]) — or, for streams that differ only in a final
+/// line break, which no line shows, the whole-stream diagnostic.
 pub fn warning_diagnostics_with_roots(
     expected: &[u8],
     actual: &[u8],
     expected_roots: Option<WarningRoots<'_>>,
     actual_roots: Option<WarningRoots<'_>>,
 ) -> Vec<Diagnostic> {
-    if compare_warnings_with_roots(expected, actual, expected_roots, actual_roots).is_empty() {
-        Vec::new()
+    let whole = compare_warnings_with_roots(expected, actual, expected_roots, actual_roots);
+    if whole.is_empty() {
+        return whole;
+    }
+    let lines = diagnose_warnings(
+        &normalize_warning_bytes_with_roots(expected, expected_roots),
+        &normalize_warning_bytes_with_roots(actual, actual_roots),
+    );
+    if lines.is_empty() {
+        whole
     } else {
-        diagnose_warnings(
-            &normalize_warning_bytes_with_roots(expected, expected_roots),
-            &normalize_warning_bytes_with_roots(actual, actual_roots),
-        )
+        lines
     }
 }
 

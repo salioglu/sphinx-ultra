@@ -835,6 +835,35 @@ fn comparator_folds_lone_carriage_returns_like_the_generator() {
     assert!(compare_warnings(b"w\r", b"w\n", None, None).is_empty());
 }
 
+/// Two warning streams that differ only in a final line break have no
+/// line that differs, so the line diagnostics alone would pass them: the
+/// helper every harness shares reports the whole stream instead.
+#[test]
+fn warning_diagnostics_see_a_final_line_break_difference() {
+    for (expected, actual) in [
+        (&b"w\n"[..], &b"w"[..]),
+        (b"w", b"w\n"),
+        (b"a\nb\n", b"a\nb"),
+    ] {
+        let diagnostics = warning_diagnostics_with_roots(expected, actual, None, None);
+        let categories: Vec<&str> = diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.category.as_str())
+            .collect();
+        assert_eq!(
+            categories,
+            ["warning"],
+            "{:?} vs {:?}",
+            String::from_utf8_lossy(expected),
+            String::from_utf8_lossy(actual)
+        );
+    }
+    assert!(warning_diagnostics_with_roots(b"w\r\n", b"w\n", None, None).is_empty());
+    let lines = warning_diagnostics_with_roots(b"a\nb\n", b"a\nc", None, None);
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0].category, "warning-changed-line");
+}
+
 #[test]
 fn committed_ledgers_load_and_validate() {
     let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/html_oracle");
@@ -1918,16 +1947,12 @@ fn compare_aux_outputs(
         doctree_root: Some(&cache_dir),
         case_root: Some(run_dir),
     });
-    let expected_warnings = case.warnings.as_bytes();
-    let mut warning_diagnostics =
-        warning_diagnostics_with_roots(expected_warnings, &actual_warnings, None, roots);
-    if warning_diagnostics.is_empty() {
-        // The line diagnostics cannot see a stream that differs only in its
-        // final line break; the whole-stream comparison can.
-        warning_diagnostics =
-            compare_warnings_with_roots(expected_warnings, &actual_warnings, None, roots);
-    }
-    diagnostics.extend(warning_diagnostics);
+    diagnostics.extend(warning_diagnostics_with_roots(
+        case.warnings.as_bytes(),
+        &actual_warnings,
+        None,
+        roots,
+    ));
     Ok(diagnostics)
 }
 
