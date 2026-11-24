@@ -31,7 +31,7 @@ use crate::env::resolve::{NitpickConfig, Resolver};
 use crate::env::toctree::{resolve_body_toctrees, ToctreeLocations};
 use crate::env::BuildEnvironment;
 use crate::intersphinx::Intersphinx;
-use crate::pyformat::{py_float, py_int_error};
+use crate::pyformat;
 use crate::rst::{LogLocation, ParseOptions, ParseOutput, ReadConfig, RegistryExport, SphinxCrash};
 use crate::transforms::post::{apply_post_transforms, PostTransformConfig};
 use crate::transforms::reporter::{render_records, LogRecord};
@@ -166,14 +166,14 @@ fn build_date() -> BuildDate {
 
 /// `datetime.fromtimestamp(float(epoch), tz=UTC)`
 /// (`SP/sphinx/util/i18n.py:274-276`): the POSIX timestamp `epoch`, read
-/// as Python's `float()` reads it ([`py_float`]), its whole seconds taken
-/// toward zero and the fraction rounded half to even to microseconds, a
-/// rounded fraction of a whole second carried into the seconds (CPython's
-/// `_fromtimestamp`), and a year outside Python's 1 to 9999
-/// [`BuildDate::OutOfRange`]. `None` for what crashes Sphinx before the
-/// read ([`source_date_epoch_import_crash`]).
+/// as Python's `float()` reads it ([`pyformat::float`]), its whole seconds
+/// taken toward zero and the fraction rounded half to even to
+/// microseconds, a rounded fraction of a whole second carried into the
+/// seconds (CPython's `_fromtimestamp`), and a year outside Python's 1 to
+/// 9999 [`BuildDate::OutOfRange`]. `None` for what crashes Sphinx before
+/// the read ([`source_date_epoch_import_crash`]).
 fn date_of_epoch(epoch: &str) -> Option<BuildDate> {
-    let timestamp = py_float(epoch)?;
+    let timestamp = pyformat::float(epoch).ok()?;
     if !timestamp.is_finite() || !holds_in_time_t(timestamp) {
         return None;
     }
@@ -202,10 +202,10 @@ fn date_of_epoch(epoch: &str) -> Option<BuildDate> {
 /// application up, before it logs anything about the configuration:
 /// importing `sphinx.builders.gettext` takes `time.gmtime(float(value))`
 /// (`SP/sphinx/builders/gettext.py:200-206`), which raises, and crashes
-/// Sphinx (decision 13), for what `float()` rejects ([`py_float`]), for
-/// NaN, for a time the platform's `time_t` does not hold, and for one in a
-/// year `struct tm` does not hold, whose `OSError` names the platform's
-/// `EOVERFLOW`. The crash `value` makes, if any.
+/// Sphinx (decision 13), for what `float()` rejects ([`pyformat::float`]),
+/// for NaN, for a time the platform's `time_t` does not hold, and for one
+/// in a year `struct tm` does not hold, whose `OSError` names the
+/// platform's `EOVERFLOW`. The crash `value` makes, if any.
 ///
 /// Not modelled: Windows' `gmtime`, which also fails before 1970 and
 /// after 3000.
@@ -217,14 +217,9 @@ pub fn source_date_epoch_import_crash(value: &str) -> Option<SphinxCrash> {
             LogLocation::None,
         ))
     };
-    let Some(timestamp) = py_float(value) else {
-        return raise(
-            "ValueError",
-            &format!(
-                "could not convert string to float: {}",
-                crate::utils::py_repr_str(value)
-            ),
-        );
+    let timestamp = match pyformat::float(value) {
+        Ok(timestamp) => timestamp,
+        Err(message) => return raise("ValueError", &message),
     };
     if timestamp.is_nan() {
         return raise("ValueError", "Invalid value NaN (not a number)");
@@ -245,11 +240,11 @@ pub fn source_date_epoch_import_crash(value: &str) -> Option<SphinxCrash> {
 /// `correct_copyright_year` (`SP/sphinx/config.py:711-738`) takes
 /// `int(value)`, which raises for what `int()` rejects in base 10, a
 /// fraction or an exponent `float()` reads among them, and for more digits
-/// than it reads ([`py_int_error`]). Sphinx reports the handler's
+/// than it reads ([`pyformat::int`]). Sphinx reports the handler's
 /// exception as an `ExtensionError` naming the handler, and crashes
 /// (decision 13). The crash `value` makes, if any.
 pub fn source_date_epoch_config_crash(value: &str) -> Option<SphinxCrash> {
-    let error = py_int_error(value)?;
+    let error = pyformat::int(value).err()?;
     Some(SphinxCrash::extension_error(
         "Extension error (sphinx.config)",
         "correct_copyright_year",

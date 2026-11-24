@@ -5186,3 +5186,263 @@ fn figure_named_as_its_figname_exits_two() {
         );
     }
 }
+
+/// The project of the Task 17a3 math pins: one numbered equation and one
+/// reference to it, at line 7.
+const EQUATION: &str = "Index\n=====\n\n.. math:: x^2\n   :label: e1\n\nSee :eq:`e1`.\n";
+
+/// The project of the Task 17a3 numref pins: one numbered table, labelled
+/// `tbl`, and one reference to it, at line 12, written as `reference`.
+fn numbered_table(reference: &str) -> String {
+    format!(
+        "Index\n=====\n\n.. _tbl:\n\n.. table:: Cap\n\n   ===  ===\n   a    b\n   ===  ===\n\n\
+         See {reference}.\n"
+    )
+}
+
+/// `MathDomain.resolve_xref` formats `math_eqref_format` with Python's
+/// `str.format`, which renders a format spec (`str.__format__`) and a
+/// conversion (`repr()`) before it: `Eq{number:x>4}` gives `Eqxxx1` and
+/// `Eq{number!r}` gives `Eq'1'`, with no record. Sphinx 9.1.0's pages,
+/// probed; here the text is read from the search index (the pages are
+/// 5b's), whose terms hold `eqxxx1` and `eq` only when the format renders,
+/// not `(1)`.
+#[test]
+fn math_eqref_format_renders_a_format_spec_and_a_conversion() {
+    for (test, eqref_format, term) in [
+        ("t17a3-eqref-spec", "Eq{number:x>4}", "eqxxx1"),
+        ("t17a3-eqref-conversion", "Eq{number!r}", "eq"),
+    ] {
+        let conf = format!("project = 'Temp'\nmath_eqref_format = '{eqref_format}'\n");
+        let src = temp_source(test, &[("conf.py", conf.as_str()), ("index.rst", EQUATION)]);
+        let out = out_dir(test);
+        let (result, written) = warning_stream(&src, &out, &[]);
+        assert!(result.status.success(), "{test}: {}", stderr_of(&result));
+        assert_eq!(written, "", "{test}");
+        let terms = search_value(&out)["terms"].clone();
+        assert!(
+            terms.get(term).is_some(),
+            "{test}: no term {term} in {terms}"
+        );
+    }
+}
+
+/// Decision 13: `str.format` raises `ValueError` for a format spec a
+/// `str` does not take (`Unknown format code 'd'`) and for a conversion
+/// other than `s`, `r` and `a`, which `MathDomain.resolve_xref` does not
+/// catch: Sphinx 9.1.0 crashes where the reference is resolved. Probed.
+#[test]
+fn math_eqref_format_invalid_spec_or_conversion_exits_two() {
+    for (test, eqref_format, exception) in [
+        (
+            "t17a3-crash-eqref-spec",
+            "Eq {number:d}",
+            "ValueError: Unknown format code 'd' for object of type 'str'",
+        ),
+        (
+            "t17a3-crash-eqref-conversion",
+            "Eq {number!z}",
+            "ValueError: Unknown conversion specifier z",
+        ),
+    ] {
+        let conf = format!("project = 'Temp'\nmath_eqref_format = '{eqref_format}'\n");
+        assert_eq!(
+            crash_stream(
+                test,
+                &[("conf.py", conf.as_str()), ("index.rst", EQUATION)],
+                &[],
+                &[],
+            ),
+            crash_report(None, exception, Some("<SRCDIR>/index.rst:7")),
+            "{test}"
+        );
+    }
+}
+
+/// Decision 13: a `numfig_format` entry, or an explicit `:numref:` title,
+/// that holds neither `{name}` nor `number` is applied with `%`
+/// (`title % fignum`), and `_resolve_numref_xref` catches `KeyError` and
+/// `TypeError` only. A format that ends in its `%` is `ValueError:
+/// incomplete format`, and a conversion character `%` does not know is
+/// `ValueError: unsupported format character`, after the argument is
+/// taken: Sphinx 9.1.0 crashes where the reference is resolved. Probed.
+#[test]
+fn old_style_numfig_format_value_error_exits_two() {
+    let plain = numbered_table(":numref:`tbl`");
+    let titled = numbered_table(":numref:`Tab %z <tbl>`");
+    for (test, conf, index, exception) in [
+        (
+            "t17a3-crash-numfig-format-incomplete",
+            "numfig = True\nnumfig_format = {'table': 'Table %'}\n",
+            plain.as_str(),
+            "ValueError: incomplete format",
+        ),
+        (
+            "t17a3-crash-numref-title-unsupported",
+            "numfig = True\n",
+            titled.as_str(),
+            "ValueError: unsupported format character 'z' (0x7a) at index 5",
+        ),
+    ] {
+        let conf = format!("project = 'Temp'\n{conf}");
+        assert_eq!(
+            crash_stream(
+                test,
+                &[("conf.py", conf.as_str()), ("index.rst", index)],
+                &[],
+                &[],
+            ),
+            crash_report(None, exception, Some("<SRCDIR>/index.rst:12")),
+            "{test}"
+        );
+    }
+}
+
+/// `title % fignum` renders `%r` as `repr()` of the number, so an explicit
+/// `:numref:` title `Tab%r` gives `Tab'1'` with no record, where a title
+/// with no conversion is `TypeError: not all arguments converted`, which
+/// `_resolve_numref_xref` catches: `invalid numfig_format: <title>`, and the
+/// content node stays (its text `Tab%r` would index the term `r`). Sphinx
+/// 9.1.0's streams and pages, probed.
+#[test]
+fn old_style_numref_titles_render_or_warn_as_python_formats_them() {
+    for (test, title, expected) in [
+        ("t17a3-numref-title-repr", "Tab%r", ""),
+        (
+            "t17a3-numref-title-no-conversion",
+            "Figure 1",
+            "<SRCDIR>/index.rst:12: WARNING: invalid numfig_format: Figure 1\n",
+        ),
+    ] {
+        let index = numbered_table(&format!(":numref:`{title} <tbl>`"));
+        let src = temp_source(
+            test,
+            &[
+                ("conf.py", "project = 'Temp'\nnumfig = True\n"),
+                ("index.rst", index.as_str()),
+            ],
+        );
+        let out = out_dir(test);
+        let (result, written) = warning_stream(&src, &out, &[]);
+        assert!(result.status.success(), "{test}: {}", stderr_of(&result));
+        assert_eq!(written, expected, "{test}");
+        if expected.is_empty() {
+            let terms = search_value(&out)["terms"].clone();
+            assert!(terms.get("r").is_none(), "{test}: the title rendered");
+        }
+    }
+}
+
+/// Decision 13: `Manpage.run` builds its link with
+/// `manpages_url.format_map(info)`, whose `section` is `None` for a page the
+/// target names no section of (`ls.`). `None` takes no format spec
+/// (`TypeError: unsupported format string passed to NoneType.__format__`),
+/// which nothing catches: Sphinx 9.1.0 crashes at parse time. Probed.
+#[test]
+fn manpages_url_spec_on_a_missing_section_exits_two() {
+    assert_crash_exits_two(
+        "t17a3-crash-manpages-url-none-spec",
+        &[
+            (
+                "conf.py",
+                "manpages_url = 'https://man.example/{page}.{section:>3}'\n",
+            ),
+            ("index.rst", "Title\n=====\n\nSee :manpage:`ls.`.\n"),
+        ],
+        "TypeError: unsupported format string passed to NoneType.__format__",
+        "<SRCDIR>/index.rst:4",
+    );
+}
+
+/// `manpages_url.format_map(info)` renders a format spec on a `str` and a
+/// conversion of the `None` section as Python does
+/// (`https://man.example/ls____.'1'` and `https://man.example/ls____.None`,
+/// pinned in the role's tree by `manpage_matches_sphinx`), with no record.
+/// Probed on Sphinx 9.1.0.
+#[test]
+fn manpages_url_with_a_valid_spec_renders() {
+    let test = "t17a3-manpages-url-spec";
+    let src = temp_source(
+        test,
+        &[
+            (
+                "conf.py",
+                "manpages_url = 'https://man.example/{page:_<6}.{section!r}'\n",
+            ),
+            (
+                "index.rst",
+                "Title\n=====\n\nSee :manpage:`ls(1)` and :manpage:`ls.`.\n",
+            ),
+        ],
+    );
+    let (result, written) = warning_stream(&src, &out_dir(test), &[]);
+    assert!(result.status.success(), "{}", stderr_of(&result));
+    assert_eq!(written, "");
+}
+
+/// docutils reads `:header-rows:` with `int()`, which reads no more than
+/// 4,300 digits, leading zeros among them: 4,300 zeros and a 1 is the
+/// option error Python's message words, not a table of one header row.
+/// Sphinx 9.1.0's stream, probed.
+#[test]
+fn a_directive_option_past_int_digit_limit_is_invalid() {
+    let digits = format!("{}1", "0".repeat(4300));
+    let index = format!("Title\n=====\n\n.. csv-table::\n   :header-rows: {digits}\n\n   a, b\n");
+    let test = "t17a3-option-int-limit";
+    let src = temp_source(test, &[("index.rst", index.as_str())]);
+    let (result, written) = warning_stream(&src, &out_dir(test), &[]);
+    assert!(result.status.success(), "{}", stderr_of(&result));
+    assert_eq!(
+        written,
+        format!(
+            "<SRCDIR>/index.rst:4: ERROR: Error in \"csv-table\" directive:\n\
+             invalid option value: (option: \"header-rows\"; value: '{digits}')\n\
+             Exceeds the limit (4300 digits) for integer string conversion: value has 4301 \
+             digits; use sys.set_int_max_str_digits() to increase the limit.\n\n\
+             .. csv-table::\n   :header-rows: {digits}\n\n   a, b [docutils]\n"
+        )
+    );
+}
+
+/// Every caller of `int()` reads Python's one: its message names a literal
+/// it cannot read by its `repr()` cut to 200 characters (`%.200R`), and its
+/// 4,300-digit limit holds for a `unicode` directive's character code,
+/// which `code.isdigit()` lets through to `int()`, as for an option.
+/// Sphinx 9.1.0's streams, probed.
+#[test]
+fn int_errors_read_as_python_words_them() {
+    let xs = "x".repeat(250);
+    let ones = "1".repeat(4301);
+    for (test, index, expected) in [
+        (
+            "t17a3-option-int-literal",
+            format!("Title\n=====\n\n.. csv-table::\n   :header-rows: {xs}\n\n   a, b\n"),
+            format!(
+                "<SRCDIR>/index.rst:4: ERROR: Error in \"csv-table\" directive:\n\
+                 invalid option value: (option: \"header-rows\"; value: '{xs}')\n\
+                 invalid literal for int() with base 10: '{}.\n\n\
+                 .. csv-table::\n   :header-rows: {xs}\n\n   a, b [docutils]\n",
+                "x".repeat(199)
+            ),
+        ),
+        (
+            "t17a3-unicode-code-int-limit",
+            format!("Title\n=====\n\n.. |x| unicode:: {ones}\n\nText |x|.\n"),
+            format!(
+                "<SRCDIR>/index.rst:4: ERROR: Invalid character code: {ones}\n\
+                 ValueError: Exceeds the limit (4300 digits) for integer string conversion: value \
+                 has 4301 digits; use sys.set_int_max_str_digits() to increase the limit \
+                 [docutils]\n\
+                 <SRCDIR>/index.rst:4: WARNING: Substitution definition \"x\" empty or invalid.\n\n\
+                 .. |x| unicode:: {ones} [docutils]\n\
+                 <SRCDIR>/index.rst:6: ERROR: Undefined substitution referenced: \"x\". \
+                 [docutils]\n"
+            ),
+        ),
+    ] {
+        let src = temp_source(test, &[("index.rst", index.as_str())]);
+        let (result, written) = warning_stream(&src, &out_dir(test), &[]);
+        assert!(result.status.success(), "{test}: {}", stderr_of(&result));
+        assert_eq!(written, expected, "{test}");
+    }
+}

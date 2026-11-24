@@ -17,7 +17,7 @@
 use crate::doctree::ids;
 use crate::doctree::pending::{Pending, PendingTransform, PyValue};
 use crate::doctree::{kinds, messages, AttrValue, Attrs, Node, NodeExt, Span};
-use crate::pyformat::py_int_canonical;
+use crate::pyformat;
 use crate::transforms::state::{DocLoc, DocumentState, SourceRef};
 use crate::utils::py_splitlines;
 
@@ -14394,13 +14394,8 @@ fn convert_option(conv: Conv, value: Option<&str>) -> Result<OptVal, String> {
                         .to_string(),
                 );
             };
-            match py_int_canonical(v) {
-                Some((neg, digits)) => Ok(int_optval(neg, &digits)),
-                None => Err(format!(
-                    "invalid literal for int() with base 10: {}",
-                    py_repr(Some(v))
-                )),
-            }
+            let (neg, digits) = pyformat::int(v)?;
+            Ok(int_optval(neg, &digits))
         }
         Conv::PositiveInt => {
             let Some(v) = value else {
@@ -14409,13 +14404,9 @@ fn convert_option(conv: Conv, value: Option<&str>) -> Result<OptVal, String> {
                         .to_string(),
                 );
             };
-            match py_int_canonical(v) {
-                Some((false, digits)) if digits != "0" => Ok(int_optval(false, &digits)),
-                Some(_) => Err("negative or zero value; must be positive".to_string()),
-                None => Err(format!(
-                    "invalid literal for int() with base 10: {}",
-                    py_repr(Some(v))
-                )),
+            match pyformat::int(v)? {
+                (false, digits) if digits != "0" => Ok(int_optval(false, &digits)),
+                _ => Err("negative or zero value; must be positive".to_string()),
             }
         }
         Conv::IntOrNothing => match value {
@@ -14449,15 +14440,11 @@ fn convert_option(conv: Conv, value: Option<&str>) -> Result<OptVal, String> {
         }
         Conv::OptionalInt => match value {
             None => Ok(OptVal::Null),
-            Some(v) => match py_int_canonical(v) {
+            Some(v) => match pyformat::int(v)? {
                 // `int('-0')` is 0, which optional_int accepts —
-                // py_int_canonical already reports it non-negative.
-                Some((true, _)) => Err("negative value; must be positive or zero".to_string()),
-                Some((false, digits)) => Ok(int_optval(false, &digits)),
-                None => Err(format!(
-                    "invalid literal for int() with base 10: {}",
-                    py_repr(Some(v))
-                )),
+                // `pyformat::int` already reports it non-negative.
+                (true, _) => Err("negative value; must be positive or zero".to_string()),
+                (false, digits) => Ok(int_optval(false, &digits)),
             },
         },
         Conv::SingleCharOrUnicode | Conv::SingleCharOrWhitespaceOrUnicode => {
@@ -14511,13 +14498,17 @@ fn convert_option(conv: Conv, value: Option<&str>) -> Result<OptVal, String> {
             let Some(v) = value else {
                 return Err("argument required but none supplied".to_string());
             };
-            match py_int(v) {
-                Some(n) if n >= 1 => Ok(OptVal::Int(n)),
-                Some(_) => Err("negative or zero value; must be positive".to_string()),
-                None => Err(format!(
-                    "invalid literal for int() with base 10: {}",
-                    py_repr(Some(v))
-                )),
+            match pyformat::int(v)? {
+                (false, digits) if digits != "0" => match digits.parse() {
+                    Ok(n) => Ok(OptVal::Int(n)),
+                    // A width past `i64`, which Python reads at any
+                    // precision, is not modelled.
+                    Err(_) => Err(format!(
+                        "invalid literal for int() with base 10: {}",
+                        py_repr(Some(v))
+                    )),
+                },
+                _ => Err("negative or zero value; must be positive".to_string()),
             }
         }
         Conv::Unchanged => Ok(OptVal::Str(value.unwrap_or("").to_string())),
@@ -14583,13 +14574,10 @@ fn convert_option(conv: Conv, value: Option<&str>) -> Result<OptVal, String> {
         }
         Conv::FlagOrInt => match value {
             None => Ok(OptVal::Null),
-            Some(v) => match py_int_canonical(v) {
-                Some((neg, digits)) => Ok(int_optval(neg, &digits)),
-                None => Err(format!(
-                    "invalid literal for int() with base 10: {}",
-                    py_repr(Some(v))
-                )),
-            },
+            Some(v) => {
+                let (neg, digits) = pyformat::int(v)?;
+                Ok(int_optval(neg, &digits))
+            }
         },
         Conv::Figwidth => {
             let Some(v) = value else {
@@ -14652,12 +14640,7 @@ fn unicode_code(code: &str) -> Result<String, String> {
     // Python gates on str.isdigit() (Nd digits AND digit-typed No chars
     // like '²'), then int() — which only accepts the Nd ones.
     if !code.is_empty() && code.chars().all(super::digits::is_python_digit) {
-        let Some((false, digits)) = py_int_canonical(code) else {
-            return Err(format!(
-                "invalid literal for int() with base 10: {}",
-                py_repr(Some(code))
-            ));
-        };
+        let (_, digits) = pyformat::int(code)?;
         let n: u32 = digits
             .parse()
             .map_err(|_| format!("code too large ({code})"))?;
@@ -14703,13 +14686,9 @@ fn int_optval(neg: bool, digits: &str) -> OptVal {
 /// nonnegative_int (directives/__init__.py:224-231), with Python's own
 /// int() error text for bad literals.
 fn nonnegative_int(s: &str) -> Result<OptVal, String> {
-    match py_int_canonical(s) {
-        Some((true, _)) => Err("negative value; must be positive or zero".to_string()),
-        Some((false, digits)) => Ok(int_optval(false, &digits)),
-        None => Err(format!(
-            "invalid literal for int() with base 10: {}",
-            py_repr(Some(s))
-        )),
+    match pyformat::int(s)? {
+        (true, _) => Err("negative value; must be positive or zero".to_string()),
+        (false, digits) => Ok(int_optval(false, &digits)),
     }
 }
 
@@ -14722,10 +14701,10 @@ fn py_int_display(neg: bool, digits: &str) -> String {
 }
 
 /// Python int(str) for numeric consumers; None when invalid OR outside
-/// i64 (attr-facing paths must use [`py_int_canonical`] to keep exact
+/// i64 (attr-facing paths must use [`pyformat::int`] to keep exact
 /// digits for values Python would carry at arbitrary precision).
 fn py_int(s: &str) -> Option<i64> {
-    let (neg, digits) = py_int_canonical(s)?;
+    let (neg, digits) = pyformat::int(s).ok()?;
     py_int_display(neg, &digits).parse::<i64>().ok()
 }
 
@@ -14772,9 +14751,9 @@ fn get_measure(argument: &str, units: &[&str]) -> Result<String, String> {
     }
     // Python: int() first (arbitrary precision — exact digits preserved),
     // float() second; negative or unlisted unit is the units-list error.
-    let (negative, norm) = if let Some((neg, digits)) = py_int_canonical(number) {
+    let (negative, norm) = if let Ok((neg, digits)) = pyformat::int(number) {
         (neg, py_int_display(neg, &digits))
-    } else if let Ok(f) = number.parse::<f64>() {
+    } else if let Ok(f) = pyformat::float(number) {
         (f < 0.0, py_float_str(f))
     } else {
         return Err(no_valid());
@@ -15625,6 +15604,29 @@ fn is_reference(reference: &str) -> Option<String> {
 mod tests {
     use super::*;
     use crate::rst::{parse_rst, ParseOptions};
+
+    /// docutils' `parse_measure` reads a length's number with `int()`,
+    /// then `float()`, and `int()` reads no more than 4,300 digits, leading
+    /// zeros among them: past them the number is the float, `inf` for 4,301
+    /// ones and `1.0` for 4,300 zeros and a 1. docutils 0.22.4's
+    /// `length_or_percentage_or_unitless(value, 'px')`, probed.
+    #[test]
+    fn a_length_past_int_digit_limit_reads_as_a_float() {
+        let length =
+            |value: String| convert_option(Conv::LengthOrPercentageOrUnitless("px"), Some(&value));
+        assert_eq!(
+            length(format!("{}px", "1".repeat(4301))),
+            Ok(OptVal::Str("infpx".to_string()))
+        );
+        assert_eq!(
+            length(format!("{}1px", "0".repeat(4300))),
+            Ok(OptVal::Str("1.0px".to_string()))
+        );
+        assert_eq!(
+            length(format!("{}1px", "0".repeat(4299))),
+            Ok(OptVal::Str("1px".to_string()))
+        );
+    }
 
     /// The `(source, lineno)` sequence of a line stream.
     fn stream_of(lines: &[LineRec]) -> Vec<(u16, u32)> {

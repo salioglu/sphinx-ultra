@@ -431,6 +431,8 @@ const MANPAGES_URL: &[(&str, &str, &str)] = &[
      "    <paragraph>\n        <manpage classes=\"manpage\" page=\"!ls\" path=\"!ls(1)\" section=\"1\" xml:space=\"preserve\">\n            ls(1)\n"),
     ("https://m/{page}/{section}/{path}", ":manpage:`ls(` :manpage:`ls()` :manpage:`ls.` :manpage:`a.b(3)` :manpage:`x(0)`\n",
      "    <paragraph>\n        <manpage classes=\"manpage\" page=\"ls\" path=\"ls(\" section=\"True\" xml:space=\"preserve\">\n            <reference classes=\"manpage\" refuri=\"https://m/ls/None/ls(\">\n                ls(\n         \n        <manpage classes=\"manpage\" page=\"ls\" path=\"ls()\" section=\"True\" xml:space=\"preserve\">\n            <reference classes=\"manpage\" refuri=\"https://m/ls/None/ls()\">\n                ls()\n         \n        <manpage classes=\"manpage\" page=\"ls\" path=\"ls.\" section=\"True\" xml:space=\"preserve\">\n            <reference classes=\"manpage\" refuri=\"https://m/ls/None/ls.\">\n                ls.\n         \n        <manpage classes=\"manpage\" page=\"a.b\" path=\"a.b(3)\" section=\"3\" xml:space=\"preserve\">\n            <reference classes=\"manpage\" refuri=\"https://m/a.b/3/a.b(3)\">\n                a.b(3)\n         \n        <manpage classes=\"manpage\" page=\"x(0)\" path=\"x(0)\" section=\"\" xml:space=\"preserve\">\n            <reference classes=\"manpage\" refuri=\"https://m/x(0)//x(0)\">\n                x(0)\n"),
+    ("https://man.example/{page:_<6}.{section!r}", ":manpage:`ls(1)` :manpage:`ls.`\n",
+     "    <paragraph>\n        <manpage classes=\"manpage\" page=\"ls\" path=\"ls(1)\" section=\"1\" xml:space=\"preserve\">\n            <reference classes=\"manpage\" refuri=\"https://man.example/ls____.'1'\">\n                ls(1)\n         \n        <manpage classes=\"manpage\" page=\"ls\" path=\"ls.\" section=\"True\" xml:space=\"preserve\">\n            <reference classes=\"manpage\" refuri=\"https://man.example/ls____.None\">\n                ls.\n"),
 ];
 
 #[rustfmt::skip]
@@ -530,7 +532,10 @@ fn abbr_matches_sphinx() {
 /// [RC §3.7]: the page, path and section of `_manpage_re`, a section of
 /// `None` (`"True"`), and with `manpages_url` the `reference` to the URL
 /// the page formats (`None` for a missing section), except for a disabled
-/// reference.
+/// reference. The URL is Python's `str.format_map` over the page's
+/// `info`, so a format spec and a conversion render as Python renders
+/// them (the `{page:_<6}.{section!r}` row, Sphinx 9.1.0's post-read tree,
+/// probed).
 #[test]
 fn manpage_matches_sphinx() {
     check(MANPAGE, ReadConfig::default());
@@ -697,6 +702,28 @@ fn external_default_role_matches_sphinx() {
     check(EXTERNAL_DEFAULT_ROLE, config);
 }
 
+/// Not modelled (T19b's divergence list): a `manpages_url` field that
+/// looks up an attribute its value has (`{page.upper}`), which Sphinx 9.1.0
+/// formats as the attribute's text, here a bound method's, which names its
+/// address in memory. The reference keeps `manpages_url` as written, with
+/// no record and no crash.
+#[test]
+fn manpages_url_on_an_attribute_value_is_kept_as_written() {
+    let config = ReadConfig {
+        manpages_url: Some("https://m/{page.upper}".to_string()),
+        ..ReadConfig::default()
+    };
+    let (body, warnings) = read(":manpage:`ls(1)`\n", config.clone());
+    assert_eq!(
+        body,
+        "    <paragraph>\n        <manpage classes=\"manpage\" page=\"ls\" path=\"ls(1)\" \
+         section=\"1\" xml:space=\"preserve\">\n            <reference classes=\"manpage\" \
+         refuri=\"https://m/{page.upper}\">\n                ls(1)\n"
+    );
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(crash(":manpage:`ls(1)`\n", config), None);
+}
+
 /// Decision 13: the role inputs that crash Sphinx 9.1.0 — a trailing `&`
 /// in `guilabel` and `menuselection` (`IndexError`), a removed `:index:`
 /// entry type (`ValueError`), a Sphinx role called as the default role of
@@ -759,6 +786,35 @@ fn role_crashes_are_kept() {
         ))
     );
     assert_eq!(crash(":manpage:`!ls(1)`\n", url("https://m/{foo}")), None);
+    // It is Python's `format_map`, parser and all: a single `{` at the end,
+    // a `{` in a field name, and a format spec on the `None` of a page with
+    // no section (`ls.`) each raise what CPython 3.12 raises.
+    for (rst, manpages_url, exception, message) in [
+        (
+            ":manpage:`ls(1)`\n",
+            "https://m/x{",
+            "ValueError",
+            "Single '{' encountered in format string",
+        ),
+        (
+            ":manpage:`ls(1)`\n",
+            "https://m/{a{b}",
+            "ValueError",
+            "unexpected '{' in field name",
+        ),
+        (
+            ":manpage:`ls.`\n",
+            "https://m/{section:>3}",
+            "TypeError",
+            "unsupported format string passed to NoneType.__format__",
+        ),
+    ] {
+        assert_eq!(
+            crash(rst, url(manpages_url)),
+            Some((exception.to_string(), message.to_string())),
+            "{manpages_url}"
+        );
+    }
 
     // A leaked default role is a registration the document's table holds
     // with no default role name of its own.

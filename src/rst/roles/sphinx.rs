@@ -11,6 +11,7 @@
 //! ([`ReferenceParts`]).
 
 use crate::doctree::{kinds, unescape, AttrValue, Node};
+use crate::pyformat::{self, FormatError, Value};
 use crate::rst::inline::RefContext;
 use crate::rst::LogLocation;
 use crate::transforms::state::DocumentState;
@@ -357,66 +358,40 @@ fn manpage_info(manpage: &str) -> (String, String, Option<String>) {
     )
 }
 
-/// `manpages_url.format_map(info)`: each `{path}`, `{page}` and
-/// `{section}` (a section of `None` is `None`), `{{` and `}}` a brace. A
-/// field naming no key raises `KeyError`, a positional one `ValueError`,
-/// both a crash in Sphinx (decision 13); a conversion or format spec after
-/// a known key is not modelled and gives the plain value.
+/// `manpages_url.format_map(info)`, Python's own `str.format_map`
+/// ([`pyformat::format_map`]) over the page's `path`, `page` and
+/// `section`, which is `None` when the target names no section. Whatever
+/// it raises, a `KeyError` for a field that names no key among them, a
+/// `ValueError` for a positional field, a format it cannot read or a spec
+/// it does not know, a `TypeError` for a spec on `None`, `Manpage.run`
+/// does not catch: Sphinx 9.1.0 crashes at parse time (decision 13), where
+/// the role is. A field that looks up an attribute its value has
+/// (`{page.upper}`) is not modelled (T19b's divergence list): Sphinx
+/// formats the attribute's text, a bound method's, which names its address
+/// in memory; the reference keeps `manpages_url` as written.
 fn format_manpages_url(
     url: &str,
     info: &(String, String, Option<String>),
     location: LogLocation,
 ) -> Result<String, SphinxCrash> {
-    let value_error = |message: &str| {
-        Err(SphinxCrash::python(
-            "ValueError",
-            message.to_string(),
+    let section = info.2.as_deref().map_or(Value::None, Value::Str);
+    let mapping = [
+        ("path", Value::Str(&info.0)),
+        ("page", Value::Str(&info.1)),
+        ("section", section),
+    ];
+    match pyformat::format_map(url, &mapping) {
+        Ok(uri) => Ok(uri),
+        Err(FormatError::NotModelled(_)) => Ok(url.to_string()),
+        Err(FormatError::KeyError(key)) => Err(SphinxCrash::python(
+            "KeyError",
+            crate::utils::py_repr_str(&key),
             location,
-        ))
-    };
-    let mut out = String::with_capacity(url.len());
-    let mut chars = url.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
-            '{' if chars.peek() == Some(&'{') => {
-                chars.next();
-                out.push('{');
-            }
-            '}' if chars.peek() == Some(&'}') => {
-                chars.next();
-                out.push('}');
-            }
-            '}' => return value_error("Single '}' encountered in format string"),
-            '{' => {
-                let mut field = String::new();
-                loop {
-                    match chars.next() {
-                        Some('}') => break,
-                        Some(c) => field.push(c),
-                        None => return value_error("expected '}' before end of string"),
-                    }
-                }
-                let name = field.split(['.', '[', '!', ':']).next().unwrap_or_default();
-                match name {
-                    "path" => out.push_str(&info.0),
-                    "page" => out.push_str(&info.1),
-                    "section" => out.push_str(info.2.as_deref().unwrap_or("None")),
-                    _ if name.is_empty() || name.chars().all(|c| c.is_ascii_digit()) => {
-                        return value_error("Format string contains positional fields")
-                    }
-                    _ => {
-                        return Err(SphinxCrash::python(
-                            "KeyError",
-                            crate::utils::py_repr_str(name),
-                            location,
-                        ))
-                    }
-                }
-            }
-            c => out.push(c),
+        )),
+        Err(FormatError::TypeError(crash) | FormatError::Crash(crash)) => {
+            Err(SphinxCrash { location, ..crash })
         }
     }
-    Ok(out)
 }
 
 /// Sphinx's `Manpage` (`SP/sphinx/roles.py:531-550`), a `ReferenceRole`:

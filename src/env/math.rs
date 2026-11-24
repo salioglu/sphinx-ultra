@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use crate::diagnostics::{Category, Diagnostic};
 use crate::doctree::ids::make_id;
 use crate::env::BuildEnvironment;
-use crate::pyformat::FormatError;
+use crate::pyformat::{self, FormatError, Value};
 use crate::rst::{EquationRecord, LogLocation, SphinxCrash};
 
 /// `env.domaindata['math']['objects']`
@@ -171,7 +171,7 @@ pub struct EquationTarget<'e> {
 /// code blocks it numbered while no numbered equation stands in it
 /// (`KeyError: 'displaymath'`), and a `math_eqref_format` that
 /// `str.format` raises anything but `KeyError` for
-/// ([`crate::pyformat::format_new_style`]).
+/// ([`crate::pyformat::format`]), `TypeError` included.
 pub fn resolve_xref<'e>(
     env: &'e BuildEnvironment,
     numfig: bool,
@@ -216,15 +216,16 @@ pub fn resolve_xref<'e>(
     };
     // `(math_eqref_format or '({number})').format(number=eqno)`, and on
     // `KeyError` a warning and `'(%d)' % number`; whatever else it raises
-    // is not caught.
+    // is not caught. A value the port does not model reads as the
+    // `KeyError` it always has (T19b's divergence list).
     let format = math
         .eqref_format
         .as_deref()
         .filter(|format| !format.is_empty())
         .unwrap_or("({number})");
-    let (title, warning) = match crate::pyformat::format_new_style(format, None, &eqno) {
+    let (title, warning) = match pyformat::format(format, &[("number", Value::Str(&eqno))]) {
         Ok(title) => (title, None),
-        Err(FormatError::KeyError(key)) => (
+        Err(FormatError::KeyError(key) | FormatError::NotModelled(key)) => (
             format!("({number})"),
             Some(format!(
                 "Invalid math_eqref_format: KeyError({})",

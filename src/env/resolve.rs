@@ -20,7 +20,7 @@ use crate::env::toctree::docname_join;
 use crate::env::BuildEnvironment;
 use crate::error::{BuildWarning, WarningType};
 use crate::intersphinx::{self, Diagnostic, HookOutcome, Intersphinx, XrefQuery};
-use crate::pyformat::{format_new_style, FormatError};
+use crate::pyformat::{self, FormatError, Value};
 use crate::rst::SphinxCrash;
 use crate::utils::py_repr_str;
 
@@ -300,42 +300,41 @@ impl Resolver<'_> {
         }
         let fignum: Vec<String> = fignumber.iter().map(u32::to_string).collect();
         let fignum = fignum.join(".");
-        let newtitle = if title.contains("{name}") || title.contains("number") {
+        let number = ("number", Value::Str(&fignum));
+        let formatted = if title.contains("{name}") || title.contains("number") {
             // New style (`Fig.{number}`). Sphinx passes `name` to `format`
             // only `if figname:` — a *truthiness* test, so an empty caption
             // is formatted without it, and a `{name}` in the title then
             // raises the KeyError below (the `figname is None` guard above
             // is the only None-ness test in this algorithm).
-            let named = figname.as_deref().filter(|figname| !figname.is_empty());
-            match format_new_style(&title, named, &fignum) {
-                Ok(newtitle) => newtitle,
-                Err(FormatError::KeyError(key)) => {
-                    return XrefOutcome::Kept {
-                        warning: Some(format!(
-                            "invalid numfig_format: {title} (KeyError({}))",
-                            py_repr_str(&key)
-                        )),
-                    }
-                }
-                Err(FormatError::TypeError(_)) => {
-                    return XrefOutcome::Kept {
-                        warning: Some(format!("invalid numfig_format: {title}")),
-                    }
-                }
-                // `except KeyError` and `except TypeError` only: anything
-                // else `str.format` raises crashes Sphinx.
-                Err(FormatError::Crash(crash)) => return XrefOutcome::Crash(crash),
+            match figname.as_deref().filter(|figname| !figname.is_empty()) {
+                Some(figname) => pyformat::format(&title, &[("name", Value::Str(figname)), number]),
+                None => pyformat::format(&title, &[number]),
             }
         } else {
-            // Old style (`Fig.%s`).
-            match format_old_style(&title, &fignum) {
-                Ok(newtitle) => newtitle,
-                Err(TypeError) => {
-                    return XrefOutcome::Kept {
-                        warning: Some(format!("invalid numfig_format: {title}")),
-                    }
+            // Old style (`Fig.%s`): `title % fignum`.
+            pyformat::percent(&title, &fignum)
+        };
+        // `except KeyError` and `except TypeError` only: anything else
+        // either style raises crashes Sphinx. A value the port does not
+        // model reads as the `KeyError` it always has (T19b's divergence
+        // list).
+        let newtitle = match formatted {
+            Ok(newtitle) => newtitle,
+            Err(FormatError::KeyError(key) | FormatError::NotModelled(key)) => {
+                return XrefOutcome::Kept {
+                    warning: Some(format!(
+                        "invalid numfig_format: {title} (KeyError({}))",
+                        py_repr_str(&key)
+                    )),
                 }
             }
+            Err(FormatError::TypeError(_)) => {
+                return XrefOutcome::Kept {
+                    warning: Some(format!("invalid numfig_format: {title}")),
+                }
+            }
+            Err(FormatError::Crash(crash)) => return XrefOutcome::Crash(crash),
         };
 
         XrefOutcome::Resolved(self.build_reference_node(
@@ -761,44 +760,6 @@ struct LabelTarget<'a> {
 /// Sphinx's `ValueError` out of `get_fignumber`.
 #[derive(Debug)]
 struct NoNumber;
-
-/// Python's `TypeError` out of `%`-formatting.
-#[derive(Debug)]
-struct TypeError;
-
-/// `title % fignum` for a single string argument: exactly one `%s`
-/// conversion, or Python raises `TypeError` — too few ("not enough
-/// arguments") and too many ("not all arguments converted") both land on
-/// the same warning. Any other conversion is reported as an invalid format
-/// too; `%r` would in fact work in Python, but no `numfig_format` uses it
-/// and guessing at the rest of `%`-formatting would be worse than saying
-/// the format is unusable.
-fn format_old_style(title: &str, fignum: &str) -> Result<String, TypeError> {
-    let mut out = String::with_capacity(title.len());
-    let mut rest = title;
-    let mut conversions = 0usize;
-    while let Some(percent) = rest.find('%') {
-        out.push_str(&rest[..percent]);
-        let mut chars = rest[percent + 1..].chars();
-        match chars.next() {
-            Some('%') => out.push('%'),
-            Some('s') => {
-                conversions += 1;
-                out.push_str(fignum);
-            }
-            // `%d` with a string argument, or a trailing bare `%`, is a
-            // TypeError/ValueError; either way Sphinx logs #13.
-            _ => return Err(TypeError),
-        }
-        rest = &rest[percent + 2..];
-    }
-    if conversions != 1 {
-        // "not all arguments converted during string formatting".
-        return Err(TypeError);
-    }
-    out.push_str(rest);
-    Ok(out)
-}
 
 /// `ws_re.split(target, maxsplit=1)`: the first whitespace run splits the
 /// leading word off. `ws_re` is `\s+`, Python's `str.isspace` — so a
@@ -2327,13 +2288,29 @@ mod tests {
 
     #[test]
     fn numref_renders_both_format_styles_and_reports_broken_ones() {
-        assert_eq!(format_old_style("Fig. %s", "1.2").unwrap(), "Fig. 1.2");
+        let format_new_style = |title: &str, figname: Option<&str>, fignum: &str| match figname {
+            Some(figname) => pyformat::format(
+                title,
+                &[
+                    ("name", Value::Str(figname)),
+                    ("number", Value::Str(fignum)),
+                ],
+            ),
+            None => pyformat::format(title, &[("number", Value::Str(fignum))]),
+        };
+        assert_eq!(pyformat::percent("Fig. %s", "1.2").unwrap(), "Fig. 1.2");
         assert!(
-            format_old_style("Fig.", "1").is_err(),
+            matches!(
+                pyformat::percent("Fig.", "1"),
+                Err(FormatError::TypeError(_))
+            ),
             "no conversion: TypeError"
         );
         assert!(
-            format_old_style("%s %s", "1").is_err(),
+            matches!(
+                pyformat::percent("%s %s", "1"),
+                Err(FormatError::TypeError(_))
+            ),
             "two conversions for one argument: TypeError"
         );
         assert_eq!(
@@ -2442,7 +2419,7 @@ mod tests {
     }
 
     /// `_resolve_numref_xref` formats the rest of a field on the string its
-    /// keyword gives ([`format_new_style`]): an index of digits fills the
+    /// keyword gives ([`pyformat::format`]): an index of digits fills the
     /// character; a name in brackets raises the `TypeError` the resolver
     /// catches, which warns `invalid numfig_format: <title>` without the
     /// exception; and what else `str.format` raises but `KeyError` it does
