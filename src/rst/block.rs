@@ -16,7 +16,7 @@
 
 use crate::doctree::ids;
 use crate::doctree::pending::{Pending, PendingTransform, PyValue};
-use crate::doctree::{kinds, messages, AttrValue, Node, NodeExt, Span};
+use crate::doctree::{kinds, messages, AttrValue, Attrs, Node, NodeExt, Span};
 use crate::transforms::state::{DocLoc, DocumentState, SourceRef};
 use crate::utils::py_splitlines;
 
@@ -792,14 +792,13 @@ impl BlockParser {
     /// [`Self::parse_nested`] into a container that has `document` set
     /// while it is filled. Sphinx's `nested_parse_to_nodes` parses into an
     /// anonymous `Element` it attaches first (`SP/sphinx/util/parsing.py:62-63`):
-    /// glossary definitions (`domains/std/__init__.py:541`) and `hlist`
-    /// (`directives/other.py:289`) here; object description content
-    /// (`directives/__init__.py:288`) and `py:module` content
-    /// (`domains/python/__init__.py:505`), which match titles, through
-    /// [`Self::parse_nested_titled`], as `only` (which sets
-    /// `node.document` itself, `directives/other.py:322`). The changeset
-    /// directives do both (`domains/changeset.py:67,82`), but their
-    /// content is not nested-parsed here.
+    /// glossary definitions (`domains/std/__init__.py:541`), `hlist`
+    /// (`directives/other.py:289`) and the content of the changeset
+    /// directives (`domains/changeset.py:82`, [`Self::run_version_change`])
+    /// here; object description content (`directives/__init__.py:288`) and
+    /// `py:module` content (`domains/python/__init__.py:505`), which match
+    /// titles, through [`Self::parse_nested_titled`], as `only` (which sets
+    /// `node.document` itself, `directives/other.py:322`).
     fn parse_nested_attached(&mut self, lines: &[LineRec], kind: &'static str) -> Vec<Node> {
         self.parse_nested_into(lines, kind, true)
     }
@@ -6706,10 +6705,14 @@ impl BlockParser {
         }
     }
 
-    /// versionadded family (sphinx/domains/changeset.py VersionChange):
-    /// a versionmodified node holding ONE translatable="0" paragraph whose
-    /// lead-in inline ends with '.' (no text) or ': ' (text follows as
-    /// siblings in the same paragraph).
+    /// Sphinx's `VersionChange.run` (`SP/sphinx/domains/changeset.py:65-117`),
+    /// behind `versionadded`, `versionchanged`, `deprecated` and
+    /// `versionremoved`: a `versionmodified` node holding a paragraph of
+    /// the text on the directive line, if any, and then the content,
+    /// nested-parsed whether or not that text is there. The first child,
+    /// if a paragraph, opens with the label (`'<label>: '`); if not, a
+    /// paragraph of the label goes in front, `'<label>.'` when there is
+    /// nothing at all.
     fn run_version_change(
         &mut self,
         info: &'static (&'static str, &'static str, &'static str),
@@ -6718,46 +6721,81 @@ impl BlockParser {
     ) {
         let (type_name, label, lead_fmt) = *info;
         let version = &input.arguments[0];
-        // Inline messages from the explanation must anchor on the text's
-        // own line, not the directive marker (review finding 41).
-        let mut text_lineno = input.lineno;
-        let text: Option<String> = input
-            .arguments
-            .get(1)
-            .cloned()
-            .or_else(|| {
-                if input.content.is_empty() {
-                    None
-                } else {
-                    text_lineno = input.content[0].lineno;
-                    Some(self.join_lines(&input.content))
-                }
-            })
-            .filter(|t| !t.is_empty());
         let mut node = Node::elem("versionmodified", input.span);
         node.set("type", AttrValue::Str(type_name.to_string()));
         node.set("version", AttrValue::Str(version.clone()));
-        let lead_base = lead_fmt.replace("{}", version);
-        let lead = match &text {
-            Some(_) => format!("{lead_base}: "),
-            None => format!("{lead_base}."),
-        };
-        let mut para = Node::elem(kinds::PARAGRAPH, input.span);
-        para.set("translatable", AttrValue::Int(0));
-        let mut inner = Node::elem("inline", input.span);
-        inner
-            .attrs
-            .classes
-            .extend(["versionmodified".to_string(), label.to_string()]);
-        inner.children.push(Node::text_node(lead, input.span));
-        para.children.push(inner);
+        // `arguments[1]`, inline-parsed at the line below the directive's
+        // (`parse_inline(..., lineno=self.lineno + 1)`) into a paragraph at
+        // the directive's line; its messages follow the node.
         let mut messages = Vec::new();
-        if let Some(t) = text {
-            let inline = self.inline(&t, input.span, text_lineno);
-            para.children.extend(inline.nodes);
+        if let Some(argument) = input.arguments.get(1) {
+            let inline = self.inline(argument, input.span, input.lineno + 1);
+            let mut para = Node::elem(kinds::PARAGRAPH, input.span);
+            para.children = inline.nodes;
+            node.children.push(para);
             messages = inline.messages;
         }
-        node.children.push(para);
+        // `parse_content_to_nodes()`: a nested parse into an anonymous
+        // `Element` that has `document` set (`SP/sphinx/util/parsing.py:62-71`),
+        // no section titles. `node` has `document` set too
+        // (`changeset.py:67`), so a paragraph put into it below takes the
+        // machine's position from `setup_child`.
+        let current = if input.content.is_empty() {
+            input.current
+        } else {
+            let content = self.parse_nested_attached(&input.content, "element");
+            node.children.extend(content);
+            current_after(&input.content, self.ending)
+        };
+        let lead = |suffix: &str| {
+            let mut inline = Node::elem("inline", input.span);
+            inline
+                .attrs
+                .classes
+                .extend(["versionmodified".to_string(), label.to_string()]);
+            let text = format!("{}{suffix}", lead_fmt.replace("{}", version));
+            inline.children.push(Node::text_node(text, input.span));
+            inline
+        };
+        match node.children.first_mut() {
+            Some(first) if first.kind == kinds::PARAGRAPH => {
+                // Sphinx moves the paragraph's children into an `inline`
+                // that has the paragraph's location and is translatable,
+                // in a new paragraph (`translatable=False`) that
+                // `replace_self` gives the old one's ids, classes, names
+                // and dupnames and no other attribute
+                // (`SP/docutils/nodes.py:1110-1132`); RemoveTranslatableInline
+                // (999) dissolves the inline again. This parse makes what
+                // is left. Every paragraph docutils parses has the
+                // rawsource that Sphinx's condition reads. The paragraph
+                // keeps its own location, the one that inline hands to the
+                // nodes it holds while the read transforms locate them.
+                let Attrs {
+                    ids,
+                    names,
+                    dupnames,
+                    classes,
+                    ..
+                } = std::mem::take(&mut first.attrs);
+                first.attrs = Attrs {
+                    ids,
+                    names,
+                    dupnames,
+                    classes,
+                    ..Attrs::default()
+                };
+                first.set("translatable", AttrValue::Int(0));
+                first.children.insert(0, lead(": "));
+            }
+            first => {
+                let suffix = if first.is_some() { ": " } else { "." };
+                let mut para = Node::elem(kinds::PARAGRAPH, input.span);
+                para.set("translatable", AttrValue::Int(0));
+                para.children.push(lead(suffix));
+                self.note_location(&mut para, current);
+                node.children.insert(0, para);
+            }
+        }
         out.push(node);
         out.extend(messages);
     }
@@ -7934,10 +7972,18 @@ impl BlockParser {
                 return;
             }
         }
-        // BasePseudoSection context check: allowed parents are the document
-        // root, sections, and sidebars (body.py:33-40).
+        // BasePseudoSection context check (body.py:32-47): the parse's
+        // container may not be a body, part, sub-structural, bibliographic
+        // or decorative element or a topic. The document, a section and a
+        // sidebar may hold one, and so may a container that is none of
+        // those: the anonymous `Element` docutils and Sphinx parse content
+        // into ("element", and Sphinx's object description and `py:module`
+        // content), and Sphinx's `only`.
         if let Some(parent) = self.nested_node_kind {
-            if parent != "sidebar" {
+            if !matches!(
+                parent,
+                "sidebar" | "element" | "desc_content" | "py_module" | "only"
+            ) {
                 out.push(self.directive_run_error(
                     &format!(
                         "The \"{}\" directive may not be used within topics or body elements.",
@@ -16433,6 +16479,219 @@ mod tests {
                 "well-formed glossary warned: {src:?}"
             );
         }
+    }
+
+    /// Sphinx's `VersionChange` (`SP/sphinx/domains/changeset.py:65-117`)
+    /// nested-parses its content, after the text on the directive line
+    /// too: the first paragraph carries the label and the later paragraphs
+    /// are its siblings. The research report's `va2` and `va3` ([SQ §4.3])
+    /// and the same for `versionchanged`, each Sphinx 9.1.0's tree (smart
+    /// quotes off).
+    #[test]
+    fn version_change_keeps_multi_paragraph_content() {
+        for (src, sphinx) in [
+            (
+                ".. versionadded:: 1.0\n   First paragraph ends here\n\n   \"Second\" paragraph.\n\nAfter.\n",
+                "<document source=\"<snippet>\">\n    <versionmodified type=\"versionadded\" version=\"1.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified added\">\n                Added in version 1.0: \n            First paragraph ends here\n        <paragraph>\n            \"Second\" paragraph.\n    <paragraph>\n        After.\n",
+            ),
+            (
+                ".. versionadded:: 1.0\n\n   First paragraph.\n\n   \"Second\" paragraph.\n",
+                "<document source=\"<snippet>\">\n    <versionmodified type=\"versionadded\" version=\"1.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified added\">\n                Added in version 1.0: \n            First paragraph.\n        <paragraph>\n            \"Second\" paragraph.\n",
+            ),
+            (
+                ".. versionchanged:: 2.0 Text here.\n\n   Second paragraph.\n\n   Third paragraph.\n",
+                "<document source=\"<snippet>\">\n    <versionmodified type=\"versionchanged\" version=\"2.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified changed\">\n                Changed in version 2.0: \n            Text here.\n        <paragraph>\n            Second paragraph.\n        <paragraph>\n            Third paragraph.\n",
+            ),
+            (
+                ".. versionchanged:: 2.0\n\n   First.\n\n   Second.\n",
+                "<document source=\"<snippet>\">\n    <versionmodified type=\"versionchanged\" version=\"2.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified changed\">\n                Changed in version 2.0: \n            First.\n        <paragraph>\n            Second.\n",
+            ),
+        ] {
+            assert_eq!(pf_sphinx(src), sphinx, "{src:?}");
+        }
+    }
+
+    /// Our read of each `(rst, body, warnings)` row, the way the read-state
+    /// harness reads a snippet with `keep_warnings` off, against Sphinx
+    /// 9.1.0's: its post-read doctree, less the document line, and its
+    /// warning stream. One entry per row that differs.
+    fn sphinx_read_differences(rows: &[(&str, &str, &[&str])]) -> Vec<String> {
+        rows.iter()
+            .filter_map(|&(rst, body, warnings)| {
+                let read = crate::transforms::test_support::read_snippet(rst, false);
+                (read.body != body || read.warnings != warnings).then(|| {
+                    format!(
+                        "{rst:?}\n--- sphinx 9.1.0 ---\n{body}{warnings:#?}\n--- ours ---\n{}{:#?}",
+                        read.body, read.warnings
+                    )
+                })
+            })
+            .collect()
+    }
+
+    /// Version-change content read as Sphinx 9.1.0 reads it (oracle: each
+    /// snippet built as `index.rst` with the dummy builder, `smartquotes =
+    /// False`; the post-read doctree and the `-w` stream). The text on the
+    /// directive line is inline-parsed at the line below the directive's,
+    /// and the content is nested-parsed into a container that has
+    /// `document` set, whether or not that text is there: a construct the
+    /// content holds behaves as it does anywhere else, and a node in it is
+    /// located as docutils locates it.
+    #[test]
+    fn version_change_content_reads_like_sphinx() {
+        let differences = sphinx_read_differences(&[
+            // the inline-parse audit's cases: a literal block keeps its text
+            (
+                "Title\n=====\n\n.. versionadded:: 1.0\n\n   Example::\n\n      :nod:bogus:`x`\n\nSentinel :nod:sentinel:`z`.\n",
+                "    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <versionmodified type=\"versionadded\" version=\"1.0\">\n            <paragraph translatable=\"0\">\n                <inline classes=\"versionmodified added\">\n                    Added in version 1.0: \n                Example:\n            <literal_block xml:space=\"preserve\">\n                :nod:bogus:`x`\n        <paragraph>\n            Sentinel \n            <problematic ids=\"id2\" refid=\"id1\">\n                :nod:sentinel:`z`\n            .\n",
+                &["WARNING: unknown role name: nod:sentinel", "<SRCDIR>/index.rst:10: ERROR: Unknown interpreted text role \"nod:sentinel\". [docutils]"],
+            ),
+            // a comment's text is no inline markup
+            (
+                "Title\n=====\n\n.. versionadded:: 1.0\n\n   Text.\n\n   .. a *comment\n\nSentinel :nod:sentinel:`z`.\n",
+                "    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <versionmodified type=\"versionadded\" version=\"1.0\">\n            <paragraph translatable=\"0\">\n                <inline classes=\"versionmodified added\">\n                    Added in version 1.0: \n                Text.\n            <comment xml:space=\"preserve\">\n                a *comment\n        <paragraph>\n            Sentinel \n            <problematic ids=\"id2\" refid=\"id1\">\n                :nod:sentinel:`z`\n            .\n",
+                &["WARNING: unknown role name: nod:sentinel", "<SRCDIR>/index.rst:10: ERROR: Unknown interpreted text role \"nod:sentinel\". [docutils]"],
+            ),
+            // text on the directive line, then content
+            (
+                "Title\n=====\n\n.. deprecated:: 1.0 Arg :nod:arg:`x` *open\n\n   Body :nod:body:`y`.\n\nSentinel :nod:sentinel:`z`.\n",
+                "    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <versionmodified type=\"deprecated\" version=\"1.0\">\n            <paragraph translatable=\"0\">\n                <inline classes=\"versionmodified deprecated\">\n                    Deprecated since version 1.0: \n                Arg \n                <problematic ids=\"id2\" refid=\"id1\">\n                    :nod:arg:`x`\n                 \n                <problematic ids=\"id4\" refid=\"id3\">\n                    *\n                open\n            <paragraph>\n                Body \n                <problematic ids=\"id6\" refid=\"id5\">\n                    :nod:body:`y`\n                .\n        <paragraph>\n            Sentinel \n            <problematic ids=\"id8\" refid=\"id7\">\n                :nod:sentinel:`z`\n            .\n",
+                &["WARNING: unknown role name: nod:arg", "<SRCDIR>/index.rst:5: ERROR: Unknown interpreted text role \"nod:arg\". [docutils]", "<SRCDIR>/index.rst:5: WARNING: Inline emphasis start-string without end-string. [docutils]", "WARNING: unknown role name: nod:body", "<SRCDIR>/index.rst:6: ERROR: Unknown interpreted text role \"nod:body\". [docutils]", "WARNING: unknown role name: nod:sentinel", "<SRCDIR>/index.rst:8: ERROR: Unknown interpreted text role \"nod:sentinel\". [docutils]"],
+            ),
+            // a list after the first paragraph
+            (
+                "Title\n=====\n\n.. versionchanged:: 1.0\n\n   First :nod:p1:`x`.\n\n   * item *open\n\nSentinel :nod:sentinel:`z`.\n",
+                "    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <versionmodified type=\"versionchanged\" version=\"1.0\">\n            <paragraph translatable=\"0\">\n                <inline classes=\"versionmodified changed\">\n                    Changed in version 1.0: \n                First \n                <problematic ids=\"id2\" refid=\"id1\">\n                    :nod:p1:`x`\n                .\n            <bullet_list bullet=\"*\">\n                <list_item>\n                    <paragraph>\n                        item \n                        <problematic ids=\"id4\" refid=\"id3\">\n                            *\n                        open\n        <paragraph>\n            Sentinel \n            <problematic ids=\"id6\" refid=\"id5\">\n                :nod:sentinel:`z`\n            .\n",
+                &["WARNING: unknown role name: nod:p1", "<SRCDIR>/index.rst:6: ERROR: Unknown interpreted text role \"nod:p1\". [docutils]", "<SRCDIR>/index.rst:8: WARNING: Inline emphasis start-string without end-string. [docutils]", "WARNING: unknown role name: nod:sentinel", "<SRCDIR>/index.rst:10: ERROR: Unknown interpreted text role \"nod:sentinel\". [docutils]"],
+            ),
+            // an image `:target:` reference has the source and no line
+            (
+                "Title\n=====\n\n.. versionadded:: 1.0\n\n   .. image:: pic.png\n      :target: bad_\n\nAfter.\n",
+                "    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <versionmodified type=\"versionadded\" version=\"1.0\">\n            <paragraph translatable=\"0\">\n                <inline classes=\"versionmodified added\">\n                    Added in version 1.0: \n            <problematic ids=\"id2\" refid=\"id1\">\n        <paragraph>\n            After.\n",
+                &["<SRCDIR>/index.rst:: ERROR: Unknown target name: \"bad\". [docutils]"],
+            ),
+            // the first paragraph's children stand at its line
+            (
+                ".. versionadded:: 1.0\n\n   See bad_ here.\n",
+                "    <versionmodified type=\"versionadded\" version=\"1.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified added\">\n                Added in version 1.0: \n            See \n            <problematic ids=\"id2\" refid=\"id1\">\n                bad_\n             here.\n",
+                &["<SRCDIR>/index.rst:3: ERROR: Unknown target name: \"bad\". [docutils]"],
+            ),
+            // a later paragraph stands at its own line
+            (
+                ".. versionadded:: 1.0\n\n   First.\n\n   See bad_ here.\n",
+                "    <versionmodified type=\"versionadded\" version=\"1.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified added\">\n                Added in version 1.0: \n            First.\n        <paragraph>\n            See \n            <problematic ids=\"id2\" refid=\"id1\">\n                bad_\n             here.\n",
+                &["<SRCDIR>/index.rst:5: ERROR: Unknown target name: \"bad\". [docutils]"],
+            ),
+            // the text on the directive line stands at the directive's
+            (
+                ".. versionadded:: 1.0 See bad_ here.\n\n   And bad2_ there.\n",
+                "    <versionmodified type=\"versionadded\" version=\"1.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified added\">\n                Added in version 1.0: \n            See \n            <problematic ids=\"id2\" refid=\"id1\">\n                bad_\n             here.\n        <paragraph>\n            And \n            <problematic ids=\"id4\" refid=\"id3\">\n                bad2_\n             there.\n",
+                &["<SRCDIR>/index.rst:1: ERROR: Unknown target name: \"bad\". [docutils]", "<SRCDIR>/index.rst:3: ERROR: Unknown target name: \"bad2\". [docutils]"],
+            ),
+            // version changes nest
+            (
+                ".. versionadded:: 1.0\n\n   .. versionchanged:: 2.0\n\n      Inner bad_ text.\n\n   Outer bad2_ text.\n",
+                "    <versionmodified type=\"versionadded\" version=\"1.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified added\">\n                Added in version 1.0: \n        <versionmodified type=\"versionchanged\" version=\"2.0\">\n            <paragraph translatable=\"0\">\n                <inline classes=\"versionmodified changed\">\n                    Changed in version 2.0: \n                Inner \n                <problematic ids=\"id2\" refid=\"id1\">\n                    bad_\n                 text.\n        <paragraph>\n            Outer \n            <problematic ids=\"id4\" refid=\"id3\">\n                bad2_\n             text.\n",
+                &["<SRCDIR>/index.rst:5: ERROR: Unknown target name: \"bad\". [docutils]", "<SRCDIR>/index.rst:7: ERROR: Unknown target name: \"bad2\". [docutils]"],
+            ),
+            // a target in the content (CPython `using/cmdline.rst`)
+            (
+                ".. versionremoved:: 3.14\n\n   ``-J`` is no longer reserved for use by Jython_,\n   and now has no special meaning.\n\n   .. _Jython: https://www.jython.org/\n",
+                "    <versionmodified type=\"versionremoved\" version=\"3.14\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified removed\">\n                Removed in version 3.14: \n            <literal>\n                -J\n             is no longer reserved for use by \n            <reference name=\"Jython\" refuri=\"https://www.jython.org/\">\n                Jython\n            ,\n            and now has no special meaning.\n        <target ids=\"jython\" names=\"jython\" refuri=\"https://www.jython.org/\">\n",
+                &[],
+            ),
+            // a directive in the content (CPython `c-api/contextvars.rst`)
+            (
+                ".. versionchanged:: 3.7.1\n\n   .. note::\n\n      Text::\n\n         PyContext *PyContext_New(void);\n\n      See :nod:issue:`34762` here.\n",
+                "    <versionmodified type=\"versionchanged\" version=\"3.7.1\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified changed\">\n                Changed in version 3.7.1: \n        <note>\n            <paragraph>\n                Text:\n            <literal_block xml:space=\"preserve\">\n                PyContext *PyContext_New(void);\n            <paragraph>\n                See \n                <problematic ids=\"id2\" refid=\"id1\">\n                    :nod:issue:`34762`\n                 here.\n",
+                &["WARNING: unknown role name: nod:issue", "<SRCDIR>/index.rst:9: ERROR: Unknown interpreted text role \"nod:issue\". [docutils]"],
+            ),
+            // no section titles
+            (
+                "Top\n===\n\n.. versionadded:: 1.0\n\n   Title\n   -----\n\n   Text.\n",
+                "    <section ids=\"top\" names=\"top\">\n        <title>\n            Top\n        <versionmodified type=\"versionadded\" version=\"1.0\">\n            <paragraph translatable=\"0\">\n                <inline classes=\"versionmodified added\">\n                    Added in version 1.0: \n            <paragraph>\n                Text.\n",
+                &["<SRCDIR>/index.rst:7: ERROR: Unexpected section title.", "", "Title", "----- [docutils]"],
+            ),
+            // directive-line text that runs on
+            (
+                ".. versionadded:: 1.0 First line\n   continues *here\n\n   Content.\n",
+                "    <versionmodified type=\"versionadded\" version=\"1.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified added\">\n                Added in version 1.0: \n            First line\n            continues \n            <problematic ids=\"id2\" refid=\"id1\">\n                *\n            here\n        <paragraph>\n            Content.\n",
+                &["<SRCDIR>/index.rst:2: WARNING: Inline emphasis start-string without end-string. [docutils]"],
+            ),
+            // content that does not start with a paragraph
+            (
+                ".. versionadded:: 1.0\n\n   - item\n\n   Text.\n",
+                "    <versionmodified type=\"versionadded\" version=\"1.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified added\">\n                Added in version 1.0: \n        <bullet_list bullet=\"-\">\n            <list_item>\n                <paragraph>\n                    item\n        <paragraph>\n            Text.\n",
+                &[],
+            ),
+            // a target in the content stays: its parent is a TextElement
+            (
+                ".. versionadded:: 1.0\n\n   .. _lab:\n\n   Text.\n\nSee lab_.\n",
+                "    <versionmodified type=\"versionadded\" version=\"1.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified added\">\n                Added in version 1.0: \n        <target ids=\"lab\" names=\"lab\">\n        <paragraph>\n            Text.\n    <paragraph>\n        See \n        <reference name=\"lab\" refid=\"lab\">\n            lab\n        .\n",
+                &[],
+            ),
+            // the first paragraph keeps its ids, classes, names and dupnames
+            (
+                ".. versionadded:: 1.0\n\n   .. rst-class:: special\n\n      First para.\n\n   Second.\n",
+                "    <versionmodified type=\"versionadded\" version=\"1.0\">\n        <paragraph classes=\"special\" translatable=\"0\">\n            <inline classes=\"versionmodified added\">\n                Added in version 1.0: \n            First para.\n        <paragraph>\n            Second.\n",
+                &[],
+            ),
+            // in a list item
+            (
+                "- item\n\n  .. versionchanged:: 2.0\n\n     Text bad_ here.\n\n     More.\n",
+                "    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                item\n            <versionmodified type=\"versionchanged\" version=\"2.0\">\n                <paragraph translatable=\"0\">\n                    <inline classes=\"versionmodified changed\">\n                        Changed in version 2.0: \n                    Text \n                    <problematic ids=\"id2\" refid=\"id1\">\n                        bad_\n                     here.\n                <paragraph>\n                    More.\n",
+                &["<SRCDIR>/index.rst:5: ERROR: Unknown target name: \"bad\". [docutils]"],
+            ),
+            // in a table cell
+            (
+                "+------------------------------+\n| .. versionadded:: 1.0        |\n|                              |\n|    Cell bad_ text.           |\n+------------------------------+\n",
+                "    <table>\n        <tgroup cols=\"1\">\n            <colspec colwidth=\"30\">\n            <tbody>\n                <row>\n                    <entry>\n                        <versionmodified type=\"versionadded\" version=\"1.0\">\n                            <paragraph translatable=\"0\">\n                                <inline classes=\"versionmodified added\">\n                                    Added in version 1.0: \n                                Cell \n                                <problematic ids=\"id2\" refid=\"id1\">\n                                    bad_\n                                 text.\n",
+                &["<SRCDIR>/index.rst:4: ERROR: Unknown target name: \"bad\". [docutils]"],
+            ),
+        ]);
+        assert!(differences.is_empty(), "{}", differences.join("\n"));
+    }
+
+    /// docutils' topic and sidebar may stand in a container that is no body
+    /// element (`BasePseudoSection.run`, `SP/docutils/parsers/rst/directives/
+    /// body.py:42-47`): the anonymous `Element` docutils and Sphinx parse
+    /// content into (version changes, object descriptions, `py:module`)
+    /// and Sphinx's `only` (oracle as above).
+    #[test]
+    fn pseudo_sections_stand_in_anonymous_containers() {
+        let differences = sphinx_read_differences(&[
+            // version-change content
+            (
+                ".. versionadded:: 1.0\n\n   .. topic:: T\n\n      Body.\n",
+                "    <versionmodified type=\"versionadded\" version=\"1.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified added\">\n                Added in version 1.0: \n        <topic>\n            <title>\n                T\n            <paragraph>\n                Body.\n",
+                &[],
+            ),
+            // version-change content, a sidebar
+            (
+                ".. versionadded:: 1.0\n\n   .. sidebar:: S\n\n      Body.\n",
+                "    <versionmodified type=\"versionadded\" version=\"1.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified added\">\n                Added in version 1.0: \n        <sidebar>\n            <title>\n                S\n            <paragraph>\n                Body.\n",
+                &[],
+            ),
+            // `only` content
+            (
+                ".. only:: html\n\n   .. topic:: T\n\n      Body.\n",
+                "    <only expr=\"html\">\n        <topic>\n            <title>\n                T\n            <paragraph>\n                Body.\n",
+                &[],
+            ),
+            // `py:module` content
+            (
+                ".. py:module:: m\n\n   .. topic:: T\n\n      Body.\n",
+                "    <index entries=\"('pair',\\ 'module;\\ m',\\ 'module-m',\\ '',\\ None)\">\n    <target ismod=\"1\" refid=\"module-m\">\n    <topic ids=\"module-m\">\n        <title>\n            T\n        <paragraph>\n            Body.\n",
+                &[],
+            ),
+            // object description content
+            (
+                ".. class:: x\n\n   .. topic:: T\n\n      Body.\n",
+                "    <index entries=\"('single',\\ 'x\\ (built-in\\ class)',\\ 'x',\\ '',\\ None)\">\n    <desc classes=\"py class\" desctype=\"class\" domain=\"py\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"class\">\n        <desc_signature _toc_name=\"x\" _toc_parts=\"('x',)\" class=\"\" classes=\"sig sig-object\" fullname=\"x\" ids=\"x\" module=\"True\">\n            <desc_annotation xml:space=\"preserve\">\n                <desc_sig_keyword classes=\"k\">\n                    class\n                <desc_sig_space classes=\"w\">\n                     \n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                x\n        <desc_content>\n            <topic>\n                <title>\n                    T\n                <paragraph>\n                    Body.\n",
+                &[],
+            ),
+        ]);
+        assert!(differences.is_empty(), "{}", differences.join("\n"));
     }
 }
 

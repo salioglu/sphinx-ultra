@@ -31,6 +31,7 @@ pub mod misc;
 pub mod post;
 pub mod references;
 pub mod reporter;
+pub mod smartquotes;
 pub mod sphinx;
 pub mod state;
 pub mod tags;

@@ -113,7 +113,11 @@ pub fn freeze_workaround(tree: &mut TxTree, id: TxId, state: &mut DocumentState)
 ///    `SP/sphinx/domains/index.py:113-116`). Those are mixed kinds, which
 ///    this rule leaves without a location (the census in [DS §6.1] has
 ///    102 `pending_xref`s with a source and a line and 65 with neither):
-///    they need overrides before anything relies on their location;
+///    they need overrides before anything relies on their location. The
+///    children of a `versionmodified` are not in inline position: it is
+///    the one `TextElement` that holds body elements, the content its
+///    directive parses (`SP/sphinx/domains/changeset.py:82`), and they
+///    stand where that parse puts them;
 /// 2. so has a node of a kind docutils never locates ([`UNLOCATED`]);
 /// 3. so has a node docutils makes without a location and puts in a
 ///    parent that is not yet in the document, where `setup_child` does
@@ -134,7 +138,9 @@ fn parse_location(tree: &TxTree, id: TxId, state: &DocumentState) -> DocLoc {
         return *loc;
     }
     let parent = tree.parent(id).map(|parent| tree.node(parent).kind);
-    if parent.is_some_and(is_text_element) && node.kind != kinds::IMAGE {
+    let inline_position =
+        parent.is_some_and(|parent| is_text_element(parent) && parent != "versionmodified");
+    if inline_position && node.kind != kinds::IMAGE {
         return DocLoc::default();
     }
     match node.kind {
