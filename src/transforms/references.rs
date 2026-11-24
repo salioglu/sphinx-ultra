@@ -1473,9 +1473,11 @@ mod tests {
     /// as the transforms locate it, not the node's span. A rubric stands
     /// where its block ended (line 7), or has no line after an option
     /// block or in a container without `document`; a bare target in a note
-    /// keeps no source (`<unknown>:line`); one in a glossary definition
-    /// after an include, its line in its file
-    /// ([`glossary_definition_targets_count_their_own_file_s_lines`]).
+    /// keeps no source (`<unknown>:line`); a bare target after an include
+    /// stands at its line in the top-level input, the included lines and
+    /// padding spliced in ([`hyperlink_targets_take_docutils_absolute_input_line`]);
+    /// one in a glossary definition after an include, at its line in its
+    /// file ([`glossary_definition_targets_count_their_own_file_s_lines`]).
     /// Probed on Sphinx 9.1.0 (`-w`), `a.rst` labelling `dup` first.
     #[test]
     fn duplicate_labels_are_located_as_get_node_location_locates_their_node() {
@@ -1485,7 +1487,7 @@ mod tests {
         let part = [("part.inc", "One.\n\nTwo.\n")];
         /// `z.rst`, the files beside it and where the warning is located.
         type Row<'a> = (&'a str, &'a [(&'a str, &'a str)], &'a str);
-        let rows: [Row; 6] = [
+        let rows: [Row; 7] = [
             (
                 "Z\n=\n\n.. _dup:\n\n.. rubric:: R\n\nText.\n",
                 &[],
@@ -1512,6 +1514,11 @@ mod tests {
                 "Z\n=\n\n.. note::\n\n   Text.\n\n   .. _dup:\n",
                 &[],
                 "<unknown>:8",
+            ),
+            (
+                "Z\n=\n\n.. include:: part.inc\n\n.. _dup:\n",
+                &[("part.inc", "Part.\n")],
+                "<SRCDIR>/z.rst:11",
             ),
             (
                 "Z\n=\n\n.. include:: part.inc\n\n.. glossary::\n\n   term\n      Text.\n\n      \
