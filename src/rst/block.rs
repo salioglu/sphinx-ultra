@@ -8234,8 +8234,9 @@ impl BlockParser {
             // location would otherwise move ([`DocumentState::span_remaps`]).
             // The guard means the same for a glossary definition's lines
             // (`own_line`): their count below does not use the offset, but
-            // one that a csv cell or another detached parse read is not in
-            // the input either, and keeps its own location too.
+            // a line the input does not hold, read by an include in the
+            // definition, a csv cell or another detached parse, keeps its
+            // own location too.
             let Some(&offset) = offsets.get(&(line.source, line.lineno)) else {
                 continue;
             };
