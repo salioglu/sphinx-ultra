@@ -32,10 +32,14 @@ pub struct ClassAttribute;
 
 impl Transform for ClassAttribute {
     fn apply(&self, cx: &mut TransformCx<'_>) {
-        let Some(pending) = cx
+        // The schedule runs this row for a `note_pending` record only, and
+        // the arena keeps every identity it ever held, a node `remove` or
+        // `replace_self` took out of the tree included.
+        let pending = cx
             .pending_record()
-            .and_then(|record| cx.tree.by_uid(record.node))
-        else {
+            .and_then(|record| cx.tree.by_uid(record.node));
+        debug_assert!(pending.is_some(), "ClassAttribute without its pending node");
+        let Some(pending) = pending else {
             return;
         };
         let (classes, directive) = class_details(cx.tree.node(pending));
