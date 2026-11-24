@@ -110,7 +110,7 @@ pub fn freeze_workaround(tree: &mut TxTree, id: TxId, state: &mut DocumentState)
 ///    too, through `set_source_info` (`SP/sphinx/util/docutils.py:691-695`):
 ///    `pending_xref` and `download_reference` (`XRefRole`,
 ///    `SP/sphinx/roles.py:138-139`) and `index` (`IndexRole`,
-///    `SP/sphinx/domains/index.py:115-116`). Those are mixed kinds, which
+///    `SP/sphinx/domains/index.py:113-116`). Those are mixed kinds, which
 ///    this rule leaves without a location (the census in [DS §6.1] has
 ///    102 `pending_xref`s with a source and a line and 65 with neither):
 ///    they need overrides before anything relies on their location;
@@ -410,7 +410,7 @@ mod tests {
             ),
             (
                 "docutils-0685",
-                ".. image:: p.png\n   :target: http://x^_y\n",
+                ".. image:: p.png\n   :target: http://x\u{1f}y\n",
                 &["<SRCDIR>/index.rst:", "<SRCDIR>/index.rst:1"],
             ),
             (
