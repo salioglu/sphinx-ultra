@@ -216,7 +216,10 @@ impl TxTree {
     /// detached subtree. Every node with an identity is addressable by it,
     /// and the ids map is docutils' `document.ids` as the parse leaves it
     /// ([DS §4.4 (4), §8.1]): each id names its first carrier in that
-    /// order, which may be a detached node.
+    /// order, which may be a detached node. One gap: an id the parse
+    /// registered on a node in a subtree it discarded without keeping it
+    /// (`DocumentState::detach`) names that node in `document.ids` but
+    /// nothing here ([`Self::by_id`]).
     pub fn from_parse(doctree: Doctree, state: &mut DocumentState) -> TxTree {
         let Doctree { root, sources } = doctree;
         let mut tree = TxTree {
@@ -312,7 +315,8 @@ impl TxTree {
     }
 
     /// The roots of the detached forest: the subtrees the parse discarded
-    /// that hold a registered node, in the order it discarded them.
+    /// that hold a registered or pending node, in the order it discarded
+    /// them.
     pub fn detached(&self) -> &[TxId] {
         &self.detached
     }
@@ -339,7 +343,13 @@ impl TxTree {
 
     /// docutils `document.ids.get(id)`: the node the id was registered
     /// for, which need not be in the tree. A detached node's id names it,
-    /// and a node replaced since still holds the ids it had.
+    /// and a node replaced since still holds the ids it had. Unlike
+    /// docutils' map it has no node for an id the parse registered on a
+    /// node it then dropped (a `:name:`d image in a rejected table, say,
+    /// [`Self::from_parse`]): `None` there, where docutils' lookup finds
+    /// the dropped node, and each caller handles it so that the read comes
+    /// out as Sphinx's (a reference and an alias to that name resolve with
+    /// no record, probed on Sphinx 9.1.0).
     pub fn by_id(&self, id: &str) -> Option<TxId> {
         self.ids.get(id).copied()
     }

@@ -547,9 +547,10 @@ pub struct DocumentState {
     /// The subtrees the parser discarded that hold a node a registry or a
     /// pending record holds: in docutils those nodes leave the tree but
     /// stay in the registries, where the transforms still number them,
-    /// resolve through them and report against them ([DS §4.4]). Every registered [`Uid`] is reachable exactly once
-    /// from the root or from here ([`Self::misplaced_registrations`]). The
-    /// read transforms' arena takes the forest over
+    /// resolve through them and report against them ([DS §4.4]). Every
+    /// registered [`Uid`] is reachable exactly once from the root or from
+    /// here ([`Self::misplaced_registrations`]). The read transforms' arena
+    /// takes the forest over
     /// ([`crate::transforms::tree::TxTree::from_parse`]), leaving this
     /// empty.
     pub detached: Vec<Node>,
@@ -756,9 +757,12 @@ impl DocumentState {
     /// Subtrees the parser discards. Each one holding a node a registry or
     /// a pending record holds is kept in [`Self::detached`], the way
     /// docutils' registries keep such nodes alive. The rest are dropped,
-    /// as docutils garbage-collects them, together with the location
-    /// overrides of their nodes ([`Self::loc_overrides`]): a node with an
-    /// identity for its override alone keeps nothing alive.
+    /// together with the location overrides of their nodes
+    /// ([`Self::loc_overrides`]): a node with an identity for its override
+    /// alone keeps nothing alive. Docutils drops such a subtree too, except
+    /// a node of it that `set_id` registered, which `document.ids` keeps:
+    /// its id is taken ([`Self::ids`]) but names no node in the read
+    /// transforms' arena ([`crate::transforms::tree::TxTree::by_id`]).
     pub(crate) fn detach(&mut self, nodes: impl IntoIterator<Item = Node>) {
         let mut held: Option<HashSet<Uid>> = None;
         for node in nodes {
@@ -891,7 +895,7 @@ impl DocumentState {
 
     /// How many [`Self::loc_overrides`] entries name a node neither the tree
     /// under `root` nor [`Self::detached`] holds. None at the end of a
-    /// parse: [`Self::detach`] drops a dropped node's override with it, so
+    /// parse: `Self::detach` drops a dropped node's override with it, so
     /// an override always has its node. One that had not would be inert,
     /// since nothing reaches it, but it is state the parse lost track of.
     pub fn unreachable_overrides(&self, root: &Node) -> usize {
