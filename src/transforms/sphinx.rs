@@ -91,6 +91,43 @@ fn strip_classifiers(tree: &mut TxTree, term: TxId) {
     tree.node_mut(term).set_rawsource(&rawsource);
 }
 
+/// 010-034 `PreserveTranslatableMessages` (`SP/sphinx/transforms/i18n.py:103-111`):
+/// every `translatable` node of the tree keeps its original messages
+/// (`preserve_original_messages`) before `Locale` (020) could translate
+/// them, on every read, message catalogs or not. Sphinx's one
+/// `translatable` class is `toctree` (`SP/sphinx/addnodes.py:58-70`): its
+/// entries' titles, those that are not empty, go into `rawentries`, a list
+/// it starts when the node has none (`setdefault`), and its caption, when
+/// it has one, into `rawcaption`. Nothing later in the read changes them.
+///
+/// The parse stores a toctree without a caption the way pformat prints
+/// docutils' `None`, as `caption="True"`, so the caption is read as the
+/// resolve pass reads it ([`crate::env::toctree::caption_of`]): one that
+/// reads `True` is taken for none and gets no `rawcaption`.
+pub struct PreserveTranslatableMessages;
+
+impl Transform for PreserveTranslatableMessages {
+    fn apply(&self, cx: &mut TransformCx<'_>) {
+        let tree = &mut *cx.tree;
+        for toctree in tree.findall(tree.root(), |node| node.kind == kinds::TOCTREE) {
+            let node = tree.node_mut(toctree);
+            let mut rawentries = match node.get("rawentries") {
+                Some(AttrValue::List(rawentries)) => rawentries.clone(),
+                _ => Vec::new(),
+            };
+            rawentries.extend(
+                crate::env::toctree::entries_of(node.get("entries"))
+                    .into_iter()
+                    .filter_map(|(title, _)| title.filter(|title| !title.is_empty())),
+            );
+            node.set("rawentries", AttrValue::List(rawentries));
+            if let Some(caption) = crate::env::toctree::caption_of(node.get("caption")).cloned() {
+                node.set("rawcaption", AttrValue::Str(caption));
+            }
+        }
+    }
+}
+
 /// 210-021 `MoveModuleTargets` (`SP/sphinx/transforms/__init__.py:153-175`):
 /// a `py:module` target (`ismod`) that stands third in a section, after
 /// the title and the module's index node, gives the section its ids ahead
@@ -826,6 +863,70 @@ mod tests {
             srcdir: Path::new("<SRCDIR>"),
         });
         tree.into_doctree()
+    }
+
+    /// `PreserveTranslatableMessages` (010-034) keeps a toctree's entry
+    /// titles as `rawentries` and its caption as `rawcaption`; with
+    /// neither, `rawentries` is empty and there is no `rawcaption`. The
+    /// node the directive makes has neither attribute: the parse leaves
+    /// them to the read.
+    //
+    // oracle: the env fixture's `smartquotes_resolved` project (Sphinx
+    //   9.1.0): `tocs_pformat["index"]`'s toctree, exactly as the first
+    //   row's transformed tag; `TocTree.run`
+    //   (`SP/sphinx/directives/other.py:64-87`) sets neither attribute.
+    #[test]
+    fn preserve_translatable_messages_keeps_a_toctrees_titles_and_caption() {
+        fn toctree_tag(node: &Node) -> Option<String> {
+            if node.kind == kinds::TOCTREE {
+                return Some(crate::doctree::pformat::starttag(node));
+            }
+            node.children.iter().find_map(toctree_tag)
+        }
+        let found: std::collections::BTreeSet<String> =
+            ["index", "a", "b"].map(String::from).into();
+        let options = ParseOptions {
+            found_docs: Some(std::sync::Arc::new(found)),
+            ..index_rst()
+        };
+        let rows: [(&str, &str, &str); 2] = [
+            (
+                ".. toctree::\n   :caption: \"Contents\" -- here\n\n   a\n   \
+                 \"Explicit\" title -- b <b>\n",
+                "<toctree caption=\"\"Contents\" -- here\" entries=\"(None,\\ 'a') \
+                 ('\"Explicit\"\\ title\\ --\\ b',\\ 'b')\" glob=\"0\" hidden=\"0\" \
+                 includefiles=\"a b\" includehidden=\"0\" maxdepth=\"-1\" numbered=\"0\" \
+                 parent=\"index\" titlesonly=\"0\">",
+                "<toctree caption=\"\"Contents\" -- here\" entries=\"(None,\\ 'a') \
+                 ('\"Explicit\"\\ title\\ --\\ b',\\ 'b')\" glob=\"0\" hidden=\"0\" \
+                 includefiles=\"a b\" includehidden=\"0\" maxdepth=\"-1\" numbered=\"0\" \
+                 parent=\"index\" rawcaption=\"\"Contents\" -- here\" \
+                 rawentries=\"\"Explicit\"\\ title\\ --\\ b\" titlesonly=\"0\">",
+            ),
+            (
+                ".. toctree::\n\n   a\n   b\n",
+                "<toctree caption=\"True\" entries=\"(None,\\ 'a') (None,\\ 'b')\" glob=\"0\" \
+                 hidden=\"0\" includefiles=\"a b\" includehidden=\"0\" maxdepth=\"-1\" \
+                 numbered=\"0\" parent=\"index\" titlesonly=\"0\">",
+                "<toctree caption=\"True\" entries=\"(None,\\ 'a') (None,\\ 'b')\" glob=\"0\" \
+                 hidden=\"0\" includefiles=\"a b\" includehidden=\"0\" maxdepth=\"-1\" \
+                 numbered=\"0\" parent=\"index\" rawentries=\"\" titlesonly=\"0\">",
+            ),
+        ];
+        for (rst, parsed, preserved) in rows {
+            let doctree = crate::rst::parse_rst(rst, &options);
+            assert_eq!(
+                toctree_tag(&doctree.root).as_deref(),
+                Some(parsed),
+                "{rst:?}"
+            );
+            let doctree = apply_row(doctree, TransformId::PreserveTranslatableMessages);
+            assert_eq!(
+                toctree_tag(&doctree.root).as_deref(),
+                Some(preserved),
+                "{rst:?}"
+            );
+        }
     }
 
     /// `HandleCodeBlocks` (210-022, `SP/sphinx/transforms/__init__.py:178-197`)

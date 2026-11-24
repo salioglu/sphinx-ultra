@@ -295,8 +295,15 @@ mod tests {
                 "{kind}"
             );
         }
-        // Every TextElement kind is in the table: 45 docutils classes and
-        // 33 Sphinx ones.
-        assert_eq!(CLASSES.iter().filter(|row| row.1).count(), 78);
+        // Every TextElement kind is in the table, so the table pins the
+        // other three predicates for each: 45 docutils classes and 33
+        // Sphinx ones.
+        for kind in crate::doctree::TEXT_ELEMENT_KINDS {
+            assert!(
+                CLASSES.iter().any(|row| row.0 == *kind),
+                "the table leaves out the TextElement {kind}"
+            );
+        }
+        assert_eq!(crate::doctree::TEXT_ELEMENT_KINDS.len(), 78);
     }
 }

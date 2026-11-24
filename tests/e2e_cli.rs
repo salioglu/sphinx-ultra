@@ -3291,6 +3291,125 @@ fn smartquotes_follow_the_default_and_the_d_override() {
     );
 }
 
+/// A `-D smartquotes_excludes.<key>` override is the string as given,
+/// which Sphinx's `in` searches: `dirhtml` excludes the `html` builder,
+/// `en_GB` the `en` language, and `man,text` is no list and excludes no
+/// `html`. With no `conf.py` dict the override starts an empty one, so a
+/// `ja` build, which the default dict excludes, educates with `ja`'s
+/// quotes.
+//
+// oracle (Sphinx 9.1.0 `-b html` builds, wave 5a T16b fix round 1,
+//   scratch `t16bf/probe_excludes.out`): the doctree's text, `"Hi" --
+//   it's` or educated as asserted.
+#[test]
+fn smartquotes_excludes_overrides_are_searched_strings() {
+    let titles = |name: &str, conf: &str, overrides: &[&str]| {
+        let src = temp_source(
+            name,
+            &[
+                ("conf.py", conf),
+                ("index.rst", "\"Hi\" -- it's\n============\n\nText.\n"),
+            ],
+        );
+        let out = out_dir(name);
+        let mut args = vec![src.to_str().unwrap(), out.to_str().unwrap(), "-q"];
+        args.extend_from_slice(overrides);
+        let result = sphinx_build(&args);
+        assert!(result.status.success(), "{name}: {}", stderr_of(&result));
+        assert_eq!(stderr_of(&result), "", "{name}");
+        search_value(&out)["titles"].clone()
+    };
+    let straight = serde_json::json!(["\"Hi\" -- it's"]);
+    let curled = serde_json::json!(["\u{201c}Hi\u{201d} \u{2013} it\u{2019}s"]);
+    let project = "project = 'Temp'\n";
+    for (name, value, expected) in [
+        (
+            "sq-excl-dirhtml",
+            "smartquotes_excludes.builders=dirhtml",
+            &straight,
+        ),
+        (
+            "sq-excl-man-text",
+            "smartquotes_excludes.builders=man,text",
+            &curled,
+        ),
+        (
+            "sq-excl-en-gb",
+            "smartquotes_excludes.languages=en_GB",
+            &straight,
+        ),
+    ] {
+        assert_eq!(&titles(name, project, &["-D", value]), expected, "{value}");
+    }
+    let japanese = "project = 'Temp'\nlanguage = 'ja'\n";
+    assert_eq!(titles("sq-excl-ja", japanese, &[]), straight);
+    assert_eq!(
+        titles(
+            "sq-excl-ja-man",
+            japanese,
+            &["-D", "smartquotes_excludes.builders=man"]
+        ),
+        serde_json::json!(["\u{300c}Hi\u{300d} \u{2013} it\u{2019}s"])
+    );
+}
+
+/// A `smartquotes` in `conf.py` that is no bool keeps smart quotes on, as
+/// Sphinx tests it with `is False`, and earns `check_confval_types`'
+/// warning, with no location and no type, which `-W` counts; an `int`,
+/// `bool`'s base, earns none.
+//
+// oracle (Sphinx 9.1.0 `-b html` builds, wave 5a T16b fix round 1,
+//   scratch `t16bf/probe_conftypes.out`): stderr and the `-w` file hold
+//   the one line asserted; `-W` exits 1.
+#[test]
+fn a_mistyped_smartquotes_warns_and_keeps_smart_quotes_on() {
+    let src = temp_source(
+        "smartquotes-none",
+        &[
+            ("conf.py", "project = 'Temp'\nsmartquotes = None\n"),
+            ("index.rst", "\"Hi\" -- it's\n============\n\nText.\n"),
+        ],
+    );
+    let out = out_dir("smartquotes-none");
+    let warnings = out_dir("smartquotes-none-w").join("warnings.txt");
+    let result = sphinx_build(&[
+        src.to_str().unwrap(),
+        out.to_str().unwrap(),
+        "-q",
+        "-w",
+        warnings.to_str().unwrap(),
+    ]);
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    let line = "WARNING: The config value `smartquotes' has type `NoneType'; expected `bool'.\n";
+    assert_eq!(stderr_of(&result), line);
+    assert_eq!(std::fs::read_to_string(&warnings).unwrap(), line);
+    assert_eq!(
+        search_value(&out)["titles"],
+        serde_json::json!(["\u{201c}Hi\u{201d} \u{2013} it\u{2019}s"])
+    );
+
+    let out = out_dir("smartquotes-none-W");
+    let result = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap(), "-q", "-W"]);
+    assert_eq!(
+        result.status.code(),
+        Some(1),
+        "stderr: {}",
+        stderr_of(&result)
+    );
+
+    let src = temp_source(
+        "smartquotes-zero",
+        &[
+            ("conf.py", "project = 'Temp'\nsmartquotes = 0\n"),
+            ("index.rst", "\"Hi\" -- it's\n============\n\nText.\n"),
+        ],
+    );
+    let out = out_dir("smartquotes-zero");
+    let result = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap(), "-q"]);
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert_eq!(stderr_of(&result), "");
+}
+
 /// `source_encoding` is a real key (panel fix round B, [19]): `-D` reaches
 /// it, a non-UTF-8 value prints sphinx's deprecation warning byte-exactly
 /// (probed), and the warning counts toward `-W`.

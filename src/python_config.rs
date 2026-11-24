@@ -191,8 +191,9 @@ pub struct ConfPyConfig {
     /// `source_encoding` as written, `None` when conf.py said nothing.
     pub source_encoding: Option<String>,
     /// `(key, python type name)` for the `int | None` keys whose conf.py
-    /// value is neither an int nor `None` — what sphinx's
-    /// `check_confval_types` warns about (see
+    /// value is neither an int nor `None`, and for a `smartquotes` that is
+    /// neither a bool nor an int — what sphinx's `check_confval_types`
+    /// warns about (see
     /// [`crate::config::BuildConfig::confval_type_mismatches`]).
     pub confval_type_mismatches: Vec<(String, String)>,
     pub add_function_parentheses: Option<bool>,
@@ -458,17 +459,25 @@ impl PythonConfigParser {
             .get("smartquotes_excludes")
             .and_then(serde_json::Value::as_object)
             .map(|excludes| {
-                // `excludes.get(key, [])`: a list (or a tuple) of names; a
-                // string Sphinx matches as a substring is read as a list
-                // of the one name.
-                let names = |key: &str| -> Vec<String> {
+                // `excludes.get(key, [])`, which `name in` tests
+                // ([`crate::config::ExcludedNames`]): a list or a tuple by
+                // the names in it, a string by searching it, a dict by its
+                // keys. Any other value makes Sphinx raise `TypeError`
+                // (not modelled) and is read as no names.
+                let names = |key: &str| -> crate::config::ExcludedNames {
+                    use crate::config::ExcludedNames;
                     match excludes.get(key) {
-                        Some(serde_json::Value::Array(items)) => items
-                            .iter()
-                            .filter_map(|item| item.as_str().map(str::to_string))
-                            .collect(),
-                        Some(serde_json::Value::String(name)) => vec![name.clone()],
-                        _ => Vec::new(),
+                        Some(serde_json::Value::Array(items)) => ExcludedNames::Names(
+                            items
+                                .iter()
+                                .filter_map(|item| item.as_str().map(str::to_string))
+                                .collect(),
+                        ),
+                        Some(serde_json::Value::String(text)) => ExcludedNames::Text(text.clone()),
+                        Some(serde_json::Value::Object(map)) => {
+                            ExcludedNames::Names(map.keys().cloned().collect())
+                        }
+                        _ => ExcludedNames::default(),
                     }
                 };
                 crate::config::SmartquotesExcludes {
@@ -483,6 +492,22 @@ impl PythonConfigParser {
         };
         config.highlight_language = extract_string("highlight_language");
 
+        // The values `check_confval_types` reports
+        // (`crate::config::BuildConfig::confval_type_mismatches`).
+        // `smartquotes` is a `bool` (`config.py:289`): Sphinx keeps any
+        // other value, which leaves smart quotes on
+        // (`ConfPyConfig::smartquotes`), and reports one whose type shares
+        // no base with `bool`, which is every type but `int`, `bool`'s base
+        // (`The config value `smartquotes' has type `NoneType'; expected
+        // `bool'.`).
+        let mut mismatches: Vec<(String, String)> = Vec::new();
+        if let Some(value) = self.conf_namespace.get("smartquotes") {
+            let type_name = python_type_name(value);
+            if !matches!(type_name, "bool" | "int") {
+                mismatches.push(("smartquotes".to_string(), type_name.to_string()));
+            }
+        }
+
         // Object-signature / py-domain family. The two line-length keys are
         // `int | None`, so they read through `as_i64` rather than
         // `extract_int`: `x = None` in conf.py is a JSON null, which lands
@@ -490,7 +515,6 @@ impl PythonConfigParser {
         // Any other type is what sphinx's `check_confval_types` warns about
         // (`The config value ... has type `str'; expected `NoneType' or
         // `int'.`) — recorded with the python type name and left unset.
-        let mut mismatches: Vec<(String, String)> = Vec::new();
         let mut extract_none_default_int = |key: &str| -> Option<i64> {
             match self.conf_namespace.get(key) {
                 None | Some(serde_json::Value::Null) => None,
@@ -2061,13 +2085,16 @@ e = 'esc\n'
     /// (`SP/sphinx/transforms/__init__.py:389`), so `0`, `None` and `''`
     /// keep them on, as an unset key does. A `smartquotes_excludes` dict is
     /// read key by key with `.get(key, [])`, so a key it leaves out
-    /// excludes nothing.
+    /// excludes nothing, and each value as `in` tests it: a list or a
+    /// tuple by its names, a string as a string, a dict by its keys.
     //
     // oracle (Sphinx 9.1.0, [SQ] S2 `probe_conftypes.out`): with
     //   `smartquotes = 0`, `None` or `''` in conf.py, `"Hi" -- it's` is
-    //   educated, as it is unset.
+    //   educated, as it is unset. The values' `in`: `settings_for`'s test.
     #[test]
     fn smartquotes_keys_are_read_from_conf_py() {
+        use crate::config::{ExcludedNames, SmartquotesExcludes};
+
         let build = |source: &str| {
             parse(source)
                 .extract_configuration()
@@ -2097,11 +2124,14 @@ e = 'esc\n'
         }
         let built = config.to_build_config().unwrap();
         assert_eq!(built.smartquotes_action, "qe");
+        let names = |values: &[&str]| {
+            ExcludedNames::Names(values.iter().map(|value| value.to_string()).collect())
+        };
         assert_eq!(
             built.smartquotes_excludes,
-            crate::config::SmartquotesExcludes {
-                languages: Vec::new(),
-                builders: vec!["dummy".to_string(), "man".to_string()],
+            SmartquotesExcludes {
+                languages: ExcludedNames::default(),
+                builders: names(&["dummy", "man"]),
             }
         );
         assert!(!parse("smartquotes = 1\n")
@@ -2112,16 +2142,152 @@ e = 'esc\n'
 
         let unset = build("project = 'x'\n");
         assert_eq!(unset.smartquotes_action, "qDe");
+        assert_eq!(unset.smartquotes_excludes, SmartquotesExcludes::default());
         assert_eq!(
-            unset.smartquotes_excludes,
-            crate::config::SmartquotesExcludes::default()
+            build("smartquotes_excludes = {'languages': 'ja', 'builders': ('html',)}\n")
+                .smartquotes_excludes,
+            SmartquotesExcludes {
+                languages: ExcludedNames::Text("ja".to_string()),
+                builders: names(&["html"]),
+            }
         );
         assert_eq!(
-            build("smartquotes_excludes = {'languages': 'ja'}\n").smartquotes_excludes,
-            crate::config::SmartquotesExcludes {
-                languages: vec!["ja".to_string()],
-                builders: Vec::new(),
+            build("smartquotes_excludes = {'builders': {'html': 1}, 'languages': None}\n")
+                .smartquotes_excludes,
+            SmartquotesExcludes {
+                languages: ExcludedNames::default(),
+                builders: names(&["html"]),
             }
+        );
+    }
+
+    /// A `-D smartquotes_excludes.<key>` override goes into the dict
+    /// conf.py assigned, whose other key stays (with none, it starts an
+    /// empty one: `config::tests::smartquotes_keys_take_sphinxs_override_grammar`).
+    //
+    // oracle (Sphinx 9.1.0, `-b html`, wave 5a T16b fix round 1, scratch
+    //   `t16bf/probe_excludes.out`): with `language = 'ja'` and
+    //   `smartquotes_excludes = {'languages': ['ja'], 'builders': []}`,
+    //   `-D smartquotes_excludes.builders=man` leaves `"Hi" -- it's`.
+    #[test]
+    fn a_dotted_excludes_override_keeps_the_conf_py_dict() {
+        use crate::config::{ExcludedNames, SmartquotesExcludes};
+
+        let mut config = parse(
+            "language = 'ja'\n\
+             smartquotes_excludes = {'languages': ['ja'], 'builders': []}\n",
+        )
+        .extract_configuration()
+        .unwrap()
+        .to_build_config()
+        .unwrap();
+        assert!(config
+            .apply_override("smartquotes_excludes.builders", "man")
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            config.smartquotes_excludes,
+            SmartquotesExcludes {
+                languages: ExcludedNames::Names(vec!["ja".to_string()]),
+                builders: ExcludedNames::Text("man".to_string()),
+            }
+        );
+        assert_eq!(
+            config.conf_values.get("smartquotes_excludes"),
+            Some(&serde_json::json!({"languages": ["ja"], "builders": "man"}))
+        );
+        assert_eq!(
+            crate::transforms::smartquotes::settings_for(&config, "ja", "html"),
+            None
+        );
+
+        // Without the conf.py dict, the override's dict has no `languages`.
+        let mut config = parse("language = 'ja'\n")
+            .extract_configuration()
+            .unwrap()
+            .to_build_config()
+            .unwrap();
+        assert!(config
+            .apply_override("smartquotes_excludes.builders", "man")
+            .unwrap()
+            .is_none());
+        assert!(crate::transforms::smartquotes::settings_for(&config, "ja", "html").is_some());
+    }
+
+    /// `check_confval_types` (`config.py:775-847`) on `smartquotes`, a
+    /// `bool`: a value whose type shares no base with `bool` warns, after
+    /// the `int | None` key Sphinx registers before it and before the one
+    /// the python domain registers, and Sphinx keeps it, so smart quotes
+    /// stay on; an `int`, `bool`'s base, does not warn, and neither does a
+    /// value a `-D smartquotes=0|1` override replaces. A tuple is read as
+    /// a list here, so its warning names `list` where Sphinx's names
+    /// `tuple` (`python_type_name`).
+    //
+    // oracle (Sphinx 9.1.0, `-b html` builds, wave 5a T16b fix round 1,
+    //   scratch `t16bf/probe_conftypes.out`): each warning line as
+    //   asserted, `WARNING: ` and the text with no location and no type, on
+    //   stderr and in the `-w` file; none for `0`, `1`, `False`, or `None`
+    //   with `-D smartquotes=0` or `=1`; the four in the order asserted
+    //   (the frozenset's members print in Python's hash order, which the
+    //   ENUM warning here spells in registration order, as before).
+    #[test]
+    fn a_mistyped_smartquotes_warns_like_check_confval_types() {
+        let build = |source: &str| {
+            parse(source)
+                .extract_configuration()
+                .unwrap()
+                .to_build_config()
+                .unwrap()
+        };
+        let warning = |type_name: &str| {
+            format!("The config value `smartquotes' has type `{type_name}'; expected `bool'.")
+        };
+        for (literal, type_name) in [
+            ("None", "NoneType"),
+            ("''", "str"),
+            ("'yes'", "str"),
+            ("1.5", "float"),
+            ("[]", "list"),
+            ("{}", "dict"),
+        ] {
+            let config = build(&format!("smartquotes = {literal}\n"));
+            assert!(config.smartquotes, "{literal}");
+            assert_eq!(config.validate(), [warning(type_name)], "{literal}");
+        }
+        for literal in ["0", "1", "True", "False"] {
+            let config = build(&format!("smartquotes = {literal}\n"));
+            assert!(config.validate().is_empty(), "{literal}");
+        }
+        for (value, on) in [("0", false), ("1", true)] {
+            let mut config = build("smartquotes = None\n");
+            assert!(config
+                .apply_override("smartquotes", value)
+                .unwrap()
+                .is_none());
+            assert_eq!(config.smartquotes, on);
+            assert!(config.validate().is_empty(), "-D smartquotes={value}");
+        }
+
+        let config = build(
+            "toc_object_entries_show_parents = 'bogus'\n\
+             maximum_signature_line_length = 'a'\n\
+             smartquotes = None\n\
+             python_maximum_signature_line_length = 'b'\n",
+        );
+        assert_eq!(
+            config.validate(),
+            [
+                "The config value `toc_object_entries_show_parents` has to be a one of \
+                 frozenset({'domain', 'all', 'hide'}), but `bogus` is given."
+                    .to_string(),
+                "The config value `maximum_signature_line_length' has type `str'; expected \
+                 `NoneType' or `int'."
+                    .to_string(),
+                warning("NoneType"),
+                "The config value `python_maximum_signature_line_length' has type `str'; \
+                 expected `NoneType' or `int'."
+                    .to_string(),
+            ]
         );
     }
 

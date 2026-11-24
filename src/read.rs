@@ -79,18 +79,22 @@ pub struct ReadSettings {
     pub build_date: DateTime<Utc>,
     /// `language` (`SP/sphinx/config.py:230`, default `'en'`): the language
     /// whose variant of an image the image collector prefers
-    /// ([`crate::env::collectors::images`]).
+    /// ([`crate::env::collectors::images`]), and the document's language
+    /// for `SphinxSmartQuotes` (750), the one a block no `language-*`
+    /// class names is educated in ([`crate::transforms::smartquotes`]).
     pub language: String,
     /// `trim_doctest_flags` (`SP/sphinx/config.py:267`, default `True`):
     /// whether the resolve pass's `TrimDoctestFlagsTransform` strips doctest
     /// flags ([`crate::transforms::post`]), which [`resolve_standalone`]
     /// reads here.
     pub trim_doctest_flags: bool,
-    /// What `SphinxSmartQuotes` (750) educates, and in which language
-    /// ([`crate::transforms::smartquotes`]); `None` when its availability
-    /// test turns it off for the build: `smartquotes`, the builder or the
-    /// language in `smartquotes_excludes`, or a language docutils has no
-    /// quotes for ([`smartquotes::settings_for`]). Sphinx's default
+    /// What `SphinxSmartQuotes` (750) educates
+    /// ([`crate::transforms::smartquotes`]), in [`Self::language`]; `None`
+    /// when its availability test turns it off for the build:
+    /// `smartquotes`, the builder or the language in
+    /// `smartquotes_excludes`, or a language docutils has no quotes for
+    /// ([`smartquotes::settings_for`], which [`Self::from_config`] runs
+    /// for the language it gives [`Self::language`]). Sphinx's default
     /// educates `qDe` in English.
     pub smartquotes: Option<SmartQuotesSettings>,
 }
@@ -678,7 +682,6 @@ mod tests {
             settings.smartquotes,
             Some(SmartQuotesSettings {
                 actions: smartquotes::educate::Actions::parse("qe"),
-                document_language: "de".to_string(),
             })
         );
         let unset = BuildConfig {
@@ -699,8 +702,8 @@ mod tests {
         );
         let excluding_dummy = BuildConfig {
             smartquotes_excludes: crate::config::SmartquotesExcludes {
-                languages: Vec::new(),
-                builders: vec!["dummy".to_string()],
+                languages: crate::config::ExcludedNames::default(),
+                builders: crate::config::ExcludedNames::Names(vec!["dummy".to_string()]),
             },
             ..BuildConfig::default()
         };

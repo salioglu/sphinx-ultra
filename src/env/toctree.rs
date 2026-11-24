@@ -1029,7 +1029,13 @@ const VIRTUAL_DOCS: [(&str, &str, &str); 3] = [
 /// back from the Python tuple reprs [`ResolvedEntries::entries_attr`] stores
 /// (`(None, 'intro')`, `('Custom', 'api')`).
 pub(crate) fn toctree_entries(toctree: &Node) -> Vec<(Option<String>, String)> {
-    let Some(AttrValue::List(items)) = toctree.get("entries") else {
+    entries_of(toctree.get("entries"))
+}
+
+/// [`toctree_entries`] for the value `entries` of a toctree's `entries`
+/// attribute, wherever the node lives (a read transform's arena too).
+pub(crate) fn entries_of(entries: Option<&AttrValue>) -> Vec<(Option<String>, String)> {
+    let Some(AttrValue::List(items)) = entries else {
         return Vec::new();
     };
     items
@@ -1104,12 +1110,19 @@ fn attr_flag(node: &Node, key: &'static str) -> bool {
     matches!(node.get(key), Some(AttrValue::Int(n)) if *n != 0)
 }
 
-/// `toctree.attributes.get('caption')` when it is truthy. The parser
-/// stores an absent caption the way docutils prints a `None` attribute,
-/// as the string `True` (`Element.starttag`), so a caption literally
-/// reading `True` is indistinguishable from none and treated as none.
+/// `toctree.attributes.get('caption')` when it is truthy
+/// ([`caption_of`]).
 fn toctree_caption(toctree: &Node) -> Option<&String> {
-    match toctree.get("caption") {
+    caption_of(toctree.get("caption"))
+}
+
+/// A toctree's caption, read from the value `caption` of its `caption`
+/// attribute, when it is truthy. The parser stores an absent caption the
+/// way docutils prints a `None` attribute, as the string `True`
+/// (`Element.starttag`), so a caption literally reading `True` is
+/// indistinguishable from none and treated as none.
+pub(crate) fn caption_of(caption: Option<&AttrValue>) -> Option<&String> {
+    match caption {
         Some(AttrValue::Str(caption)) if !caption.is_empty() && caption != "True" => Some(caption),
         _ => None,
     }
@@ -2154,54 +2167,6 @@ mod tests {
         );
         assert!(env.glob_toctrees.is_empty());
         assert!(env.numbered_toctrees.is_empty());
-    }
-
-    /// `PreserveTranslatableMessages` (010-034,
-    /// `SP/sphinx/transforms/i18n.py:103-111`) runs on every read, message
-    /// catalogs or not, and a toctree keeps its explicit entry titles as
-    /// `rawentries` and its caption as `rawcaption`
-    /// (`toctree.preserve_original_messages`, `SP/sphinx/addnodes.py:61-70`);
-    /// with neither, `rawentries` is empty and there is no `rawcaption`.
-    //
-    // oracle: the env fixture's `smartquotes_resolved` project (Sphinx
-    //   9.1.0): `tocs_pformat["index"]`'s toctree, exactly as asserted.
-    #[test]
-    fn a_toctree_keeps_its_explicit_titles_and_caption() {
-        let found = docs(&["index", "a", "b"]);
-        let toctree_tag = |source: &str| {
-            let doctree = parse(source, "index", &found);
-            let mut toctrees = Vec::new();
-            toctree_nodes(&doctree.root, &mut toctrees);
-            assert_eq!(toctrees.len(), 1, "{source:?}");
-            crate::doctree::pformat::starttag(toctrees[0])
-        };
-        assert_eq!(
-            toctree_tag(
-                ".. toctree::\n   :caption: \"Contents\" -- here\n\n   a\n   \
-                 \"Explicit\" title -- b <b>\n"
-            ),
-            "<toctree caption=\"\"Contents\" -- here\" entries=\"(None,\\ 'a') \
-             ('\"Explicit\"\\ title\\ --\\ b',\\ 'b')\" glob=\"0\" hidden=\"0\" \
-             includefiles=\"a b\" includehidden=\"0\" maxdepth=\"-1\" numbered=\"0\" \
-             parent=\"index\" rawcaption=\"\"Contents\" -- here\" \
-             rawentries=\"\"Explicit\"\\ title\\ --\\ b\" titlesonly=\"0\">"
-        );
-        assert_eq!(
-            toctree_tag(".. toctree::\n\n   a\n   b\n"),
-            "<toctree caption=\"True\" entries=\"(None,\\ 'a') (None,\\ 'b')\" glob=\"0\" \
-             hidden=\"0\" includefiles=\"a b\" includehidden=\"0\" maxdepth=\"-1\" \
-             numbered=\"0\" parent=\"index\" rawentries=\"\" titlesonly=\"0\">"
-        );
-    }
-
-    /// Every `toctree` node of the tree at `node`, in document order.
-    fn toctree_nodes<'a>(node: &'a Node, found: &mut Vec<&'a Node>) {
-        if node.kind == kinds::TOCTREE {
-            found.push(node);
-        }
-        for child in &node.children {
-            toctree_nodes(child, found);
-        }
     }
 
     #[test]

@@ -28,25 +28,25 @@ use educate::{
 
 /// What the transform does to a document, once Sphinx's availability test
 /// has passed ([`settings_for`]): the educations `smartquotes_action`
-/// asks for and the document's language. A read without them
+/// asks for. A read without them
 /// ([`crate::read::ReadSettings::smartquotes`] `None`) educates nothing.
+/// The document's language, docutils' `settings.language_code`, which a
+/// block no `language-*` class on it or an ancestor names is educated in,
+/// is the read's own ([`crate::read::ReadSettings::language`]), the one
+/// [`settings_for`] tested.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SmartQuotesSettings {
     /// `smartquotes_action`, read as docutils' `educate_tokens` reads its
     /// attribute string ([`Actions::parse`]).
     pub actions: Actions,
-    /// `language` (docutils' `settings.language_code`): the language of a
-    /// block no `language-*` class on it or an ancestor names.
-    pub document_language: String,
 }
 
 impl Default for SmartQuotesSettings {
-    /// Sphinx's defaults: `smartquotes_action = 'qDe'` and `language =
-    /// 'en'` (`SP/sphinx/config.py:230`, `:290`).
+    /// Sphinx's default: `smartquotes_action = 'qDe'`
+    /// (`SP/sphinx/config.py:290`).
     fn default() -> Self {
         SmartQuotesSettings {
             actions: Actions::parse("qDe"),
-            document_language: "en".to_string(),
         }
     }
 }
@@ -56,12 +56,14 @@ impl Default for SmartQuotesSettings {
 /// configuration's, `None` read as `'en'`), by the builder named
 /// `builder_name`: the settings the transform runs with, or `None` when it
 /// does not run. In Sphinx's order, it does not run when `smartquotes` is
-/// off, when `smartquotes_excludes` names the builder, or the configured
-/// language (whole: `zh_CN` does not exclude `zh-CN`), or when docutils
-/// has quotes for none of the language's tags (`normalize_language_tag`),
-/// all without a word. The first test, of `settings.smart_quotes`, reads
-/// what only a `docutils.conf` or an extension sets, neither of which a
-/// build here reads (decision 16).
+/// off, when the builder's name or the configured language is `in` the
+/// `smartquotes_excludes` key that names them (a list by its names, whole:
+/// `zh_CN` does not exclude `zh-CN`; a string by searching it: `dirhtml`
+/// excludes `html`; [`crate::config::ExcludedNames::contains`]), or when
+/// docutils has quotes for none of the language's tags
+/// (`normalize_language_tag`), all without a word. The first test, of
+/// `settings.smart_quotes`, reads what only a `docutils.conf` or an
+/// extension sets, neither of which a build here reads (decision 16).
 pub fn settings_for(
     config: &BuildConfig,
     language: &str,
@@ -69,14 +71,13 @@ pub fn settings_for(
 ) -> Option<SmartQuotesSettings> {
     let excludes = &config.smartquotes_excludes;
     let available = config.smartquotes
-        && !excludes.builders.iter().any(|name| name == builder_name)
-        && !excludes.languages.iter().any(|name| name == language)
+        && !excludes.builders.contains(builder_name)
+        && !excludes.languages.contains(language)
         && normalize_language_tag(language)
             .iter()
             .any(|tag| has_quotes(tag));
     available.then(|| SmartQuotesSettings {
         actions: Actions::parse(&config.smartquotes_action),
-        document_language: language.to_string(),
     })
 }
 
@@ -103,11 +104,13 @@ pub fn settings_for(
 /// replaces it with `nodes.Text(newtext)`.
 ///
 /// The language of a block is the first `language-*` class on it or an
-/// ancestor, else the document's; its quotes are those of the first tag
-/// of its [`normalize_language_tag`] docutils has quotes for. A language
-/// with none gets ASCII quotes, and the first block of each such language
-/// a WARNING reporter record, located at the block, which docutils makes
-/// and puts nowhere: `No smart quotes defined for language "xx".`
+/// ancestor, else the document's, the read's `language`
+/// ([`crate::read::ReadSettings::language`]); its quotes are those of the
+/// first tag of its [`normalize_language_tag`] docutils has quotes for. A
+/// language with none gets ASCII quotes, and the first block of each such
+/// language a WARNING reporter record, located at the block, which
+/// docutils makes and puts nowhere: `No smart quotes defined for language
+/// "xx".`
 pub struct SphinxSmartQuotes;
 
 impl Transform for SphinxSmartQuotes {
@@ -131,7 +134,7 @@ impl Transform for SphinxSmartQuotes {
         // a document's blocks name.
         let mut unsupported = HashSet::new();
         for block in blocks {
-            let lang = language_code(cx.tree, block, &settings.document_language);
+            let lang = language_code(cx.tree, block, &read.language);
             let quotes = normalize_language_tag(&lang)
                 .into_iter()
                 .find(|tag| has_quotes(tag));
@@ -176,8 +179,8 @@ fn language_code(tree: &TxTree, id: TxId, fallback: &str) -> String {
 const EDUCABLE: [char; 7] = ['"', '\'', '-', '.', '`', '\\', '&'];
 
 /// Educates the block at `block`: its Text as tokens ([`block_text`]),
-/// through [`educate_tokens`] in `language`, each output back into its
-/// Text ([`set_text_data`]).
+/// through [`educate_tokens`] in `language`, each output back in the
+/// place docutils puts it ([`replaced_text`], [`set_text_data`]).
 fn educate_block(tree: &mut TxTree, block: TxId, actions: &Actions, language: &str) {
     let texts = block_text(tree, block);
     let tokens: Vec<(TokenKind, String)> = texts
@@ -197,8 +200,36 @@ fn educate_block(tree: &mut TxTree, block: TxId, actions: &Actions, language: &s
     }
     let educated = educate_tokens(&tokens, actions, language);
     for ((id, _), data) in texts.into_iter().zip(educated) {
-        set_text_data(tree.node_mut(id), data);
+        let place = replaced_text(tree, id);
+        set_text_data(tree.node_mut(place), data);
     }
+}
+
+/// The Text whose place `txtnode.parent.replace(txtnode, nodes.Text(new))`
+/// puts the new Text in, for the Text at `id`
+/// (`SP/docutils/transforms/universal.py:338-339`). `Element.replace`
+/// finds the place with `children.index(txtnode)`
+/// (`SP/docutils/nodes.py:1101-1108`), the first child that is the Text or
+/// equals it, and a Text is the `str` of its data, escape markers included
+/// ([`text_data`]): the first Text child of the parent whose data is the
+/// Text's. That is the Text itself, unless an earlier sibling's output
+/// equals the Text's source: the sibling then takes the Text's output, and
+/// the Text keeps its source. A Text's own place is never one an earlier
+/// output went to, which is always a place before that output's own Text.
+fn replaced_text(tree: &TxTree, id: TxId) -> TxId {
+    let Some(parent) = tree.parent(id) else {
+        return id;
+    };
+    let data = text_data(tree.node(id));
+    tree.node(parent)
+        .children
+        .iter()
+        .copied()
+        .find(|&child| {
+            let node = tree.node(child);
+            node.kind == kinds::TEXT && text_data(node) == data
+        })
+        .unwrap_or(id)
 }
 
 /// The Text under the block at `block`, in document order, each with the
@@ -297,6 +328,7 @@ mod tests {
     use crate::read::ReadSettings;
     use crate::transforms::reporter::render_records;
     use crate::transforms::state::DocumentState;
+    use crate::transforms::test_support::{harness_settings, read_snippet_with};
     use crate::transforms::{TransformId, READ_TRANSFORMS};
 
     fn element(kind: &'static str, children: Vec<Node>) -> Node {
@@ -498,6 +530,155 @@ mod tests {
         );
     }
 
+    /// A block's Text is literal when an element above the block stops
+    /// smart quotes too, not only one between the Text and the block: the
+    /// `inline` of a `pending_xref` in a `literal_block` (a
+    /// `parsed-literal`'s `:ref:`) is a block of its own, and its quotes
+    /// and dashes stay as they are; so does the literal block's own text.
+    //
+    // oracle: `is_smartquotable` walks from the Text's parent to the
+    //   document (`SP/sphinx/util/nodes.py:708-716`); the snippet corpus'
+    //   `sx_smartquotes.skipped_blocks` (Sphinx 9.1.0, smart quotes on)
+    //   keeps the parsed-literal's `"T"` straight.
+    #[test]
+    fn a_block_under_a_literal_block_stays_literal() {
+        let (pformat, _) = educated(vec![element(
+            kinds::LITERAL_BLOCK,
+            vec![
+                text("\"parsed\" "),
+                element(
+                    kinds::PENDING_XREF,
+                    vec![classed(
+                        "inline",
+                        &["xref", "std", "std-ref"],
+                        vec![text("\"T\" -- x")],
+                    )],
+                ),
+            ],
+        )]);
+        assert_eq!(
+            pformat,
+            "<document>\n    \
+             <literal_block>\n        \
+             \"parsed\" \n        \
+             <pending_xref>\n            \
+             <inline classes=\"xref std std-ref\">\n                \
+             \"T\" -- x\n"
+        );
+    }
+
+    /// A `pending_xref` whose `support_smartquotes` is `False` (Sphinx's
+    /// citation reference) makes the Text of the `inline` in it literal for
+    /// both blocks that hold it: the paragraph's, and the inline's own,
+    /// whose element above stops smart quotes; the paragraph's text around
+    /// it is educated.
+    //
+    // oracle: `is_smartquotable` (`SP/sphinx/util/nodes.py:708-716`) on
+    //   `CitationReferenceTransform`'s node
+    //   (`SP/sphinx/domains/citation.py:150-176`).
+    #[test]
+    fn a_pending_xref_without_smart_quotes_keeps_its_inline() {
+        let mut xref = with(
+            kinds::PENDING_XREF,
+            &[("refdomain", "citation"), ("reftype", "ref")],
+            vec![element("inline", vec![text("\"T\" -- x")])],
+        );
+        xref.set("support_smartquotes", AttrValue::Int(0));
+        let (pformat, _) = educated(vec![element(
+            kinds::PARAGRAPH,
+            vec![text("See "), xref, text(" -- \"it\".")],
+        )]);
+        assert_eq!(
+            pformat,
+            "<document>\n    \
+             <paragraph>\n        \
+             See \n        \
+             <pending_xref refdomain=\"citation\" reftype=\"ref\" support_smartquotes=\"0\">\n            \
+             <inline>\n                \
+             \"T\" -- x\n         \
+             \u{2013} \u{201c}it\u{201d}.\n"
+        );
+    }
+
+    /// A block no `language-*` class names is educated in the read's
+    /// language ([`ReadSettings::language`]), one with such a class in its
+    /// own.
+    //
+    // oracle: Sphinx 9.1.0 through tools/gen_sphinx_fixture.py's harness,
+    //   `language = 'de'`, smart quotes on (wave 5a T16b fix round 1,
+    //   scratch `t16bf/probe_language.out`): the body as asserted.
+    #[test]
+    fn a_block_is_educated_in_the_reads_language() {
+        let settings = ReadSettings {
+            language: "de".to_string(),
+            smartquotes: Some(SmartQuotesSettings::default()),
+            ..harness_settings(true)
+        };
+        assert_eq!(
+            read_snippet_with(
+                "\"Hi\" -- it's 'q'.\n\n.. rst-class:: language-en\n\n\"En\" 'q'.\n",
+                &settings
+            )
+            .body,
+            "    <paragraph>\n        \
+             \u{201e}Hi\u{201c} \u{2013} it\u{2019}s \u{201a}q\u{2018}.\n    \
+             <paragraph classes=\"language-en\">\n        \
+             \u{201c}En\u{201d} \u{2018}q\u{2019}.\n"
+        );
+    }
+
+    /// docutils puts each output back with `txtnode.parent.replace(txtnode,
+    /// nodes.Text(newtext))`, and `Element.replace` finds the place with
+    /// `children.index`, which compares a Text as the string it is, escape
+    /// markers included: an earlier sibling whose output equals a later
+    /// Text's source takes the later Text's output, and the later Text
+    /// keeps its source. `&#34;` is no entity in reStructuredText, but
+    /// docutils' `smartquotes` reads it as `"` when it restores its escapes,
+    /// so `&#34;x ` comes out as `"x `, the next Text's source.
+    //
+    // oracle: Sphinx 9.1.0 through tools/gen_sphinx_fixture.py's harness,
+    //   smart quotes on (wave 5a T16b fix round 1, scratch
+    //   `t16bf/probe_replace_sphinx.out`; the review's
+    //   `review16b/probe_replace.py` input first): each body as asserted.
+    #[test]
+    fn an_output_goes_where_element_replace_finds_its_text() {
+        let settings = ReadSettings {
+            smartquotes: Some(SmartQuotesSettings::default()),
+            ..harness_settings(true)
+        };
+        let paragraph = |texts: &[&str]| {
+            let mut body = String::from("    <paragraph>\n");
+            for (text, emphasis) in texts.iter().zip(["y", "z", "w"]) {
+                body.push_str(&format!(
+                    "        {text}\n        <emphasis>\n            {emphasis}\n"
+                ));
+            }
+            body
+        };
+        let rows: [(&str, &[&str]); 5] = [
+            // The first Text's output is the second's source.
+            ("&#34;x *y*\"x *z*\n", &["\u{201d}x ", "\"x "]),
+            // Each later Text's output lands one place earlier.
+            (
+                "&#34;x *y*\"x *z*\"x *w*\n",
+                &["\u{201d}x ", "\u{201d}x ", "\"x "],
+            ),
+            // No earlier sibling equals the later Text.
+            ("\"x *y*\"x *z*\n", &["\u{201c}x ", "\u{201d}x "]),
+            // `"\x ` is `"\0x ` to docutils: no sibling equals it.
+            ("&#34;x *y*\"\\x *z*\n", &["\"x ", "\u{201d}x "]),
+            // `"x\ ` is `"x\0 `, and so is the first Text's output.
+            ("&#34;x\\ *y*\"x\\ *z*\n", &["\u{201d}x", "\"x"]),
+        ];
+        for (rst, texts) in rows {
+            assert_eq!(
+                read_snippet_with(rst, &settings).body,
+                paragraph(texts),
+                "{rst:?}"
+            );
+        }
+    }
+
     /// Text under an element whose `support_smartquotes` is `False` (pformat
     /// `0`; a py default value, a citation label) is literal: it stays as it
     /// is, and its last character is the next token's context.
@@ -646,13 +827,22 @@ mod tests {
     }
 
     /// `is_available`'s gates, in order: `smartquotes` off, the builder
-    /// or the configuration's language excluded (an exact match: `zh-CN` is
-    /// not `zh_CN`), a language docutils has no quotes for; otherwise the
-    /// action string and the language.
+    /// or the configuration's language `in` its `smartquotes_excludes` key,
+    /// a language docutils has no quotes for; otherwise the action string.
+    /// A list holds a name whole (`zh-CN` is not `zh_CN`, `en` not
+    /// `en_GB`), a tuple too; a string, as `-D smartquotes_excludes.<key>`
+    /// gives it or conf.py writes it, holds every name that occurs in it
+    /// (`dirhtml` excludes `html`, `en_GB` excludes `en`), and a
+    /// comma-separated one is no list (`man,text` excludes no `html`).
     //
-    // oracle: [SQ] S2 `probe_conftypes.out` and `probe_config.out`.
+    // oracle: [SQ] S2 `probe_conftypes.out` and `probe_config.out`; the
+    //   string values: Sphinx 9.1.0 `-b html` and `-b dummy` builds (wave
+    //   5a T16b fix round 1, scratch `t16bf/probe_excludes.out`), smart
+    //   quotes on exactly where `Some` is asserted.
     #[test]
     fn settings_follow_is_available() {
+        use crate::config::ExcludedNames;
+
         let config = BuildConfig::default();
         assert_eq!(
             settings_for(&config, "en", "html"),
@@ -675,15 +865,12 @@ mod tests {
         }
         assert_eq!(
             settings_for(&config, "zh-CN", "html"),
-            Some(SmartQuotesSettings {
-                document_language: "zh-CN".to_string(),
-                ..SmartQuotesSettings::default()
-            })
+            Some(SmartQuotesSettings::default())
         );
         let excluding_dummy = BuildConfig {
             smartquotes_excludes: SmartquotesExcludes {
-                languages: Vec::new(),
-                builders: vec!["dummy".to_string()],
+                languages: ExcludedNames::default(),
+                builders: ExcludedNames::Names(vec!["dummy".to_string()]),
             },
             smartquotes_action: "qe".to_string(),
             ..BuildConfig::default()
@@ -693,9 +880,44 @@ mod tests {
             settings_for(&excluding_dummy, "ja", "html"),
             Some(SmartQuotesSettings {
                 actions: Actions::parse("qe"),
-                document_language: "ja".to_string(),
             })
         );
+
+        let excluding = |languages: ExcludedNames, builders: ExcludedNames| BuildConfig {
+            smartquotes_excludes: SmartquotesExcludes {
+                languages,
+                builders,
+            },
+            ..BuildConfig::default()
+        };
+        let text = |value: &str| ExcludedNames::Text(value.to_string());
+        let names = |values: &[&str]| {
+            ExcludedNames::Names(values.iter().map(|value| value.to_string()).collect())
+        };
+        let none = ExcludedNames::default;
+        let rows = [
+            (excluding(none(), text("dirhtml")), "html", false),
+            (excluding(none(), text("html5")), "html", false),
+            (excluding(none(), text("html")), "html", false),
+            (excluding(none(), text("htm")), "html", true),
+            (excluding(none(), text("man,text")), "html", true),
+            (excluding(none(), text("")), "html", true),
+            (excluding(none(), names(&["html"])), "html", false),
+            (excluding(none(), text("dummyx")), "dummy", false),
+            (excluding(none(), text("html")), "dummy", true),
+            (excluding(text("en_GB"), none()), "html", false),
+            (excluding(text("e"), none()), "html", true),
+            (excluding(text(""), none()), "html", true),
+            (excluding(names(&["en_GB"]), none()), "html", true),
+        ];
+        for (config, builder, educated) in rows {
+            assert_eq!(
+                settings_for(&config, "en", builder).is_some(),
+                educated,
+                "{:?} for {builder}",
+                config.smartquotes_excludes
+            );
+        }
     }
 
     /// The std domain notes a glossary term while the glossary directive

@@ -209,10 +209,10 @@ pub struct BuildConfig {
     /// `smartquotes_excludes` (`config.py:291-295`, rebuild class `'env'`):
     /// the languages and builders the transform does not run for
     /// ([`SmartquotesExcludes`]). A dict, so a `-D` override sets one key
-    /// of it (`-D smartquotes_excludes.builders=man,text`), never the
-    /// whole. One divergence: when `conf.py` does not set the dict, Sphinx
-    /// makes the override the whole dict, so the other key excludes
-    /// nothing (`config.py:309-312`), where here it keeps its default.
+    /// of it to the string as given (`-D smartquotes_excludes.builders=man`),
+    /// never the whole, and when `conf.py` did not set the dict, the
+    /// override starts a new one, so the other key excludes nothing
+    /// ([`Self::apply_override`]).
     pub smartquotes_excludes: SmartquotesExcludes,
 
     /// `trim_doctest_flags`, default `True` (`config.py:267`, rebuild class
@@ -271,13 +271,16 @@ pub struct BuildConfig {
     pub source_encoding: String,
 
     /// Type mismatches `check_confval_types` (`config.py:775-847`) will
-    /// report — `(key, python type name)` for the two `int | None` keys
-    /// whose value arrived as some other type: a `-D` override (always
+    /// report — `(key, python type name)` for a key of
+    /// [`CONFVAL_TYPE_CHECKED_KEYS`] whose value arrived as some other type.
+    /// For the two `int | None` keys that is a `-D` override (always
     /// `str`, because `convert_overrides` has no int branch for a key whose
     /// default is `None` and returns the raw string, `config.py:397`) or a
-    /// mistyped `conf.py` assignment. Diagnostic state rather than
-    /// configuration: skipped by serde, so it neither enters the cache
-    /// fingerprint nor survives a save/load.
+    /// mistyped `conf.py` assignment; for `smartquotes`, a `conf.py`
+    /// assignment of a type that shares no base with `bool` (an `int`
+    /// does), which a `-D smartquotes=0|1` override replaces. Diagnostic
+    /// state rather than configuration: skipped by serde, so it neither
+    /// enters the cache fingerprint nor survives a save/load.
     #[serde(skip)]
     pub confval_type_mismatches: Vec<(String, String)>,
 
@@ -395,6 +398,22 @@ const NONE_DEFAULT_INT_KEYS: [&str; 2] = [
     "python_maximum_signature_line_length",
 ];
 
+/// The keys whose value `check_confval_types` (`config.py:775-847`) can
+/// find mistyped here ([`BuildConfig::confval_type_mismatches`]), in
+/// Sphinx's registration order, the order it reports them in, each with the
+/// types its warning names, `sorted` by their backticked spelling: the two
+/// `int | None` keys ([`NONE_DEFAULT_INT_KEYS`]) and, between them,
+/// `smartquotes` (`config.py:289`), a core key, where the python domain
+/// registers the second when it is set up.
+const CONFVAL_TYPE_CHECKED_KEYS: [(&str, &str); 3] = [
+    ("maximum_signature_line_length", "`NoneType' or `int'"),
+    ("smartquotes", "`bool'"),
+    (
+        "python_maximum_signature_line_length",
+        "`NoneType' or `int'",
+    ),
+];
+
 /// The config keys whose only valid type is `bool` and that this crate
 /// types, whose `-D` value takes Sphinx's bool grammar: `convert_overrides`
 /// turns `'0'` and `'1'` into `False` and `True` and raises `ConfigError`
@@ -403,34 +422,78 @@ const NONE_DEFAULT_INT_KEYS: [&str; 2] = [
 const STRICT_BOOL_KEYS: [&str; 3] = ["keep_warnings", "trim_doctest_flags", "smartquotes"];
 
 /// `smartquotes_excludes` as `SphinxSmartQuotes.is_available` reads it
-/// (`SP/sphinx/transforms/__init__.py:383-384`): the two keys of a dict,
-/// each read with `.get(key, [])`. Unset, the dict is Sphinx's default
-/// ([`Default`]: `{'languages': ['ja', 'zh_CN', 'zh_TW'], 'builders':
-/// ['man', 'text']}`, `config.py:291-295`); a dict that leaves a key out
-/// excludes nothing by that key, which is what a missing field reads as.
-///
-/// Sphinx tests `name in builders` and `config.language in languages`
-/// against whatever the dict holds; a string value there is matched as a
-/// substring, which a list of the one string ([`crate::python_config`]
-/// reads it so) matches only whole.
+/// (`SP/sphinx/transforms/__init__.py:383-397`): the two keys of a dict,
+/// each read with `.get(key, [])` and tested with Python's `in`
+/// ([`ExcludedNames`]): `name in builders` and `config.language in
+/// languages`. Unset, the dict is Sphinx's default ([`Default`]:
+/// `{'languages': ['ja', 'zh_CN', 'zh_TW'], 'builders': ['man', 'text']}`,
+/// `config.py:291-295`); a dict that leaves a key out excludes nothing by
+/// that key, which is what an empty list reads as.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SmartquotesExcludes {
-    /// The values of `language` the transform does not run for, each
-    /// matched whole: `zh_CN` does not exclude `zh-CN`.
+    /// The values of `language` the transform does not run for.
     #[serde(default)]
-    pub languages: Vec<String>,
+    pub languages: ExcludedNames,
     /// The names of the builders the transform does not run for
     /// ([`crate::builder::BuilderKind::name`]).
     #[serde(default)]
-    pub builders: Vec<String>,
+    pub builders: ExcludedNames,
 }
 
 impl Default for SmartquotesExcludes {
     fn default() -> Self {
-        let strings = |values: &[&str]| values.iter().map(|value| value.to_string()).collect();
+        let names = |values: &[&str]| {
+            ExcludedNames::Names(values.iter().map(|value| value.to_string()).collect())
+        };
         Self {
-            languages: strings(&["ja", "zh_CN", "zh_TW"]),
-            builders: strings(&["man", "text"]),
+            languages: names(&["ja", "zh_CN", "zh_TW"]),
+            builders: names(&["man", "text"]),
+        }
+    }
+}
+
+impl SmartquotesExcludes {
+    /// An empty dict, `{}`, whose keys both exclude nothing: what a dotted
+    /// `-D smartquotes_excludes.<key>` override starts from when `conf.py`
+    /// set no dict ([`BuildConfig::apply_override`]).
+    pub fn empty() -> Self {
+        Self {
+            languages: ExcludedNames::default(),
+            builders: ExcludedNames::default(),
+        }
+    }
+}
+
+/// One value of [`SmartquotesExcludes`], as Python's `name in value` tests
+/// a name against it ([`Self::contains`]). Another value (`None`, a number)
+/// makes Sphinx raise `TypeError` when the transform runs, which is not
+/// modelled (decision 13): it is read as no names.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum ExcludedNames {
+    /// A list or a tuple, or a dict, whose keys `in` tests: a name is in it
+    /// when it is one of them, whole (`zh_CN` does not exclude `zh-CN`).
+    Names(Vec<String>),
+    /// A string, which `in` searches: a name is in it when it occurs in it
+    /// (`'html' in 'dirhtml'`, `'en' in 'en_GB'`). A `-D
+    /// smartquotes_excludes.<key>` override is one, the string as given
+    /// ([`BuildConfig::apply_override`]).
+    Text(String),
+}
+
+impl Default for ExcludedNames {
+    /// `[]`, what `.get(key, [])` gives for a key the dict leaves out.
+    fn default() -> Self {
+        ExcludedNames::Names(Vec::new())
+    }
+}
+
+impl ExcludedNames {
+    /// Python's `name in value`.
+    pub fn contains(&self, name: &str) -> bool {
+        match self {
+            ExcludedNames::Names(names) => names.iter().any(|known| known == name),
+            ExcludedNames::Text(text) => text.contains(name),
         }
     }
 }
@@ -801,18 +864,18 @@ impl BuildConfig {
             ));
         }
         // The type-mismatch branch (`config.py:822-838`): `type_value` is not
-        // in `{int, NoneType}` and shares no non-trivial base with NoneType,
-        // so the warning names the permitted set, `sorted` by the
-        // backticked spelling — `NoneType' before `int' (N < i).
-        for key in NONE_DEFAULT_INT_KEYS {
+        // a permitted type and shares no non-trivial base with the default's
+        // type (an `int` does with `bool`), so the warning names the
+        // permitted set, `sorted` by the backticked spelling — `NoneType'
+        // before `int' (N < i).
+        for (key, permitted) in CONFVAL_TYPE_CHECKED_KEYS {
             if let Some((_, type_name)) = self
                 .confval_type_mismatches
                 .iter()
                 .find(|(mismatched, _)| mismatched == key)
             {
                 warnings.push(format!(
-                    "The config value `{key}' has type `{type_name}'; expected `NoneType' or \
-                     `int'."
+                    "The config value `{key}' has type `{type_name}'; expected {permitted}."
                 ));
             }
         }
@@ -833,9 +896,9 @@ impl BuildConfig {
         warnings
     }
 
-    /// Record that `key` (one of [`NONE_DEFAULT_INT_KEYS`]) received a value
-    /// of python type `type_name`, for [`Self::validate`] to report. One
-    /// entry per key, like sphinx's `once=True`.
+    /// Record that `key` (one of [`CONFVAL_TYPE_CHECKED_KEYS`]) received a
+    /// value of python type `type_name`, for [`Self::validate`] to report.
+    /// One entry per key, like sphinx's `once=True`.
     pub fn note_confval_type_mismatch(&mut self, key: &str, type_name: &str) {
         if !self
             .confval_type_mismatches
@@ -973,6 +1036,11 @@ impl BuildConfig {
             anyhow::bail!("'{key}' must be '0' or '1', got '{value}'");
         }
 
+        if let Some(entry) = key.strip_prefix("smartquotes_excludes.") {
+            self.override_smartquotes_excludes(entry, value);
+            return Ok(None);
+        }
+
         let mut tree = serde_json::to_value(&*self)?;
 
         // Resolve the dotted path. A key missing from its parent object is
@@ -1051,6 +1119,14 @@ impl BuildConfig {
 
         // Serde-skipped state does not survive the round trip; carry it.
         applied.confval_type_mismatches = std::mem::take(&mut self.confval_type_mismatches);
+        // `check_confval_types` reads the override, which `Config.__getattr__`
+        // takes before `conf.py`'s value, and a bool override has the one
+        // type the key allows: nothing to report about conf.py's value.
+        if STRICT_BOOL_KEYS.contains(&key) {
+            applied
+                .confval_type_mismatches
+                .retain(|(mismatched, _)| mismatched != key);
+        }
         // A top-level key is a Sphinx setting name: the `.buildinfo` hash
         // sees the override as conf.py would have. (A dotted key names
         // this crate's own nesting, not a conf.py setting.)
@@ -1061,6 +1137,39 @@ impl BuildConfig {
         }
         *self = applied;
         Ok(None)
+    }
+
+    /// A `-D smartquotes_excludes.<entry>=<value>` override, as Sphinx's
+    /// `Config.__init__` applies a dotted override (`config.py:309-312`):
+    /// `raw_config.setdefault('smartquotes_excludes', {})[entry] = value`.
+    /// The value is the string as given, which `convert_overrides` never
+    /// sees, so it is not split, and `in` searches it
+    /// ([`ExcludedNames::Text`]). It goes into the dict `conf.py` assigned
+    /// or an earlier such override made, which [`Self::conf_values`] holds
+    /// as Sphinx's `raw_config` does; with neither, into a new empty dict,
+    /// so the default's other key is gone and excludes nothing. An entry
+    /// the transform never reads makes the dict all the same, and Sphinx
+    /// reports no dotted override as unknown.
+    fn override_smartquotes_excludes(&mut self, entry: &str, value: &str) {
+        use serde_json::{Map, Value};
+        if !self.conf_values.contains_key("smartquotes_excludes") {
+            self.smartquotes_excludes = SmartquotesExcludes::empty();
+            self.conf_values.insert(
+                "smartquotes_excludes".to_string(),
+                Value::Object(Map::new()),
+            );
+        }
+        // A `conf.py` value that is no dict makes Sphinx raise `TypeError`
+        // here, which is not modelled (decision 13).
+        if let Some(Value::Object(raw)) = self.conf_values.get_mut("smartquotes_excludes") {
+            raw.insert(entry.to_string(), Value::String(value.to_string()));
+        }
+        let names = ExcludedNames::Text(value.to_string());
+        match entry {
+            "languages" => self.smartquotes_excludes.languages = names,
+            "builders" => self.smartquotes_excludes.builders = names,
+            _ => {}
+        }
     }
 
     /// Coerce a CLI string to the JSON type currently occupying the slot.
@@ -1597,17 +1706,32 @@ output:
     /// and take `-D` as Sphinx does: `smartquotes` only as `0` or `1`, any
     /// other value (`False` included) a fatal `ConfigError` with Sphinx's
     /// message; `smartquotes_action` as a string; `smartquotes_excludes`
-    /// one key at a time, a list split on commas, never as a whole dict.
+    /// one key at a time, never as a whole dict, each value the string as
+    /// given, never split on commas. With no `conf.py` dict, the first
+    /// dotted override starts an empty one, so the default's other key is
+    /// gone; a later override adds to that dict, which `conf_values` holds,
+    /// as Sphinx's `raw_config` does.
+    //
+    // oracle (Sphinx 9.1.0, `-b html` builds, wave 5a T16b fix round 1,
+    //   scratch `t16bf/probe_excludes.out`): with `language = 'ja'` and no
+    //   conf.py dict, `-D smartquotes_excludes.builders=man` educates
+    //   (`「Hi」 – it’s`), `-D smartquotes_excludes.foo=x` too, with no
+    //   warning, and `.languages=ja` with `.builders=man`, in either order,
+    //   does not; `-D smartquotes_excludes=x` warns and is ignored.
     #[test]
     fn smartquotes_keys_take_sphinxs_override_grammar() {
         let mut config = BuildConfig::default();
         assert!(config.smartquotes);
         assert_eq!(config.smartquotes_action, "qDe");
+        let names = |values: &[&str]| {
+            ExcludedNames::Names(values.iter().map(|value| value.to_string()).collect())
+        };
+        let text = |value: &str| ExcludedNames::Text(value.to_string());
         assert_eq!(
             config.smartquotes_excludes,
             SmartquotesExcludes {
-                languages: vec!["ja".into(), "zh_CN".into(), "zh_TW".into()],
-                builders: vec!["man".into(), "text".into()],
+                languages: names(&["ja", "zh_CN", "zh_TW"]),
+                builders: names(&["man", "text"]),
             }
         );
 
@@ -1636,14 +1760,37 @@ output:
             .is_none());
         assert_eq!(config.smartquotes_action, "qBe");
 
+        // No conf.py dict: the override starts `{}`.
         assert!(config
             .apply_override("smartquotes_excludes.builders", "html,dummy")
             .unwrap()
             .is_none());
-        assert_eq!(config.smartquotes_excludes.builders, ["html", "dummy"]);
         assert_eq!(
-            config.smartquotes_excludes.languages,
-            ["ja", "zh_CN", "zh_TW"]
+            config.smartquotes_excludes,
+            SmartquotesExcludes {
+                languages: ExcludedNames::default(),
+                builders: text("html,dummy"),
+            }
+        );
+        assert_eq!(
+            config.conf_values.get("smartquotes_excludes"),
+            Some(&serde_json::json!({"builders": "html,dummy"}))
+        );
+        // The dict it made takes the next one.
+        assert!(config
+            .apply_override("smartquotes_excludes.languages", "en_GB")
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            config.smartquotes_excludes,
+            SmartquotesExcludes {
+                languages: text("en_GB"),
+                builders: text("html,dummy"),
+            }
+        );
+        assert_eq!(
+            config.conf_values.get("smartquotes_excludes"),
+            Some(&serde_json::json!({"builders": "html,dummy", "languages": "en_GB"}))
         );
         let ignored = config
             .apply_override("smartquotes_excludes", "html")
@@ -1653,7 +1800,20 @@ output:
                 .starts_with("cannot override dictionary config setting 'smartquotes_excludes'")),
             "a whole dict is not overridden"
         );
-        assert_eq!(config.smartquotes_excludes.builders, ["html", "dummy"]);
+        assert_eq!(config.smartquotes_excludes.builders, text("html,dummy"));
+
+        // A key the transform never reads makes the dict all the same, and
+        // is no unknown key.
+        let mut config = BuildConfig::default();
+        assert!(config
+            .apply_override("smartquotes_excludes.foo", "x")
+            .unwrap()
+            .is_none());
+        assert_eq!(config.smartquotes_excludes, SmartquotesExcludes::empty());
+        assert_eq!(
+            config.conf_values.get("smartquotes_excludes"),
+            Some(&serde_json::json!({"foo": "x"}))
+        );
     }
 
     /// `trim_doctest_flags` (`config.py:267`: default `True`, type `bool`

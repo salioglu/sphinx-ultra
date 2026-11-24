@@ -2455,10 +2455,8 @@ mod tests {
             "smartquotes_action"
         );
         let mut excludes = base.clone();
-        excludes
-            .smartquotes_excludes
-            .builders
-            .push("html".to_string());
+        excludes.smartquotes_excludes.builders =
+            crate::config::ExcludedNames::Text("html".to_string());
         assert_ne!(
             config_fingerprint(&excludes).unwrap(),
             baseline,

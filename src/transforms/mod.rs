@@ -242,6 +242,7 @@ impl TransformId {
     pub(crate) fn transform(self) -> &'static dyn Transform {
         match self {
             TransformId::ApplySourceWorkaround => &sphinx::ApplySourceWorkaround,
+            TransformId::PreserveTranslatableMessages => &sphinx::PreserveTranslatableMessages,
             TransformId::TranslationProgressTotaliser => &sphinx::TranslationProgressTotaliser,
             TransformId::DefaultSubstitutions => &sphinx::DefaultSubstitutions,
             TransformId::MoveModuleTargets => &sphinx::MoveModuleTargets,
@@ -274,14 +275,13 @@ impl TransformId {
             TransformId::FilterSystemMessages => &sphinx::FilterSystemMessages,
 
             // Inert with `extensions = []` and Sphinx's defaults ([TW §2.2]):
-            // no message catalogs or gettext builder (010-019, 010-034,
-            // 020, 880-041, 950, 999-038), `html_compact_lists` on (100),
-            // no 4-tuple index entries (210-026), `doctitle_xform` and
+            // no message catalogs or gettext builder (010-019, 020, 880-041,
+            // 950, 999-038), `html_compact_lists` on (100), no 4-tuple
+            // index entries (210-026), `doctitle_xform` and
             // `sectsubtitle_xform` off (320, 350), no `strip_comments`
             // (740), no header or footer (820), `validate` off (835), and
             // nothing to expose (840).
             TransformId::ExtraTranslatableNodes
-            | TransformId::PreserveTranslatableMessages
             | TransformId::Locale
             | TransformId::RefOnlyBulletListTransform
             | TransformId::AutoIndexUpgrader
