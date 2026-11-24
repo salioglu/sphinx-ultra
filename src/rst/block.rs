@@ -7975,15 +7975,13 @@ impl BlockParser {
         // BasePseudoSection context check (body.py:32-47): the parse's
         // container may not be a body, part, sub-structural, bibliographic
         // or decorative element or a topic. The document, a section and a
-        // sidebar may hold one, and so may a container that is none of
-        // those: the anonymous `Element` docutils and Sphinx parse content
-        // into ("element", and Sphinx's object description and `py:module`
-        // content), and Sphinx's `only`.
+        // sidebar may hold one, and so may the anonymous `Element` that
+        // version-change, `class`, `hlist` and table-directive content is
+        // parsed into ("element"). Every other container kind rejects one,
+        // also where Sphinx accepts it (object description, `py:module` and
+        // `only` content, for example).
         if let Some(parent) = self.nested_node_kind {
-            if !matches!(
-                parent,
-                "sidebar" | "element" | "desc_content" | "py_module" | "only"
-            ) {
+            if !matches!(parent, "sidebar" | "element") {
                 out.push(self.directive_run_error(
                     &format!(
                         "The \"{}\" directive may not be used within topics or body elements.",
@@ -16654,9 +16652,8 @@ mod tests {
 
     /// docutils' topic and sidebar may stand in a container that is no body
     /// element (`BasePseudoSection.run`, `SP/docutils/parsers/rst/directives/
-    /// body.py:42-47`): the anonymous `Element` docutils and Sphinx parse
-    /// content into (version changes, object descriptions, `py:module`)
-    /// and Sphinx's `only` (oracle as above).
+    /// body.py:42-47`): the anonymous `Element` version-change content is
+    /// parsed into (oracle as above).
     #[test]
     fn pseudo_sections_stand_in_anonymous_containers() {
         let differences = sphinx_read_differences(&[
@@ -16670,24 +16667,6 @@ mod tests {
             (
                 ".. versionadded:: 1.0\n\n   .. sidebar:: S\n\n      Body.\n",
                 "    <versionmodified type=\"versionadded\" version=\"1.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified added\">\n                Added in version 1.0: \n        <sidebar>\n            <title>\n                S\n            <paragraph>\n                Body.\n",
-                &[],
-            ),
-            // `only` content
-            (
-                ".. only:: html\n\n   .. topic:: T\n\n      Body.\n",
-                "    <only expr=\"html\">\n        <topic>\n            <title>\n                T\n            <paragraph>\n                Body.\n",
-                &[],
-            ),
-            // `py:module` content
-            (
-                ".. py:module:: m\n\n   .. topic:: T\n\n      Body.\n",
-                "    <index entries=\"('pair',\\ 'module;\\ m',\\ 'module-m',\\ '',\\ None)\">\n    <target ismod=\"1\" refid=\"module-m\">\n    <topic ids=\"module-m\">\n        <title>\n            T\n        <paragraph>\n            Body.\n",
-                &[],
-            ),
-            // object description content
-            (
-                ".. class:: x\n\n   .. topic:: T\n\n      Body.\n",
-                "    <index entries=\"('single',\\ 'x\\ (built-in\\ class)',\\ 'x',\\ '',\\ None)\">\n    <desc classes=\"py class\" desctype=\"class\" domain=\"py\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"class\">\n        <desc_signature _toc_name=\"x\" _toc_parts=\"('x',)\" class=\"\" classes=\"sig sig-object\" fullname=\"x\" ids=\"x\" module=\"True\">\n            <desc_annotation xml:space=\"preserve\">\n                <desc_sig_keyword classes=\"k\">\n                    class\n                <desc_sig_space classes=\"w\">\n                     \n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                x\n        <desc_content>\n            <topic>\n                <title>\n                    T\n                <paragraph>\n                    Body.\n",
                 &[],
             ),
         ]);
