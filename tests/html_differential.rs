@@ -1,10 +1,12 @@
 mod support {
     pub mod diagnostics;
     pub mod html_oracle;
+    pub mod text_diff;
 }
 
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
+use regex::Regex;
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
@@ -12,7 +14,7 @@ use std::io::Write;
 use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{mpsc, Arc, LazyLock, Mutex};
 use std::time::Duration;
 use support::diagnostics::{run_bounded, run_bounded_with_timeout, ExitStatusKind, ProcessOutput};
 use support::html_oracle::{
@@ -25,6 +27,7 @@ use support::html_oracle::{
     CaseRecord, CaseResult, CaseStatus, Diagnostic, IndexDocument, InventoryRecord, Keep, Policy,
     ReportInputs,
 };
+use support::text_diff::first_differing_line;
 
 fn minimal_case() -> serde_json::Value {
     json!({
@@ -1044,7 +1047,7 @@ fn diagnostic_synthetic_warnings_and_first_divergence_are_grouped() {
         .iter()
         .any(|item| item.category == "warning-missing-line"));
     let diagnostics = (0..3)
-        .map(|index| support::html_oracle::Diagnostic {
+        .map(|index| Diagnostic {
             category: "html-body".to_string(),
             logical_path: format!("page-{index}.html"),
             first_expected_line: Some(7),
@@ -1054,7 +1057,7 @@ fn diagnostic_synthetic_warnings_and_first_divergence_are_grouped() {
         })
         .collect::<Vec<_>>();
     let mut diagnostics = diagnostics;
-    diagnostics.push(support::html_oracle::Diagnostic {
+    diagnostics.push(Diagnostic {
         category: "html-body".to_string(),
         logical_path: "page-0.html".to_string(),
         first_expected_line: Some(7),
@@ -1074,7 +1077,7 @@ fn diagnostic_synthetic_warnings_and_first_divergence_are_grouped() {
 #[test]
 fn diagnostic_first_divergence_groups_by_content_not_line_number() {
     let diagnostics = vec![
-        support::html_oracle::Diagnostic {
+        Diagnostic {
             category: "html-body".to_string(),
             logical_path: "one.html".to_string(),
             first_expected_line: Some(1),
@@ -1082,7 +1085,7 @@ fn diagnostic_first_divergence_groups_by_content_not_line_number() {
             actual: "uno\nrest".to_string(),
             detail: String::new(),
         },
-        support::html_oracle::Diagnostic {
+        Diagnostic {
             category: "html-body".to_string(),
             logical_path: "two.html".to_string(),
             first_expected_line: Some(9),
@@ -1090,7 +1093,7 @@ fn diagnostic_first_divergence_groups_by_content_not_line_number() {
             actual: "uno\nother".to_string(),
             detail: String::new(),
         },
-        support::html_oracle::Diagnostic {
+        Diagnostic {
             category: "html-body".to_string(),
             logical_path: "three.html".to_string(),
             first_expected_line: Some(9),
@@ -1203,7 +1206,7 @@ fn report_case(
         common_mismatch_count: 0,
         diagnostics: category
             .map(|category| {
-                vec![support::html_oracle::Diagnostic {
+                vec![Diagnostic {
                     category: category.to_string(),
                     logical_path: format!("{case_id}.html"),
                     first_expected_line: line,
@@ -1226,7 +1229,7 @@ fn report_case_with_diagnostic(
     actual: &str,
 ) -> CaseResult {
     let mut result = report_case(profile, source_set, case_id, false, None, None);
-    result.diagnostics = vec![support::html_oracle::Diagnostic {
+    result.diagnostics = vec![Diagnostic {
         category: category.to_string(),
         logical_path: logical_path.to_string(),
         first_expected_line: Some(1),
@@ -1631,6 +1634,30 @@ fn selected_ultra_binary() -> String {
         .unwrap_or(selected)
 }
 
+/// Ultra's html build of one case, as both harnesses run it: quiet, its
+/// warning stream written to `warnings_path`, and, like the reference
+/// build, from the source directory, so cwd-relative paths in its output
+/// are source-relative.
+fn html_build_command(
+    binary: &str,
+    input_dir: &Path,
+    output_dir: &Path,
+    cache_dir: &Path,
+    warnings_path: &Path,
+) -> Command {
+    let mut command = Command::new(binary);
+    command
+        .current_dir(input_dir)
+        .arg(input_dir)
+        .arg(output_dir)
+        .args(["-b", "html", "-d"])
+        .arg(cache_dir)
+        .arg("-q")
+        .arg("-w")
+        .arg(warnings_path);
+    command
+}
+
 fn run_html_case(
     case: &CaseRecord,
     profile_root: &Path,
@@ -1666,19 +1693,13 @@ fn run_html_case(
     fs::write(expected_dir.join("warnings.txt"), case.warnings.as_bytes())
         .map_err(|error| format!("write expected warnings: {error}"))?;
 
-    // Like the reference build, Ultra runs from the source directory so
-    // cwd-relative paths in its output are source-relative.
-    let mut command = Command::new(selected_ultra_binary());
-    command
-        .current_dir(&input_dir)
-        .arg(&input_dir)
-        .arg(&actual_dir)
-        .args(["-b", "html", "-d"])
-        .arg(&cache_dir)
-        .arg("-q")
-        .args(["-w"])
-        .arg(&warnings_path);
-    let process = run_bounded(command);
+    let process = run_bounded(html_build_command(
+        &selected_ultra_binary(),
+        &input_dir,
+        &actual_dir,
+        &cache_dir,
+        &warnings_path,
+    ));
     let actual_status = process_status(&process);
     let mut diagnostics = if actual_status.is_some() {
         compare_trees(
@@ -1756,7 +1777,7 @@ fn run_needs_case(
     expected_dir: &Path,
     actual_needs_dir: &Path,
     run_dir: &Path,
-) -> Result<(Option<CaseStatus>, Vec<support::html_oracle::Diagnostic>), String> {
+) -> Result<(Option<CaseStatus>, Vec<Diagnostic>), String> {
     let expected_status = case
         .needs_status
         .ok_or_else(|| format!("{} has no needs_status", case_key(case)))?;
@@ -1828,7 +1849,7 @@ fn process_status(process: &ProcessOutput) -> Option<CaseStatus> {
     }
 }
 
-fn process_diagnostic(process: &ProcessOutput) -> support::html_oracle::Diagnostic {
+fn process_diagnostic(process: &ProcessOutput) -> Diagnostic {
     let (category, detail) = match &process.status {
         ExitStatusKind::Timeout => ("timeout", "Ultra process exceeded the deadline".to_string()),
         ExitStatusKind::SpawnError(error) => ("spawn", error.clone()),
@@ -1837,7 +1858,7 @@ fn process_diagnostic(process: &ProcessOutput) -> support::html_oracle::Diagnost
             ("process", "unexpected process status".to_string())
         }
     };
-    support::html_oracle::Diagnostic {
+    Diagnostic {
         category: category.to_string(),
         logical_path: String::new(),
         first_expected_line: None,
@@ -1895,19 +1916,15 @@ fn compare_aux_outputs(
         .map_err(|error| format!("create {}: {error}", input_dir.display()))?;
     materialize_case_inputs(case, profile_root, &input_dir)?;
 
-    // Invoked exactly as `run_html_case` invokes it, from the source
-    // directory, so the two harnesses normalize the same output.
-    let mut command = Command::new(env!("CARGO_BIN_EXE_sphinx-ultra"));
-    command
-        .current_dir(&input_dir)
-        .arg(&input_dir)
-        .arg(&output_dir)
-        .args(["-b", "html", "-d"])
-        .arg(&cache_dir)
-        .arg("-q")
-        .arg("-w")
-        .arg(&warnings_path);
-    let process = run_bounded(command);
+    // The build `run_html_case` runs, so the two harnesses normalize the
+    // same output.
+    let process = run_bounded(html_build_command(
+        env!("CARGO_BIN_EXE_sphinx-ultra"),
+        &input_dir,
+        &output_dir,
+        &cache_dir,
+        &warnings_path,
+    ));
     let mut diagnostics = match process_status(&process) {
         Some(actual_status) => {
             let expected = case
@@ -2091,16 +2108,18 @@ fn aux_gate_failure(
         diff.regressions.iter().map(|key| {
             let (case, component) = key;
             let diagnostic = &first_diagnostics[key];
-            let (line, expected, actual) =
-                first_differing_line(&diagnostic.expected, &diagnostic.actual);
-            format!(
-                "    {case} {component:?}: {} ({})\n        expected line {line}: {}\n        \
-                 actual line {line}:   {}",
-                diagnostic.category,
-                diagnostic.detail,
-                cap_line(expected),
-                cap_line(actual)
-            )
+            let head = format!(
+                "    {case} {component:?}: {} ({})",
+                diagnostic.category, diagnostic.detail
+            );
+            match first_differing_line(&diagnostic.expected, &diagnostic.actual) {
+                Some((line, expected, actual)) => format!(
+                    "{head}\n        expected line {line}: {}\n        actual line {line}:   {}",
+                    cap_line(expected),
+                    cap_line(actual)
+                ),
+                None => format!("{head}\n        only a final line break differs"),
+            }
         }),
     );
     push_bounded_list(
@@ -2128,21 +2147,6 @@ fn push_bounded_list(
     }
     if count > MAX_ITEMS {
         message.push_str(&format!("\n    ... and {} more", count - MAX_ITEMS));
-    }
-}
-
-/// The first line, numbered from 1, where two texts differ, and that line of
-/// each (empty past a text's end).
-fn first_differing_line<'a>(expected: &'a str, actual: &'a str) -> (usize, &'a str, &'a str) {
-    let mut expected_lines = expected.lines();
-    let mut actual_lines = actual.lines();
-    let mut number = 1;
-    loop {
-        match (expected_lines.next(), actual_lines.next()) {
-            (Some(left), Some(right)) if left == right => number += 1,
-            (None, None) => return (number, "", ""),
-            (left, right) => return (number, left.unwrap_or_default(), right.unwrap_or_default()),
-        }
     }
 }
 
@@ -2365,8 +2369,6 @@ const M1_VALIDATION_MESSAGES: &[&str] = &[
 /// path (`part.rst:6` for `<SRCDIR>/part.rst:6`, F8b) is fixed since T14, so
 /// one now is unexplained.
 fn warning_census(case: &CaseRecord, diagnostics: &[Diagnostic]) -> GapCensus {
-    use regex::Regex;
-    use std::sync::LazyLock;
     static M1: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(&format!("^({})$", M1_VALIDATION_MESSAGES.join("|"))).expect("valid pattern")
     });
@@ -2490,8 +2492,6 @@ fn warning_records(lines: &[&str]) -> Vec<String> {
 /// The message of a line that opens a warning record,
 /// `[<location>: ]WARNING|ERROR|CRITICAL: <message>`.
 fn warning_record_message(line: &str) -> Option<&str> {
-    use regex::Regex;
-    use std::sync::LazyLock;
     static RECORD: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"^(?:\S+?(?::\d*)?: )?(?:WARNING|ERROR|CRITICAL): (.*)").expect("valid pattern")
     });

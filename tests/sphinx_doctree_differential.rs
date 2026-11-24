@@ -38,6 +38,7 @@
 
 mod support {
     pub mod read_gaps;
+    pub mod text_diff;
 }
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -446,10 +447,13 @@ fn assert_gaps(
         .difference(&known)
         .map(|case| {
             let (expected, actual) = &mismatches[*case];
-            let (line, expected, actual) = first_differing_line(expected, actual);
-            format!(
-                "    {case}: line {line}\n        expected: {expected:?}\n        actual:   {actual:?}"
-            )
+            match support::text_diff::first_differing_line(expected, actual) {
+                Some((line, expected, actual)) => format!(
+                    "    {case}: line {line}\n        expected: {expected:?}\n        actual:   \
+                     {actual:?}"
+                ),
+                None => format!("    {case}: only a final line break differs"),
+            }
         })
         .collect();
     let fixed: Vec<&str> = known.difference(&observed).copied().collect();
@@ -499,21 +503,6 @@ fn docutils_snippets_resolved_differential() {
         KNOWN_RESOLVED_STANDALONE_GAPS,
         &resolved_mismatches(&fixture),
     );
-}
-
-/// The first line, numbered from 1, where two texts differ, and that line
-/// of each (empty past a text's end).
-fn first_differing_line<'a>(expected: &'a str, actual: &'a str) -> (usize, &'a str, &'a str) {
-    let mut expected_lines = expected.lines();
-    let mut actual_lines = actual.lines();
-    let mut number = 1;
-    loop {
-        match (expected_lines.next(), actual_lines.next()) {
-            (Some(left), Some(right)) if left == right => number += 1,
-            (None, None) => return (number, "", ""),
-            (left, right) => return (number, left.unwrap_or_default(), right.unwrap_or_default()),
-        }
-    }
 }
 
 /// Prints `mismatches` as gap-table rows. A row's reason lists the fix

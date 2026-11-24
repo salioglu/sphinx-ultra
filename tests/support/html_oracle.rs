@@ -1,3 +1,4 @@
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -5,8 +6,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{Cursor, Read};
 use std::path::{Component, Path, PathBuf};
+use std::sync::LazyLock;
 
 use flate2::read::ZlibDecoder;
+
+use super::text_diff::first_differing_line;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Policy {
@@ -1089,9 +1093,6 @@ pub fn parse_inventory(bytes: &[u8]) -> Result<(Vec<u8>, Vec<InventoryRecord>), 
 /// any other line would compare equal to lines with different bytes. Every
 /// other line, including every line the loader skips, stays raw.
 fn parse_inventory_record(line: &str) -> InventoryRecord {
-    use regex::Regex;
-    use std::sync::LazyLock;
-
     // Python's `\s` (`str.isspace`) is Unicode `White_Space`, which is Rust's
     // `\s`, plus U+001C..=U+001F.
     const SPACE: &str = r"[\s\x1C-\x1F]";
@@ -1453,24 +1454,22 @@ fn replace_token(bytes: &[u8], token: &[u8], replacement: &[u8]) -> Vec<u8> {
 /// writes into `schema_violations.json`, exactly as `zero_schema_timings`
 /// in `tools/gen_html_oracle.py` does for the reference.
 pub fn zero_schema_timings(bytes: &[u8]) -> Vec<u8> {
-    use regex::bytes::Regex;
-    use std::sync::LazyLock;
-
-    static PATTERNS: LazyLock<[(Regex, &[u8]); 3]> = LazyLock::new(|| {
+    static PATTERNS: LazyLock<[(regex::bytes::Regex, &[u8]); 3]> = LazyLock::new(|| {
         [
             (
-                Regex::new(
+                regex::bytes::Regex::new(
                     r"(Schema validation completed with \d+ warning\(s\) in )\d+\.\d+( seconds\.)",
                 )
                 .expect("valid regex"),
                 b"${1}0.000${2}",
             ),
             (
-                Regex::new(r"(Validated )\d+(?:\.\d+)?( needs/s\.)").expect("valid regex"),
+                regex::bytes::Regex::new(r"(Validated )\d+(?:\.\d+)?( needs/s\.)")
+                    .expect("valid regex"),
                 b"${1}0${2}",
             ),
             (
-                Regex::new(r#"("validated_needs_per_second": )\d+(?:\.\d+)?"#)
+                regex::bytes::Regex::new(r#"("validated_needs_per_second": )\d+(?:\.\d+)?"#)
                     .expect("valid regex"),
                 b"${1}0",
             ),
@@ -1537,16 +1536,7 @@ fn display_bytes(bytes: &[u8]) -> String {
 }
 
 fn first_difference_line(expected: &str, actual: &str) -> Option<usize> {
-    let mut expected_lines = expected.lines();
-    let mut actual_lines = actual.lines();
-    let mut line_number = 1;
-    loop {
-        match (expected_lines.next(), actual_lines.next()) {
-            (None, None) => return None,
-            (left, right) if left == right => line_number += 1,
-            _ => return Some(line_number),
-        }
-    }
+    first_differing_line(expected, actual).map(|(line, _, _)| line)
 }
 
 pub fn status_name(status: CaseStatus) -> &'static str {
@@ -2726,15 +2716,8 @@ fn first_difference_text(expected: &str, actual: &str) -> Option<(usize, String,
     let actual = normalize_crlf(actual.as_bytes());
     let expected = String::from_utf8_lossy(&expected);
     let actual = String::from_utf8_lossy(&actual);
-    let expected_lines = expected.lines().collect::<Vec<_>>();
-    let actual_lines = actual.lines().collect::<Vec<_>>();
-    let first = (0..expected_lines.len().max(actual_lines.len()))
-        .find(|index| expected_lines.get(*index) != actual_lines.get(*index))?;
-    Some((
-        first + 1,
-        cap_text(expected_lines.get(first).copied().unwrap_or_default()),
-        cap_text(actual_lines.get(first).copied().unwrap_or_default()),
-    ))
+    first_differing_line(&expected, &actual)
+        .map(|(line, expected, actual)| (line, cap_text(expected), cap_text(actual)))
 }
 
 fn diagnose_object_keys(
