@@ -17,6 +17,7 @@
 use crate::doctree::ids;
 use crate::doctree::pending::{Pending, PendingTransform, PyValue};
 use crate::doctree::{kinds, messages, AttrValue, Attrs, Node, NodeExt, Span};
+use crate::pyformat::py_int_canonical;
 use crate::transforms::state::{DocLoc, DocumentState, SourceRef};
 use crate::utils::py_splitlines;
 
@@ -14710,47 +14711,6 @@ fn nonnegative_int(s: &str) -> Result<OptVal, String> {
             py_repr(Some(s))
         )),
     }
-}
-
-/// Python int(str), canonicalized: arbitrary precision (the value is the
-/// canonical ASCII decimal string), Unicode Nd digits accepted with their
-/// decimal values, single underscores allowed BETWEEN digits, surrounding
-/// whitespace ignored. Returns (negative, digits-without-sign, canonical
-/// leading-zero-stripped ASCII string WITH sign).
-pub(crate) fn py_int_canonical(s: &str) -> Option<(bool, String)> {
-    // `int()` strips Unicode White_Space ONLY — probed over all 0x110000
-    // codepoints against CPython 3.12: it REJECTS the four C0 separators
-    // `\x1c`-`\x1f` that `str.isspace` admits, so Rust's `trim()` is the
-    // exactly-right predicate here and `py_isspace` would be wrong.
-    let t = s.trim();
-    let (neg, body) = match t.strip_prefix('-') {
-        Some(rest) => (true, rest),
-        None => (false, t.strip_prefix('+').unwrap_or(t)),
-    };
-    if body.is_empty() {
-        return None;
-    }
-    let mut digits = String::with_capacity(body.len());
-    let mut prev_underscore = true; // leading underscore rejected
-    for c in body.chars() {
-        if c == '_' {
-            if prev_underscore {
-                return None;
-            }
-            prev_underscore = true;
-            continue;
-        }
-        let d = super::digits::decimal_digit_value(c)?;
-        digits.push(char::from(b'0' + d as u8));
-        prev_underscore = false;
-    }
-    if prev_underscore {
-        // trailing underscore (or all-underscores)
-        return None;
-    }
-    let stripped = digits.trim_start_matches('0');
-    let canonical = if stripped.is_empty() { "0" } else { stripped };
-    Some((neg && canonical != "0", canonical.to_string()))
 }
 
 fn py_int_display(neg: bool, digits: &str) -> String {

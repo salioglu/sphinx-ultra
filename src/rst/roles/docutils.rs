@@ -147,7 +147,7 @@ pub(crate) fn unimplemented(call: &RoleCall<'_>) -> String {
 
 /// A Python `int`, as `int(text)` makes one of a string: its sign and its
 /// canonical decimal digits, at any precision
-/// (`crate::rst::block::py_int_canonical`: surrounding whitespace, one
+/// (`crate::pyformat::py_int_canonical`: surrounding whitespace, one
 /// sign, Unicode decimal digits and single underscores between them).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PyInt {
@@ -158,7 +158,7 @@ pub(crate) struct PyInt {
 impl PyInt {
     /// `int(text)`, or `None` where Python raises `ValueError`.
     pub(crate) fn parse(text: &str) -> Option<PyInt> {
-        let (negative, digits) = crate::rst::block::py_int_canonical(text)?;
+        let (negative, digits) = crate::pyformat::py_int_canonical(text)?;
         Some(PyInt { negative, digits })
     }
 

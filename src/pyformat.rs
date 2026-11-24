@@ -1,7 +1,8 @@
 //! Python's string formatting, as CPython 3.12.2 runs it, for the
 //! configuration values Sphinx 9.1.0 formats with it: `str.format` over the
 //! fields a `numfig_format`, an explicit `:numref:` title or
-//! `math_eqref_format` names ([`format_new_style`]).
+//! `math_eqref_format` names ([`format_new_style`]); and `int()` over a
+//! `str` ([`py_int_canonical`]).
 
 use crate::rst::digits::decimal_digit_value;
 use crate::rst::SphinxCrash;
@@ -526,6 +527,47 @@ fn suggestion_distance(a: &[char], b: &[char], max_cost: usize) -> usize {
         }
     }
     result
+}
+
+/// Python int(str), canonicalized: arbitrary precision (the value is the
+/// canonical ASCII decimal string), Unicode Nd digits accepted with their
+/// decimal values, single underscores allowed BETWEEN digits, surrounding
+/// whitespace ignored. Returns (negative, digits-without-sign, canonical
+/// leading-zero-stripped ASCII string WITH sign).
+pub(crate) fn py_int_canonical(s: &str) -> Option<(bool, String)> {
+    // `int()` strips Unicode White_Space ONLY — probed over all 0x110000
+    // codepoints against CPython 3.12: it REJECTS the four C0 separators
+    // `\x1c`-`\x1f` that `str.isspace` admits, so Rust's `trim()` is the
+    // exactly-right predicate here and `py_isspace` would be wrong.
+    let t = s.trim();
+    let (neg, body) = match t.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, t.strip_prefix('+').unwrap_or(t)),
+    };
+    if body.is_empty() {
+        return None;
+    }
+    let mut digits = String::with_capacity(body.len());
+    let mut prev_underscore = true; // leading underscore rejected
+    for c in body.chars() {
+        if c == '_' {
+            if prev_underscore {
+                return None;
+            }
+            prev_underscore = true;
+            continue;
+        }
+        let d = decimal_digit_value(c)?;
+        digits.push(char::from(b'0' + d as u8));
+        prev_underscore = false;
+    }
+    if prev_underscore {
+        // trailing underscore (or all-underscores)
+        return None;
+    }
+    let stripped = digits.trim_start_matches('0');
+    let canonical = if stripped.is_empty() { "0" } else { stripped };
+    Some((neg && canonical != "0", canonical.to_string()))
 }
 
 #[cfg(test)]
