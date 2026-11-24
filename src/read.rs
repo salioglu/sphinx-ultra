@@ -794,6 +794,9 @@ mod tests {
                 "<SRCDIR>/index.rst.rst:10: WARNING: line number spec is out of range(1-1): '9'",
             ]
         );
+        // `log_parse_warnings` sorts the log, so what is left to check is
+        // that every record drew its own seq, which the sort's stability
+        // could not order otherwise.
         let keys: Vec<OrderKey> = read
             .outcome
             .state()
@@ -801,9 +804,10 @@ mod tests {
             .iter()
             .map(LogRecord::key)
             .collect();
-        let mut sorted = keys.clone();
-        sorted.sort();
-        assert_eq!(keys, sorted, "the log is in creation order");
+        assert!(
+            keys.windows(2).all(|pair| pair[0] < pair[1]),
+            "two records share a key: {keys:?}"
+        );
         assert!(read.outcome.output.registry.log_warnings.is_empty());
     }
 
