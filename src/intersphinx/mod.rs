@@ -188,7 +188,8 @@ pub fn mapping_config_error(errors: usize) -> String {
     }
 }
 
-/// Python's `repr()` for the JSON shapes a `conf.py` literal can produce.
+/// Python's `repr()` for the JSON shapes a `conf.py` literal can produce,
+/// a number's through [`crate::pyformat::number_str`].
 /// Sequences render as lists — see [`validate_mapping`]'s doc comment for
 /// why a tuple cannot be told apart here.
 fn py_repr_value(value: &JsonValue) -> String {
@@ -196,7 +197,7 @@ fn py_repr_value(value: &JsonValue) -> String {
         JsonValue::Null => "None".to_string(),
         JsonValue::Bool(true) => "True".to_string(),
         JsonValue::Bool(false) => "False".to_string(),
-        JsonValue::Number(n) => n.to_string(),
+        JsonValue::Number(n) => crate::pyformat::number_str(n),
         JsonValue::String(s) => py_repr_str(s),
         JsonValue::Array(items) => {
             let inner: Vec<String> = items.iter().map(py_repr_value).collect();

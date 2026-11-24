@@ -368,9 +368,13 @@ fn manpage_info(manpage: &str) -> (String, String, Option<String>) {
 /// the role is. A field that looks up an attribute its value has
 /// (`{page.upper}`) is not modelled (T19b's divergence list): Sphinx
 /// formats the attribute's text, a bound method's, which names its address
-/// in memory, and reads on, so a later field still raises what it raises
-/// ([`FormatError::NotModelled`]); where nothing is raised, the reference
-/// keeps `manpages_url` as written.
+/// in memory, and reads on. The port reads on past such a value rendered
+/// without a spec, or after `!s`, `!r` or `!a` with a spec a `str` takes,
+/// so a later field still raises what it raises
+/// ([`FormatError::NotModelled`]). Where the format completes, or stops at
+/// a lookup on such a value, a spec built from its text or a spec that
+/// renders it without a conversion, the reference keeps `manpages_url` as
+/// written, where Python may raise.
 fn format_manpages_url(
     url: &str,
     info: &(String, String, Option<String>),

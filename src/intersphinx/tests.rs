@@ -273,6 +273,22 @@ fn mapping_validation_reports_sphinxs_exact_error_texts() {
              Inventory locations must be non-empty strings or None."
         ]
     );
+
+    // `%r` of a float is its `repr()`. Sphinx 9.1.0's stream, probed.
+    let (_, errors) = validate_mapping(&conf_value(
+        "{'p': ('https://x/', 0.00001), 'q': 0.0000001, 'r': (1e16, None)}\n",
+    ));
+    assert_eq!(
+        errors,
+        vec![
+            "Invalid inventory location value `1e-05` in intersphinx_mapping['p'][1]. \
+             Inventory locations must be non-empty strings or None.",
+            "Invalid value `1e-07` in intersphinx_mapping['q']. \
+             Expected a two-element tuple or list.",
+            "Invalid target URI value `1e+16` in intersphinx_mapping['r'][0]. \
+             Target URIs must be unique non-empty strings.",
+        ]
+    );
 }
 
 #[test]

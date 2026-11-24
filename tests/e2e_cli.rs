@@ -5435,6 +5435,55 @@ fn a_field_after_an_attribute_value_exits_two() {
     );
 }
 
+/// Decision 13: after `!r` the value of an attribute a string has
+/// (`{number.upper!r}`, whose text sphinx-ultra does not model) is a
+/// `str`, so Python checks its format spec as `str.__format__` does,
+/// whatever the text, and reads on. In `math_eqref_format`, a spec a `str`
+/// does not take crashes Sphinx 9.1.0 where the reference is resolved, and
+/// a later field that names no argument is the `KeyError` it warns about.
+/// Probed.
+#[test]
+fn math_eqref_format_checks_a_spec_after_a_converted_attribute_value() {
+    let test = "t17a3-crash-eqref-converted-attribute-spec";
+    assert_eq!(
+        crash_stream(
+            test,
+            &[
+                (
+                    "conf.py",
+                    "project = 'Temp'\nmath_eqref_format = '{number.upper!r:d}'\n",
+                ),
+                ("index.rst", EQUATION),
+            ],
+            &[],
+            &[],
+        ),
+        crash_report(
+            None,
+            "ValueError: Unknown format code 'd' for object of type 'str'",
+            Some("<SRCDIR>/index.rst:7")
+        ),
+        "{test}"
+    );
+    let test = "t17a3-eqref-converted-attribute-then-key";
+    let src = temp_source(
+        test,
+        &[
+            (
+                "conf.py",
+                "project = 'Temp'\nmath_eqref_format = '{number.upper!r:>3} {nope}'\n",
+            ),
+            ("index.rst", EQUATION),
+        ],
+    );
+    let (result, written) = warning_stream(&src, &out_dir(test), &[]);
+    assert!(result.status.success(), "{test}: {}", stderr_of(&result));
+    assert_eq!(
+        written, "<SRCDIR>/index.rst:7: WARNING: Invalid math_eqref_format: KeyError('nope')\n",
+        "{test}"
+    );
+}
+
 /// docutils reads a `unicode` directive's character code with
 /// `chr(int(code))`, or `chr(int(value, 16))` for a hexadecimal one, and
 /// CPython 3.12's `chr` takes a C `int`: up to `2**31 - 1` a code past

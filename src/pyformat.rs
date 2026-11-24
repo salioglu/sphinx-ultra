@@ -19,7 +19,10 @@
 //!   a character;
 //! - `repr()` of a `float` ([`float_repr`]): a length docutils reads with
 //!   `float()` (`get_measure`), and a float constant `ast.unparse` writes
-//!   (the Python domain's signatures).
+//!   (the Python domain's signatures);
+//! - `str()` of a number a `conf.py` literal holds ([`number_str`]): what
+//!   the `.buildinfo` config hash hashes (`stable_hash`), and `%r` in the
+//!   errors of `intersphinx_mapping`.
 //!
 //! Each raises what CPython raises, with CPython's message, which Sphinx's
 //! crash report prints (decision 13); each caller decides which of those
@@ -70,14 +73,17 @@ pub(crate) enum FormatError {
     /// The value of an attribute that the value has (`{number.upper}`, a
     /// bound method mostly, whose text names its address in memory), which
     /// Python goes on with and the port does not model (T19b's divergence
-    /// list). Rendered without a spec, it is read past, as Python reads
-    /// past it, and the rest of the format raises what it raises; this is
-    /// the outcome where the next step needs the value itself (a lookup on
-    /// it, a spec built from its text, or rendering it with a spec, after
-    /// a conversion or not), or where the format otherwise completes.
-    /// Carries the whole text of the first field of the format that
-    /// reaches such a value or builds its spec from one, which the callers
-    /// that catch `KeyError` report as one.
+    /// list). Rendered without a spec, or after `!s`, `!r` or `!a` with a
+    /// spec a `str` takes, it is read past, as Python reads past it, and
+    /// the rest of the format raises what it raises; after a conversion it
+    /// is a `str`, whose spec raises what `str.__format__` raises whatever
+    /// the text. This is the outcome where the next step needs the value
+    /// itself (a lookup on it, a spec built from its text, or rendering it
+    /// with a spec and no conversion, whose outcome depends on its type),
+    /// or where the format otherwise completes. Carries the whole text of
+    /// the first field of the format that reaches such a value or builds
+    /// its spec from one, which the callers that catch `KeyError` report
+    /// as one.
     NotModelled(String),
 }
 
@@ -173,10 +179,11 @@ struct Arguments<'k, 'v> {
 /// and `}}` are a literal brace, and a single `}`, or a `{` that ends the
 /// format, is a `ValueError`; each field parsed ([`parse_field`]) and
 /// filled ([`output_field`]) before the next is read. A field that renders
-/// a value the port does not model is read past, as Python reads past
-/// it, so that the rest of the format raises what it raises; the first
-/// such field names the format's [`FormatError::NotModelled`], whether the
-/// format completes ([`Built::NotModelled`]) or a later field stops it.
+/// a value the port does not model, without a spec or converted with a
+/// spec a `str` takes, is read past, as Python reads past it, so that the
+/// rest of the format raises what it raises; the first such field names
+/// the format's [`FormatError::NotModelled`], whether the format completes
+/// ([`Built::NotModelled`]) or a later field stops it.
 fn build_string<'f>(
     chars: &'f [char],
     arguments: &Arguments<'_, '_>,
@@ -227,8 +234,9 @@ fn build_string<'f>(
 /// looked up ([`get_field_object`]), converted ([`convert`]), its spec
 /// expanded with the same arguments when it holds a field, then rendered
 /// ([`render_field`]). `None` for a value the port does not model,
-/// rendered without a spec, whose text Python writes and the port does not
-/// know. A spec built from such a value is [`FormatError::NotModelled`].
+/// rendered without a spec, or converted and rendered with a spec a `str`
+/// takes, whose text Python writes and the port does not know. A spec
+/// built from such a value is [`FormatError::NotModelled`].
 fn output_field(
     field: &FormatField<'_>,
     arguments: &Arguments<'_, '_>,
@@ -743,7 +751,9 @@ fn suggestion_distance(a: &[char], b: &[char], max_cost: usize) -> usize {
 /// CPython's `do_conversion`: `!s`, `!r` and `!a` give `str()`, `repr()`
 /// ([`py_repr_str`]) and `ascii()` ([`ascii`]) of the value, `'None'` for
 /// `None`; any other character is a `ValueError` that names it as itself
-/// from `!` to `~`, and by its code point in hex otherwise.
+/// from `!` to `~`, and by its code point in hex otherwise. A value the
+/// port does not model stays one, a `str` whose text it does not know
+/// once converted, which [`render_field`] tells by the field's conversion.
 fn convert(object: Object, conversion: Option<char>) -> Result<Object, FormatError> {
     let Some(conversion) = conversion else {
         return Ok(object);
@@ -773,7 +783,11 @@ fn convert(object: Object, conversion: Option<char>) -> Result<Object, FormatErr
 /// and `None` by `object.__format__`, which gives `'None'` for an empty
 /// spec and raises `TypeError` for any other. A value the port does not
 /// model gives `None` for an empty spec, its text, which the port does not
-/// know, and is [`FormatError::NotModelled`] for any other.
+/// know. After the field's `!s`, `!r` or `!a` it is a `str` whose text the
+/// port does not know: its spec raises what `str.__format__` raises
+/// whatever the text ([`check_unknown_str`]), and otherwise gives `None`
+/// too. With any other spec it is [`FormatError::NotModelled`], whose
+/// outcome depends on the value's type.
 fn render_field(
     object: Object,
     spec: &[char],
@@ -786,21 +800,38 @@ fn render_field(
             "unsupported format string passed to NoneType.__format__",
         )),
         Object::NotModelled if spec.is_empty() => Ok(None),
+        Object::NotModelled if field.conversion.is_some() => check_unknown_str(spec).map(|()| None),
         Object::NotModelled => Err(not_modelled(field.text)),
     }
 }
 
 /// `str.__format__(spec)` (CPython's `_PyUnicode_FormatAdvancedWriter`):
-/// the text itself for an empty spec; otherwise the spec as `s` and `<`
-/// default it ([`StrSpec::parse`]), any type but `s` a `ValueError`, then
-/// `format_string_internal`: a sign, `z`, `#` or the `=` alignment is a
-/// `ValueError`, the precision keeps that many code points, and the fill
-/// pads them to the width, its odd one on the right when centred
+/// the text itself for an empty spec; otherwise the spec as a `str` takes
+/// it ([`str_spec`]), then the precision keeps that many code points, and
+/// the fill pads them to the width, its odd one on the right when centred
 /// (`calc_padding`).
 fn format_str(text: &str, spec: &[char]) -> Result<String, FormatError> {
     if spec.is_empty() {
         return Ok(text.to_string());
     }
+    let spec = str_spec(spec)?;
+    let len = text.chars().count();
+    let kept = spec.precision.map_or(len, |precision| precision.min(len));
+    let total = spec.width.map_or(kept, |width| width.max(kept));
+    let left = match spec.align {
+        '>' => total - kept,
+        '^' => (total - kept) / 2,
+        _ => 0,
+    };
+    padded(text, kept, spec.fill, left, total - kept - left)
+}
+
+/// A non-empty spec as `str.__format__` takes it, which raises the same
+/// whatever the text: the spec as `s` and `<` default it
+/// ([`StrSpec::parse`]), any type but `s` a `ValueError`, then
+/// `format_string_internal`'s checks, where a sign, `z`, `#` or the `=`
+/// alignment is a `ValueError`.
+fn str_spec(spec: &[char]) -> Result<StrSpec, FormatError> {
     let spec = StrSpec::parse(spec)?;
     if spec.kind != 's' {
         return Err(value_error(format!(
@@ -828,20 +859,30 @@ fn format_str(text: &str, spec: &[char]) -> Result<String, FormatError> {
             "'=' alignment not allowed in string format specifier",
         ));
     }
-    let len = text.chars().count();
-    let kept = spec.precision.map_or(len, |precision| precision.min(len));
-    let total = spec.width.map_or(kept, |width| width.max(kept));
-    let left = match spec.align {
-        '>' => total - kept,
-        '^' => (total - kept) / 2,
-        _ => 0,
-    };
-    padded(text, kept, spec.fill, left, total - kept - left)
+    Ok(spec)
+}
+
+/// `str.__format__(spec)` over a `str` whose text the port does not know:
+/// `str()`, `repr()` or `ascii()` of a value it does not model. What
+/// [`format_str`] raises whatever the text: the spec's errors
+/// ([`str_spec`]), and the `MemoryError` of a width no allocation holds,
+/// which the text, far shorter than such a width, is padded to; room for
+/// the width's fill alone is tried, as [`padded`] tries it for an empty
+/// text.
+fn check_unknown_str(spec: &[char]) -> Result<(), FormatError> {
+    if spec.is_empty() {
+        return Ok(());
+    }
+    let spec = str_spec(spec)?;
+    if let Some(width) = spec.width {
+        reserved(width.checked_mul(spec.fill.len_utf8()))?;
+    }
+    Ok(())
 }
 
 /// The first `kept` characters of `text` between `left` and `right`
-/// copies of `fill`, or the `MemoryError` CPython's writer raises when no
-/// allocation holds them (`_PyUnicodeWriter_Prepare`).
+/// copies of `fill`, in the room [`reserved`] makes for them, or its
+/// `MemoryError`.
 fn padded(
     text: &str,
     kept: usize,
@@ -853,10 +894,21 @@ fn padded(
         .char_indices()
         .nth(kept)
         .map_or(text.len(), |(at, _)| at);
-    let bytes = left
-        .checked_add(right)
-        .and_then(|fills| fills.checked_mul(fill.len_utf8()))
-        .and_then(|fills| fills.checked_add(kept_bytes));
+    let mut out = reserved(
+        left.checked_add(right)
+            .and_then(|fills| fills.checked_mul(fill.len_utf8()))
+            .and_then(|fills| fills.checked_add(kept_bytes)),
+    )?;
+    out.extend(std::iter::repeat_n(fill, left));
+    out.push_str(&text[..kept_bytes]);
+    out.extend(std::iter::repeat_n(fill, right));
+    Ok(out)
+}
+
+/// An empty `String` that holds `bytes` (`None`: more than `usize`
+/// counts), or the `MemoryError` CPython's writer raises when no
+/// allocation holds them (`_PyUnicodeWriter_Prepare`).
+fn reserved(bytes: Option<usize>) -> Result<String, FormatError> {
     let mut out = String::new();
     if bytes.is_none_or(|bytes| out.try_reserve_exact(bytes).is_err()) {
         return Err(FormatError::Crash(SphinxCrash::python(
@@ -865,9 +917,6 @@ fn padded(
             LogLocation::None,
         )));
     }
-    out.extend(std::iter::repeat_n(fill, left));
-    out.push_str(&text[..kept_bytes]);
-    out.extend(std::iter::repeat_n(fill, right));
     Ok(out)
 }
 
@@ -1407,6 +1456,17 @@ pub(crate) fn float_repr(value: f64) -> String {
     }
 }
 
+/// Python's `str()` of a number a `conf.py` literal holds, which `repr()`
+/// gives too, read as a JSON number: an `int`'s digits, and a `float`'s
+/// `repr()` ([`float_repr`]), which serde_json's own text is not (`0.00001`
+/// and `1e-7` for `1e-05` and `1e-07`).
+pub(crate) fn number_str(number: &serde_json::Number) -> String {
+    match number.as_f64() {
+        Some(value) if number.is_f64() => float_repr(value),
+        _ => number.to_string(),
+    }
+}
+
 /// The text `float()` and `int()` read in place of the `str` `text`
 /// (CPython's `_PyUnicode_TransformDecimalAndSpaceToASCII`): each
 /// character below DEL as it is, whitespace past ASCII a space, a decimal
@@ -1810,29 +1870,22 @@ mod tests {
     /// Not modelled (T19b's divergence list): the value of an attribute
     /// that the value has (`{number.upper}`, `{number.__class__}`), which
     /// Python goes on with, a bound method mostly, whose text names its
-    /// address in memory. Rendered without a spec, the port reads on past
-    /// it as Python does, so that what the rest of the format raises,
-    /// which does not depend on that text, is raised: a later field's
-    /// lookup, conversion, spec and rendering, the parser's errors, a
-    /// nested field of the spec. It stops at once where the next step needs
-    /// the value itself: a lookup on it, a spec built from its text, or
-    /// rendering it with a spec, after a conversion or not. Each of those,
-    /// and a format that otherwise completes, is [`FormatError::NotModelled`]
+    /// address in memory. Rendered without a spec, or after `!s`, `!r` or
+    /// `!a` with a spec a `str` takes, the port reads on past it as Python
+    /// does, so that what the rest of the format raises, which does not
+    /// depend on that text, is raised: a later field's lookup, conversion,
+    /// spec and rendering, the parser's errors, a nested field of the spec.
+    /// After a conversion the value is a `str` whose text the port does not
+    /// know, and its spec raises what `str.__format__` raises whatever the
+    /// text: the spec's own errors, a type, sign, `z`, `#` or `=` a `str`
+    /// does not take, a width no allocation holds. The port stops at once
+    /// where the next step needs the value itself: a lookup on it, a spec
+    /// built from its text, or rendering it with a spec and no conversion,
+    /// whose outcome depends on the value's type. Each of those, and a
+    /// format that otherwise completes, is [`FormatError::NotModelled`]
     /// with the whole text of the first field of the format that reaches
-    /// such a value or builds its spec from one. CPython 3.12 gives, for
-    /// the rows not modelled, in order: the method's text; `TypeError:
-    /// 'builtin_function_or_method' object is not subscriptable`;
-    /// `AttributeError: 'builtin_function_or_method' object has no
-    /// attribute 'x'`; the method's text (`!r`); `TypeError: unsupported
-    /// format string passed to builtin_function_or_method.__format__`;
-    /// `<class 'str'>`; `1 ` and the method's text; that `TypeError` again,
-    /// after the method's text; `ValueError: Invalid format specifier '<the
-    /// method's text>' for object of type 'str'`; that `TypeError` again;
-    /// `ValueError: Unknown format code 'd' for object of type 'str'` and
-    /// `KeyError: 'nope'`, which the port does not reach, as it stops
-    /// where `repr()`'s text takes a spec; `s`, the first character of
-    /// `str.__doc__`; then `<class 'NoneType'>`, and the manual-page URL
-    /// with the method's text and `  1`.
+    /// such a value or builds its spec from one. What CPython 3.12 gives
+    /// for each row not modelled is in the comment above it.
     //
     // oracle (CPython 3.12, the locked core profile): each title below
     //   `.format(number='1', name='Cap')`, and each URL
@@ -1841,32 +1894,163 @@ mod tests {
     #[test]
     fn the_value_of_an_attribute_a_value_has_is_not_modelled() {
         let not_modelled = |text: &str| format!("not modelled: {text}");
+        let not_allowed =
+            |what: &str| format!("ValueError: {what} not allowed in string format specifier");
+        let unknown_code = |code: &str| {
+            format!("ValueError: Unknown format code '{code}' for object of type 'str'")
+        };
+        let too_many_digits = "ValueError: Too many decimal digits in format string";
         for (title, expected) in [
+            // The method's text.
             ("{number.upper}", not_modelled("number.upper")),
+            // `TypeError: 'builtin_function_or_method' object is not
+            // subscriptable`.
             ("{number.upper[0]}", not_modelled("number.upper[0]")),
+            // `AttributeError: 'builtin_function_or_method' object has no
+            // attribute 'x'`.
             ("{number.upper.x}", not_modelled("number.upper.x")),
+            // The method's text, by `repr()`.
             ("{number.upper!r}", not_modelled("number.upper!r")),
+            // `TypeError: unsupported format string passed to
+            // builtin_function_or_method.__format__`.
             ("{number.upper:>3}", not_modelled("number.upper:>3")),
+            // `<class 'str'>`.
             ("{number.__class__}", not_modelled("number.__class__")),
+            // `1 ` and the method's text.
             ("{number} {number.upper!r}", not_modelled("number.upper!r")),
+            // That `TypeError` again, after the method's text.
             (
                 "{number.upper} {number.lower:>3}",
                 not_modelled("number.upper"),
             ),
+            // `ValueError: Invalid format specifier '<the method's text>'
+            // for object of type 'str'`.
             (
                 "{number:{number.upper}}",
                 not_modelled("number:{number.upper}"),
             ),
+            // That `TypeError` again.
             (
                 "{number.upper:{number.upper}}",
                 not_modelled("number.upper:{number.upper}"),
             ),
-            ("{number.upper!r:d}", not_modelled("number.upper!r:d")),
+            // `s`, the first character of `str.__doc__`.
+            ("{number.__doc__[0]}", not_modelled("number.__doc__[0]")),
+            // `ValueError: Unknown format code 'd' for object of type
+            // 'str'`: `str.__doc__` is a `str`, a type the port does not
+            // know the value has.
+            ("{number.__doc__:d}", not_modelled("number.__doc__:d")),
+            // The method's text by `repr()` or `ascii()`, padded, or kept
+            // whole.
+            ("{number.upper!r:>3}", not_modelled("number.upper!r:>3")),
+            ("{number.upper!a:*^60}", not_modelled("number.upper!a:*^60")),
+            ("{number.upper!r:s}", not_modelled("number.upper!r:s")),
             (
-                "{number.upper!r:>3} {nope}",
+                "{number.upper!r:\u{665}}",
+                not_modelled("number.upper!r:\u{665}"),
+            ),
+            (
+                "{number.upper!r:{number}}",
+                not_modelled("number.upper!r:{number}"),
+            ),
+            // The padded text, then the method's text.
+            (
+                "{number.upper!r:>3} {number.lower}",
                 not_modelled("number.upper!r:>3"),
             ),
-            ("{number.__doc__[0]}", not_modelled("number.__doc__[0]")),
+            // `TypeError: unsupported format string passed to
+            // builtin_function_or_method.__format__`, after the padded text.
+            (
+                "{number.upper!r:>3} {number.lower:>3}",
+                not_modelled("number.upper!r:>3"),
+            ),
+            // `ValueError: Invalid format specifier '<the method's text by
+            // repr()>' for object of type 'str'`.
+            (
+                "{number:{number.upper!r}}",
+                not_modelled("number:{number.upper!r}"),
+            ),
+            (
+                "{number.upper!r:{number.upper}}",
+                not_modelled("number.upper!r:{number.upper}"),
+            ),
+            // After `!s`, `!r` or `!a`, what `str.__format__` raises for
+            // the spec, whatever the text.
+            ("{number.upper!r:d}", unknown_code("d")),
+            ("{number.upper!a:x}", unknown_code("x")),
+            ("{number.upper!r:\u{e9}}", unknown_code("\\xe9")),
+            ("{number.__class__!r:d}", unknown_code("d")),
+            ("{number.__doc__!r:d}", unknown_code("d")),
+            ("{number.upper!s:+}", not_allowed("Sign")),
+            ("{number.upper!a: }", not_allowed("Space")),
+            (
+                "{number.upper!r:z}",
+                not_allowed("Negative zero coercion (z)"),
+            ),
+            ("{number.upper!s:#}", not_allowed("Alternate form (#)")),
+            ("{number.upper!a:=5}", not_allowed("'=' alignment")),
+            (
+                "{number.upper!r:,}",
+                "ValueError: Cannot specify ',' with 's'.".to_string(),
+            ),
+            (
+                "{number.upper!s:_}",
+                "ValueError: Cannot specify '_' with 's'.".to_string(),
+            ),
+            (
+                "{number.upper!a:,_}",
+                "ValueError: Cannot specify both ',' and '_'.".to_string(),
+            ),
+            (
+                "{number.upper!r:.}",
+                "ValueError: Format specifier missing precision".to_string(),
+            ),
+            (
+                "{number.upper!s:ss}",
+                "ValueError: Invalid format specifier 'ss' for object of type 'str'".to_string(),
+            ),
+            (
+                "{number.upper!r:9223372036854775808}",
+                too_many_digits.to_string(),
+            ),
+            (
+                "{number.upper!r:.9223372036854775808}",
+                too_many_digits.to_string(),
+            ),
+            (
+                "{number.upper!r:1000000000000000000}",
+                "MemoryError".to_string(),
+            ),
+            (
+                "{number.upper!s:>9223372036854775807}",
+                "MemoryError".to_string(),
+            ),
+            (
+                "{number.upper!a:\u{1f600}^1000000000000000000}",
+                "MemoryError".to_string(),
+            ),
+            // After a spec a `str` takes, what the rest of the format
+            // raises.
+            ("{number.upper!r:>3} {nope}", "KeyError: 'nope'".to_string()),
+            (
+                "{number} {number.upper!r:>3} {nope}",
+                "KeyError: 'nope'".to_string(),
+            ),
+            (
+                "{number.__class__!s:>3} {nope}",
+                "KeyError: 'nope'".to_string(),
+            ),
+            ("{number.upper!r:>3} {number:d}", unknown_code("d")),
+            ("{number.upper!r:>3} {number.lower!s:d}", unknown_code("d")),
+            (
+                "{number.upper!s:<5} {0}",
+                "IndexError: Replacement index 0 out of range for positional args tuple"
+                    .to_string(),
+            ),
+            (
+                "{number.upper!a:^7} {name.real}",
+                "AttributeError: 'str' object has no attribute 'real'".to_string(),
+            ),
             // What Python raises before it needs the value.
             (
                 "{number.upper.}",
@@ -1968,15 +2152,55 @@ mod tests {
         };
         let section = Value::Str("1");
         for (url, section, expected) in [
+            // `<class 'NoneType'>`.
             (
                 "{section.__class__}",
                 Value::None,
                 not_modelled("section.__class__"),
             ),
+            // The URL with the method's text and `  1`.
             (
                 "https://m/{page.upper}/{section:>3}",
                 section,
                 not_modelled("page.upper"),
+            ),
+            // The URL with the method's text by `str()`, padded.
+            (
+                "https://m/{page.upper!s:>3}",
+                section,
+                not_modelled("page.upper!s:>3"),
+            ),
+            // `https://m/<class 'NoneType'>/None`.
+            (
+                "https://m/{section.__class__!r:>3}/{section}",
+                Value::None,
+                not_modelled("section.__class__!r:>3"),
+            ),
+            ("https://m/{page.upper!r:d}", section, unknown_code("d")),
+            (
+                "https://m/{page.upper!a:,}",
+                section,
+                "ValueError: Cannot specify ',' with 's'.".to_string(),
+            ),
+            (
+                "https://m/{section.__class__!s:d}",
+                Value::None,
+                unknown_code("d"),
+            ),
+            (
+                "https://m/{page.upper!r:>3}/{nope}",
+                section,
+                "KeyError: 'nope'".to_string(),
+            ),
+            (
+                "https://m/{page.upper!r:>3}/{0}",
+                section,
+                "ValueError: Format string contains positional fields".to_string(),
+            ),
+            (
+                "https://m/{page.upper!r:<4}/{section:>3}",
+                Value::None,
+                "TypeError: unsupported format string passed to NoneType.__format__".to_string(),
             ),
             (
                 "https://m/{page.upper}/{nope}",

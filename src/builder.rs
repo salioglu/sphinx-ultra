@@ -412,11 +412,13 @@ fn stable_collection(values: impl Iterator<Item = StableValue>) -> String {
     md5_hex(&format!("[{repr}]"))
 }
 
+/// A `conf.py` literal as `stable_hash` sees it, which hashes `str()` of a
+/// number ([`crate::pyformat::number_str`]).
 fn stable_hash_json(value: &serde_json::Value) -> StableValue {
     match value {
         serde_json::Value::Null => StableValue::None,
         serde_json::Value::Bool(value) => StableValue::Bool(*value),
-        serde_json::Value::Number(value) => StableValue::Raw(value.to_string()),
+        serde_json::Value::Number(value) => StableValue::Raw(crate::pyformat::number_str(value)),
         serde_json::Value::String(value) => StableValue::String(value.clone()),
         serde_json::Value::Array(values) => {
             StableValue::List(values.iter().map(stable_hash_json).collect())
@@ -3295,6 +3297,8 @@ mod tests {
     /// default rule. The `sphinx_rtd_theme` value is from
     /// `BuildInfo(app.config, app.tags, {'html'})` over the same config,
     /// because Sphinx cannot load that theme in the oracle environment.
+    /// `stable_hash` hashes `str()` of a float, its `repr()`: `1e+16`,
+    /// `1e-05`, `1.5e+17`, `1e-07`, `1.0`.
     #[test]
     fn buildinfo_config_hash_matches_sphinx_for_configured_values() {
         let cases = [
@@ -3334,6 +3338,14 @@ mod tests {
             (
                 "project = 'Fixture'\nhtml_theme_options = {'nosidebar': True}\n",
                 "a2a03cb33b0b36892e5a3836146f8e60",
+            ),
+            (
+                "project = 'Fixture'\nhtml_context = {'a': 1e16, 'b': 0.00001}\n",
+                "331b237fdfa68d15a92ce0941673f23f",
+            ),
+            (
+                "project = 'Fixture'\nhtml_theme_options = {'w': 1.5e17, 'x': 0.0000001, 'y': 1.0}\n",
+                "720f1792bff65e847089cadb967c5a1d",
             ),
             (
                 "project = 'Fixture'\nhtml_last_updated_fmt = '%Y'\n",
