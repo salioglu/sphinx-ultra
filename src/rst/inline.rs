@@ -836,7 +836,7 @@ impl<'a> Inliner<'a> {
     /// `assert self.name == self.orig_name.lower()`, which crashes Sphinx
     /// with an `AssertionError` when the role is called by another name —
     /// through a custom role, or as a default role named with capitals;
-    /// that crash is not modelled.
+    /// [`Self::call_role`] keeps that crash instead of calling this.
     ///
     /// A name that does not name a usable role produces no content at all in
     /// Sphinx, and a warning located at the role. Here the warning text is
@@ -1099,7 +1099,18 @@ impl<'a> Inliner<'a> {
                 let nodes = roles::sphinx::xref(&call, &xref_role, &env, self.state, None);
                 self.push_nodes(nodes);
             }
-            RoleFn::External(orig_name) => self.emit_external_xref(orig_name, &call),
+            // `IntersphinxRole.run` opens with `assert self.name ==
+            // self.orig_name.lower()` (`_resolve.py:379`): called by any
+            // other name, through a custom role or as a default role whose
+            // name has a capital, the role crashes Sphinx with an
+            // `AssertionError` that has no message (decision 13).
+            RoleFn::External(orig_name) => {
+                if call.name == orig_name.to_lowercase() {
+                    self.emit_external_xref(orig_name, &call);
+                } else {
+                    self.crash(RoleCrash::python("AssertionError", String::new(), location));
+                }
+            }
         }
     }
 

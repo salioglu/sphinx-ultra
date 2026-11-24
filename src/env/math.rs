@@ -472,5 +472,77 @@ mod tests {
                 Some("Invalid math_eqref_format: KeyError('foo')".to_string())
             )
         );
+        // `str.format` reads `{{` and `}}` as a literal brace.
+        assert_eq!(
+            reference(false, config(true, ".", Some("{{Eq}} {number}"))),
+            ("{Eq} 1".to_string(), None)
+        );
+        assert_eq!(
+            reference(false, config(true, ".", Some("{{{number}}} and }}"))),
+            ("{1} and }".to_string(), None)
+        );
+    }
+
+    /// `MathDomain.resolve_any_xref` is the domain's `resolve_xref`
+    /// (`SP/sphinx/domains/math.py:136-150`), and the self-referential
+    /// retry of `intersphinx_resolve_self` calls the domain again
+    /// (`SP/sphinx/transforms/post_transforms/__init__.py:140-155`). A
+    /// `math_eqref_format` the number cannot fill warns `Invalid
+    /// math_eqref_format` at the reference, and the reference still links
+    /// to the equation as `(N)`: under `:any:` and after the retry, as
+    /// under `:eq:`. Probed on Sphinx 9.1.0 (each project's resolved
+    /// doctree and warning stream; the second loads intersphinx with
+    /// `intersphinx_resolve_self = 'self'`).
+    #[test]
+    fn an_unfillable_eqref_format_warns_and_resolves_any_and_the_retry() {
+        let math = MathConfig {
+            eqref_format: Some("{foo} {number}".to_string()),
+            ..MathConfig::default()
+        };
+        let resolve_self = crate::intersphinx::Intersphinx {
+            resolve_self: "self".to_string(),
+            ..crate::intersphinx::Intersphinx::default()
+        };
+        for (line, intersphinx) in [
+            (
+                "See :eq:`why` and :any:`why`.",
+                crate::intersphinx::Intersphinx::default(),
+            ),
+            ("Self :eq:`self:why` and :any:`self:why`.", resolve_self),
+        ] {
+            let project = merge_project(&[(
+                "index",
+                &format!("Title\n=====\n\n.. math:: x^2\n   :label: why\n\n{line}\n"),
+            )]);
+            let index = crate::transforms::test_support::resolved_with(
+                &project,
+                "index",
+                math.clone(),
+                &intersphinx,
+            );
+            let word = line.split(' ').next().unwrap_or_default();
+            assert_eq!(
+                index.body,
+                format!(
+                    "    <section ids=\"title\" names=\"title\">\n        <title>\n            \
+                     Title\n        <target refid=\"equation-why\">\n        <math_block \
+                     docname=\"index\" ids=\"equation-why\" label=\"why\" no-wrap=\"0\" \
+                     nowrap=\"0\" number=\"1\" xml:space=\"preserve\">\n            x^2\n            \
+                     \n        <paragraph>\n            {word} \n            <reference \
+                     internal=\"1\" refid=\"equation-why\">\n                (1)\n             \
+                     and \n            <reference internal=\"1\" refid=\"equation-why\">\n                \
+                     (1)\n            .\n"
+                ),
+                "{line}"
+            );
+            assert_eq!(
+                index.warnings,
+                [
+                    "<SRCDIR>/index.rst:7: WARNING: Invalid math_eqref_format: KeyError('foo')",
+                    "<SRCDIR>/index.rst:7: WARNING: Invalid math_eqref_format: KeyError('foo')",
+                ],
+                "{line}"
+            );
+        }
     }
 }

@@ -235,16 +235,32 @@ pub(crate) struct Resolved {
 /// resolves them, the later post-transforms left out: the dummy builder's
 /// `''` URIs, `numfig` off, no intersphinx, not nitpicky.
 pub(crate) fn resolved(project: &Project, docname: &str) -> Resolved {
+    resolved_with(
+        project,
+        docname,
+        crate::env::math::MathConfig::default(),
+        &Intersphinx::default(),
+    )
+}
+
+/// [`resolved`] under the math domain's configuration `math`, with the
+/// loaded intersphinx state `intersphinx` (its `intersphinx_resolve_self`,
+/// for one).
+pub(crate) fn resolved_with(
+    project: &Project,
+    docname: &str,
+    math: crate::env::math::MathConfig,
+    intersphinx: &Intersphinx,
+) -> Resolved {
     let formats = BTreeMap::new();
-    let intersphinx = Intersphinx::default();
     let resolver = Resolver {
         env: &project.env,
         numfig: false,
         numfig_format: &formats,
-        math: crate::env::math::MathConfig::default(),
+        math,
         doctree: &|_| None,
         relative_uri: &|_, _| String::new(),
-        intersphinx: &intersphinx,
+        intersphinx,
     };
     let nitpick = NitpickConfig {
         nitpicky: false,

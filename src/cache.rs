@@ -21,6 +21,9 @@ pub struct BuildCache {
     file_hashes: Arc<RwLock<HashMap<PathBuf, String>>>,
     hit_count: Arc<RwLock<usize>>,
     miss_count: Arc<RwLock<usize>>,
+    /// How many documents [`Self::store_document`] has stored, each one
+    /// written to its cache file.
+    store_count: Arc<RwLock<usize>>,
     max_size_mb: usize,
     expiration_duration: Duration,
 }
@@ -65,6 +68,7 @@ impl BuildCache {
             file_hashes: Arc::new(RwLock::new(HashMap::new())),
             hit_count: Arc::new(RwLock::new(0)),
             miss_count: Arc::new(RwLock::new(0)),
+            store_count: Arc::new(RwLock::new(0)),
             max_size_mb,
             expiration_duration: Duration::from_secs(expiration_hours * 60 * 60),
         };
@@ -197,6 +201,7 @@ impl BuildCache {
 
         // Persist to disk asynchronously
         self.persist_to_disk(file_path, document)?;
+        *self.store_count.write() += 1;
 
         Ok(())
     }
@@ -234,6 +239,7 @@ impl BuildCache {
         self.file_hashes.write().clear();
         *self.hit_count.write() = 0;
         *self.miss_count.write() = 0;
+        *self.store_count.write() = 0;
 
         if self.cache_dir.exists() {
             std::fs::remove_dir_all(&self.cache_dir)?;
@@ -255,6 +261,12 @@ impl BuildCache {
     #[allow(dead_code)]
     pub fn miss_count(&self) -> usize {
         *self.miss_count.read()
+    }
+
+    /// How many documents this cache has stored, and written to disk,
+    /// since it was opened or last cleared.
+    pub fn store_count(&self) -> usize {
+        *self.store_count.read()
     }
 
     #[allow(dead_code)]

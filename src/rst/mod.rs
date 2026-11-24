@@ -902,6 +902,13 @@ pub fn parse_rst_full(source: &str, opts: &ParseOptions) -> ParseOutput {
 /// `default role X not found` at the document
 /// (`SP/sphinx/util/rst.py:65-77`). The registration ends with the
 /// document ([`ParseOutput::roles_after`]).
+///
+/// The lookup runs inside `sphinx_domains` but before `source-read`, where
+/// intersphinx installs the dispatcher that claims the `external:` names
+/// (`SP/sphinx/util/docutils.py:886-898`,
+/// `SP/sphinx/ext/intersphinx/__init__.py:81`). So an `:external:` role is
+/// an unknown domain's role here, even with `sphinx.ext.intersphinx`
+/// loaded.
 fn start_default_role(
     state: &mut DocumentState,
     opts: &ParseOptions,
@@ -923,7 +930,7 @@ fn start_default_role(
     let ctx = roles::DispatchCtx {
         sphinx: true,
         default_domain,
-        intersphinx: opts.read.intersphinx,
+        intersphinx: false,
     };
     match roles::resolve_role(&table, &ctx, name, state) {
         roles::Resolution::Found { role, .. } => {

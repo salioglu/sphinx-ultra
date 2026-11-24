@@ -3872,3 +3872,139 @@ fn leaked_sphinx_default_role_exits_two() {
         "{stderr}"
     );
 }
+
+/// Decision 13: `IntersphinxRole.run` opens with `assert self.name ==
+/// self.orig_name.lower()` (`_resolve.py:379`), so Sphinx 9.1.0 crashes
+/// with a message-less `AssertionError` when an `:external:` role is called
+/// by another name: through a custom role over it, or as a default role
+/// whose name has a capital (`SphinxRole.__call__` lowercases only a
+/// written name). Probed on both projects: exit 2, the traceback ending in
+/// the bare `AssertionError`.
+#[test]
+fn external_role_called_by_another_name_exits_two() {
+    for (test, index) in [
+        (
+            "t17a-crash-external-custom-role",
+            "Title\n=====\n\n.. role:: ext(external+myinv:py:class)\n\nCustom :ext:`int`.\n",
+        ),
+        (
+            "t17a-crash-external-default-role",
+            "Title\n=====\n\n.. default-role:: external+MyInv:py:class\n\nDefault `int`.\n",
+        ),
+    ] {
+        assert_crash_exits_two(
+            test,
+            &[
+                ("conf.py", "extensions = ['sphinx.ext.intersphinx']\n"),
+                ("index.rst", index),
+            ],
+            "AssertionError",
+            "<SRCDIR>/index.rst:6",
+        );
+    }
+}
+
+/// Sphinx looks `default_role` up for each document inside
+/// `sphinx_domains` but before `source-read`, where intersphinx installs
+/// the dispatcher that claims the `external:` names
+/// (`SP/sphinx/util/docutils.py:886-898`,
+/// `SP/sphinx/ext/intersphinx/__init__.py:81`). A configured `:external:`
+/// default role is therefore an unknown domain's role, not found, in every
+/// document, and bare interpreted text stays a `title_reference`. Sphinx
+/// 9.1.0's stream for this project, probed: both warnings once per
+/// document, in read order, the first with no location and the second at
+/// the document.
+#[test]
+fn a_configured_external_default_role_is_not_found() {
+    let src = temp_source(
+        "t17a-external-default-role-conf",
+        &[
+            (
+                "conf.py",
+                "extensions = ['sphinx.ext.intersphinx']\n\
+                 intersphinx_mapping = {'myinv': ('https://other.example/', 'local.inv')}\n\
+                 default_role = 'external+myinv:py:class'\n",
+            ),
+            (
+                "index.rst",
+                "Title\n=====\n\n.. toctree::\n\n   other\n\nDefault `int`.\n",
+            ),
+            ("other.rst", "Other\n=====\n\nAlso `str`.\n"),
+        ],
+    );
+    std::fs::copy(
+        fixture("intersphinx").join("local.inv"),
+        src.join("local.inv"),
+    )
+    .unwrap();
+    let out = out_dir("t17a-external-default-role-conf");
+    let (result, written) = warning_stream(&src, &out, &[]);
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert_eq!(
+        written,
+        "\
+WARNING: unknown role name: external+myinv:py:class
+<SRCDIR>/index.rst: WARNING: default role external+myinv:py:class not found
+WARNING: unknown role name: external+myinv:py:class
+<SRCDIR>/other.rst: WARNING: default role external+myinv:py:class not found
+"
+    );
+}
+
+/// A resolver that logs a warning and still resolves the reference
+/// resolves it on every path that calls it. `MathDomain.resolve_any_xref`
+/// is the domain's `resolve_xref` (`SP/sphinx/domains/math.py:136-150`).
+/// The self-referential retry of `intersphinx_resolve_self`
+/// (`SP/sphinx/transforms/post_transforms/__init__.py:140-155`) runs the
+/// domain again and keeps what it returns, which for `:numref:` can be the
+/// content node. So a `math_eqref_format` the number cannot fill warns
+/// `Invalid math_eqref_format` and the reference still links, under
+/// `:any:` and after the retry as under `:eq:`. A `:numref:` that numfig
+/// leaves alone warns `numfig is disabled` after the retry, with no
+/// dangling warning. Sphinx 9.1.0's streams, probed on each project (the
+/// two retry projects load the fixture inventory, which holds neither
+/// target).
+#[test]
+fn a_reference_resolved_with_a_warning_resolves_on_every_path() {
+    let equation = "Title\n=====\n\n.. math:: x^2\n   :label: why\n\n";
+    let any = format!("{equation}See :eq:`why` and :any:`why`.\n");
+    let retried = format!("{equation}Self :eq:`self:why` and :any:`self:why`.\n");
+    let invalid = "<SRCDIR>/index.rst:7: WARNING: Invalid math_eqref_format: KeyError('foo')\n";
+    let resolve_self = "extensions = ['sphinx.ext.intersphinx']\n\
+                        intersphinx_mapping = {'other': ('https://other.example/', 'local.inv')}\n\
+                        intersphinx_resolve_self = 'self'\n";
+    let eqref_format = "math_eqref_format = '{foo} {number}'\n";
+    for (test, conf, index, expected) in [
+        (
+            "t17a-any-eqref-format",
+            eqref_format.to_string(),
+            any.as_str(),
+            invalid.repeat(2),
+        ),
+        (
+            "t17a-retry-eqref-format",
+            format!("{resolve_self}{eqref_format}"),
+            retried.as_str(),
+            invalid.repeat(2),
+        ),
+        (
+            "t17a-retry-numref-kept",
+            resolve_self.to_string(),
+            "Title\n=====\n\n.. table:: The caption.\n   :name: tbl\n\n   =  =\n   a  b\n   =  =\n\n\
+             See :numref:`self:tbl`.\n",
+            "<SRCDIR>/index.rst:11: WARNING: numfig is disabled. :numref: is ignored.\n".to_string(),
+        ),
+    ] {
+        let src = temp_source(test, &[("conf.py", conf.as_str()), ("index.rst", index)]);
+        if conf.contains("local.inv") {
+            std::fs::copy(
+                fixture("intersphinx").join("local.inv"),
+                src.join("local.inv"),
+            )
+            .unwrap();
+        }
+        let (result, written) = warning_stream(&src, &out_dir(test), &[]);
+        assert!(result.status.success(), "{test}: {}", stderr_of(&result));
+        assert_eq!(written, expected, "{test}");
+    }
+}

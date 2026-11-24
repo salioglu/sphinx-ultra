@@ -1230,7 +1230,8 @@ impl SphinxBuilder {
     /// docname order is parsed again, in that order, each from the
     /// registries the one before it left. Like Sphinx's, only the
     /// documents read in this build contribute: one recovered from the
-    /// cache adds nothing.
+    /// cache adds nothing. An incremental build then stores each parsed
+    /// document in the cache once, as its last parse left it.
     ///
     /// One file failing must not abort the build: failures become
     /// `BuildErrorReport`s (and a non-zero exit) while the rest continue.
@@ -1301,6 +1302,26 @@ impl SphinxBuilder {
                 }
                 results[*index].1 = result;
             }
+        }
+
+        // The cache stores each parsed document once, as the schedule left
+        // it, in parallel: a parse the schedule redid never reaches it. A
+        // document that cannot be stored fails as one that cannot be
+        // parsed does.
+        if self.incremental {
+            pool.install(|| {
+                results.par_iter_mut().for_each(|(file_path, result)| {
+                    let stored = match result {
+                        Ok(read) if read.read_time_us.is_some() => {
+                            self.cache.store_document(file_path, &read.document)
+                        }
+                        _ => return,
+                    };
+                    if let Err(error) = stored {
+                        *result = Err(error);
+                    }
+                });
+            });
         }
 
         // Decision 13: the first document in Sphinx's read order whose
@@ -1388,7 +1409,8 @@ impl SphinxBuilder {
     }
 
     /// One document's parse, from the role registries `roles`: its read
-    /// and the document it gives, stored in the cache when the build is
+    /// and the document it gives. [`Self::read_phase`] stores the document
+    /// in the cache once the read schedule has settled, when the build is
     /// incremental.
     fn parse_one_file(
         &self,
@@ -1421,11 +1443,6 @@ impl SphinxBuilder {
         // do not validate, `FilterSystemMessages` the reporter's messages),
         // and what a later build loads has to be the tree this build
         // resolved. See [`Self::merge_phase`].
-
-        // Cache the document
-        if self.incremental {
-            self.cache.store_document(file_path, &document)?;
-        }
 
         Ok(ReadResult {
             docname,
@@ -2621,6 +2638,51 @@ mod tests {
                 ],
                 "-j {jobs}"
             );
+        }
+    }
+
+    /// Decision 14 parses a document again when one read before it changed
+    /// the role registries, and the cache stores each parsed document once,
+    /// as the schedule left it: here `a` changes them, so `b`, `c` and
+    /// `index` are parsed twice and stored once each, four stores in all.
+    /// A warm build then recovers all four.
+    #[test]
+    fn a_reparsed_document_is_stored_once() {
+        let files = [
+            (
+                "index.rst",
+                "Index\n=====\n\n.. toctree::\n\n   a\n   b\n   c\n",
+            ),
+            ("a.rst", "A\n=\n\n.. role:: red\n"),
+            ("b.rst", "B\n=\n\nUse :red:`b`.\n"),
+            ("c.rst", "C\n=\n\nUse :red:`c`.\n"),
+        ];
+        for jobs in [4, 1] {
+            let tmp = TempDir::new().unwrap();
+            let source_dir = tmp.path().join("src");
+            std::fs::create_dir_all(&source_dir).unwrap();
+            for (path, text) in files {
+                std::fs::write(source_dir.join(path), text).unwrap();
+            }
+            let build = || {
+                let config = BuildConfig {
+                    validate_directives: false,
+                    ..BuildConfig::default()
+                };
+                let mut builder =
+                    SphinxBuilder::new(config, source_dir.clone(), tmp.path().join("out")).unwrap();
+                builder.set_parallel_jobs(jobs);
+                builder.enable_incremental();
+                let stats = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap()
+                    .block_on(builder.build())
+                    .unwrap();
+                (stats.cache_hits, builder.cache.store_count())
+            };
+            assert_eq!(build(), (0, 4), "cold, -j {jobs}");
+            assert_eq!(build(), (4, 0), "warm, -j {jobs}");
         }
     }
 

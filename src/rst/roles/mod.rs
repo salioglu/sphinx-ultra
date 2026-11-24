@@ -476,8 +476,8 @@ impl RoleCrash {
     /// it exits 2: what Sphinx's report (`handle_exception`,
     /// `SP/sphinx/_cli/util/errors.py:162-245`) opens with, the category
     /// line of a `SphinxError`, then the last line of its traceback, the
-    /// exception and its message, indented as Sphinx indents it; then
-    /// where the input is.
+    /// exception and its message (the bare exception for one without a
+    /// message), indented as Sphinx indents it; then where the input is.
     pub fn report(&self) -> String {
         let category = self
             .category
@@ -489,16 +489,21 @@ impl RoleCrash {
             .map(|location| format!("{location}: "))
             .unwrap_or_default();
         format!(
-            "\n{category}\n    {}: {}\n\n{location}Sphinx 9.1.0 crashes on this input; \
-             sphinx-ultra stops the build as it does.\n",
-            self.exception, self.message
+            "\n{category}\n    {self}\n\n{location}Sphinx 9.1.0 crashes on this input; \
+             sphinx-ultra stops the build as it does.\n"
         )
     }
 }
 
 impl std::fmt::Display for RoleCrash {
+    /// The last line of Python's traceback: `Exception: message`, or the
+    /// bare `Exception` when the message is empty (an `assert` with none).
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}: {}", self.exception, self.message)
+        if self.message.is_empty() {
+            write!(f, "{}", self.exception)
+        } else {
+            write!(f, "{}: {}", self.exception, self.message)
+        }
     }
 }
 

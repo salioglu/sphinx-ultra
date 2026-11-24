@@ -5,7 +5,8 @@
 //! the post-read doctree Sphinx's read gives the same line
 //! (`tools/gen_sphinx_fixture.py`'s harness; the report's pformat blocks).
 //! The `download` rows are the role's half: no file they name exists, so
-//! the download collector (T17c) adds nothing to Sphinx's tree either.
+//! the download collector (T17c) adds nothing to Sphinx's tree either,
+//! except the `refuri` it gives a URL target (see that row).
 
 use crate::rst::{parse_rst_full, LogLocation, ParseLogWarning, ParseOptions, ReadConfig};
 use crate::transforms::test_support::{harness_settings, index_rst, DOC};
@@ -186,6 +187,9 @@ const SAMP: &[(&str, &str)] = &[
      "    <paragraph>\n        <literal classes=\"file\" role=\"file\">\n            C:\\Users{user}\n"),
     (":SAMP:`Upper{X}`\n",
      "    <paragraph>\n        <literal classes=\"samp\" role=\"samp\">\n            Upper\n            <emphasis>\n                X\n"),
+    // P03b: no `Title <target>` split.
+    (":samp:`x <{y}>`\n",
+     "    <paragraph>\n        <literal classes=\"samp\" role=\"samp\">\n            x <\n            <emphasis>\n                y\n            >\n"),
 ];
 
 #[rustfmt::skip]
@@ -242,6 +246,13 @@ const DOWNLOAD: &[(&str, &str)] = &[
      "    <paragraph>\n        <literal classes=\"xref download\">\n            f.txt\n"),
     (":download:`f  .txt`\n",
      "    <paragraph>\n        <download_reference refdoc=\"index\" refdomain=\"\" refexplicit=\"0\" reftarget=\"f .txt\" reftype=\"download\" refwarn=\"0\">\n            <literal classes=\"xref download\">\n                f  .txt\n"),
+    // P02 `r_download`, the role's half only. Sphinx's tree also has
+    // `refuri="https://example.com/x.zip"`, which its
+    // DownloadFileCollector adds to a URL target at 880 (Task 17c). This
+    // read does not run that collector yet, so the row leaves the
+    // attribute out; T17c adds it here.
+    (":download:`https://example.com/x.zip`\n",
+     "    <paragraph>\n        <download_reference refdoc=\"index\" refdomain=\"\" refexplicit=\"0\" reftarget=\"https://example.com/x.zip\" reftype=\"download\" refwarn=\"0\">\n            <literal classes=\"xref download\">\n                https://example.com/x.zip\n"),
 ];
 
 #[rustfmt::skip]
@@ -455,6 +466,18 @@ const DEFAULT_ROLE_CONFIG: &[(&str, &str, &str)] = &[
      "    <paragraph>\n        A \n        <pending_xref refdoc=\"index\" refdomain=\"\" refexplicit=\"0\" reftarget=\"x\" reftype=\"any\" refwarn=\"1\">\n            <literal classes=\"xref any\">\n                x\n         here.\n    <paragraph>\n        D \n        <title_reference>\n            z\n         here.\n"),
 ];
 
+/// `default_role = 'external+myinv:py:class'`, read with
+/// `sphinx.ext.intersphinx` loaded and an `intersphinx_mapping` key
+/// `myinv`: the input, Sphinx 9.1.0's post-read body and its warnings
+/// (probed).
+#[rustfmt::skip]
+const EXTERNAL_DEFAULT_ROLE_CONFIG: (&str, &str, &[&str]) = (
+    "Text `x` and `a <b>` and `y`:literal:.\n",
+    "    <paragraph>\n        Text \n        <title_reference>\n            x\n         and \n        <title_reference>\n            a <b>\n         and \n        <literal>\n            y\n        .\n",
+    &["WARNING: unknown role name: external+myinv:py:class",
+      "<SRCDIR>/index.rst: WARNING: default role external+myinv:py:class not found"],
+);
+
 /// [RC §3.1]: the generic docroles are `CustomRole`s over `GenericRole`,
 /// their node class Sphinx's (`literal_strong`, `emphasis`,
 /// `literal_emphasis`, `literal`), classed with the registered name, the
@@ -625,6 +648,26 @@ fn default_role_config_and_directive() {
     ] {
         assert_eq!(read("Text `x`.\n", unknown(role)).1, warnings, "{role}");
     }
+
+    // Sphinx looks `default_role` up inside `sphinx_domains` but before
+    // `source-read`, where intersphinx installs the dispatcher that claims
+    // the `external:` names (`SP/sphinx/util/docutils.py:886-898`,
+    // `SP/sphinx/ext/intersphinx/__init__.py:81`). Even with
+    // `sphinx.ext.intersphinx` loaded, an `:external:` role there is an
+    // unknown domain's, and it is not found.
+    let (rst, body, warnings) = EXTERNAL_DEFAULT_ROLE_CONFIG;
+    let external = ReadConfig {
+        default_role: Some("external+myinv:py:class".to_string()),
+        intersphinx: true,
+        ..ReadConfig::default()
+    };
+    assert_eq!(
+        read(rst, external),
+        (
+            body.to_string(),
+            warnings.iter().map(|warning| warning.to_string()).collect()
+        )
+    );
 }
 
 /// An `:external:` role registered as the default role reads its names
@@ -730,4 +773,49 @@ fn role_crashes_are_kept() {
         ..parse
     };
     assert_eq!(parse_rst_full("`y` here.\n", &parse).crash, None);
+
+    // `IntersphinxRole.run` opens with `assert self.name ==
+    // self.orig_name.lower()` (`_resolve.py:379`). An `:external:` role
+    // called by another name raises an `AssertionError` with no message:
+    // through a custom role, or as a default role whose name has a
+    // capital (`SphinxRole.__call__` lowercases only a written name).
+    // Called by its own name, in any case, or as an all-lowercase default
+    // role, it does not crash. Probed on Sphinx 9.1.0 (each line under a
+    // title, with `sphinx.ext.intersphinx` loaded).
+    let intersphinx = ReadConfig {
+        intersphinx: true,
+        ..ReadConfig::default()
+    };
+    for rst in [
+        ".. role:: ext(external+myinv:py:class)\n\nCustom :ext:`int`.\n",
+        ".. default-role:: external+MyInv:py:class\n\nDefault `int`.\n",
+    ] {
+        assert_eq!(
+            crash(rst, intersphinx.clone()),
+            Some(("AssertionError".to_string(), String::new())),
+            "{rst:?}"
+        );
+    }
+    for rst in [
+        "Direct :external+MyInv:py:class:`int`.\n",
+        ".. default-role:: external+myinv:py:class\n\nDefault `int`.\n",
+    ] {
+        assert_eq!(crash(rst, intersphinx.clone()), None, "{rst:?}");
+    }
+    // Sphinx's traceback then ends with the bare exception line.
+    let parse = ParseOptions {
+        read: intersphinx,
+        ..index_rst()
+    };
+    let crash = parse_rst_full(
+        ".. role:: ext(external+myinv:py:class)\n\nCustom :ext:`int`.\n",
+        &parse,
+    )
+    .crash
+    .expect("the custom role crashes");
+    assert_eq!(
+        crash.report(),
+        "\n\n    AssertionError\n\nSphinx 9.1.0 crashes on this input; sphinx-ultra stops \
+         the build as it does.\n"
+    );
 }
