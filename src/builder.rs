@@ -1035,17 +1035,16 @@ impl SphinxBuilder {
                     })
                     .collect();
                 sink.push_next(BuildWarning::new(
-                        // Logged with no `location`, so it prints bare.
-                        PathBuf::new(),
-                        None,
-                        format!(
-                            "multiple files found for the document \"{docname}\": {}\nUse {} for the build.",
-                            listed.join(", "),
-                            py_repr_str(&candidates[0].display().to_string()),
-                        ),
-                        WarningType::Other,
+                    // Logged with no `location`, so it prints bare.
+                    PathBuf::new(),
+                    None,
+                    format!(
+                        "multiple files found for the document \"{docname}\": {}\nUse {} for the build.",
+                        listed.join(", "),
+                        py_repr_str(&candidates[0].display().to_string()),
                     ),
-                );
+                    WarningType::Other,
+                ));
             }
             dropped.extend(candidates.into_iter().skip(1));
         }
