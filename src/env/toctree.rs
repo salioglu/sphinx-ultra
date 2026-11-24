@@ -2156,6 +2156,54 @@ mod tests {
         assert!(env.numbered_toctrees.is_empty());
     }
 
+    /// `PreserveTranslatableMessages` (010-034,
+    /// `SP/sphinx/transforms/i18n.py:103-111`) runs on every read, message
+    /// catalogs or not, and a toctree keeps its explicit entry titles as
+    /// `rawentries` and its caption as `rawcaption`
+    /// (`toctree.preserve_original_messages`, `SP/sphinx/addnodes.py:61-70`);
+    /// with neither, `rawentries` is empty and there is no `rawcaption`.
+    //
+    // oracle: the env fixture's `smartquotes_resolved` project (Sphinx
+    //   9.1.0): `tocs_pformat["index"]`'s toctree, exactly as asserted.
+    #[test]
+    fn a_toctree_keeps_its_explicit_titles_and_caption() {
+        let found = docs(&["index", "a", "b"]);
+        let toctree_tag = |source: &str| {
+            let doctree = parse(source, "index", &found);
+            let mut toctrees = Vec::new();
+            toctree_nodes(&doctree.root, &mut toctrees);
+            assert_eq!(toctrees.len(), 1, "{source:?}");
+            crate::doctree::pformat::starttag(toctrees[0])
+        };
+        assert_eq!(
+            toctree_tag(
+                ".. toctree::\n   :caption: \"Contents\" -- here\n\n   a\n   \
+                 \"Explicit\" title -- b <b>\n"
+            ),
+            "<toctree caption=\"\"Contents\" -- here\" entries=\"(None,\\ 'a') \
+             ('\"Explicit\"\\ title\\ --\\ b',\\ 'b')\" glob=\"0\" hidden=\"0\" \
+             includefiles=\"a b\" includehidden=\"0\" maxdepth=\"-1\" numbered=\"0\" \
+             parent=\"index\" rawcaption=\"\"Contents\" -- here\" \
+             rawentries=\"\"Explicit\"\\ title\\ --\\ b\" titlesonly=\"0\">"
+        );
+        assert_eq!(
+            toctree_tag(".. toctree::\n\n   a\n   b\n"),
+            "<toctree caption=\"True\" entries=\"(None,\\ 'a') (None,\\ 'b')\" glob=\"0\" \
+             hidden=\"0\" includefiles=\"a b\" includehidden=\"0\" maxdepth=\"-1\" \
+             numbered=\"0\" parent=\"index\" rawentries=\"\" titlesonly=\"0\">"
+        );
+    }
+
+    /// Every `toctree` node of the tree at `node`, in document order.
+    fn toctree_nodes<'a>(node: &'a Node, found: &mut Vec<&'a Node>) {
+        if node.kind == kinds::TOCTREE {
+            found.push(node);
+        }
+        for child in &node.children {
+            toctree_nodes(child, found);
+        }
+    }
+
     #[test]
     fn note_toctree_creates_the_includes_key_even_when_empty() {
         // sphinx `setdefault(docname, []).extend([])`.

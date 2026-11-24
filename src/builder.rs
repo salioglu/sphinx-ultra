@@ -104,6 +104,16 @@ pub enum BuilderKind {
 }
 
 impl BuilderKind {
+    /// The builder's `name` (`Builder.name`): what
+    /// `smartquotes_excludes['builders']` names it by
+    /// (`SP/sphinx/transforms/__init__.py:392`).
+    pub fn name(self) -> &'static str {
+        match self {
+            BuilderKind::Html => "html",
+            BuilderKind::Dummy => "dummy",
+        }
+    }
+
     /// The tags the builder adds to the build's when it is made
     /// (`SP/sphinx/builders/__init__.py:120-124`): its `format`, its
     /// `name`, `format_<format>` and `builder_<name>`. The HTML builder's
@@ -742,9 +752,12 @@ impl SphinxBuilder {
         self.incremental = true;
     }
 
-    /// Resolve as `kind` builds ([`BuilderKind`]); `html` unless set.
+    /// Read and resolve as `kind` builds ([`BuilderKind`]); `html` unless
+    /// set. The read takes the builder from here too: it decides whether
+    /// `smartquotes_excludes` turns smart quotes off.
     pub fn set_builder_kind(&mut self, kind: BuilderKind) {
         self.builder_kind = kind;
+        self.parser.set_builder_kind(&self.config, kind);
     }
 
     /// Discard the saved environment before building (sphinx-build `-E`).
@@ -1381,7 +1394,7 @@ impl SphinxBuilder {
                 .cloned()
                 .unwrap_or_else(|| self.source_dir.join(format!("{docname}.rst")))
         };
-        let settings = ReadSettings::from_config(&self.config);
+        let settings = ReadSettings::from_config(&self.config, self.builder_kind);
 
         for index in ordered {
             let result = &mut results[index];
@@ -2423,6 +2436,33 @@ mod tests {
             config_fingerprint(&untrimmed).unwrap(),
             baseline,
             "trim_doctest_flags"
+        );
+
+        // The smart-quotes keys are rebuild class `'env'`
+        // (`config.py:289-295`): SmartQuotes (750) runs in the read.
+        let mut straight = base.clone();
+        straight.smartquotes = false;
+        assert_ne!(
+            config_fingerprint(&straight).unwrap(),
+            baseline,
+            "smartquotes"
+        );
+        let mut action = base.clone();
+        action.smartquotes_action = "q".to_string();
+        assert_ne!(
+            config_fingerprint(&action).unwrap(),
+            baseline,
+            "smartquotes_action"
+        );
+        let mut excludes = base.clone();
+        excludes
+            .smartquotes_excludes
+            .builders
+            .push("html".to_string());
+        assert_ne!(
+            config_fingerprint(&excludes).unwrap(),
+            baseline,
+            "smartquotes_excludes"
         );
 
         // `today` and `today_fmt` are rebuild class `'env'`

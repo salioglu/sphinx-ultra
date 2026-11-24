@@ -34,6 +34,7 @@ use crate::intersphinx::Intersphinx;
 use crate::rst::{LogLocation, ParseOptions, ParseOutput, ReadConfig, RegistryExport};
 use crate::transforms::post::{apply_post_transforms, PostTransformConfig};
 use crate::transforms::reporter::{render_records, LogRecord};
+use crate::transforms::smartquotes::{self, SmartQuotesSettings};
 use crate::transforms::state::DocumentState;
 use crate::transforms::tags::Tags;
 use crate::transforms::{Transform, TransformId};
@@ -42,7 +43,8 @@ use crate::transforms::{Transform, TransformId};
 /// resolve pass after it: `trim_doctest_flags`, which
 /// [`resolve_standalone`] takes from here (a build's resolve pass reads its
 /// configuration). Every field holds Sphinx's default unless the
-/// configuration says otherwise ([`Self::from_config`]).
+/// configuration, or the builder the read is for, says otherwise
+/// ([`Self::from_config`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReadSettings {
     /// `keep_warnings` (`SP/sphinx/config.py:261`, default `False`): whether
@@ -84,6 +86,13 @@ pub struct ReadSettings {
     /// flags ([`crate::transforms::post`]), which [`resolve_standalone`]
     /// reads here.
     pub trim_doctest_flags: bool,
+    /// What `SphinxSmartQuotes` (750) educates, and in which language
+    /// ([`crate::transforms::smartquotes`]); `None` when its availability
+    /// test turns it off for the build: `smartquotes`, the builder or the
+    /// language in `smartquotes_excludes`, or a language docutils has no
+    /// quotes for ([`smartquotes::settings_for`]). Sphinx's default
+    /// educates `qDe` in English.
+    pub smartquotes: Option<SmartQuotesSettings>,
 }
 
 impl ReadSettings {
@@ -99,21 +108,26 @@ impl ReadSettings {
             build_date: build_date(),
             language: "en".to_string(),
             trim_doctest_flags: true,
+            smartquotes: Some(SmartQuotesSettings::default()),
         }
     }
 
-    /// The read settings of a build configured by `config`, dated as a
-    /// build that starts now ([`build_date`]).
-    pub fn from_config(config: &BuildConfig) -> Self {
+    /// The read settings of a build configured by `config` with the builder
+    /// `builder`, dated as a build that starts now ([`build_date`]). The
+    /// builder decides one thing a read does: whether
+    /// `smartquotes_excludes` turns smart quotes off for it.
+    pub fn from_config(config: &BuildConfig, builder: BuilderKind) -> Self {
+        // Sphinx reads a `language` of `None` as `'en'`
+        // (`SP/sphinx/config.py:573-581`).
+        let language = config.language.clone().unwrap_or_else(|| "en".to_string());
         ReadSettings {
             keep_warnings: config.keep_warnings,
             today: config.today.clone(),
             today_fmt: config.today_fmt.clone(),
             version: config.version.clone().unwrap_or_default(),
             release: config.release.clone().unwrap_or_default(),
-            // Sphinx reads a `language` of `None` as `'en'`
-            // (`SP/sphinx/config.py:573-581`).
-            language: config.language.clone().unwrap_or_else(|| "en".to_string()),
+            smartquotes: smartquotes::settings_for(config, &language, builder.name()),
+            language,
             trim_doctest_flags: config.trim_doctest_flags,
             ..Self::sphinx_defaults()
         }
@@ -605,9 +619,11 @@ mod tests {
     }
 
     /// The read settings follow the configuration, Sphinx's defaults
-    /// otherwise (`config.py:225-230`, `:261`, `:267`); the trace is a test
-    /// switch no configuration sets. The build date is the moment the settings
-    /// were made, so the comparisons carry it over.
+    /// otherwise (`config.py:225-230`, `:261`, `:267`, `:289-295`); the
+    /// trace is a test switch no configuration sets. Smart quotes follow
+    /// the builder too, which `smartquotes_excludes` may name. The build
+    /// date is the moment the settings were made, so the comparisons carry
+    /// it over.
     #[test]
     fn read_settings_follow_the_configuration() {
         let defaults = ReadSettings::sphinx_defaults();
@@ -623,15 +639,19 @@ mod tests {
                 build_date: defaults.build_date,
                 language: "en".to_string(),
                 trim_doctest_flags: true,
+                smartquotes: Some(SmartQuotesSettings::default()),
             }
         );
-        assert_eq!(
-            ReadSettings {
-                build_date: defaults.build_date,
-                ..ReadSettings::from_config(&BuildConfig::default())
-            },
-            defaults
-        );
+        for builder in [BuilderKind::Html, BuilderKind::Dummy] {
+            assert_eq!(
+                ReadSettings {
+                    build_date: defaults.build_date,
+                    ..ReadSettings::from_config(&BuildConfig::default(), builder)
+                },
+                defaults,
+                "{builder:?}"
+            );
+        }
         let config = BuildConfig {
             keep_warnings: true,
             today: "April 1".to_string(),
@@ -640,9 +660,10 @@ mod tests {
             release: Some("1.2.3".to_string()),
             language: Some("de".to_string()),
             trim_doctest_flags: false,
+            smartquotes_action: "qe".to_string(),
             ..BuildConfig::default()
         };
-        let settings = ReadSettings::from_config(&config);
+        let settings = ReadSettings::from_config(&config, BuilderKind::Html);
         assert!(!settings.trim_doctest_flags);
         assert!(settings.keep_warnings);
         assert!(!settings.trace_ids);
@@ -653,11 +674,44 @@ mod tests {
             ("1.2", "1.2.3")
         );
         assert_eq!(settings.language, "de");
+        assert_eq!(
+            settings.smartquotes,
+            Some(SmartQuotesSettings {
+                actions: smartquotes::educate::Actions::parse("qe"),
+                document_language: "de".to_string(),
+            })
+        );
         let unset = BuildConfig {
             language: None,
             ..BuildConfig::default()
         };
-        assert_eq!(ReadSettings::from_config(&unset).language, "en");
+        let unset = ReadSettings::from_config(&unset, BuilderKind::Html);
+        assert_eq!(unset.language, "en");
+        assert_eq!(unset.smartquotes, Some(SmartQuotesSettings::default()));
+
+        let off = BuildConfig {
+            smartquotes: false,
+            ..BuildConfig::default()
+        };
+        assert_eq!(
+            ReadSettings::from_config(&off, BuilderKind::Html).smartquotes,
+            None
+        );
+        let excluding_dummy = BuildConfig {
+            smartquotes_excludes: crate::config::SmartquotesExcludes {
+                languages: Vec::new(),
+                builders: vec!["dummy".to_string()],
+            },
+            ..BuildConfig::default()
+        };
+        assert_eq!(
+            ReadSettings::from_config(&excluding_dummy, BuilderKind::Dummy).smartquotes,
+            None
+        );
+        assert_eq!(
+            ReadSettings::from_config(&excluding_dummy, BuilderKind::Html).smartquotes,
+            Some(SmartQuotesSettings::default())
+        );
     }
 
     /// `SOURCE_DATE_EPOCH` read as `datetime.fromtimestamp(float(value),

@@ -189,6 +189,32 @@ pub struct BuildConfig {
     /// Sphinx's bool grammar, `0` or `1` only ([`STRICT_BOOL_KEYS`]).
     pub keep_warnings: bool,
 
+    /// `smartquotes`, default `True` (`config.py:289`, rebuild class
+    /// `'env'`): whether `SphinxSmartQuotes` (750) educates the quotes,
+    /// dashes and ellipses of the read's text
+    /// ([`crate::transforms::smartquotes::settings_for`]). The transform
+    /// tests the value with `is False`
+    /// (`SP/sphinx/transforms/__init__.py:389`), so only a `conf.py` that
+    /// sets it to `False` turns it off; `0`, `None` and `''` leave it on.
+    /// A `-D` override takes Sphinx's bool grammar, `0` or `1` only
+    /// ([`STRICT_BOOL_KEYS`]).
+    pub smartquotes: bool,
+
+    /// `smartquotes_action`, default `'qDe'` (`config.py:290`, rebuild
+    /// class `'env'`): what the transform educates, docutils'
+    /// `educate_tokens` attribute string
+    /// ([`crate::transforms::smartquotes::educate::Actions::parse`]).
+    pub smartquotes_action: String,
+
+    /// `smartquotes_excludes` (`config.py:291-295`, rebuild class `'env'`):
+    /// the languages and builders the transform does not run for
+    /// ([`SmartquotesExcludes`]). A dict, so a `-D` override sets one key
+    /// of it (`-D smartquotes_excludes.builders=man,text`), never the
+    /// whole. One divergence: when `conf.py` does not set the dict, Sphinx
+    /// makes the override the whole dict, so the other key excludes
+    /// nothing (`config.py:309-312`), where here it keeps its default.
+    pub smartquotes_excludes: SmartquotesExcludes,
+
     /// `trim_doctest_flags`, default `True` (`config.py:267`, rebuild class
     /// `'env'`): whether `TrimDoctestFlagsTransform`, the post-transform at
     /// priority 401, strips `# doctest: +FLAG` comments and `<BLANKLINE>`
@@ -374,7 +400,40 @@ const NONE_DEFAULT_INT_KEYS: [&str; 2] = [
 /// turns `'0'` and `'1'` into `False` and `True` and raises `ConfigError`
 /// for anything else (`config.py:366-374`). The crate's other bool keys
 /// still also take `true`/`false`.
-const STRICT_BOOL_KEYS: [&str; 2] = ["keep_warnings", "trim_doctest_flags"];
+const STRICT_BOOL_KEYS: [&str; 3] = ["keep_warnings", "trim_doctest_flags", "smartquotes"];
+
+/// `smartquotes_excludes` as `SphinxSmartQuotes.is_available` reads it
+/// (`SP/sphinx/transforms/__init__.py:383-384`): the two keys of a dict,
+/// each read with `.get(key, [])`. Unset, the dict is Sphinx's default
+/// ([`Default`]: `{'languages': ['ja', 'zh_CN', 'zh_TW'], 'builders':
+/// ['man', 'text']}`, `config.py:291-295`); a dict that leaves a key out
+/// excludes nothing by that key, which is what a missing field reads as.
+///
+/// Sphinx tests `name in builders` and `config.language in languages`
+/// against whatever the dict holds; a string value there is matched as a
+/// substring, which a list of the one string ([`crate::python_config`]
+/// reads it so) matches only whole.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SmartquotesExcludes {
+    /// The values of `language` the transform does not run for, each
+    /// matched whole: `zh_CN` does not exclude `zh-CN`.
+    #[serde(default)]
+    pub languages: Vec<String>,
+    /// The names of the builders the transform does not run for
+    /// ([`crate::builder::BuilderKind::name`]).
+    #[serde(default)]
+    pub builders: Vec<String>,
+}
+
+impl Default for SmartquotesExcludes {
+    fn default() -> Self {
+        let strings = |values: &[&str]| values.iter().map(|value| value.to_string()).collect();
+        Self {
+            languages: strings(&["ja", "zh_CN", "zh_TW"]),
+            builders: strings(&["man", "text"]),
+        }
+    }
+}
 
 /// `deprecate_source_encoding` (`config.py:886-896`, a `config-inited`
 /// handler at priority 790): the encodings it does NOT warn about.
@@ -521,6 +580,9 @@ impl Default for BuildConfig {
             suppress_warnings: Vec::new(),
             show_warning_types: true,
             keep_warnings: false,
+            smartquotes: true,
+            smartquotes_action: "qDe".to_string(),
+            smartquotes_excludes: SmartquotesExcludes::default(),
             trim_doctest_flags: true,
             primary_domain: Some("py".to_string()),
             highlight_language: "default".to_string(),
@@ -1529,6 +1591,69 @@ output:
             );
             assert!(!config.keep_warnings, "{value}: the setting is unchanged");
         }
+    }
+
+    /// The smart-quotes keys (`config.py:289-295`) default like Sphinx's,
+    /// and take `-D` as Sphinx does: `smartquotes` only as `0` or `1`, any
+    /// other value (`False` included) a fatal `ConfigError` with Sphinx's
+    /// message; `smartquotes_action` as a string; `smartquotes_excludes`
+    /// one key at a time, a list split on commas, never as a whole dict.
+    #[test]
+    fn smartquotes_keys_take_sphinxs_override_grammar() {
+        let mut config = BuildConfig::default();
+        assert!(config.smartquotes);
+        assert_eq!(config.smartquotes_action, "qDe");
+        assert_eq!(
+            config.smartquotes_excludes,
+            SmartquotesExcludes {
+                languages: vec!["ja".into(), "zh_CN".into(), "zh_TW".into()],
+                builders: vec!["man".into(), "text".into()],
+            }
+        );
+
+        assert!(config.apply_override("smartquotes", "0").unwrap().is_none());
+        assert!(!config.smartquotes);
+        assert_eq!(
+            config.conf_values.get("smartquotes"),
+            Some(&serde_json::Value::Bool(false))
+        );
+        assert!(config.apply_override("smartquotes", "1").unwrap().is_none());
+        assert!(config.smartquotes);
+        for value in ["False", "false", "true", "no", ""] {
+            let error = config
+                .apply_override("smartquotes", value)
+                .expect_err(value);
+            assert_eq!(
+                error.to_string(),
+                format!("'smartquotes' must be '0' or '1', got '{value}'")
+            );
+            assert!(config.smartquotes, "{value}: the setting is unchanged");
+        }
+
+        assert!(config
+            .apply_override("smartquotes_action", "qBe")
+            .unwrap()
+            .is_none());
+        assert_eq!(config.smartquotes_action, "qBe");
+
+        assert!(config
+            .apply_override("smartquotes_excludes.builders", "html,dummy")
+            .unwrap()
+            .is_none());
+        assert_eq!(config.smartquotes_excludes.builders, ["html", "dummy"]);
+        assert_eq!(
+            config.smartquotes_excludes.languages,
+            ["ja", "zh_CN", "zh_TW"]
+        );
+        let ignored = config
+            .apply_override("smartquotes_excludes", "html")
+            .unwrap();
+        assert!(
+            ignored.is_some_and(|message| message
+                .starts_with("cannot override dictionary config setting 'smartquotes_excludes'")),
+            "a whole dict is not overridden"
+        );
+        assert_eq!(config.smartquotes_excludes.builders, ["html", "dummy"]);
     }
 
     /// `trim_doctest_flags` (`config.py:267`: default `True`, type `bool`

@@ -158,6 +158,18 @@ pub struct ConfPyConfig {
     /// nothing.
     pub trim_doctest_flags: Option<bool>,
 
+    // Smart quotes (`config.py:289-295`).
+    /// `smartquotes`: `Some` for a conf.py bool only. `SphinxSmartQuotes`
+    /// tests the value with `is False`
+    /// (`SP/sphinx/transforms/__init__.py:389`), so any other value
+    /// (`0`, `None`, `''`) leaves Sphinx's `True` in place.
+    pub smartquotes: Option<bool>,
+    /// `smartquotes_action`, `None` when conf.py said nothing.
+    pub smartquotes_action: Option<String>,
+    /// `smartquotes_excludes`, `None` when conf.py said nothing; a dict is
+    /// read key by key, as `.get(key, [])` reads it.
+    pub smartquotes_excludes: Option<crate::config::SmartquotesExcludes>,
+
     // The read-side keys (`config.py:257`, `:268`).
     /// `primary_domain`: `None` when conf.py said nothing, `Some(None)` for
     /// an explicit `primary_domain = None`.
@@ -439,6 +451,31 @@ impl PythonConfigParser {
         config.show_warning_types = extract_bool("show_warning_types");
         config.keep_warnings = extract_bool("keep_warnings");
         config.trim_doctest_flags = extract_bool("trim_doctest_flags");
+        config.smartquotes = extract_bool("smartquotes");
+        config.smartquotes_action = extract_string("smartquotes_action");
+        config.smartquotes_excludes = self
+            .conf_namespace
+            .get("smartquotes_excludes")
+            .and_then(serde_json::Value::as_object)
+            .map(|excludes| {
+                // `excludes.get(key, [])`: a list (or a tuple) of names; a
+                // string Sphinx matches as a substring is read as a list
+                // of the one name.
+                let names = |key: &str| -> Vec<String> {
+                    match excludes.get(key) {
+                        Some(serde_json::Value::Array(items)) => items
+                            .iter()
+                            .filter_map(|item| item.as_str().map(str::to_string))
+                            .collect(),
+                        Some(serde_json::Value::String(name)) => vec![name.clone()],
+                        _ => Vec::new(),
+                    }
+                };
+                crate::config::SmartquotesExcludes {
+                    languages: names("languages"),
+                    builders: names("builders"),
+                }
+            });
         config.primary_domain = match self.conf_namespace.get("primary_domain") {
             Some(serde_json::Value::Null) => Some(None),
             Some(value) => value.as_str().map(|name| Some(name.to_string())),
@@ -610,6 +647,9 @@ impl PythonConfigParser {
                 | "show_warning_types"
                 | "keep_warnings"
                 | "trim_doctest_flags"
+                | "smartquotes"
+                | "smartquotes_action"
+                | "smartquotes_excludes"
                 | "primary_domain"
                 | "highlight_language"
                 | "intersphinx_mapping"
@@ -1191,6 +1231,9 @@ impl Default for ConfPyConfig {
             show_warning_types: None,
             keep_warnings: None,
             trim_doctest_flags: None,
+            smartquotes: None,
+            smartquotes_action: None,
+            smartquotes_excludes: None,
             primary_domain: None,
             highlight_language: None,
             // `None` = "conf.py said nothing", which leaves
@@ -1420,6 +1463,15 @@ impl ConfPyConfig {
         }
         if let Some(trim_doctest_flags) = self.trim_doctest_flags {
             config.trim_doctest_flags = trim_doctest_flags;
+        }
+        if let Some(smartquotes) = self.smartquotes {
+            config.smartquotes = smartquotes;
+        }
+        if let Some(action) = &self.smartquotes_action {
+            config.smartquotes_action = action.clone();
+        }
+        if let Some(excludes) = &self.smartquotes_excludes {
+            config.smartquotes_excludes = excludes.clone();
         }
 
         config.conf_values = self.raw_values.clone();
@@ -2000,6 +2052,77 @@ e = 'esc\n'
         let p = parse("project = 'x'\n");
         let config = p.extract_configuration().unwrap();
         assert!(config.to_build_config().unwrap().trim_doctest_flags);
+    }
+
+    /// The smart-quotes keys are standard keys (`config.py:289-295`): read
+    /// from conf.py into the build configuration, never into
+    /// `custom_configs`. Only `smartquotes = False` turns smart quotes off:
+    /// Sphinx tests the value with `is False`
+    /// (`SP/sphinx/transforms/__init__.py:389`), so `0`, `None` and `''`
+    /// keep them on, as an unset key does. A `smartquotes_excludes` dict is
+    /// read key by key with `.get(key, [])`, so a key it leaves out
+    /// excludes nothing.
+    //
+    // oracle (Sphinx 9.1.0, [SQ] S2 `probe_conftypes.out`): with
+    //   `smartquotes = 0`, `None` or `''` in conf.py, `"Hi" -- it's` is
+    //   educated, as it is unset.
+    #[test]
+    fn smartquotes_keys_are_read_from_conf_py() {
+        let build = |source: &str| {
+            parse(source)
+                .extract_configuration()
+                .unwrap()
+                .to_build_config()
+                .unwrap()
+        };
+        assert!(!build("smartquotes = False\n").smartquotes);
+        for on in [
+            "smartquotes = True\n",
+            "smartquotes = 0\n",
+            "smartquotes = None\n",
+            "smartquotes = ''\n",
+            "project = 'x'\n",
+        ] {
+            assert!(build(on).smartquotes, "{on:?}");
+        }
+
+        let config = parse(
+            "smartquotes_action = 'qe'\n\
+             smartquotes_excludes = {'builders': ['dummy', 'man'], 'other': ['x']}\n",
+        )
+        .extract_configuration()
+        .unwrap();
+        for key in ["smartquotes_action", "smartquotes_excludes"] {
+            assert!(!config.custom_configs.contains_key(key), "{key}");
+        }
+        let built = config.to_build_config().unwrap();
+        assert_eq!(built.smartquotes_action, "qe");
+        assert_eq!(
+            built.smartquotes_excludes,
+            crate::config::SmartquotesExcludes {
+                languages: Vec::new(),
+                builders: vec!["dummy".to_string(), "man".to_string()],
+            }
+        );
+        assert!(!parse("smartquotes = 1\n")
+            .extract_configuration()
+            .unwrap()
+            .custom_configs
+            .contains_key("smartquotes"));
+
+        let unset = build("project = 'x'\n");
+        assert_eq!(unset.smartquotes_action, "qDe");
+        assert_eq!(
+            unset.smartquotes_excludes,
+            crate::config::SmartquotesExcludes::default()
+        );
+        assert_eq!(
+            build("smartquotes_excludes = {'languages': 'ja'}\n").smartquotes_excludes,
+            crate::config::SmartquotesExcludes {
+                languages: vec!["ja".to_string()],
+                builders: Vec::new(),
+            }
+        );
     }
 
     /// `today` and `today_fmt` are standard keys (`config.py:227-229`):

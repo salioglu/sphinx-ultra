@@ -35,6 +35,7 @@ mod support {
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{json, Value};
+use sphinx_ultra::builder::BuilderKind;
 use sphinx_ultra::config::BuildConfig;
 use sphinx_ultra::read::{read_standalone, ReadSettings};
 use sphinx_ultra::rst::{parse_rst_full, ParseOptions};
@@ -108,20 +109,20 @@ fn load_fixture() -> Fixture {
 }
 
 /// The read settings the fixture's header gives through a [`BuildConfig`]
-/// (M1's validation off, decision 7), with the id trace on.
+/// (M1's validation off, decision 7) for the dummy builder the oracle
+/// builds with, with the id trace on.
 fn read_settings_of(settings: &FixtureSettings) -> ReadSettings {
-    assert!(
-        !settings.smartquotes,
-        "no smart-quote transform exists yet, so only `smartquotes = False` \
-         reads like the oracle"
-    );
     ReadSettings {
         trace_ids: true,
-        ..ReadSettings::from_config(&BuildConfig {
-            validate_directives: false,
-            keep_warnings: settings.keep_warnings,
-            ..BuildConfig::default()
-        })
+        ..ReadSettings::from_config(
+            &BuildConfig {
+                validate_directives: false,
+                keep_warnings: settings.keep_warnings,
+                smartquotes: settings.smartquotes,
+                ..BuildConfig::default()
+            },
+            BuilderKind::Dummy,
+        )
     }
 }
 

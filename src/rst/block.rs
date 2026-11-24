@@ -7154,6 +7154,21 @@ impl BlockParser {
             warnings: resolved.warnings.clone(),
         });
         let mut toctree = Node::elem("toctree", input.span);
+        // `PreserveTranslatableMessages` (010-034,
+        // `SP/sphinx/transforms/i18n.py:103-111`) runs on every read,
+        // message catalogs or not, and nothing later changes what it sets
+        // on a toctree (`toctree.preserve_original_messages`,
+        // `SP/sphinx/addnodes.py:61-70`): its explicit entry titles as
+        // `rawentries`, and its caption, when it has one, as `rawcaption`.
+        let raw_entries: Vec<String> = resolved
+            .entries
+            .iter()
+            .filter_map(|(title, _)| title.clone())
+            .filter(|title| !title.is_empty())
+            .collect();
+        if let Some(c) = caption.as_ref().filter(|c| !c.is_empty()) {
+            toctree.set("rawcaption", AttrValue::Str(c.clone()));
+        }
         match caption {
             // pformat renders a Python None attr value as "True".
             Some(c) => toctree.set("caption", AttrValue::Str(c)),
@@ -7188,7 +7203,7 @@ impl BlockParser {
         };
         toctree.set("numbered", AttrValue::Int(numbered));
         toctree.set("parent", AttrValue::Str(self.docname.clone()));
-        toctree.set("rawentries", AttrValue::Str(String::new()));
+        toctree.set("rawentries", AttrValue::List(raw_entries));
         toctree.set(
             "titlesonly",
             AttrValue::Int(i64::from(opt_get(&input.options, "titlesonly").is_some())),

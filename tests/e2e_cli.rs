@@ -3237,6 +3237,60 @@ fn a_load_time_config_error_writes_sphinxs_report_to_both_halves() {
     assert_eq!(String::from_utf8(result.stderr).unwrap(), written);
 }
 
+/// A build educates quotes, dashes and apostrophes, as Sphinx's default
+/// `smartquotes = True` (`config.py:289`) has it, so a title reaches the
+/// search index curled; `-D smartquotes=0` turns that off; and any other
+/// spelling, `False` included, is the `ConfigError` Sphinx raises for a
+/// bool option (`convert_overrides`, `config.py:366-374`): exit 2 and
+/// Sphinx's report.
+//
+// oracle (Sphinx 9.1.0, smart-quotes report S2 `probe_conftypes.out`):
+//   `-D smartquotes=0` leaves `"Hi" -- it's`; `-D smartquotes=False`
+//   raises `ConfigError: 'smartquotes' must be '0' or '1', got 'False'`.
+#[test]
+fn smartquotes_follow_the_default_and_the_d_override() {
+    let src = temp_source(
+        "smartquotes",
+        &[("index.rst", "\"Hi\" -- it's\n============\n\nText.\n")],
+    );
+    let titles = |name: &str, overrides: &[&str]| {
+        let out = out_dir(name);
+        let mut args = vec![src.to_str().unwrap(), out.to_str().unwrap(), "-q"];
+        args.extend_from_slice(overrides);
+        let result = sphinx_build(&args);
+        assert!(result.status.success(), "{name}: {}", stderr_of(&result));
+        search_value(&out)["titles"].clone()
+    };
+    assert_eq!(
+        titles("smartquotes-default", &[]),
+        serde_json::json!(["\u{201c}Hi\u{201d} \u{2013} it\u{2019}s"])
+    );
+    assert_eq!(
+        titles("smartquotes-off", &["-D", "smartquotes=0"]),
+        serde_json::json!(["\"Hi\" -- it's"])
+    );
+
+    let out = out_dir("smartquotes-false");
+    let result = sphinx_build(&[
+        src.to_str().unwrap(),
+        out.to_str().unwrap(),
+        "-q",
+        "-D",
+        "smartquotes=False",
+    ]);
+    assert_eq!(
+        result.status.code(),
+        Some(2),
+        "stderr: {}",
+        stderr_of(&result)
+    );
+    assert_eq!(
+        stderr_of(&result),
+        "\nConfiguration error!\n\n    sphinx.errors.ConfigError: 'smartquotes' must be \
+         '0' or '1', got 'False'\n"
+    );
+}
+
 /// `source_encoding` is a real key (panel fix round B, [19]): `-D` reaches
 /// it, a non-UTF-8 value prints sphinx's deprecation warning byte-exactly
 /// (probed), and the warning counts toward `-W`.

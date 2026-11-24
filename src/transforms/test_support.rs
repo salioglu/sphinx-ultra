@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::builder::BuilderKind;
 use crate::config::BuildConfig;
 use crate::diagnostics::Diagnostic;
 use crate::doctree::Doctree;
@@ -48,15 +49,20 @@ pub(crate) fn index_rst() -> ParseOptions {
 }
 
 /// The read-state fixture's read settings (M1's validation off, smart
-/// quotes off, the id trace on), with `keep_warnings` as given.
+/// quotes off, the dummy builder, the id trace on), with `keep_warnings`
+/// as given.
 pub(crate) fn harness_settings(keep_warnings: bool) -> ReadSettings {
     ReadSettings {
         trace_ids: true,
-        ..ReadSettings::from_config(&BuildConfig {
-            validate_directives: false,
-            keep_warnings,
-            ..BuildConfig::default()
-        })
+        ..ReadSettings::from_config(
+            &BuildConfig {
+                validate_directives: false,
+                keep_warnings,
+                smartquotes: false,
+                ..BuildConfig::default()
+            },
+            BuilderKind::Dummy,
+        )
     }
 }
 

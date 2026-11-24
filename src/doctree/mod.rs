@@ -1065,6 +1065,60 @@ Escaped letter "\a" and \`backtick\` done.
         assert_eq!(escaped.text_data(), "a\u{0}*b\u{0} c");
     }
 
+    /// A plain-text run that holds only an escaped space or an escaped line
+    /// end, between two inline elements, unescapes to nothing, but docutils
+    /// keeps its Text, `'\x00 '` or `'\x00\n'` (`implicit_inline`,
+    /// `SP/docutils/parsers/rst/states.py:1160`): pformat prints nothing
+    /// for it, and SmartQuotes reads it as whitespace before the next quote.
+    //
+    // oracle (Sphinx 9.1.0, the snippet harness of
+    //   tools/gen_sphinx_fixture.py, smartquotes off): `str()` of the
+    //   paragraph's Text nodes in order, and the pformat, as asserted.
+    #[test]
+    fn escaped_whitespace_runs_keep_their_text() {
+        let source = "*a*\\ *\"b\"* and **c**\\ ``d``\\ \"e\" and *f*\\\n*\"g\"*\n";
+        let data = [
+            "a",
+            "\u{0} ",
+            "\"b\"",
+            " and ",
+            "c",
+            "\u{0} ",
+            "d",
+            "\u{0} \"e\" and ",
+            "f",
+            "\u{0}\n",
+            "\"g\"",
+        ];
+        let pformat = concat!(
+            "<document source=\"<snippet>\">\n",
+            "    <paragraph>\n",
+            "        <emphasis>\n",
+            "            a\n",
+            "        <emphasis>\n",
+            "            \"b\"\n",
+            "         and \n",
+            "        <strong>\n",
+            "            c\n",
+            "        <literal>\n",
+            "            d\n",
+            "        \"e\" and \n",
+            "        <emphasis>\n",
+            "            f\n",
+            "        <emphasis>\n",
+            "            \"g\"\n",
+        );
+        for sphinx in [false, true] {
+            let tree = parse(source, sphinx);
+            let datas: Vec<String> = text_leaves(&tree.root)
+                .iter()
+                .map(|leaf| leaf.text_data().into_owned())
+                .collect();
+            assert_eq!(datas, data, "sphinx mode: {sphinx}");
+            assert_eq!(tree.root.pformat(), pformat, "sphinx mode: {sphinx}");
+        }
+    }
+
     /// Decision 10: `uid` and `raw` are read-stage metadata, so a side-car
     /// holding only them — or nothing — compares equal to no side-car,
     /// at any depth; `rawsource` and `pending` are tree data and count.

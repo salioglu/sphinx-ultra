@@ -268,6 +268,7 @@ impl TransformId {
             TransformId::ExternalTargets => &references::ExternalTargets,
             TransformId::InternalTargets => &references::InternalTargets,
             TransformId::FootnoteDocnameUpdater => &footnotes::FootnoteDocnameUpdater,
+            TransformId::SphinxSmartQuotes => &smartquotes::SphinxSmartQuotes,
             TransformId::Transitions => &misc::Transitions,
             TransformId::SphinxDanglingReferences => &references::SphinxDanglingReferences,
             TransformId::FilterSystemMessages => &sphinx::FilterSystemMessages,
@@ -294,8 +295,6 @@ impl TransformId {
             | TransformId::AddTranslationClasses
             | TransformId::RemoveTranslatableInline => &NoOp,
 
-            // T16b.
-            TransformId::SphinxSmartQuotes => &NoOp,
             // T18b.
             TransformId::TargetNotes | TransformId::SectNum | TransformId::Contents => &NoOp,
 
@@ -702,7 +701,9 @@ fn apply(
 /// subtree: whatever checks the parse's registrations against the tree
 /// ([`DocumentState::registries_dump`],
 /// [`DocumentState::misplaced_registrations`]) reads the parse's state,
-/// before this stage.
+/// before this stage. The Text escape data the parse kept for the stage's
+/// transforms, SmartQuotes (750) the last of them, is dropped when the
+/// stage ends ([`smartquotes::clear_raw`]).
 ///
 /// With the id trace on, the stage ends by tagging the trace's events
 /// ([`tag_trace`]): stage M can still take a node out of the tree, so
@@ -752,9 +753,11 @@ pub(crate) fn read_transforms_with(
         );
     }
     tag_trace(&mut tree, &mut state);
+    let mut doctree = tree.into_doctree();
+    smartquotes::clear_raw(&mut doctree.root);
     ReadOutcome {
         output: ParseOutput {
-            doctree: tree.into_doctree(),
+            doctree,
             directive_records,
             role_records,
             toctrees,

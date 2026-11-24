@@ -3702,9 +3702,10 @@ pub(crate) mod tests {
     use super::roles::tests::{parse as read_parse, read_tree};
 
     /// The pformat of the post-read tree of `source` read as `<SRC>/index.rst`
-    /// under `read`, `keep_warnings = True`, as the probes read it: what a
-    /// transform changes, such as the classes ClassAttribute (210) places,
-    /// shows there and not in the parse ([`read_tree`]).
+    /// under `read`, `keep_warnings = True` and smart quotes off, as the
+    /// probes read it: what a transform changes, such as the classes
+    /// ClassAttribute (210) places, shows there and not in the parse
+    /// ([`read_tree`]).
     fn read_post(source: &str, read: ReadConfig) -> String {
         let options = ParseOptions {
             source_path: "<SRC>/index.rst".to_string(),
@@ -3715,6 +3716,7 @@ pub(crate) mod tests {
         };
         let settings = crate::read::ReadSettings {
             keep_warnings: true,
+            smartquotes: None,
             ..crate::read::ReadSettings::sphinx_defaults()
         };
         crate::read::read_standalone(source, &options, &settings)

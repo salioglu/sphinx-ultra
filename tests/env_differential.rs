@@ -639,34 +639,28 @@ fn assert_warning_gap_is_sound(project: &str, actual: &[String], expected: &[Str
 
 /// Fixture `conf` keys that provably steer no behavior this crate has
 /// implemented, which is what makes it sound to leave them off the
-/// [`config_of`] override pass.
-///
-/// `smartquotes`: no smart-quote transform exists.
+/// [`config_of`] override pass. None today: every key the fixture sets is
+/// applied as a `-D` override.
 ///
 /// A new fixture project introducing another such key must either have it
 /// added here (with the same kind of justification) or be expressible as a
 /// `-D` override.
-const KNOWN_INERT_CONF: &[&str] = &["smartquotes"];
+const KNOWN_INERT_CONF: &[&str] = &[];
 
 /// The side-condition that makes one [`KNOWN_INERT_CONF`] entry sound.
 ///
-/// Exhaustive on purpose. A future key added to [`KNOWN_INERT_CONF`] with
-/// no arm here fails the first project that sets it, with instructions —
-/// the mechanical forcing the table otherwise lacks, so "inert" cannot be
-/// claimed for a new key without either a side-condition or an explicit
-/// statement that every value is inert.
+/// Exhaustive on purpose. A key added to [`KNOWN_INERT_CONF`] with no
+/// side-condition here fails the first project that sets it, with
+/// instructions — the mechanical forcing the table otherwise lacks, so
+/// "inert" cannot be claimed for a new key without either a side-condition
+/// or an explicit statement that every value is inert.
 fn assert_inert_conf_is_sound(project: &str, key: &str, _value: &serde_json::Value) {
-    match key {
-        // Inert in EVERY sense: no smart-quote transform exists at all, so
-        // neither `True` nor `False` steers anything.
-        "smartquotes" => {}
-        other => panic!(
-            "project {project:?} sets {other:?}, which is listed in KNOWN_INERT_CONF \
-             but has no soundness arm in assert_inert_conf_is_sound. Add one: either \
-             an empty arm with a comment saying why EVERY value is inert, or an \
-             assertion narrowing it to the values that are."
-        ),
-    }
+    panic!(
+        "project {project:?} sets {key:?}, which is listed in KNOWN_INERT_CONF \
+         but has no soundness arm in assert_inert_conf_is_sound. Match on the key and \
+         add one: either an empty arm with a comment saying why EVERY value is inert, \
+         or an assertion narrowing it to the values that are."
+    )
 }
 
 fn report(divergences: &[String], keys: &str) {
@@ -1398,12 +1392,12 @@ fn resolved_doctrees_match_oracle() {
 /// each table names a fixture document (or project) exactly once — so the
 /// table lengths ARE the exemption counts. Update the six constants and
 /// the doc sites together.
-const DOCUMENTED_PROJECTS: usize = 31;
-const DOCUMENTED_DOCUMENTS: usize = 89;
+const DOCUMENTED_PROJECTS: usize = 32;
+const DOCUMENTED_DOCUMENTS: usize = 92;
 const DOCUMENTED_WHOLESALE_EXEMPT_DOCUMENTS: usize = 0;
-const DOCUMENTED_BYTE_EXACT_DOCUMENTS: usize = 89;
+const DOCUMENTED_BYTE_EXACT_DOCUMENTS: usize = 92;
 const DOCUMENTED_WARNING_EXEMPT_PROJECTS: usize = 0;
-const DOCUMENTED_BYTE_EXACT_WARNING_PROJECTS: usize = 31;
+const DOCUMENTED_BYTE_EXACT_WARNING_PROJECTS: usize = 32;
 
 #[test]
 fn exemption_arithmetic_matches_the_documented_numbers() {

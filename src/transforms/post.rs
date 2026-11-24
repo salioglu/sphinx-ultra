@@ -388,11 +388,14 @@ mod tests {
     /// The read settings of a build with M1's validation off and
     /// `trim_doctest_flags` as given.
     fn settings(trim_doctest_flags: bool) -> ReadSettings {
-        ReadSettings::from_config(&BuildConfig {
-            validate_directives: false,
-            trim_doctest_flags,
-            ..BuildConfig::default()
-        })
+        ReadSettings::from_config(
+            &BuildConfig {
+                validate_directives: false,
+                trim_doctest_flags,
+                ..BuildConfig::default()
+            },
+            BuilderKind::Dummy,
+        )
     }
 
     /// `rst` read as `<SRCDIR>/index.rst` and resolved as `kind` resolves

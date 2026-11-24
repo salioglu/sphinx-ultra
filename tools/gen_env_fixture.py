@@ -1504,6 +1504,57 @@ Para `x`__.
 """,
         },
     },
+    # -----------------------------------------------------------------------
+    # `smartquotes_resolved` (wave 5a T16b, smart-quotes report §6.5): the one
+    # project read with smart quotes on, Sphinx's default. The read educates
+    # the tree's text, so titles, and with them the toc entries, the implicit
+    # `:doc:`/`:ref:` text and the label's section name, and the explicit
+    # role titles; it leaves straight what the resolve pass reads from
+    # attributes -- the toctree caption and an explicit toctree entry title
+    # -- and the glossary term's std key, which the glossary directive notes
+    # before SmartQuotes (750) runs.
+    # -----------------------------------------------------------------------
+    {
+        "name": "smartquotes_resolved",
+        "conf": {"smartquotes": True},
+        "files": {
+            "index": """\
+"Index" -- title
+================
+
+.. toctree::
+   :caption: "Contents" -- here
+
+   a
+   "Explicit" title -- b <b>
+
+See :doc:`a`, :doc:`"T" <b>`, :ref:`sec-a`, :ref:`"R" -- r <sec-a>` and
+:term:`"Term" -- x`.
+
+.. glossary::
+
+   "Term" -- x
+      Def "x".
+""",
+            "a": """\
+"Doc A" -- it's
+===============
+
+.. _sec-a:
+
+"Section" in A
+--------------
+
+Text.
+""",
+            "b": """\
+Doc 'B'
+=======
+
+Text.
+""",
+        },
+    },
 ]
 
 

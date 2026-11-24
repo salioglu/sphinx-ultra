@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Generate the smart-quotes unit fixture and tables from docutils 0.22.4.
+"""Generate the smart-quotes fixtures and tables from docutils 0.22.4 and
+Sphinx 9.1.0.
 
 Regenerate with the locked core oracle profile:
 
@@ -10,6 +11,9 @@ Regenerate with the locked core oracle profile:
         --project tools/oracle_profiles/core \
         python tools/gen_smartquotes_fixture.py --tables
     cargo fmt --all
+    PYTHONNOUSERSITE=1 uv run --locked --python 3.12 \
+        --project tools/oracle_profiles/core \
+        python tools/gen_smartquotes_fixture.py --variant
 
 The `cargo fmt` is not optional after `--tables`: rustfmt lays out the
 emitted arrays, so skipping it leaves a diff that is pure formatting.
@@ -58,14 +62,29 @@ reading of their regular expressions (research report "smart quotes" §6.1,
           `APOSTROPHE`, `ADJACENT_*` and `OPENING_*` passes test. The runs
           live there, not in src/rst/digits.rs, which
           tools/gen_digit_tables.py alone writes.
+--variant writes tests/fixtures/sphinx_smartquotes_differential.json: the
+          snippet corpus of tools/gen_sphinx_fixture.py (its `CASES`, each
+          with its own `conf`), read through that generator's harness,
+          imported by path, twice: with `smartquotes = False`, which must
+          give tests/fixtures/sphinx_doctree_differential.json's trees byte
+          for byte (regenerate that first after a `CASES` change), and with
+          `smartquotes = True`, both with `keep_warnings = True` and the
+          dummy builder (report §6.3). A case is recorded when smart quotes
+          change its tree or its warnings: both trees, and the warning lines
+          only the second read printed, which must all be SmartQuotes' own
+          `No smart quotes defined for language` records.
 """
 
 import argparse
+import importlib.util
 import json
 import random
 import re
+import shutil
 import sys
+import tempfile
 import unicodedata
+from collections import Counter
 from pathlib import Path
 
 import docutils
@@ -74,6 +93,7 @@ from docutils import nodes
 from docutils.utils import normalize_language_tag
 from docutils.utils import smartquotes as sq
 from sphinx.transforms import SphinxSmartQuotes
+from sphinx.util.docutils import docutils_namespace, patch_docutils
 
 EXPECTED_DOCUTILS = "0.22.4"
 EXPECTED_SPHINX = "9.1.0"
@@ -89,6 +109,18 @@ assert sphinx.__version__ == EXPECTED_SPHINX, (
 REPO_ROOT = Path(__file__).resolve().parent.parent
 UNITS_PATH = REPO_ROOT / "tests" / "fixtures" / "smartquotes_units.json"
 TABLES_PATH = REPO_ROOT / "src" / "transforms" / "smartquotes" / "tables.rs"
+VARIANT_PATH = REPO_ROOT / "tests" / "fixtures" / "sphinx_smartquotes_differential.json"
+BASE_FIXTURE = "tests/fixtures/sphinx_doctree_differential.json"
+SPHINX_GENERATOR = REPO_ROOT / "tools" / "gen_sphinx_fixture.py"
+
+# The one record SmartQuotes makes (`SP/docutils/transforms/universal.py:
+# 324-328`): every warning line the smart-quotes read adds must be one.
+SMARTQUOTES_WARNING = "WARNING: No smart quotes defined for language "
+
+# Anti-truncation floor for the variant: 63 cases when --variant was added
+# (wave 5a T16b). The corpus only grows, so a regeneration below the floor
+# lost cases.
+VARIANT_FLOOR = 55
 
 # The report's action table (§S3): docutils' numbered presets, the letters
 # one at a time and combined, and the strings that do nothing but run
@@ -447,14 +479,146 @@ def tables():
     print(f"wrote {TABLES_PATH}: {len(quotes)} languages, {len(word)} word runs")
 
 
+def load_sphinx_generator():
+    """tools/gen_sphinx_fixture.py, imported by path: its `CASES` and the
+    harness that reads them (`make_app`, `probe`, `normalize`)."""
+    spec = importlib.util.spec_from_file_location("gen_sphinx_fixture", SPHINX_GENERATOR)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def read_corpus(gs, smartquotes):
+    """Every case of `gs.CASES` read through its harness with `smartquotes`
+    as given and `keep_warnings = True`, one app per distinct `conf`, as the
+    generator itself groups them: `{name: (pseudo_xml, warning lines,
+    effective settings)}`, the warning lines those the case's read wrote,
+    with the source path spelled as in the pseudo-XML."""
+    gs.CONFOVERRIDES = {"smartquotes": smartquotes, "keep_warnings": True}
+    groups = {}
+    for case in gs.CASES:
+        family, name, rst, conf = gs.case_parts(case)
+        key = json.dumps(conf, sort_keys=True)
+        groups.setdefault(key, (conf, []))[1].append((f"{family}.{name}", rst))
+    results = {}
+    for key in sorted(groups):
+        conf, cases = groups[key]
+        base = Path(tempfile.mkdtemp(prefix="smartquotes_variant_")).resolve() / "src"
+        with docutils_namespace(), patch_docutils(str(base)):
+            app = gs.make_app(base, conf)
+            try:
+                settings = {
+                    "smartquotes": app.config.smartquotes,
+                    "smartquotes_action": app.config.smartquotes_action,
+                    "language": app.config.language,
+                    "keep_warnings": app.config.keep_warnings,
+                    "builder": app.builder.name,
+                }
+                assert settings["smartquotes"] is smartquotes, settings
+                for name, rst in cases:
+                    start = len(app._warning.getvalue())
+                    doctree = gs.probe(app, base, rst)
+                    warnings = app._warning.getvalue()[start:]
+                    warnings = warnings.replace(str(base / "index.rst"), gs.SOURCE_TOKEN)
+                    assert str(base) not in warnings, f"{name}: srcdir leaked:\n{warnings}"
+                    results[name] = (
+                        gs.normalize(doctree.pformat(), base),
+                        warnings.splitlines(),
+                        settings,
+                    )
+            finally:
+                app.cleanup()
+                shutil.rmtree(base.parent, ignore_errors=True)
+    return results
+
+
+def variant():
+    """The smart-quotes variant of the snippet corpus (report §6.3)."""
+    gs = load_sphinx_generator()
+    base_fixture = json.loads((REPO_ROOT / BASE_FIXTURE).read_text(encoding="utf-8"))
+    committed = {case["name"]: case["pseudo_xml"] for case in base_fixture["cases"]}
+    corpus = [gs.case_parts(case) for case in gs.CASES]
+    names = [f"{family}.{name}" for family, name, _, _ in corpus]
+    assert names == list(committed), (
+        f"{BASE_FIXTURE} is not tools/gen_sphinx_fixture.py's corpus: regenerate it first"
+    )
+
+    off = read_corpus(gs, False)
+    on = read_corpus(gs, True)
+    again = read_corpus(gs, True)
+    assert on == again, "two smart-quotes reads of the corpus differ"
+
+    cases = []
+    settings = None
+    for (family, name, rst, conf), case_name in zip(corpus, names):
+        off_xml, off_warnings, _ = off[case_name]
+        on_xml, on_warnings, on_settings = on[case_name]
+        assert off_xml == committed[case_name], (
+            f"{case_name}: the smartquotes-off read is not {BASE_FIXTURE}'s tree"
+        )
+        if not conf:
+            settings = on_settings
+        # The warning lines the smart-quotes read printed and the other did
+        # not, in the order it printed them; none may go missing.
+        budget = Counter(off_warnings)
+        added = []
+        for line in on_warnings:
+            if budget[line]:
+                budget[line] -= 1
+            else:
+                added.append(line)
+        assert not +budget, f"{case_name}: smart quotes removed warnings: {sorted(+budget)}"
+        assert all(SMARTQUOTES_WARNING in line for line in added), (
+            f"{case_name}: a warning that is not SmartQuotes': {added}"
+        )
+        if on_xml == off_xml and not added:
+            continue
+        cases.append({
+            "name": case_name,
+            "rst": rst,
+            "conf": conf,
+            "pseudo_xml_off": off_xml,
+            "pseudo_xml": on_xml,
+            "smartquotes_warnings": "".join(f"{line}\n" for line in added),
+        })
+    assert settings == {
+        "smartquotes": True,
+        "smartquotes_action": "qDe",
+        "language": "en",
+        "keep_warnings": True,
+        "builder": "dummy",
+    }, settings
+    assert len(cases) >= VARIANT_FLOOR, f"variant degenerated: {len(cases)} cases"
+    return {
+        "docutils_version": docutils.__version__,
+        "sphinx_version": sphinx.__version__,
+        "generator": "tools/gen_smartquotes_fixture.py --variant",
+        "base_fixture": BASE_FIXTURE,
+        "settings": settings,
+        "cases": cases,
+    }
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--units", action="store_true", help="write tests/fixtures/smartquotes_units.json")
     mode.add_argument("--tables", action="store_true", help="write src/transforms/smartquotes/tables.rs")
+    mode.add_argument(
+        "--variant",
+        action="store_true",
+        help="write tests/fixtures/sphinx_smartquotes_differential.json",
+    )
     args = parser.parse_args(argv)
     if args.tables:
         tables()
+        return 0
+    if args.variant:
+        fixture = variant()
+        with open(VARIANT_PATH, "w", encoding="utf-8") as f:
+            json.dump(fixture, f, indent=2, sort_keys=True, ensure_ascii=False)
+            f.write("\n")
+        print(f"wrote {VARIANT_PATH}: {len(fixture['cases'])} cases")
         return 0
     fixture = units()
     UNITS_PATH.write_text(dump(fixture) + "\n", encoding="utf-8")

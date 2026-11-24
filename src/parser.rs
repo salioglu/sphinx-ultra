@@ -16,6 +16,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 use std::sync::Arc;
 
+use crate::builder::BuilderKind;
 use crate::config::BuildConfig;
 use crate::doctree::{kinds, AttrValue, Doctree, Node, Span};
 use crate::document::{
@@ -71,9 +72,15 @@ impl Parser {
             py: crate::py::PySigConfig::from(config),
             srcdir: None,
             source_encoding: config.source_encoding.clone(),
-            read: ReadSettings::from_config(config),
+            read: ReadSettings::from_config(config, BuilderKind::default()),
             read_config: rst::ReadConfig::from(config),
         })
+    }
+
+    /// Read for the builder `kind` of a build configured by `config`
+    /// ([`ReadSettings::from_config`]): the CLI's `html` unless set.
+    pub fn set_builder_kind(&mut self, config: &BuildConfig, kind: BuilderKind) {
+        self.read = ReadSettings::from_config(config, kind);
     }
 
     /// Attach the project source directory (sphinx `env.srcdir`), enabling

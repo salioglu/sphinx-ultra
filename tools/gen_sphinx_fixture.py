@@ -43,7 +43,10 @@ produces (probes doc, "TRAP" finding).
 Pinned configuration (recorded in the fixture header, asserted at runtime):
   - conf.py: extensions=[], master_doc='index', exclude_patterns=['_build']
   - confoverrides: smartquotes=False  (Sphinx enables docutils smartquotes by
-    default; disabling keeps wave-1/2 text conventions -- probes doc gotcha)
+    default; disabling keeps wave-1/2 text conventions -- probes doc gotcha).
+    The `sx_smartquotes` family (wave 5a T16b) is read with them off too:
+    tools/gen_smartquotes_fixture.py --variant reads the whole corpus again
+    with them on, into tests/fixtures/sphinx_smartquotes_differential.json.
   - confoverrides: keep_warnings=True (FilterSystemMessages keeps WARNING(2)/
     ERROR(3)/SEVERE(4) system_messages in-tree like the wave-1/2 fixtures;
     DEBUG(0)/INFO(1) are still stripped -- probes doc FilterSystemMessages
@@ -313,6 +316,19 @@ SUPPORTED_KINDS = {
     "literal_strong",
     "literal_emphasis",
     "pending_xref_condition",
+    # wave 5a T16b: the smart-quotes family's option list, substitution
+    # definitions and footnotes
+    "option_list",
+    "option_list_item",
+    "option_group",
+    "option",
+    "option_string",
+    "option_argument",
+    "description",
+    "footnote",
+    "footnote_reference",
+    "label",
+    "substitution_definition",
 }
 
 CASES = [
@@ -954,6 +970,153 @@ CASES = [
     # (880) now that the read runs it; `:name:` lands on the figure
     # (Sphinx's Figure override, `sphinx/directives/patches.py`) -----
     ('sx_image', 'figure_name', '.. figure:: pic.png\n   :name: myfig\n\n   Caption.\n'),
+    # ----- wave 5a T16b: the smart-quotes family. Read here with smart
+    # quotes off, as every case is; tools/gen_smartquotes_fixture.py
+    # --variant reads the corpus again with them on. The first 22 are the
+    # research report's proposed cases, verbatim ([SQ] §6.2), the next 7
+    # its blocked cases whose blockers have landed (§6.4): the Sphinx
+    # `code` role (T7), FilterSystemMessages (T9b), AutoNumbering (T12),
+    # Substitutions and Footnotes (T11), version-change content (T16a).
+    # The last pins the Text docutils keeps for a run of escaped whitespace
+    # between inline elements, which is context for the quote after it.
+    # -----
+    ('sx_smartquotes', 'basic_quotes', '"quoted" and \'single\' and it\'s and 80\'s and the \'80s.\n'),
+    ('sx_smartquotes', 'dashes_ellipsis', "En -- dash, em --- dash, four ---- and five ----- dashes, ellipsis... and . . . spaced and .... four.\n"),
+    ('sx_smartquotes', 'nested_and_adjacent_quotes', "\"Nested 'inner' quotes\" and 'nested \"inner\" quotes' and \"'Adjacent' words\" and '\"adjacent\" too'.\n"),
+    ('sx_smartquotes', 'context_punctuation', "He said, \"Hi.\" She said, 'Hi.' Before:\"x\" (\"p\") ['b'] {\"c\"} <\"d\"> -\"e\"- --\"f\"-- ---'g'--- \"h\", \"i\"; \"j\"! \"k\"? \" spaced \"\n"),
+    ('sx_smartquotes', 'apostrophes_decades', "The '90s, the 1990's, '20s, 'til, 'tis, Hallowe'en, rock'n'roll, 5'10\", O'Neil, dogs' bones.\n"),
+    ('sx_smartquotes', 'inline_markup_adjacency', 'A *"emph"* and "*emph*" and **"strong"** and "**strong**".\n\nword*"emph"* and *emph*"after" and ``"literal"`` and "``literal``".\n\nx ``lit`` "after literal" and x ``lit``"after literal" and *emph*\'s.\n'),
+    ('sx_smartquotes', 'backslash_escapes', r'''\"escaped double\" and \'escaped single\' and it\'s.
+
+Escaped dashes \-\- and \-- and ellipsis \.\.\. and \... done.
+
+Backslash then quote \\"x" and escaped space x\ "y" and '\a'.
+
+Escaped letter "\a" and \`backtick\` done.
+'''),
+    ('sx_smartquotes', 'escaped_whitespace_context', 'a\\ "b" and "\\ c" and x\\\n"y" end\n'),
+    ('sx_smartquotes', 'escaped_quote_context', 'Escaped-quote context \\""x" and \\\'\'y\' and x\\"-- z.\n'),
+    ('sx_smartquotes', 'title_with_escapes', '\\"Title\\" -- \\-\\-\n==================\n\nBody.\n'),
+    ('sx_smartquotes', 'literal_entities', "Entities &#34; &#39; &#46; &#45; &#96; &#92; &quot; stay?\n"),
+    ('sx_smartquotes', 'docutils_roles', ':emphasis:`"e"` :strong:`\\"s\\"` :title-reference:`"t"` :sup:`"u"` :sub:`"d"` :emphasis:`\\"E\\"`\n'),
+    ('sx_smartquotes', 'xref_explicit_titles', ':ref:`"T" -- x <nolabel>` :doc:`"D" <nodoc>` :ref:`\\"T\\" <nolabel>` :term:`"term" -- t` :ref:`a\\\\\'b <nolabel>`\n'),
+    ('sx_smartquotes', 'xref_in_title_double_pass', 'Title :ref:`a\\\\\'b <nolabel>` x\n------------------------------\n'),
+    ('sx_smartquotes', 'block_elements', '''"Title" -- here
+===============
+
+.. rubric:: "Rubric" -- r
+
+.. topic:: "Topic" title
+
+   "Topic" body.
+
+.. sidebar:: "Side" title
+   :subtitle: "Sub" title
+
+   "Side" body.
+
+.. admonition:: "Admonition" title
+
+   "Admonition" body...
+
+.. note:: "Note" -- body...
+
+Term "one"
+   Definition "one".
+
+Term : "classifier" : 'c2'
+   Definition.
+
+:Field "name": Field "body".
+
+| Line "one" ends
+| "Line" two
+
+   "Quote" body.
+
+   -- "Attribution"
+'''),
+    ('sx_smartquotes', 'skipped_blocks', '''::
+
+   "literal block" -- x...
+
+.. parsed-literal::
+
+   "parsed" *"literal"* :ref:`"T" <nolabel>`
+
+.. code-block:: python
+
+   x = "code"
+
+.. math::
+
+   "math"
+
+.. comment "comment" -- x
+'''),
+    ('sx_smartquotes', 'option_list', '--opt=value      Desc "one" -- x.\n-x arg           Desc \'two\'.\n--long=<"q">     Desc it\'s.\n--a, --b         Two --options.\n'),
+    ('sx_smartquotes', 'standalone_uri_and_email', "See https://example.org/a--b/c---d/e...f and user--x@example.org and https://example.org/it's.\n"),
+    ('sx_smartquotes', 'inline_target', 'An _`"inline" target` and `"phrase" <https://example.org/p--q>`_ here.\n'),
+    ('sx_smartquotes', 'language_classes', '''.. rst-class:: language-de
+
+"Deutsch" und 'einfach'.
+
+.. rst-class:: language-fr
+
+"Français" et 'simple'.
+
+.. rst-class:: language-xx
+
+"Unknown" it's -- y... the '80s.
+
+.. rst-class:: language-xx
+
+"Unknown" again.
+
+.. container:: language-ja
+
+   "Japanese" 'x'.
+
+"English" again.
+'''),
+    ('sx_smartquotes', 'py_docfields', '''.. py:function:: f(x="a", y='b') -> "R"
+
+   Function "body" -- text.
+
+   :param x: The "x" -- param
+   :type x: str
+   :param str y: The 'y'
+   :returns: "ret" value
+   :rtype: int
+   :raises ValueError: if "bad"
+'''),
+    ('sx_smartquotes', 'deprecated_seealso_glossary', '''.. deprecated:: 2.0 "Deprecated" -- now
+
+.. seealso:: "See" this.
+
+.. glossary::
+
+   "Term" -- x
+      Def "x".
+'''),
+    ('sx_smartquotes', 'skipped_inline_nodes', 'A :literal:`"lit"` and :math:`"m"` and `"title ref"` and :code:`"code"`.\n'),
+    ('sx_smartquotes', 'tables', '''+-----------+-----------+
+| "grid"    | 'cell'    |
++===========+===========+
+| it's      | a -- b    |
++-----------+-----------+
+
+.. list-table:: "List" table
+
+   * - "a"
+     - 'b'
+'''),
+    ('sx_smartquotes', 'system_message_paragraphs', '.. bogus:: x\n\nText *unclosed "q".\n'),
+    ('sx_smartquotes', 'substitution_definition_unreferenced', '.. |x| replace:: "plain" -- x\n.. |y| replace:: :ref:`"T" -- t <nolabel>` and "plain"\n'),
+    ('sx_smartquotes', 'versionmodified_cross_paragraph', '.. versionadded:: 1.0\n   First paragraph ends here\n\n   "Second" paragraph.\n'),
+    ('sx_smartquotes', 'substitution_in_context', 'Before |sub| after and |it|.\n\n.. |sub| replace:: "replaced" -- text\n.. |it| replace:: it\'s\n'),
+    ('sx_smartquotes', 'footnote_context', 'Auto [#]_"quoted" and [1]_\'s.\n\n.. [#] Auto "footnote".\n.. [1] Numbered.\n'),
+    ('sx_smartquotes', 'escaped_whitespace_between_inlines', '*a*\\ *"b"* and **c**\\ ``d``\\ "e" and *f*\\\n*"g"*\n'),
 ]
 
 
@@ -1150,6 +1313,7 @@ def generate_sphinx_snippets() -> int:
         "py": 49,
         "pysig": 30,
         "pyconf": 30,
+        "sx_smartquotes": 26,
     }
     counts: dict = {}
     for case in CASES:

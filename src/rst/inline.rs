@@ -412,13 +412,14 @@ impl<'a> Inliner<'a> {
     }
 
     /// A plain-text run's `nodes.Text(text)` (`states.py:1160`), built from
-    /// the null-escaped run so it keeps docutils' data. A run that
-    /// unescapes to nothing (escaped whitespace only) adds no node; docutils
-    /// keeps that Text, which pformat and the writers print as nothing.
+    /// the null-escaped run so it keeps docutils' data. `implicit_inline`
+    /// makes no Text of an empty run only: a run of escaped whitespace
+    /// (`\x00 `, `\x00\n`) unescapes to nothing, which pformat and the
+    /// writers print as nothing, but its Text stays, and SmartQuotes reads
+    /// it as whitespace before the quote after it.
     fn push_plain_text(&mut self, data: &str) {
-        let node = Node::text_node_escaped(data, self.span);
-        if node.text.as_deref().is_some_and(|text| !text.is_empty()) {
-            self.nodes.push(node);
+        if !data.is_empty() {
+            self.nodes.push(Node::text_node_escaped(data, self.span));
         }
     }
 

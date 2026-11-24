@@ -6498,6 +6498,173 @@
         "part": "Para `x`__.\n"
       },
       "name": "state.final_position_include"
+    },
+    {
+      "conf": {
+        "smartquotes": true
+      },
+      "expect": {
+        "dependencies": {},
+        "files_to_rebuild": {
+          "a": [
+            "index"
+          ],
+          "b": [
+            "index"
+          ]
+        },
+        "genindex": [
+          {
+            "entries": [
+              {
+                "category_key": null,
+                "name": "\"Term\" -- x",
+                "subitems": [],
+                "targets": [
+                  [
+                    "main",
+                    "#term-Term-x"
+                  ]
+                ]
+              }
+            ],
+            "group": "Symbols"
+          }
+        ],
+        "included": {},
+        "index_entries": {
+          "a": [],
+          "b": [],
+          "index": [
+            [
+              "single",
+              "\"Term\" -- x",
+              "term-Term-x",
+              "main",
+              null
+            ]
+          ]
+        },
+        "py_modindex": {
+          "collapse": false,
+          "groups": []
+        },
+        "py_modules": [],
+        "py_objects": [],
+        "relations": {
+          "a": [
+            "index",
+            "index",
+            "b"
+          ],
+          "b": [
+            "index",
+            "a",
+            null
+          ],
+          "index": [
+            null,
+            null,
+            "a"
+          ]
+        },
+        "resolved_pformat": {
+          "a": "<document source=\"<project>/a.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"doc-a-it-s\" names=\"\"doc\\ a\"\\ --\\ it's\">\n        <title>\n            “Doc A” – it’s\n        <target refid=\"sec-a\">\n        <section ids=\"section-in-a sec-a\" names=\"\"section\"\\ in\\ a sec-a\">\n            <title>\n                “Section” in A\n            <paragraph>\n                Text.\n",
+          "b": "<document source=\"<project>/b.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"doc-b\" names=\"doc\\ 'b'\">\n        <title>\n            Doc ‘B’\n        <paragraph>\n            Text.\n",
+          "index": "<document source=\"<project>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"index-title\" names=\"\"index\"\\ --\\ title\">\n        <title>\n            “Index” – title\n        <compound classes=\"toctree-wrapper\">\n            <compact_paragraph toctree=\"1\">\n                <title>\n                    \"Contents\" -- here\n                <bullet_list>\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                “Doc A” – it’s\n                        <bullet_list>\n                            <list_item classes=\"toctree-l2\">\n                                <compact_paragraph classes=\"toctree-l2\">\n                                    <reference anchorname=\"#section-in-a\" internal=\"1\" refuri=\"#section-in-a\">\n                                        “Section” in A\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                \"Explicit\" title -- b\n        <paragraph>\n            See \n            <reference internal=\"1\" refuri=\"\">\n                <inline classes=\"doc\">\n                    “Doc A” – it’s\n            , \n            <reference internal=\"1\" refuri=\"\">\n                <inline classes=\"doc\">\n                    “T”\n            , \n            <reference internal=\"1\" refuri=\"#sec-a\">\n                <inline classes=\"std std-ref\">\n                    “Section” in A\n            , \n            <reference internal=\"1\" refuri=\"#sec-a\">\n                <inline classes=\"std std-ref\">\n                    “R” – r\n             and\n            <reference internal=\"1\" refid=\"term-Term-x\">\n                <inline classes=\"xref std std-term\">\n                    “Term” – x\n            .\n        <glossary sorted=\"0\">\n            <definition_list classes=\"glossary\">\n                <definition_list_item>\n                    <term ids=\"term-Term-x\">\n                        “Term” – x\n                        <index entries=\"('single',\\ '\"Term\"\\ --\\ x',\\ 'term-Term-x',\\ 'main',\\ None)\">\n                    <definition>\n                        <paragraph>\n                            Def “x”.\n"
+        },
+        "std": {
+          "anonlabels": {
+            "genindex": [
+              "genindex",
+              ""
+            ],
+            "modindex": [
+              "py-modindex",
+              ""
+            ],
+            "py-modindex": [
+              "py-modindex",
+              ""
+            ],
+            "search": [
+              "search",
+              ""
+            ],
+            "sec-a": [
+              "a",
+              "sec-a"
+            ]
+          },
+          "labels": {
+            "genindex": [
+              "genindex",
+              "",
+              "Index"
+            ],
+            "modindex": [
+              "py-modindex",
+              "",
+              "Module Index"
+            ],
+            "py-modindex": [
+              "py-modindex",
+              "",
+              "Python Module Index"
+            ],
+            "search": [
+              "search",
+              "",
+              "Search Page"
+            ],
+            "sec-a": [
+              "a",
+              "sec-a",
+              "“Section” in A"
+            ]
+          },
+          "objects": [
+            {
+              "docname": "index",
+              "labelid": "term-Term-x",
+              "name": "\"Term\" -- x",
+              "objtype": "term"
+            }
+          ],
+          "progoptions": [],
+          "terms": {
+            "\"term\" -- x": [
+              "index",
+              "term-Term-x"
+            ]
+          }
+        },
+        "toc_fignumbers": {},
+        "toc_num_entries": {
+          "a": 2,
+          "b": 1,
+          "index": 1
+        },
+        "toc_secnumbers": {},
+        "tocs_pformat": {
+          "a": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"a\">\n                “Doc A” – it’s\n        <bullet_list>\n            <list_item>\n                <compact_paragraph>\n                    <reference anchorname=\"#section-in-a\" internal=\"1\" refuri=\"a\">\n                        “Section” in A\n",
+          "b": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"b\">\n                Doc ‘B’\n",
+          "index": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"index\">\n                “Index” – title\n        <bullet_list>\n            <toctree caption=\"\"Contents\" -- here\" entries=\"(None,\\ 'a') ('\"Explicit\"\\ title\\ --\\ b',\\ 'b')\" glob=\"0\" hidden=\"0\" includefiles=\"a b\" includehidden=\"0\" maxdepth=\"-1\" numbered=\"0\" parent=\"index\" rawcaption=\"\"Contents\" -- here\" rawentries=\"\"Explicit\"\\ title\\ --\\ b\" titlesonly=\"0\">\n"
+        },
+        "toctree_includes": {
+          "index": [
+            "a",
+            "b"
+          ]
+        },
+        "warnings": []
+      },
+      "files": {
+        "a": "\"Doc A\" -- it's\n===============\n\n.. _sec-a:\n\n\"Section\" in A\n--------------\n\nText.\n",
+        "b": "Doc 'B'\n=======\n\nText.\n",
+        "index": "\"Index\" -- title\n================\n\n.. toctree::\n   :caption: \"Contents\" -- here\n\n   a\n   \"Explicit\" title -- b <b>\n\nSee :doc:`a`, :doc:`\"T\" <b>`, :ref:`sec-a`, :ref:`\"R\" -- r <sec-a>` and\n:term:`\"Term\" -- x`.\n\n.. glossary::\n\n   \"Term\" -- x\n      Def \"x\".\n"
+      },
+      "name": "smartquotes_resolved"
     }
   ],
   "sphinx_version": "9.1.0"

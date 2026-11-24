@@ -19,8 +19,12 @@
 //!
 //! Both read through [`read_standalone`] with the [`ReadSettings`] the
 //! fixture's recorded settings give through a [`BuildConfig`] (M1's
-//! directive and role validation off, wave 5a decision 7), never Sphinx's
-//! bare defaults, and compare its post-read doctree as it is.
+//! directive and role validation off, wave 5a decision 7) for the dummy
+//! builder the oracle builds with, never Sphinx's bare defaults, and
+//! compare its post-read doctree as it is. Both corpora read with smart
+//! quotes off: the fixture's header says so, and so does the oracle's
+//! `conf.py`; tests/sphinx_smartquotes_differential.rs reads the first
+//! corpus with them on.
 //!
 //! Clones the tests/doctree_differential.rs shape: committed JSON, version
 //! assertions (BOTH sphinx and docutils are recorded), floor guard against
@@ -186,19 +190,19 @@ fn a_mapped_conf_translates_onto_py_sig_config() {
 }
 
 /// The read settings of a build whose configuration sets `keep_warnings`
-/// as `settings` records it: a [`BuildConfig`] with M1's validation off
-/// (decision 7), projected the way a build projects it.
+/// and `smartquotes` as `settings` records them: a [`BuildConfig`] with
+/// M1's validation off (decision 7), projected the way a dummy build
+/// projects it.
 fn read_settings_of(settings: &FixtureSettings) -> ReadSettings {
-    assert!(
-        !settings.smartquotes,
-        "no smart-quote transform exists yet, so only `smartquotes = False` \
-         reads like the oracle"
-    );
-    ReadSettings::from_config(&BuildConfig {
-        validate_directives: false,
-        keep_warnings: settings.keep_warnings,
-        ..BuildConfig::default()
-    })
+    ReadSettings::from_config(
+        &BuildConfig {
+            validate_directives: false,
+            keep_warnings: settings.keep_warnings,
+            smartquotes: settings.smartquotes,
+            ..BuildConfig::default()
+        },
+        BuilderKind::Dummy,
+    )
 }
 
 /// The pformat of our post-read doctree for `rst`, read standalone as the
@@ -339,17 +343,16 @@ fn runnable_docutils_snippets() -> BTreeSet<String> {
 }
 
 /// The build configuration the oracle's `conf.py` gives, read the way the
-/// CLI reads it, with M1's validation off (decision 7).
+/// CLI reads it, with M1's validation off (decision 7). The oracle turns
+/// smart quotes off there (`smartquotes = False`), which the read honours.
 fn conf_py_config(conf: &str) -> BuildConfig {
     let dir = tempfile::TempDir::new().expect("tempdir");
     let path = dir.path().join("conf.py");
     std::fs::write(&path, conf).expect("conf.py writes");
     let config = BuildConfig::from_conf_py(&path).expect("the oracle conf.py loads");
-    assert_eq!(
-        config.conf_values.get("smartquotes"),
-        Some(&serde_json::Value::Bool(false)),
-        "no smart-quote transform exists yet, so only `smartquotes = False` reads \
-         like the oracle"
+    assert!(
+        !config.smartquotes,
+        "the oracle's conf.py turns smart quotes off"
     );
     BuildConfig {
         validate_directives: false,
@@ -372,7 +375,7 @@ fn snippet_mismatches(
         let config = configs
             .entry(case.conf.as_str())
             .or_insert_with(|| conf_py_config(&case.conf));
-        let settings = ReadSettings::from_config(config);
+        let settings = ReadSettings::from_config(config, BuilderKind::Dummy);
         let parse = ParseOptions {
             source_path: "<SRCDIR>/index.rst".to_string(),
             sphinx: true,

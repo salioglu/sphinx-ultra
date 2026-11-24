@@ -3051,6 +3051,186 @@
       "name": "sx_image.figure_name",
       "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <figure ids=\"myfig\" names=\"myfig\">\n        <image candidates=\"{'*': 'pic.png'}\" uri=\"pic.png\">\n        <caption>\n            Caption.\n",
       "rst": ".. figure:: pic.png\n   :name: myfig\n\n   Caption.\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.basic_quotes",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        \"quoted\" and 'single' and it's and 80's and the '80s.\n",
+      "rst": "\"quoted\" and 'single' and it's and 80's and the '80s.\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.dashes_ellipsis",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        En -- dash, em --- dash, four ---- and five ----- dashes, ellipsis... and . . . spaced and .... four.\n",
+      "rst": "En -- dash, em --- dash, four ---- and five ----- dashes, ellipsis... and . . . spaced and .... four.\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.nested_and_adjacent_quotes",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        \"Nested 'inner' quotes\" and 'nested \"inner\" quotes' and \"'Adjacent' words\" and '\"adjacent\" too'.\n",
+      "rst": "\"Nested 'inner' quotes\" and 'nested \"inner\" quotes' and \"'Adjacent' words\" and '\"adjacent\" too'.\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.context_punctuation",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        He said, \"Hi.\" She said, 'Hi.' Before:\"x\" (\"p\") ['b'] {\"c\"} <\"d\"> -\"e\"- --\"f\"-- ---'g'--- \"h\", \"i\"; \"j\"! \"k\"? \" spaced \"\n",
+      "rst": "He said, \"Hi.\" She said, 'Hi.' Before:\"x\" (\"p\") ['b'] {\"c\"} <\"d\"> -\"e\"- --\"f\"-- ---'g'--- \"h\", \"i\"; \"j\"! \"k\"? \" spaced \"\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.apostrophes_decades",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        The '90s, the 1990's, '20s, 'til, 'tis, Hallowe'en, rock'n'roll, 5'10\", O'Neil, dogs' bones.\n",
+      "rst": "The '90s, the 1990's, '20s, 'til, 'tis, Hallowe'en, rock'n'roll, 5'10\", O'Neil, dogs' bones.\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.inline_markup_adjacency",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        A \n        <emphasis>\n            \"emph\"\n         and \"\n        <emphasis>\n            emph\n        \" and \n        <strong>\n            \"strong\"\n         and \"\n        <strong>\n            strong\n        \".\n    <paragraph>\n        word*\"emph\"* and \n        <emphasis>\n            emph\n        \"after\" and \n        <literal>\n            \"literal\"\n         and \"\n        <literal>\n            literal\n        \".\n    <paragraph>\n        x \n        <literal>\n            lit\n         \"after literal\" and x \n        <literal>\n            lit\n        \"after literal\" and \n        <emphasis>\n            emph\n        's.\n",
+      "rst": "A *\"emph\"* and \"*emph*\" and **\"strong\"** and \"**strong**\".\n\nword*\"emph\"* and *emph*\"after\" and ``\"literal\"`` and \"``literal``\".\n\nx ``lit`` \"after literal\" and x ``lit``\"after literal\" and *emph*'s.\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.backslash_escapes",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        \"escaped double\" and 'escaped single' and it's.\n    <paragraph>\n        Escaped dashes -- and -- and ellipsis ... and ... done.\n    <paragraph>\n        Backslash then quote \\\"x\" and escaped space x\"y\" and 'a'.\n    <paragraph>\n        Escaped letter \"a\" and `backtick` done.\n",
+      "rst": "\\\"escaped double\\\" and \\'escaped single\\' and it\\'s.\n\nEscaped dashes \\-\\- and \\-- and ellipsis \\.\\.\\. and \\... done.\n\nBackslash then quote \\\\\"x\" and escaped space x\\ \"y\" and '\\a'.\n\nEscaped letter \"\\a\" and \\`backtick\\` done.\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.escaped_whitespace_context",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        a\"b\" and \"c\" and x\"y\" end\n",
+      "rst": "a\\ \"b\" and \"\\ c\" and x\\\n\"y\" end\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.escaped_quote_context",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Escaped-quote context \"\"x\" and ''y' and x\"-- z.\n",
+      "rst": "Escaped-quote context \\\"\"x\" and \\''y' and x\\\"-- z.\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.title_with_escapes",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"\"title\"\\ --\\ --\">\n        <title>\n            \"Title\" -- --\n        <paragraph>\n            Body.\n",
+      "rst": "\\\"Title\\\" -- \\-\\-\n==================\n\nBody.\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.literal_entities",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Entities &#34; &#39; &#46; &#45; &#96; &#92; &quot; stay?\n",
+      "rst": "Entities &#34; &#39; &#46; &#45; &#96; &#92; &quot; stay?\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.docutils_roles",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <emphasis>\n            \"e\"\n         \n        <strong>\n            \"s\"\n         \n        <title_reference>\n            \"t\"\n         \n        <superscript>\n            \"u\"\n         \n        <subscript>\n            \"d\"\n         \n        <emphasis>\n            \"E\"\n",
+      "rst": ":emphasis:`\"e\"` :strong:`\\\"s\\\"` :title-reference:`\"t\"` :sup:`\"u\"` :sub:`\"d\"` :emphasis:`\\\"E\\\"`\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.xref_explicit_titles",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"1\" reftarget=\"nolabel\" reftype=\"ref\" refwarn=\"1\">\n            <inline classes=\"xref std std-ref\">\n                \"T\" -- x\n         \n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"1\" reftarget=\"nodoc\" reftype=\"doc\" refwarn=\"1\">\n            <inline classes=\"xref std std-doc\">\n                \"D\"\n         \n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"1\" reftarget=\"nolabel\" reftype=\"ref\" refwarn=\"1\">\n            <inline classes=\"xref std std-ref\">\n                \"T\"\n         \n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"0\" reftarget=\"\"term\" -- t\" reftype=\"term\" refwarn=\"1\">\n            <inline classes=\"xref std std-term\">\n                \"term\" -- t\n         \n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"1\" reftarget=\"nolabel\" reftype=\"ref\" refwarn=\"1\">\n            <inline classes=\"xref std std-ref\">\n                a\\'b\n",
+      "rst": ":ref:`\"T\" -- x <nolabel>` :doc:`\"D\" <nodoc>` :ref:`\\\"T\\\" <nolabel>` :term:`\"term\" -- t` :ref:`a\\\\'b <nolabel>`\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.xref_in_title_double_pass",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title-a-b-x\" names=\"title\\ a\\\\'b\\ x\">\n        <title>\n            Title \n            <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"1\" reftarget=\"nolabel\" reftype=\"ref\" refwarn=\"1\">\n                <inline classes=\"xref std std-ref\">\n                    a\\'b\n             x\n",
+      "rst": "Title :ref:`a\\\\'b <nolabel>` x\n------------------------------\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.block_elements",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title-here\" names=\"\"title\"\\ --\\ here\">\n        <title>\n            \"Title\" -- here\n        <rubric>\n            \"Rubric\" -- r\n        <topic>\n            <title>\n                \"Topic\" title\n            <paragraph>\n                \"Topic\" body.\n        <sidebar>\n            <title>\n                \"Side\" title\n            <subtitle>\n                \"Sub\" title\n            <paragraph>\n                \"Side\" body.\n        <admonition classes=\"admonition-admonition-title\">\n            <title>\n                \"Admonition\" title\n            <paragraph>\n                \"Admonition\" body...\n        <note>\n            <paragraph>\n                \"Note\" -- body...\n        <definition_list>\n            <definition_list_item>\n                <term>\n                    Term \"one\"\n                <definition>\n                    <paragraph>\n                        Definition \"one\".\n            <definition_list_item>\n                <term>\n                    Term\n                <classifier>\n                    \"classifier\"\n                <classifier>\n                    'c2'\n                <definition>\n                    <paragraph>\n                        Definition.\n        <field_list>\n            <field>\n                <field_name>\n                    Field \"name\"\n                <field_body>\n                    <paragraph>\n                        Field \"body\".\n        <line_block>\n            <line>\n                Line \"one\" ends\n            <line>\n                \"Line\" two\n        <block_quote>\n            <paragraph>\n                \"Quote\" body.\n            <attribution>\n                \"Attribution\"\n",
+      "rst": "\"Title\" -- here\n===============\n\n.. rubric:: \"Rubric\" -- r\n\n.. topic:: \"Topic\" title\n\n   \"Topic\" body.\n\n.. sidebar:: \"Side\" title\n   :subtitle: \"Sub\" title\n\n   \"Side\" body.\n\n.. admonition:: \"Admonition\" title\n\n   \"Admonition\" body...\n\n.. note:: \"Note\" -- body...\n\nTerm \"one\"\n   Definition \"one\".\n\nTerm : \"classifier\" : 'c2'\n   Definition.\n\n:Field \"name\": Field \"body\".\n\n| Line \"one\" ends\n| \"Line\" two\n\n   \"Quote\" body.\n\n   -- \"Attribution\"\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.skipped_blocks",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <literal_block xml:space=\"preserve\">\n        \"literal block\" -- x...\n    <literal_block xml:space=\"preserve\">\n        \"parsed\" \n        <emphasis>\n            \"literal\"\n         \n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"1\" reftarget=\"nolabel\" reftype=\"ref\" refwarn=\"1\">\n            <inline classes=\"xref std std-ref\">\n                \"T\"\n    <literal_block force=\"0\" highlight_args=\"{}\" language=\"python\" xml:space=\"preserve\">\n        x = \"code\"\n    <math_block docname=\"index\" label=\"True\" no-wrap=\"0\" nowrap=\"0\" number=\"True\" xml:space=\"preserve\">\n        \"math\"\n    <comment xml:space=\"preserve\">\n        comment \"comment\" -- x\n",
+      "rst": "::\n\n   \"literal block\" -- x...\n\n.. parsed-literal::\n\n   \"parsed\" *\"literal\"* :ref:`\"T\" <nolabel>`\n\n.. code-block:: python\n\n   x = \"code\"\n\n.. math::\n\n   \"math\"\n\n.. comment \"comment\" -- x\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.option_list",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <option_list>\n        <option_list_item>\n            <option_group>\n                <option>\n                    <option_string>\n                        --opt\n                    <option_argument delimiter=\"=\">\n                        value\n            <description>\n                <paragraph>\n                    Desc \"one\" -- x.\n        <option_list_item>\n            <option_group>\n                <option>\n                    <option_string>\n                        -x\n                    <option_argument delimiter=\" \">\n                        arg\n            <description>\n                <paragraph>\n                    Desc 'two'.\n        <option_list_item>\n            <option_group>\n                <option>\n                    <option_string>\n                        --long\n                    <option_argument delimiter=\"=\">\n                        <\"q\">\n            <description>\n                <paragraph>\n                    Desc it's.\n        <option_list_item>\n            <option_group>\n                <option>\n                    <option_string>\n                        --a\n                <option>\n                    <option_string>\n                        --b\n            <description>\n                <paragraph>\n                    Two --options.\n",
+      "rst": "--opt=value      Desc \"one\" -- x.\n-x arg           Desc 'two'.\n--long=<\"q\">     Desc it's.\n--a, --b         Two --options.\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.standalone_uri_and_email",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        See \n        <reference refuri=\"https://example.org/a--b/c---d/e...f\">\n            https://example.org/a--b/c---d/e...f\n         and \n        <reference refuri=\"mailto:user--x@example.org\">\n            user--x@example.org\n         and \n        <reference refuri=\"https://example.org/it's\">\n            https://example.org/it's\n        .\n",
+      "rst": "See https://example.org/a--b/c---d/e...f and user--x@example.org and https://example.org/it's.\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.inline_target",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        An \n        <target ids=\"inline-target\" names=\"\"inline\"\\ target\">\n            \"inline\" target\n         and \n        <reference name=\"\"phrase\"\" refuri=\"https://example.org/p--q\">\n            \"phrase\"\n        <target ids=\"phrase\" names=\"\"phrase\"\" refuri=\"https://example.org/p--q\">\n         here.\n",
+      "rst": "An _`\"inline\" target` and `\"phrase\" <https://example.org/p--q>`_ here.\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.language_classes",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph classes=\"language-de\">\n        \"Deutsch\" und 'einfach'.\n    <paragraph classes=\"language-fr\">\n        \"Français\" et 'simple'.\n    <paragraph classes=\"language-xx\">\n        \"Unknown\" it's -- y... the '80s.\n    <paragraph classes=\"language-xx\">\n        \"Unknown\" again.\n    <container classes=\"language-ja\">\n        <paragraph>\n            \"Japanese\" 'x'.\n    <paragraph>\n        \"English\" again.\n",
+      "rst": ".. rst-class:: language-de\n\n\"Deutsch\" und 'einfach'.\n\n.. rst-class:: language-fr\n\n\"Français\" et 'simple'.\n\n.. rst-class:: language-xx\n\n\"Unknown\" it's -- y... the '80s.\n\n.. rst-class:: language-xx\n\n\"Unknown\" again.\n\n.. container:: language-ja\n\n   \"Japanese\" 'x'.\n\n\"English\" again.\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.py_docfields",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <index entries=\"('pair',\\ 'built-in\\ function;\\ f()',\\ 'f',\\ '',\\ None)\">\n    <desc classes=\"py function\" desctype=\"function\" domain=\"py\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"function\">\n        <desc_signature _toc_name=\"f()\" _toc_parts=\"('f',)\" class=\"\" classes=\"sig sig-object\" fullname=\"f\" ids=\"f\" module=\"True\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                f\n            <desc_parameterlist multi_line_parameter_list=\"0\" multi_line_trailing_comma=\"1\" xml:space=\"preserve\">\n                <desc_parameter xml:space=\"preserve\">\n                    <desc_sig_name classes=\"n\">\n                        x\n                    <desc_sig_operator classes=\"o\">\n                        =\n                    <inline classes=\"default_value\" support_smartquotes=\"0\">\n                        'a'\n                <desc_parameter xml:space=\"preserve\">\n                    <desc_sig_name classes=\"n\">\n                        y\n                    <desc_sig_operator classes=\"o\">\n                        =\n                    <inline classes=\"default_value\" support_smartquotes=\"0\">\n                        'b'\n            <desc_returns xml:space=\"preserve\">\n                <desc_sig_literal_string classes=\"s\">\n                    'R'\n        <desc_content>\n            <paragraph>\n                Function \"body\" -- text.\n            <field_list>\n                <field>\n                    <field_name>\n                        Parameters\n                    <field_body>\n                        <bullet_list>\n                            <list_item>\n                                <paragraph>\n                                    <literal_strong>\n                                        x\n                                     (\n                                    <pending_xref py:class=\"True\" py:module=\"True\" refdomain=\"py\" refexplicit=\"0\" refspecific=\"1\" reftarget=\"str\" reftype=\"class\">\n                                        <literal_emphasis>\n                                            str\n                                    )\n                                     -- \n                                    The \"x\" -- param\n                            <list_item>\n                                <paragraph>\n                                    <literal_strong>\n                                        y\n                                     (\n                                    <pending_xref py:class=\"True\" py:module=\"True\" refdomain=\"py\" refexplicit=\"0\" refspecific=\"1\" reftarget=\"str\" reftype=\"class\">\n                                        <literal_emphasis>\n                                            str\n                                    )\n                                     -- \n                                    The 'y'\n                <field>\n                    <field_name>\n                        Returns\n                    <field_body>\n                        <paragraph>\n                            \"ret\" value\n                <field>\n                    <field_name>\n                        Return type\n                    <field_body>\n                        <paragraph>\n                            <pending_xref py:class=\"True\" py:module=\"True\" refdomain=\"py\" refexplicit=\"0\" refspecific=\"1\" reftarget=\"int\" reftype=\"class\">\n                                int\n                <field>\n                    <field_name>\n                        Raises\n                    <field_body>\n                        <paragraph>\n                            <pending_xref py:class=\"True\" py:module=\"True\" refdomain=\"py\" refexplicit=\"0\" refspecific=\"1\" reftarget=\"ValueError\" reftype=\"exc\">\n                                <literal_strong>\n                                    ValueError\n                             -- \n                            if \"bad\"\n",
+      "rst": ".. py:function:: f(x=\"a\", y='b') -> \"R\"\n\n   Function \"body\" -- text.\n\n   :param x: The \"x\" -- param\n   :type x: str\n   :param str y: The 'y'\n   :returns: \"ret\" value\n   :rtype: int\n   :raises ValueError: if \"bad\"\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.deprecated_seealso_glossary",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <versionmodified type=\"deprecated\" version=\"2.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified deprecated\">\n                Deprecated since version 2.0: \n            \"Deprecated\" -- now\n    <seealso>\n        <paragraph>\n            \"See\" this.\n    <glossary sorted=\"0\">\n        <definition_list classes=\"glossary\">\n            <definition_list_item>\n                <term ids=\"term-Term-x\">\n                    \"Term\" -- x\n                    <index entries=\"('single',\\ '\"Term\"\\ --\\ x',\\ 'term-Term-x',\\ 'main',\\ None)\">\n                <definition>\n                    <paragraph>\n                        Def \"x\".\n",
+      "rst": ".. deprecated:: 2.0 \"Deprecated\" -- now\n\n.. seealso:: \"See\" this.\n\n.. glossary::\n\n   \"Term\" -- x\n      Def \"x\".\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.skipped_inline_nodes",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        A \n        <literal>\n            \"lit\"\n         and \n        <math>\n            \"m\"\n         and \n        <title_reference>\n            \"title ref\"\n         and \n        <literal classes=\"code\" language=\"\">\n            \"code\"\n        .\n",
+      "rst": "A :literal:`\"lit\"` and :math:`\"m\"` and `\"title ref\"` and :code:`\"code\"`.\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.tables",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"11\">\n            <colspec colwidth=\"11\">\n            <thead>\n                <row>\n                    <entry>\n                        <paragraph>\n                            \"grid\"\n                    <entry>\n                        <paragraph>\n                            'cell'\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            it's\n                    <entry>\n                        <paragraph>\n                            a -- b\n    <table ids=\"id1\">\n        <title>\n            \"List\" table\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"50\">\n            <colspec colwidth=\"50\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            \"a\"\n                    <entry>\n                        <paragraph>\n                            'b'\n",
+      "rst": "+-----------+-----------+\n| \"grid\"    | 'cell'    |\n+===========+===========+\n| it's      | a -- b    |\n+-----------+-----------+\n\n.. list-table:: \"List\" table\n\n   * - \"a\"\n     - 'b'\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.system_message_paragraphs",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown directive type \"bogus\".\n        <literal_block xml:space=\"preserve\">\n            .. bogus:: x\n    <paragraph>\n        Text \n        <problematic ids=\"id2\" refid=\"id1\">\n            *\n        unclosed \"q\".\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"3\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Inline emphasis start-string without end-string.\n",
+      "rst": ".. bogus:: x\n\nText *unclosed \"q\".\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.substitution_definition_unreferenced",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <substitution_definition names=\"x\">\n        \"plain\" -- x\n    <substitution_definition names=\"y\">\n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"1\" reftarget=\"nolabel\" reftype=\"ref\" refwarn=\"1\">\n            <inline classes=\"xref std std-ref\">\n                \"T\" -- t\n         and \"plain\"\n",
+      "rst": ".. |x| replace:: \"plain\" -- x\n.. |y| replace:: :ref:`\"T\" -- t <nolabel>` and \"plain\"\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.versionmodified_cross_paragraph",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <versionmodified type=\"versionadded\" version=\"1.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified added\">\n                Added in version 1.0: \n            First paragraph ends here\n        <paragraph>\n            \"Second\" paragraph.\n",
+      "rst": ".. versionadded:: 1.0\n   First paragraph ends here\n\n   \"Second\" paragraph.\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.substitution_in_context",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Before \n        \"replaced\" -- text\n         after and \n        it's\n        .\n    <substitution_definition names=\"sub\">\n        \"replaced\" -- text\n    <substitution_definition names=\"it\">\n        it's\n",
+      "rst": "Before |sub| after and |it|.\n\n.. |sub| replace:: \"replaced\" -- text\n.. |it| replace:: it's\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.footnote_context",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Auto \n        <footnote_reference auto=\"1\" docname=\"index\" ids=\"id1\" refid=\"id3\">\n            2\n        \"quoted\" and \n        <footnote_reference docname=\"index\" ids=\"id2\" refid=\"id4\">\n            1\n        's.\n    <footnote auto=\"1\" backrefs=\"id1\" docname=\"index\" ids=\"id3\" names=\"2\">\n        <label>\n            2\n        <paragraph>\n            Auto \"footnote\".\n    <footnote backrefs=\"id2\" docname=\"index\" ids=\"id4\" names=\"1\">\n        <label>\n            1\n        <paragraph>\n            Numbered.\n",
+      "rst": "Auto [#]_\"quoted\" and [1]_'s.\n\n.. [#] Auto \"footnote\".\n.. [1] Numbered.\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.escaped_whitespace_between_inlines",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <emphasis>\n            a\n        <emphasis>\n            \"b\"\n         and \n        <strong>\n            c\n        <literal>\n            d\n        \"e\" and \n        <emphasis>\n            f\n        <emphasis>\n            \"g\"\n",
+      "rst": "*a*\\ *\"b\"* and **c**\\ ``d``\\ \"e\" and *f*\\\n*\"g\"*\n"
     }
   ],
   "conf_semantics": "a case's optional 'conf' dict is confoverrides applied on top of the base settings above; absent = defaults. The consumer maps every key onto ParseOptions.py and errors on unmapped keys.",
