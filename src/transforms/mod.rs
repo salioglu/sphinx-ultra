@@ -38,7 +38,7 @@ pub mod tags;
 pub(crate) mod test_support;
 pub mod tree;
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
 
 use crate::diagnostics::{Category, Diagnostic, Location, OrderKey, Severity};
@@ -594,17 +594,7 @@ impl TransformCx<'_> {
     /// there (not the reporter's `source:0`); `<unknown>:line` with a line
     /// and no source; and nowhere, a bare record, with neither.
     pub fn warn(&mut self, node: TxId, message: String, category: Category) {
-        let loc = location::get_source_line(self.tree, node, self.state);
-        let line = loc.line.unwrap_or(0);
-        let location = match loc.source {
-            Some(SourceRef::Table(source)) => LogLocation::Node { source, line }.render(
-                self.tree.sources(),
-                self.srcdir,
-                self.docname,
-            ),
-            None if line != 0 => Location::Verbatim(format!("<unknown>:{line}")),
-            None => Location::None,
-        };
+        let location = node_location(self.tree, node, self.state, self.srcdir, self.docname);
         let seq = self.state.draw_seq();
         self.state.log.push(LogRecord::Logger {
             key: self.key.order_key(seq),
@@ -639,6 +629,30 @@ impl TransformCx<'_> {
         if let Some(refid) = self.tree.node(node).str_attr("refid").map(str::to_string) {
             self.tree.refids_mut().push(&refid, node);
         }
+    }
+}
+
+/// Sphinx's `get_node_location(node)` (`SP/sphinx/util/logging.py:554-562`)
+/// for the node at `node`, the location a `location=node` warning prints:
+/// docutils' location for it ([`location::get_source_line`]), as
+/// `abspath(source):line` ([`LogLocation::Node`]), or `abspath(source):`
+/// when the line is missing or 0, which is falsy there; `<unknown>:line`
+/// with a line and no source; and none with neither.
+pub(crate) fn node_location(
+    tree: &TxTree,
+    node: TxId,
+    state: &DocumentState,
+    srcdir: &Path,
+    docname: &str,
+) -> Location {
+    let loc = location::get_source_line(tree, node, state);
+    let line = loc.line.unwrap_or(0);
+    match loc.source {
+        Some(SourceRef::Table(source)) => {
+            LogLocation::Node { source, line }.render(tree.sources(), srcdir, docname)
+        }
+        None if line != 0 => Location::Verbatim(format!("<unknown>:{line}")),
+        None => Location::None,
     }
 }
 
@@ -849,9 +863,10 @@ pub fn run_merge_transforms(
                 );
             }
             TransformId::SphinxDomains => {
+                let label_locations = duplicate_label_locations(&mut doc, env, docname, inputs);
                 let output = doc.output();
                 output.state.ids.set_phase(id.python_name().to_string());
-                sphinx_domains(output, env, docname, inputs, &mut records);
+                sphinx_domains(output, env, docname, inputs, &label_locations, &mut records);
             }
             TransformId::DoctreeReadEvent => {
                 doc.output()
@@ -882,6 +897,50 @@ pub fn run_merge_transforms(
 /// The parse's records' key, `(0, 0)`: they sort before every transform's,
 /// in the order the parse drew their seqs ([DS §6.4]).
 const PARSE: TransformKey = TransformKey::at(0, 0);
+
+/// Where Sphinx's `get_node_location` locates the node of each label the
+/// std domain will report as a duplicate ([`env_std::DocumentSource::label_locations`]):
+/// an explicit name another document already labels, by its id. The node
+/// is located through the location model, so the document is held as
+/// the arena for it, which is done only when such a label exists; an
+/// indirect target's label is the node its `refid` names
+/// (`SP/sphinx/domains/std/__init__.py:947-950`).
+fn duplicate_label_locations(
+    doc: &mut MergeDocument<'_>,
+    env: &BuildEnvironment,
+    docname: &str,
+    inputs: &MergeInputs<'_>,
+) -> HashMap<String, Location> {
+    let ids: Vec<String> = doc
+        .state()
+        .names
+        .iter()
+        .filter(|(name, entry)| entry.explicit && env.std.labels.contains_key(*name))
+        .filter_map(|(_, entry)| entry.id.clone())
+        .collect();
+    let mut locations = HashMap::new();
+    if ids.is_empty() {
+        return locations;
+    }
+    let (tree, state) = doc.arena();
+    for id in ids {
+        let Some(mut node) = tree.by_id(&id) else {
+            continue;
+        };
+        if tree.node(node).kind == kinds::TARGET {
+            if let Some(real) = tree
+                .node(node)
+                .str_attr("refid")
+                .and_then(|refid| tree.by_id(refid))
+            {
+                node = real;
+            }
+        }
+        let location = node_location(tree, node, state, inputs.source_dir, docname);
+        locations.insert(id, location);
+    }
+    locations
+}
 
 /// The document stage M merges: the read's output, whose tree is held as
 /// the doctree the environment slots read, or as the arena ([`TxTree`])
@@ -1050,6 +1109,7 @@ fn sphinx_domains(
     env: &mut BuildEnvironment,
     docname: &str,
     inputs: &MergeInputs<'_>,
+    label_locations: &HashMap<String, Location>,
     records: &mut Vec<LogRecord>,
 ) {
     let mut index_warnings = Vec::new();
@@ -1085,6 +1145,7 @@ fn sphinx_domains(
             names: &output.state.names,
             path: inputs.source_path,
             source_dir: inputs.source_dir,
+            label_locations,
         },
         inputs.doc2path,
     );
@@ -1094,10 +1155,24 @@ fn sphinx_domains(
             diagnostic: Diagnostic::from(warning),
         });
     }
-    for warning in index_warnings.into_iter().chain(std_warnings.labels) {
+    let labels = std_warnings.labels.into_iter().map(|(warning, location)| {
+        let diagnostic = Diagnostic::from(warning);
+        match location {
+            Some(location) => Diagnostic {
+                location,
+                ..diagnostic
+            },
+            None => diagnostic,
+        }
+    });
+    for diagnostic in index_warnings
+        .into_iter()
+        .map(Diagnostic::from)
+        .chain(labels)
+    {
         records.push(LogRecord::Logger {
             key: SPHINX_DOMAINS.order_key(output.state.draw_seq()),
-            diagnostic: Diagnostic::from(warning),
+            diagnostic,
         });
     }
 }

@@ -1864,6 +1864,7 @@ mod tests {
                     names: &parsed.state.names,
                     path: &path,
                     source_dir: std::path::Path::new(""),
+                    label_locations: &std::collections::HashMap::new(),
                 },
                 &doc2path,
             );

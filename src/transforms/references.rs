@@ -1365,6 +1365,57 @@ mod tests {
         assert!(mismatches.is_empty(), "{}", mismatches.join("\n\n"));
     }
 
+    /// The std domain's `duplicate label` warning is `location=node`
+    /// (`SP/sphinx/domains/std/__init__.py:959-965`): Sphinx's
+    /// `get_node_location` over docutils' location for the label's node,
+    /// as the transforms locate it, not the node's span. A rubric stands
+    /// where its block ended (line 7), or has no line after an option
+    /// block or in a container without `document`; a bare target in a note
+    /// keeps no source (`<unknown>:line`). Probed on Sphinx 9.1.0 (`-w`),
+    /// `a.rst` labelling `dup` first.
+    #[test]
+    fn duplicate_labels_are_located_as_get_node_location_locates_their_node() {
+        let warning = |location: &str| {
+            format!("{location}: WARNING: duplicate label dup, other instance in <SRCDIR>/a.rst")
+        };
+        let rows = [
+            (
+                "Z\n=\n\n.. _dup:\n\n.. rubric:: R\n\nText.\n",
+                "<SRCDIR>/z.rst:7",
+            ),
+            (
+                "Z\n=\n\n.. _dup:\n\n.. rubric:: R\n   :class: x\n\nText.\n",
+                "<SRCDIR>/z.rst:",
+            ),
+            (
+                "Z\n=\n\nPara.\n\n   .. _dup:\n\n   .. rubric:: R\n\n   Text.\n",
+                "<SRCDIR>/z.rst:",
+            ),
+            (
+                "Z\n=\n\n+-------------------+\n| .. _dup:          |\n|                   |\n\
+                 | .. rubric:: R     |\n|                   |\n| Text.             |\n\
+                 +-------------------+\n",
+                "<SRCDIR>/z.rst:",
+            ),
+            (
+                "Z\n=\n\n.. note::\n\n   Text.\n\n   .. _dup:\n",
+                "<unknown>:8",
+            ),
+        ];
+        let mut mismatches = Vec::new();
+        for (z, location) in rows {
+            let project = crate::transforms::test_support::merge_project(&[
+                ("a", ".. _dup:\n\nA\n=\n"),
+                ("z", z),
+            ]);
+            let expected = [warning(location)];
+            if project.records != expected {
+                mismatches.push(format!("{z:?}\n{:#?}\n{expected:#?}", project.records));
+            }
+        }
+        assert!(mismatches.is_empty(), "{}", mismatches.join("\n\n"));
+    }
+
     /// Sphinx's `make_glossary_term` stamps a term with its content item's
     /// 0-based offset (`term.line = lineno`,
     /// `SP/sphinx/domains/std/__init__.py:387-388`, `:518-521`), and the

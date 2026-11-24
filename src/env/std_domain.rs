@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::diagnostics::Location;
 use crate::doctree::{kinds, AttrValue, Doctree, Node};
 use crate::env::numbers::{clean_astext, std_numfig_title};
 use crate::env::BuildEnvironment;
@@ -151,6 +152,12 @@ pub struct DocumentSource<'a> {
     /// The project's source directory (`env.srcdir`), against which a
     /// warning about a node names the node's source.
     pub source_dir: &'a Path,
+    /// Where Sphinx's `get_node_location` locates the node each of these
+    /// ids names, by id: the nodes a `duplicate label` warning is about,
+    /// located through the location model while the document is held as
+    /// the transforms' arena ([`crate::transforms`]). A label whose node
+    /// it does not hold is located at the node's span.
+    pub label_locations: &'a HashMap<String, Location>,
 }
 
 /// The path a warning about a node of source-table entry `source` names
@@ -175,8 +182,9 @@ pub struct DomainWarnings {
     /// these are parse records, ordered among the parse's by that seq.
     pub parse_time: Vec<(u32, BuildWarning)>,
     /// `process_doc`'s own `duplicate label` warnings, in the order it
-    /// raised them.
-    pub labels: Vec<BuildWarning>,
+    /// raised them, each with the location [`DocumentSource::label_locations`]
+    /// holds for its node.
+    pub labels: Vec<(BuildWarning, Option<Location>)>,
 }
 
 /// `StandardDomain.process_doc` (`domains/std/__init__.py:937-993`) plus the
@@ -216,7 +224,7 @@ fn collect_labels(
     env: &mut BuildEnvironment,
     doc: &DocumentSource<'_>,
     doc2path: &dyn Fn(&str) -> PathBuf,
-    warnings: &mut Vec<BuildWarning>,
+    warnings: &mut Vec<(BuildWarning, Option<Location>)>,
 ) {
     let ids = DocumentIds::of(doc.doctree);
     for (name, entry) in doc.names.iter() {
@@ -231,9 +239,28 @@ fn collect_labels(
         // whose id names no node in the tree can only mean our parse layer
         // registered an id it never stamped onto a node, so skip rather
         // than crash.
-        let Some(node) = ids.node(labelid) else {
+        let Some(mut node) = ids.node(labelid) else {
             continue;
         };
+        let located = labelid;
+        // "indirect hyperlink targets" (`:947-950`): a label on `.. _alias:
+        // real_`, whose target 460 gave the real target's `refid`, labels
+        // the node that id names, under that node's first *name* (Sphinx's
+        // own quirk: `labelid = node['names'][0]`). Sphinx indexes both
+        // blindly; a missing node or name is skipped rather than crashed on.
+        let mut labelid = labelid.to_string();
+        if node.kind == kinds::TARGET {
+            if let Some(AttrValue::Str(refid)) = node.get("refid") {
+                let Some(real) = ids.node(refid) else {
+                    continue;
+                };
+                let Some(name) = real.attrs.names.first() else {
+                    continue;
+                };
+                node = real;
+                labelid = name.clone();
+            }
+        }
         // "ignore footnote labels, labels automatically generated from a
         // link and object descriptions" (`:951-958`).
         if node.kind == kinds::FOOTNOTE
@@ -243,7 +270,9 @@ fn collect_labels(
             continue;
         }
         if let Some((other, _, _)) = env.std.labels.get(name) {
-            warnings.push(
+            // `location=node`: `get_node_location(node)`, which the
+            // location model gave for the node's id.
+            warnings.push((
                 BuildWarning::new(
                     source_path_of(doc, node.span.source),
                     Some(node.span.line as usize),
@@ -256,12 +285,12 @@ fn collect_labels(
                 // `logger.warning(...)` with no `type=`/`subtype=`: this one
                 // carries no `[type.subtype]` suffix.
                 .with_category(None),
-            );
+                doc.label_locations.get(located).cloned(),
+            ));
         }
-        env.std.anonlabels.insert(
-            name.to_string(),
-            (doc.docname.to_string(), labelid.to_string()),
-        );
+        env.std
+            .anonlabels
+            .insert(name.to_string(), (doc.docname.to_string(), labelid.clone()));
 
         let Some(sectname) = section_name(node) else {
             // "anonymous-only labels": an anonlabel, but nothing `:ref:`
@@ -270,7 +299,7 @@ fn collect_labels(
         };
         env.std.labels.insert(
             name.to_string(),
-            (doc.docname.to_string(), labelid.to_string(), sectname),
+            (doc.docname.to_string(), labelid, sectname),
         );
     }
 }
@@ -493,7 +522,7 @@ pub(crate) mod tests {
         parse_time
             .into_iter()
             .map(|(_, warning)| warning)
-            .chain(found.labels)
+            .chain(found.labels.into_iter().map(|(warning, _)| warning))
             .collect()
     }
 
@@ -563,6 +592,7 @@ pub(crate) mod tests {
                     names: &parsed.state.names,
                     path: &path,
                     source_dir: Path::new(""),
+                    label_locations: &HashMap::new(),
                 },
                 &doc2path,
             );
@@ -998,6 +1028,36 @@ pub(crate) mod tests {
         let (env, _) = read(&[("a", "A\n=\n\n.. _elsewhere: https://example.com/\n")]);
         assert!(!env.std.labels.contains_key("elsewhere"));
         assert!(!env.std.anonlabels.contains_key("elsewhere"));
+    }
+
+    /// `process_doc`'s indirect-target branch (`:947-950`): a label on
+    /// `.. _alias: real_`, whose target 460 gave `refid="real"`, labels the
+    /// node `real` names, under that node's first name, so `alias` is a
+    /// titled label whose anchor is `real section` (Sphinx's quirk, which
+    /// objects.inv prints as `index.html#real section`), however the real
+    /// target is named. Probed on Sphinx 9.1.0 (`-b html`): no warning,
+    /// `alias std:label -1 index.html#real section Real Section`.
+    #[test]
+    fn an_indirect_target_labels_the_node_its_refid_names() {
+        let label = || {
+            (
+                "index".to_string(),
+                "real section".to_string(),
+                "Real Section".to_string(),
+            )
+        };
+        let (env, warnings) = read(&[(
+            "index",
+            "Index\n=====\n\n.. _real:\n\nReal Section\n------------\n\n.. _alias: real_\n\n\
+             .. _alias2: `Real Section`_\n\nSee :ref:`alias`.\n",
+        )]);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(env.std.labels.get("alias"), Some(&label()));
+        assert_eq!(env.std.labels.get("alias2"), Some(&label()));
+        assert_eq!(
+            env.std.anonlabels.get("alias"),
+            Some(&("index".to_string(), "real section".to_string()))
+        );
     }
 
     #[test]
