@@ -4623,7 +4623,13 @@ fn index_directive_removed_entry_type_exits_two() {
 /// `MathDomain` catches only `KeyError` and `StandardDomain` `KeyError`
 /// and `TypeError`, so Sphinx 9.1.0 crashes where the reference is
 /// resolved. A doubled brace is a literal one, so `{{x}` ends on a single
-/// `}`. Probed on Sphinx 9.1.0.
+/// `}`. The rest of a field is looked up on the string its keyword gives
+/// (`a_format_field_indexes_a_string_as_python_does`): an empty attribute
+/// or anything but `.` or `[` after a `]` is a `ValueError`, an index past
+/// the string's end an `IndexError`, an attribute `str` lacks an
+/// `AttributeError` (with the suggestion Python's traceback adds), and a
+/// name in brackets a `TypeError`, which `MathDomain` does not catch.
+/// Probed on Sphinx 9.1.0.
 #[test]
 fn invalid_new_style_format_exits_two() {
     let equation = "Index\n=====\n\n.. math:: x\n   :label: e1\n\nSee :eq:`e1`.\n";
@@ -4631,6 +4637,7 @@ fn invalid_new_style_format_exits_two() {
     let math_numref = equation.replace(":eq:", ":math:numref:");
     let table = "Index\n=====\n\n.. _tbl:\n\n.. table:: Cap\n\n   ===  ===\n   a    b\n   \
                  ===  ===\n\nSee :numref:`tbl`.\n";
+    let titled = table.replace(":numref:`tbl`", ":numref:`Tab {name[3]} {number} <tbl>`");
     for (test, conf, index, exception, line) in [
         (
             "t17a2-crash-eqref-positional",
@@ -4676,6 +4683,55 @@ fn invalid_new_style_format_exits_two() {
             "ValueError: Single '}' encountered in format string",
             7,
         ),
+        (
+            "t17a2-crash-eqref-empty-attribute",
+            "math_eqref_format = 'Eq {number.}'\n",
+            equation,
+            "ValueError: Empty attribute in format string",
+            7,
+        ),
+        (
+            "t17a2-crash-eqref-after-index",
+            "math_eqref_format = 'Eq {number[0]x}'\n",
+            equation,
+            "ValueError: Only '.' or '[' may follow ']' in format field specifier",
+            7,
+        ),
+        (
+            "t17a2-crash-eqref-index-range",
+            "math_eqref_format = 'Eq {number[5]}'\n",
+            equation,
+            "IndexError: string index out of range",
+            7,
+        ),
+        (
+            "t17a2-crash-eqref-attribute",
+            "math_eqref_format = 'Eq {number.uper}'\n",
+            equation,
+            "AttributeError: 'str' object has no attribute 'uper'. Did you mean: 'upper'?",
+            7,
+        ),
+        (
+            "t17a2-crash-eqref-string-index",
+            "math_eqref_format = 'Eq {number[x]}'\n",
+            any_equation.as_str(),
+            "TypeError: string indices must be integers, not 'str'",
+            7,
+        ),
+        (
+            "t17a2-crash-numfig-format-empty-attribute",
+            "numfig = True\nnumfig_format = {'table': 'Table {number.}'}\n",
+            table,
+            "ValueError: Empty attribute in format string",
+            12,
+        ),
+        (
+            "t17a2-crash-numref-title-index-range",
+            "numfig = True\n",
+            titled.as_str(),
+            "IndexError: string index out of range",
+            12,
+        ),
     ] {
         let conf = format!("project = 'Temp'\n{conf}");
         assert_eq!(
@@ -4688,6 +4744,51 @@ fn invalid_new_style_format_exits_two() {
             crash_report(None, exception, Some(&format!("<SRCDIR>/index.rst:{line}"))),
             "{test}"
         );
+    }
+}
+
+/// `str.format` looks up the rest of a field on the string its keyword
+/// gives (CPython's `FieldNameIterator`): an index of digits is that
+/// string's character, so `Eq {number[0]}` and `Tab {name[0]}{number[0]}`
+/// fill without a record; a name in brackets is a `TypeError`, which
+/// `_resolve_numref_xref` catches and warns about without the exception
+/// (`invalid numfig_format: <title>`), where `MathDomain` crashes
+/// (`invalid_new_style_format_exits_two`). Sphinx 9.1.0's streams, probed
+/// on each project.
+#[test]
+fn a_format_field_indexes_a_string_as_python_does() {
+    let equation = "Index\n=====\n\n.. math:: x\n   :label: e1\n\nSee :eq:`e1`.\n";
+    let titled = |title: &str| {
+        format!(
+            "Index\n=====\n\n.. _tbl:\n\n.. table:: Cap\n\n   ===  ===\n   a    b\n   ===  \
+             ===\n\nSee :numref:`{title} <tbl>`.\n"
+        )
+    };
+    for (test, conf, index, expected) in [
+        (
+            "t17a2-eqref-index",
+            "math_eqref_format = 'Eq {number[0]}'\n",
+            equation.to_string(),
+            "",
+        ),
+        (
+            "t17a2-numref-title-index",
+            "numfig = True\n",
+            titled("Tab {name[0]}{number[0]}"),
+            "",
+        ),
+        (
+            "t17a2-numref-title-string-index",
+            "numfig = True\n",
+            titled("Tab {name[x]} {number}"),
+            "<SRCDIR>/index.rst:12: WARNING: invalid numfig_format: Tab {name[x]} {number}\n",
+        ),
+    ] {
+        let conf = format!("project = 'Temp'\n{conf}");
+        let src = temp_source(test, &[("conf.py", conf.as_str()), ("index.rst", &index)]);
+        let (result, written) = warning_stream(&src, &out_dir(test), &[]);
+        assert!(result.status.success(), "{test}: {}", stderr_of(&result));
+        assert_eq!(written, expected, "{test}");
     }
 }
 

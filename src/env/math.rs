@@ -231,7 +231,7 @@ pub fn resolve_xref<'e>(
                 crate::utils::py_repr_str(&key)
             )),
         ),
-        Err(FormatError::Crash(crash)) => return Err(crash),
+        Err(FormatError::TypeError(crash) | FormatError::Crash(crash)) => return Err(crash),
     };
     Ok(Some(EquationTarget {
         docname,
@@ -499,6 +499,29 @@ mod tests {
         assert_eq!(
             reference(false, config(true, ".", Some("{{{number}}} and }}"))),
             ("{1} and }".to_string(), None)
+        );
+        // The rest of a field is looked up on the number's string: an index
+        // of digits is its character, and a name in brackets the
+        // `TypeError` that `MathDomain` does not catch (decision 13, as
+        // the other exceptions but `KeyError`; probed on Sphinx 9.1.0,
+        // `a_format_field_indexes_a_string_as_python_does`,
+        // `invalid_new_style_format_exits_two`).
+        assert_eq!(
+            reference(false, config(true, ".", Some("Eq {number[0]}"))),
+            ("Eq 1".to_string(), None)
+        );
+        assert_eq!(
+            resolve_xref(
+                &env,
+                false,
+                &config(true, ".", Some("Eq {number[x]}")),
+                "why"
+            ),
+            Err(SphinxCrash::python(
+                "TypeError",
+                "string indices must be integers, not 'str'".to_string(),
+                LogLocation::None
+            ))
         );
     }
 
