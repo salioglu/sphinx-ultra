@@ -380,7 +380,7 @@ fn check_compound_biblio_field(
             .trim_matches(crate::utils::py_isspace)
             .contains('\n');
         if single_line {
-            if let Some(paragraph) = reparse_initial(&rawsource) {
+            if let Some(paragraph) = reparse_initial(&rawsource, cx.docname) {
                 let paragraph = cx.tree.new_subtree(paragraph);
                 // `f_body.children = _document.children`: the paragraph
                 // keeps the throwaway document as its parent.
@@ -413,13 +413,18 @@ fn check_compound_biblio_field(
 /// document (`frontmatter.py:448-452`): the paragraph it makes when it
 /// makes nothing else. The throwaway document's reporter writes to
 /// docutils' own stream, not Sphinx's warning stream, and its
-/// registrations are its own, so the parse here is a docutils-mode one
-/// whose messages and identities go nowhere.
-fn reparse_initial(rawsource: &str) -> Option<Node> {
+/// registrations are its own, so the parse's messages and identities go
+/// nowhere. It is a Sphinx parse all the same, of the document `docname`:
+/// `_document` takes the document's settings, Sphinx's environment among
+/// them, so Sphinx's roles (`:kbd:`, `:ref:`) parse there as they do in
+/// the document.
+fn reparse_initial(rawsource: &str, docname: &str) -> Option<Node> {
     let parsed = crate::rst::parse_rst(
         &format!("\\{rawsource}"),
         &crate::rst::ParseOptions {
             source_path: "*DocInfo transform*".to_string(),
+            sphinx: true,
+            docname: docname.to_string(),
             ..crate::rst::ParseOptions::default()
         },
     );
@@ -1558,6 +1563,23 @@ mod tests {
                 body: "    <paragraph>\n        Body.\n",
                 warnings: &[],
                 trace: &[],
+            },
+            // The reparse is a Sphinx one: its roles are Sphinx's.
+            SphinxRead {
+                rst: ":Author: J. Smith :kbd:`Ctrl`\n\nBody.\n",
+                body: "    <paragraph>\n        Body.\n",
+                warnings: &[],
+                trace: &[],
+            },
+            SphinxRead {
+                rst: ":Author: J. Smith :ref:`x`\n\n.. _x:\n\nTitle\n=====\n\nBody.\n",
+                body: "    <target refid=\"x\">\n    <section ids=\"title x\" names=\"title x\">\n        \
+                       <title>\n            Title\n        <paragraph>\n            Body.\n",
+                warnings: &[],
+                trace: &[
+                    ("parse", "target", "x", true),
+                    ("parse", "section", "title", true),
+                ],
             },
             SphinxRead {
                 rst: ":Abstract: abstract bad_\n\nBody.\n",
