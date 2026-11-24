@@ -451,9 +451,11 @@ impl TransformCx<'_> {
     /// docutils `document.reporter.system_message(level, text,
     /// base_node=node)` while this transform applies
     /// (`SP/docutils/utils/__init__.py:171-221`). The `system_message` is
-    /// located where docutils locates `node` ([`location::get_source_line`])
-    /// or, when that has neither a source nor a line, at the parse's final
-    /// position ([`DocumentState::final_position`], [DS §6.2]); its
+    /// located where docutils locates `node` ([`location::get_source_line`]):
+    /// a location with no source reads its line back against the input
+    /// ([`DocumentState::source_and_line`]), and one with neither stands at
+    /// the parse's final position ([`DocumentState::final_position`],
+    /// [DS §6.2]); its
     /// `source` is the location's, the document's own when it names none
     /// (`reporter.source`). Docutils writes the message to the warning
     /// stream as it makes it, so it is logged here, with its text as it is
@@ -478,8 +480,16 @@ impl TransformCx<'_> {
         let mut loc = base_node.map_or_else(Default::default, |node| {
             location::get_source_line(self.tree, node, self.state)
         });
-        if loc.source.is_none() && loc.line.is_none() {
-            loc = self.state.final_position;
+        // `if 'source' not in kwargs: source, line =
+        // self.get_source_and_line(kwargs.get('line'))`: a location with no
+        // source, a line or none, reads back against the input (the final
+        // position for none), keeping the line when that finds nothing.
+        if loc.source.is_none() {
+            let found = self.state.source_and_line(loc.line);
+            loc = DocLoc {
+                source: found.source,
+                line: found.line.or(loc.line),
+            };
         }
         let message = messages::system_message(
             level,

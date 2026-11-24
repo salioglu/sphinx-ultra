@@ -1233,6 +1233,7 @@ impl BlockParser {
         // lines stand after the blank lines that follow the directive, not
         // the stream this loop read, where they stand before them.
         self.state.final_position = final_position(&self.input, last_ending);
+        self.resolve_absolute_lines();
         self.state.input_lines = std::mem::take(&mut self.input)
             .iter()
             .map(|line| (line.source, line.lineno))
@@ -2671,6 +2672,7 @@ impl BlockParser {
                     if target.get("refname").is_some() {
                         self.state.note_indirect_target(&mut target);
                     }
+                    self.note_absolute_line(&mut target, line);
                     out.push(target);
                 }
                 None => {
@@ -8016,6 +8018,73 @@ impl BlockParser {
         self.state.loc_overrides.insert(uid, loc);
     }
 
+    /// Records that docutils stamps `node`, whose line is `line`, with the
+    /// machine's `abs_line_number()` ([`super::AbsoluteLine`]): its
+    /// location is the line's own until the input is complete, when
+    /// [`Self::resolve_absolute_lines`] makes it the absolute one. Until
+    /// then the override marks the node's location as the parse's, so
+    /// that a subtree the parse discards drops it
+    /// ([`DocumentState::detach`]).
+    fn note_absolute_line(&mut self, node: &mut Node, line: LineRec) {
+        let uid = self.state.identify(node);
+        self.state
+            .loc_overrides
+            .insert(uid, DocLoc::at(line.source, line.lineno));
+        self.state.parse.absolute_lines.push(super::AbsoluteLine {
+            node: uid,
+            source: line.source,
+            lineno: line.lineno,
+            bias: self.line_bias,
+            attached: self.attached,
+        });
+    }
+
+    /// Gives each node [`Self::note_absolute_line`] recorded its docutils
+    /// location, now that the top-level input ([`Self::input`]) is
+    /// complete: the 1-based index of its line there, plus the machine's
+    /// count over it, with its file as the source when its container has
+    /// `document` set and no source when not. A line the input does not
+    /// hold, one an include in a table cell or a detached parse read, keeps
+    /// its own location, which is what the reporter reads the absolute
+    /// line back to.
+    fn resolve_absolute_lines(&mut self) {
+        let pending = std::mem::take(&mut self.state.parse.absolute_lines);
+        if pending.is_empty() {
+            return;
+        }
+        let mut offsets: std::collections::HashMap<(u16, u32), usize> =
+            std::collections::HashMap::with_capacity(self.input.len());
+        for (offset, line) in self.input.iter().enumerate() {
+            offsets.entry((line.source, line.lineno)).or_insert(offset);
+        }
+        for line in pending {
+            // A node the parse discarded has lost its override.
+            if !self.state.loc_overrides.contains_key(&line.node) {
+                continue;
+            }
+            let Some(&offset) = offsets.get(&(line.source, line.lineno)) else {
+                self.state.loc_overrides.remove(&line.node);
+                continue;
+            };
+            let absolute = u32::try_from(offset)
+                .unwrap_or(u32::MAX)
+                .saturating_add(1 + line.bias);
+            if line.attached && absolute == line.lineno {
+                // The default rule's own: the span's.
+                self.state.loc_overrides.remove(&line.node);
+                continue;
+            }
+            let source = line.attached.then_some(SourceRef::Table(line.source));
+            self.state.loc_overrides.insert(
+                line.node,
+                DocLoc {
+                    source,
+                    line: Some(absolute),
+                },
+            );
+        }
+    }
+
     /// A `DirectiveError` a directive's `run()` raises (`raise
     /// self.error(...)`, `self.assert_has_content()`): `run_directive`
     /// reports the text VERBATIM — no 'Error in "X" directive:' prefix —
@@ -9234,6 +9303,7 @@ impl BlockParser {
         if indirect {
             self.state.note_indirect_target(&mut target);
         }
+        self.note_absolute_line(&mut target, lines[start]);
         out.push(target);
         self.warn_explicit_markup_end(lines, *pos, out);
     }

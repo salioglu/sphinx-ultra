@@ -1226,6 +1226,143 @@ mod tests {
         assert!(mismatches.is_empty(), "{}", mismatches.join("\n\n"));
     }
 
+    /// docutils stamps an explicit or anonymous hyperlink target with
+    /// `abs_line_number()` (`SP/docutils/parsers/rst/states.py:2057`,
+    /// `:2123`), its line in the top-level input with every inclusion's
+    /// lines and padding spliced in, and `setup_child` gives a target in a
+    /// container that has `document` the current source: `(file, absolute
+    /// line)`, which 460's errors print after or inside an include. A
+    /// target in a container without `document` (a list item) keeps no
+    /// source, and the reporter reads its absolute line back against the
+    /// input, its true line; one in a grid-table cell counts one high
+    /// there ([`crate::rst::block`]'s `line_bias`), so it reads back the
+    /// line below. Each row is a Sphinx 9.1.0 build (`-w`) of the
+    /// document beside its included files.
+    #[test]
+    fn hyperlink_targets_take_docutils_absolute_input_line() {
+        let missing = |naming: &str, refname: &str| {
+            format!(
+                "ERROR: Indirect hyperlink target {naming} refers to target \"{refname}\", \
+                 which does not exist. [docutils]"
+            )
+        };
+        let rows: Vec<(&str, Vec<(&str, &str)>, Vec<String>)> = vec![
+            (
+                "Title\n=====\n\n.. include:: part.rst\n\n.. _x: y_\n",
+                vec![("part.rst", "Part.\n")],
+                vec![format!(
+                    "/index.rst:11: {}",
+                    missing("\"x\" (id=\"x\")", "y")
+                )],
+            ),
+            (
+                "Title\n=====\n\n.. include:: part.inc\n\nSee a_.\n\n.. _a: b_\n.. _b: a_\n",
+                vec![("part.inc", "One.\n\nThree.\n")],
+                vec![
+                    "/index.rst:15: ERROR: Indirect hyperlink target \"a\" (id=\"a\") refers \
+                      to target \"b\", forming a circular reference. [docutils]"
+                        .to_string(),
+                ],
+            ),
+            (
+                ".. include:: part.inc\n\nSee `x`__.\n\n__ missing_\n",
+                vec![("part.inc", "One.\n\nTwo.\n")],
+                vec![format!(
+                    "/index.rst:12: {}",
+                    missing("(id=\"id1\")", "missing")
+                )],
+            ),
+            (
+                ".. include:: links.rst\n\nSee a_ b_.\n\n.. _a: missing_\n.. _b: missing2_\n",
+                vec![(
+                    "links.rst",
+                    ".. _python: https://python.org\n.. |proj| replace:: Project\n",
+                )],
+                vec![
+                    format!("/index.rst:11: {}", missing("\"a\" (id=\"a\")", "missing")),
+                    format!("/index.rst:12: {}", missing("\"b\" (id=\"b\")", "missing2")),
+                ],
+            ),
+            (
+                ".. include:: links.rst\n\nText.\n\n.. include:: links.rst\n\nSee a_.\n\n\
+                 .. _a: missing_\n",
+                vec![("links.rst", ".. _python2: https://python.org\n")],
+                vec![format!(
+                    "/index.rst:19: {}",
+                    missing("\"a\" (id=\"a\")", "missing")
+                )],
+            ),
+            (
+                ".. include:: links.rst\n\nTitle\n=====\n\nSee ind_.\n\n.. _ind: dup_\n\
+                 .. _dup: http://a\n.. _dup: http://b\n",
+                vec![(
+                    "links.rst",
+                    ".. _python: https://python.org\n.. |proj| replace:: Project\n",
+                )],
+                vec![
+                    "/index.rst:10: WARNING: Duplicate explicit target name: \"dup\". [docutils]"
+                        .to_string(),
+                    "/index.rst:14: ERROR: Indirect hyperlink target \"ind\" (id=\"ind\") refers \
+                     to target \"dup\", which is a duplicate, and cannot be used as a unique \
+                     reference. [docutils]"
+                        .to_string(),
+                ],
+            ),
+            (
+                "Title\n=====\n\n.. include:: inc.rst\n\nAfter.\n",
+                vec![("inc.rst", "Para ind_.\n\n.. _ind: missing_\n")],
+                vec![format!(
+                    "inc.rst:9: {}",
+                    missing("\"ind\" (id=\"ind\")", "missing")
+                )],
+            ),
+            (
+                ".. include:: part.inc\n\n- .. _x: missing_\n\n  See x_.\n",
+                vec![("part.inc", "Part.\n")],
+                vec![format!(
+                    "/index.rst:3: {}",
+                    missing("\"x\" (id=\"x\")", "missing")
+                )],
+            ),
+            (
+                "Title\n=====\n\n+------------------+\n| .. _x: missing_  |\n\
+                 |                  |\n| text x_          |\n+------------------+\n",
+                vec![],
+                vec![format!(
+                    "/index.rst:6: {}",
+                    missing("\"x\" (id=\"x\")", "missing")
+                )],
+            ),
+        ];
+        let mut mismatches = Vec::new();
+        for (index, files, expected) in rows {
+            let tmp = tempfile::tempdir().expect("a temporary source directory");
+            for (name, text) in &files {
+                std::fs::write(tmp.path().join(name), text).expect("an included file writes");
+            }
+            let parse = crate::rst::ParseOptions {
+                source_path: tmp.path().join("index.rst").display().to_string(),
+                srcdir: Some(tmp.path().to_path_buf()),
+                ..crate::transforms::test_support::index_rst()
+            };
+            let read = crate::read::read_standalone(
+                index,
+                &parse,
+                &crate::transforms::test_support::harness_settings(false),
+            );
+            let root = tmp.path().display().to_string();
+            let records: Vec<String> = read
+                .diagnostics
+                .iter()
+                .map(|record| record.render(true).replace(&root, "").replace('\\', "/"))
+                .collect();
+            if records != expected {
+                mismatches.push(format!("{index:?}\n{records:#?}\n{expected:#?}"));
+            }
+        }
+        assert!(mismatches.is_empty(), "{}", mismatches.join("\n\n"));
+    }
+
     /// Sphinx's `make_glossary_term` stamps a term with its content item's
     /// 0-based offset (`term.line = lineno`,
     /// `SP/sphinx/domains/std/__init__.py:387-388`, `:518-521`), and the

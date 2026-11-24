@@ -675,6 +675,9 @@ pub(crate) struct ParseOnlyState {
     /// the node that holds the id, which the parse spells once its tree
     /// is complete ([`DuplicateId`]).
     pub(crate) duplicate_ids: Vec<DuplicateId>,
+    /// The nodes docutils stamps with `abs_line_number()`, whose line the
+    /// parse knows once the top-level input is complete ([`AbsoluteLine`]).
+    pub(crate) absolute_lines: Vec<AbsoluteLine>,
     /// `logger.warning` diagnostics raised while running directives.
     pub(crate) log_warnings: Vec<ParseLogWarning>,
     /// Parse-recorded dependency paths and included docnames (see
@@ -698,6 +701,29 @@ pub(crate) struct DuplicateId {
     pub(crate) node: crate::doctree::Uid,
     /// That node's start tag when the message was made.
     pub(crate) starttag: String,
+}
+
+/// A node docutils stamps with the state machine's `abs_line_number()`, the
+/// 1-based index of its line in the top-level input with every inclusion's
+/// lines and padding lines spliced in, offset by a table cell's count
+/// (`SP/docutils/parsers/rst/states.py:2057`, `:2123` for a hyperlink
+/// target): `(file, absolute line)` once `setup_child` gives it the
+/// current source in a container that has `document` set, the absolute
+/// line alone in one that has not, which the reporter reads back against
+/// the input ([`DocumentState::source_and_line`]). The parse records the
+/// node's own line, and resolves it when the input is complete
+/// (`BlockParser::resolve_absolute_lines`).
+#[derive(Debug, Clone)]
+pub(crate) struct AbsoluteLine {
+    pub(crate) node: crate::doctree::Uid,
+    /// The node's line as this parser numbers it: its source-table entry
+    /// and its 1-based line there.
+    pub(crate) source: u16,
+    pub(crate) lineno: u32,
+    /// What the machine's count adds there (`BlockParser::line_bias`).
+    pub(crate) bias: u32,
+    /// Whether the node's container has `document` set.
+    pub(crate) attached: bool,
 }
 
 impl ParseOnlyState {
