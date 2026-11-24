@@ -117,7 +117,7 @@ their job (U4); `validation/` has no replacement yet and waits for its producer.
 | Cargo.lock | ✅ | Committed (2026-08); CI/release/publish all run `--locked`. |
 | Release workflow | ✅ | release-please (`release-please.yml`, manifest mode, `release-type: rust`) maintains the release PR from Conventional Commits, bumps `Cargo.toml`/`Cargo.lock`, writes `CHANGELOG.md` and creates the tag and GitHub release; it then calls `release.yml` (`workflow_call`), which validates tag vs `Cargo.toml` and the lockfile, builds six platform archives with `--locked` (musl via `cross`, aarch64 on `ubuntu-24.04-arm`), attaches SHA-256 checksums and a build-provenance attestation to the release, and publishes the crate. Attaching the archives and publishing the crate wait for approval in the `release` environment; a release made by hand runs `release.yml` through `workflow_dispatch`. `scripts/install.sh` verifies the checksum. Process: `docs/RELEASING.md`. |
 | pyo3/pythonize | ✅ removed (2026-08) | Had zero call sites while linking libpython into every build (two RUSTSEC advisories, broken musl target, undocumented Python build dependency). Python interop returns as a venv **sidecar process** in ROADMAP M5 — not as a link-time dependency. |
-| Unused dependencies | ✅ pruned (2026-08) | Removed: pyo3, pythonize, syntect, cssparser, minifier, tar, bincode, crossbeam, lru, config, glob, walkdir, indexmap, toml, ini, handlebars. syntect returns when highlighting is actually wired (M2 wave 5/M3). M2 wave 4 re-added **bincode** (this time with call sites: environment + doctree persistence) and added **ureq** with rustls (intersphinx inventory fetching). `resolver = "3"` is set for that second one: edition 2021's default resolver would happily pick a `ureq` whose own `rust-version` exceeds ours, breaking `cargo install` on the MSRV we advertise — for other people, silently. |
+| Unused dependencies | ✅ pruned (2026-08) | Removed: pyo3, pythonize, syntect, cssparser, minifier, tar, bincode, crossbeam, lru, config, glob, walkdir, indexmap, toml, ini, handlebars. Highlighting does not bring syntect back: M2 wave 5b ports Pygments 2.21.0 instead (roadmap decision U3), because byte parity needs Pygments' own token stream. M2 wave 4 re-added **bincode** (this time with call sites: environment + doctree persistence) and added **ureq** with rustls (intersphinx inventory fetching). `resolver = "3"` is set for that second one: edition 2021's default resolver would happily pick a `ureq` whose own `rust-version` exceeds ours, breaking `cargo install` on the MSRV we advertise — for other people, silently. |
 | Repo hygiene | ✅ | Scaffold leftovers deleted; metadata (`rust-version = "1.85"`, keywords, categories, exclude) merged into `Cargo.toml`; CHANGELOG backfilled (0.2.0/0.2.1/0.3.0); SECURITY.md describes the real attack surface, including the outbound HTTPS the intersphinx work added (updated M2 wave 4). |
 
 ## Testing status
@@ -150,10 +150,10 @@ also need a `cargo fmt --all` after a regen, which their docstrings now say.
 | Inventory round-trip suite | ✅ 5 tests (3 `#[test]` + 2 `#[tokio::test]`, so a bare `#[test]` grep undercounts it) over 12 committed `.inv` files (4 sphinx-written, 3 handcrafted-valid, 5 handcrafted-malformed), expectations taken from Sphinx's own `InventoryFile.loads`; same `uv` invocation with `tools/gen_inventory_fixture.py` |
 | English search-term oracle | ✅ 3 lib tests over `tests/fixtures/search_english.tsv` (25,000 words: Snowball stem + the term Sphinx finally indexes, or `-` if dropped), generated from the locked `tools/oracle_profiles/core` profile (sphinx 9.1.0, snowballstemmer 3.1.1) by `tools/gen_search_english_fixture.py`; `rust-stemmers` was rejected because it disagrees with snowballstemmer on 39 of 123,962 words |
 | HTML differential oracle (`tests/html_differential.rs` + `tests/support/html_oracle.rs`) | ✅ 62 passing + 3 ignored. Since M2 wave 5a-1 `html_oracle_aux_gate` runs every runnable core case through the binary on each test run and compares the warning stream, the exit class, `objects.inv` and `searchindex.js` strictly against `KNOWN_AUX_GAPS` (3 rows: the warning stream of three image-scale cases, owned by the 5b writer); `html_oracle_aux_census` (ignored) prints the current set. The other non-ignored tests validate both committed ledgers (`tests/fixtures/html_oracle/{core,local_needs}/index.json`: schema, hashes, pins, discovery, an Ultra-to-Ultra smoke run) and the comparators; `html_oracle_exhaustive` (`#[ignore]`, red by design) runs every runnable case through the real binary and writes `target/html-oracle/report.{md,json}`. Corpus: 1,264 core cases (735 docutils + 489 sphinx snippets as one-document projects, 29 env projects, 7 HTML projects, 4 inventory projects; 1,260 built, 3 reference crashes, 1 build error) and 142 sphinx-needs `doc_test` projects (87 built, 49 excluded for PlantUML, 3 for network, 2 build errors, 1 reference crash), generated on Linux by the manual `html-oracle.yml` workflow. See `docs/testing.md` |
-| Doctree serde / interner-cap suites | ✅ 3 passing — bincode round-trip and the interner's bound |
+| Doctree serde / interner-cap suites | ✅ 4 passing — bincode round-trips of both doctree fixtures and (M2 wave 5a-1) of the node side-car, which keeps `rawsource` and `pending` and drops the read-stage `uid` and an escaped Text's `raw` data; and the interner's bound |
 | Property tests (`tests/rst_proptest.rs`) | ✅ 14 passing — the parser never panics on arbitrary, multiline, multibyte or deeply nested input, and (wave 4.5) on arbitrary py and std object signatures, arbitrary annotations through `parse_annotation`, and arbitrary `include`/`literalinclude` option blocks and file arguments against a real scratch srcdir (the file-argument sweep draws control characters, newlines, absolute and `..` paths since panel fix round B, and pins totality only — sphinx reads whatever path `relfn2path` yields, so "never reads outside the project" is not a property either side has). Round 1 widened the std sweep's body generator, whose fixed ASCII lines at three fixed indents could not reach the `glossary` dedent branch that broke totality: it now draws an arbitrary indent over text carrying 2-, 3- and 4-byte characters. Green at `PROPTEST_CASES=2048` (14/14, 15.9s) |
 | `tests/e2e_cli.rs` | ✅ 89 passing — the real binary against fixture projects: exit codes, warning text, output trees, `--config` routing, sphinx-build mode, incremental/dependency rebuilds, and (0.6.0) the `searchindex.js`/`objects.inv`/`.buildinfo` artifacts incl. `-D`/`-t` effects on the hashes; (M2 wave 5a-1) stderr equal to `-w`, record order at `-j 1` and `-j 4`, `-W` counting reporter and transform records, `suppress_warnings`, a touched document re-emitting its read records, CRLF sources |
-| Benchmarks | ❌ `benches/builder_benchmark.rs` panics at line 69 (`No such file or directory`) — it hands the parser a `test.rst` path that does not exist, so `cargo test --all-targets` and `cargo bench` fail. Pre-existing and outside plain `cargo test`, which is why no wave caught it. The rest exercise the placeholder write path (numbers measure escaped-text copying) and the cache benchmark is `black_box(42)`. Rewrite is scheduled with M2 wave 5. |
+| Benchmarks | ❌ `benches/builder_benchmark.rs` panics at line 69 (`No such file or directory`) — it hands the parser a `test.rst` path that does not exist, so `cargo test --all-targets` and `cargo bench` fail. Pre-existing and outside plain `cargo test`, which is why no wave caught it. The rest exercise the placeholder write path (numbers measure escaped-text copying) and the cache benchmark is `black_box(42)`. The rewrite, with regression gates, is M2 wave 5c's (roadmap decision U7). |
 
 ## Known divergences from Sphinx 9.1.0 (M2 wave 5a-1)
 
@@ -237,6 +237,15 @@ decision of the wave's plan.
 - T18a/T18b: the structure directives with pending transforms, `contents`,
   `sectnum` and `TargetNotes`; the four `KNOWN_READ_STATE_GAPS` rows (one
   case's pending serials).
+- T18a, found while classifying CPython's records: inline markup next to a
+  non-ASCII dash or ellipsis is rejected. An end-string followed by one
+  (`*b*—but`), or a start-string preceded by one, prints `Inline …
+  start-string without end-string` where docutils accepts the markup,
+  because `tools/gen_punctuation_tables.py` does not expand the ranges in
+  docutils' regex-class strings (`src/rst/punctuation.rs`' `DELIMITERS`
+  holds `‐` and `‗` but not `‑`-`‖`). The fix is the generator, the
+  regenerated table and a pin, with a docutils corpus case from T18a's
+  regeneration, the only one that grows that corpus.
 - T18c: `centered`, `productionlist`, `tabularcolumns`, `acks`,
   `sectionauthor` and the other Sphinx extras.
 
@@ -338,13 +347,6 @@ each found by probing Sphinx 9.1.0 and documented at its code site:
   `validate_intersphinx_mapping`'s type-less ERRORs; the closing line prints
   the output directory as given where Sphinx prints it relative (stdout
   only).
-- Found while classifying CPython's records (not fixed): an inline-markup
-  end-string followed by a non-ASCII dash or ellipsis (`*b*—but`), and a
-  start-string preceded by one, is rejected with `Inline emphasis
-  start-string without end-string`, because `tools/gen_punctuation_tables.py`
-  does not expand the ranges in docutils' regex-class strings
-  (`src/rst/punctuation.rs`' `DELIMITERS` holds `‐` and `‗` but not
-  `‑`-`‖`).
 
 **Deferred past wave 5a** (decision 17): extracting doc fields, `include` and
 the `SourceTable` out of `src/rst/block.rs` (about 22,600 lines).
