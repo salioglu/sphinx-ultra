@@ -1870,13 +1870,27 @@ pub(crate) mod tests {
         for (source, expected) in &both_modes {
             parses.push((parse_rst_full(source, &docutils), source, expected));
         }
+        // A glossary term and its index node have overrides of their own
+        // (`records_located_through_a_glossary_term_take_its_zero_based_offset`).
+        fn glossary_uids(node: &Node, out: &mut Vec<crate::doctree::Uid>) {
+            if matches!(node.kind, kinds::TERM | "index") {
+                out.extend(node.uid());
+            }
+            node.children
+                .iter()
+                .for_each(|child| glossary_uids(child, out));
+        }
         for (out, source, expected) in parses {
             let reference = first(&out.doctree.root, kinds::REFERENCE).expect("a reference");
             let uid = reference
                 .uid()
                 .expect("an override gives the node an identity");
+            let mut terms = Vec::new();
+            glossary_uids(&out.doctree.root, &mut terms);
+            let mut overrides = out.state.loc_overrides.clone();
+            overrides.retain(|held, _| !terms.contains(held));
             assert_eq!(
-                out.state.loc_overrides,
+                overrides,
                 std::collections::HashMap::from([(uid, *expected)]),
                 "{source:?}"
             );

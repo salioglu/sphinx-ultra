@@ -1226,6 +1226,60 @@ mod tests {
         assert!(mismatches.is_empty(), "{}", mismatches.join("\n\n"));
     }
 
+    /// Sphinx's `make_glossary_term` stamps a term with its content item's
+    /// 0-based offset (`term.line = lineno`,
+    /// `SP/sphinx/domains/std/__init__.py:387-388`, `:518-521`), and the
+    /// term's index node with the same: every transform record located
+    /// through a term prints the line before the term's own (220, 620,
+    /// 850). Probed on Sphinx 9.1.0 (`-w`).
+    #[test]
+    fn records_located_through_a_glossary_term_take_its_zero_based_offset() {
+        let line = |n: u32, text: &str| format!("<SRCDIR>/index.rst:{n}: ERROR: {text} [docutils]");
+        let nope = "Undefined substitution referenced: \"nope\".";
+        let unknown = "Unknown target name: \"unknown\".";
+        let rows: [(&str, Vec<String>); 6] = [
+            (
+                ".. glossary::\n\n   term |nope|\n      def\n",
+                vec![line(2, nope)],
+            ),
+            (
+                ".. glossary::\n\n   term unknown_\n      def\n",
+                vec![line(2, unknown)],
+            ),
+            (
+                ".. glossary::\n\n   term [#]_ [#]_\n      def\n\n.. [#] f\n",
+                vec![line(
+                    2,
+                    "Too many autonumbered footnote references: only 1 corresponding \
+                     footnote available.",
+                )],
+            ),
+            (
+                ".. glossary::\n\n   one\n   two |nope|\n      def\n",
+                vec![line(3, nope)],
+            ),
+            (
+                "Para.\n\nMore.\n\n.. glossary::\n\n   term |nope|\n      def\n\n   other \
+                 unknown_\n      d\n",
+                vec![line(6, nope), line(9, unknown)],
+            ),
+            (
+                "Title\n=====\n\nIntro.\n\n.. glossary::\n\n   API\n      Application \
+                 programming interface.\n\n   REST |nope|\n      Representational state \
+                 transfer.\n",
+                vec![line(10, nope)],
+            ),
+        ];
+        let mut mismatches = Vec::new();
+        for (rst, expected) in rows {
+            let read = read_snippet(rst, false);
+            if read.warnings != expected {
+                mismatches.push(format!("{rst:?}\n{:#?}\n{expected:#?}", read.warnings));
+            }
+        }
+        assert!(mismatches.is_empty(), "{}", mismatches.join("\n\n"));
+    }
+
     /// `SphinxDanglingReferences` (850-039) replaces a reference no target
     /// name resolves by a `problematic` holding the reference's rawsource
     /// (`docutils-0212`: `word_`), reported at the reference's location,

@@ -5509,6 +5509,11 @@ impl BlockParser {
                 let mut term = Node::elem(kinds::TERM, term_span);
                 term.children = inline.nodes;
                 term_messages.extend(inline.messages);
+                // `term.source = source; term.line = lineno`: that same
+                // 0-based offset is the term's location, and its index
+                // node's (`domains/std/__init__.py:387-388`, `:404`).
+                let term_loc = DocLoc::at(tl.source, tl.lineno.saturating_sub(1));
+                self.note_location(&mut term, term_loc);
                 // `termtext = term.astext()` (`domains/std:389`), taken from
                 // the PARSED term and before the index node is appended: a
                 // term written with markup registers, indexes and ids itself
@@ -5544,6 +5549,7 @@ impl BlockParser {
                         index_key.as_deref(),
                     )]),
                 );
+                self.note_location(&mut index, term_loc);
                 term.children.push(index);
                 item.children.push(term);
             }
