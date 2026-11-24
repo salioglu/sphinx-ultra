@@ -376,7 +376,7 @@ impl SphinxIndexBuilder {
         let (title, store) = if no_search {
             ("", WordStore::default())
         } else {
-            (title, collect_words(doctree, docname, env))
+            (title, collect_words(doctree))
         };
 
         self.titles.insert(docname.to_string(), title.to_string());
@@ -535,38 +535,22 @@ fn index_entries_of(env: &BuildEnvironment, docname: &str) -> Vec<(String, Strin
 }
 
 /// `IndexBuilder._word_collector`.
-///
-/// Sphinx's `MetadataCollector` has popped the `docinfo` out of the
-/// doctree by the time the collector runs; this crate leaves that field
-/// list in place (see [`crate::env::metadata`]), so the walk starts below
-/// it.
-fn collect_words(doctree: &Doctree, docname: &str, env: &BuildEnvironment) -> WordStore {
+fn collect_words(doctree: &Doctree) -> WordStore {
     let mut store = WordStore::default();
-    let docinfo = crate::env::metadata::docinfo_field_list(doctree);
     for child in &doctree.root.children {
-        if docinfo.is_some_and(|docinfo| std::ptr::eq(docinfo, child)) {
-            continue;
-        }
-        feed_visit_nodes(child, &doctree.root.attrs.ids, &mut store, docname, env);
+        feed_visit_nodes(child, &doctree.root.attrs.ids, &mut store);
     }
     store
 }
 
 /// `_feed_visit_nodes` (`search/__init__.py:592-636`) over the resolved
-/// doctree, with the two things Sphinx's write phase did to that tree
-/// before the collector saw it folded in: a `toctree` node is visited as
-/// the tree [`crate::env::toctree::resolve_toctree`] replaces it with
-/// (`get_and_resolve_doctree`), and a `system_message` not at all
-/// (`FilterSystemMessages` removes every one at the default
-/// `keep_warnings = False`).
-fn feed_visit_nodes(
-    node: &Node,
-    parent_ids: &[String],
-    store: &mut WordStore,
-    docname: &str,
-    env: &BuildEnvironment,
-) {
-    if node.kind == kinds::COMMENT || node.kind == kinds::SYSTEM_MESSAGE {
+/// doctree, whose body toctrees the resolve pass has already replaced with
+/// their entry trees (`get_and_resolve_doctree`,
+/// [`crate::env::toctree::resolve_body_toctrees`]). The `system_message`s
+/// the read kept (`keep_warnings = True` keeps those of level WARNING and
+/// up) are indexed like any other text.
+fn feed_visit_nodes(node: &Node, parent_ids: &[String], store: &mut WordStore) {
+    if node.kind == kinds::COMMENT {
         return;
     }
     if node.attrs.classes.iter().any(|class| class == "no-search") {
@@ -581,12 +565,6 @@ fn feed_visit_nodes(
                 // index the remaining content"
                 let text = strip_html_tags(&node.astext());
                 store.words.extend(search_words(&text));
-            }
-            return;
-        }
-        kinds::TOCTREE => {
-            if let Some(resolved) = crate::env::toctree::resolve_toctree(env, docname, node) {
-                feed_visit_nodes(&resolved, parent_ids, store, docname, env);
             }
             return;
         }
@@ -614,7 +592,7 @@ fn feed_visit_nodes(
         _ => {}
     }
     for child in &node.children {
-        feed_visit_nodes(child, &node.attrs.ids, store, docname, env);
+        feed_visit_nodes(child, &node.attrs.ids, store);
     }
 }
 
@@ -2225,48 +2203,93 @@ mod tests {
         );
     }
 
-    /// The builder's read, merge and resolve steps in miniature: parse every
-    /// `(docname, source)` into one environment that knows each document's
-    /// title, metadata and toc, then feed them all. Reading everything
-    /// first matters — a toctree resolves against the tocs of the documents
-    /// it names.
-    fn feed_project(docs: &[(&str, &str)], env: &mut BuildEnvironment) -> SphinxIndexBuilder {
-        use crate::env::toctree as env_toctree;
+    /// The builder's read and merge steps in miniature: read every
+    /// `(docname, source)` as Sphinx does ([`crate::read::read_document`],
+    /// [`crate::read::merge_document`]) into one environment that knows
+    /// each document's title, metadata and toc. The post-read doctrees,
+    /// whose docinfo the metadata collector popped, with their titles.
+    fn read_project<'d>(
+        docs: &[(&'d str, &str)],
+        env: &mut BuildEnvironment,
+    ) -> Vec<(&'d str, Doctree, String)> {
+        use std::path::{Path, PathBuf};
 
         let found: BTreeSet<String> = docs.iter().map(|(name, _)| (*name).to_string()).collect();
+        let settings = crate::read::ReadSettings::sphinx_defaults();
+        let doc2path = |docname: &str| PathBuf::from(format!("{docname}.rst"));
         let mut read = Vec::new();
         for (docname, source) in docs {
-            let doctree = crate::rst::parse_rst(
-                source,
-                &crate::rst::ParseOptions {
-                    source_path: format!("{docname}.rst"),
-                    sphinx: true,
-                    docname: (*docname).to_string(),
-                    found_docs: Some(std::sync::Arc::new(found.clone())),
-                    ..Default::default()
-                },
-            );
-            let title = env_toctree::document_title(&doctree);
-            env.longtitles.insert((*docname).to_string(), title.clone());
-            env.titles.insert((*docname).to_string(), title.clone());
-            env.metadata.insert(
-                (*docname).to_string(),
-                crate::env::metadata::document_metadata(&doctree),
-            );
-            let (toc, _) = env_toctree::build_toc(&doctree, docname);
-            for toctree in env_toctree::toctree_copies(&toc) {
-                env_toctree::note_toctree(env, docname, toctree);
-            }
-            env.tocs.insert((*docname).to_string(), toc);
-            env.all_docs.insert((*docname).to_string(), 0);
-            read.push((*docname, doctree, title.astext()));
+            let parse = crate::rst::ParseOptions {
+                source_path: format!("{docname}.rst"),
+                sphinx: true,
+                docname: (*docname).to_string(),
+                found_docs: Some(std::sync::Arc::new(found.clone())),
+                ..Default::default()
+            };
+            let mut outcome = crate::read::read_document(source, &parse, &settings);
+            let inputs = crate::read::MergeInputs {
+                source_path: Path::new(&parse.source_path),
+                source_dir: Path::new(""),
+                doc2path: &doc2path,
+                read_time_us: 0,
+            };
+            crate::read::merge_document(env, docname, &mut outcome, &inputs, &settings);
+            let title = env.titles[*docname].astext();
+            read.push((*docname, outcome.output.doctree, title));
         }
+        read
+    }
 
+    /// The feed of documents [`read_project`] read, the resolve step in
+    /// miniature: reading everything first matters — a toctree resolves
+    /// against the tocs of the documents it names. Each document is fed
+    /// as the resolve pass leaves it, its body toctrees resolved the way
+    /// the HTML builder resolves them, the URIs aside
+    /// ([`crate::env::toctree::resolve_body_toctrees`]).
+    fn feed_read(read: &[(&str, Doctree, String)], env: &BuildEnvironment) -> SphinxIndexBuilder {
+        use crate::builder::BuilderKind;
+        use crate::diagnostics::DiagnosticSink;
+        use crate::env::toctree::{resolve_body_toctrees, ToctreeLocations};
+        use crate::transforms::tags::Tags;
+        use std::path::{Path, PathBuf};
+
+        let doc2path = |docname: &str| PathBuf::from(format!("{docname}.rst"));
+        let sources = |docname: &str| {
+            read.iter()
+                .find(|(name, _, _)| *name == docname)
+                .map(|(_, doctree, _)| doctree.sources.as_slice())
+        };
+        let include_patterns = ["**".to_string()];
+        let locations = ToctreeLocations {
+            source_dir: Path::new(""),
+            doc2path: &doc2path,
+            sources: &sources,
+            include_patterns: &include_patterns,
+            exclude_patterns: &[],
+        };
+        let tags = Tags::new(BuilderKind::Html.tags().iter().map(|tag| tag.to_string()));
         let mut builder = SphinxIndexBuilder::new();
-        for (docname, doctree, title) in &read {
-            builder.feed(docname, &format!("{docname}.rst"), title, doctree, env);
+        for (docname, doctree, title) in read {
+            let mut doctree = doctree.clone();
+            let mut sink = DiagnosticSink::default();
+            resolve_body_toctrees(
+                env,
+                docname,
+                &mut doctree,
+                &|_, _| String::new(),
+                &tags,
+                &locations,
+                &mut sink,
+            );
+            builder.feed(docname, &format!("{docname}.rst"), title, &doctree, env);
         }
         builder
+    }
+
+    /// [`read_project`], then [`feed_read`].
+    fn feed_project(docs: &[(&str, &str)], env: &mut BuildEnvironment) -> SphinxIndexBuilder {
+        let read = read_project(docs, env);
+        feed_read(&read, env)
     }
 
     #[test]
@@ -2376,6 +2399,9 @@ mod tests {
     #[test]
     fn index_entries_are_split_like_split_index_msg() {
         let mut env = BuildEnvironment::default();
+        // Seeded once the read is over: the merge clears a document's
+        // entries before it records the read's own.
+        let read = read_project(&[("index", "T\n=\n\nBody.\n")], &mut env);
         env.index_entries.insert(
             "index".to_string(),
             vec![
@@ -2402,7 +2428,7 @@ mod tests {
                 },
             ],
         );
-        let builder = feed_project(&[("index", "T\n=\n\nBody.\n")], &mut env);
+        let builder = feed_read(&read, &env);
         let value = builder.freeze(&env);
         assert_eq!(
             value["indexentries"],

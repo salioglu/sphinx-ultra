@@ -1285,6 +1285,12 @@ fn an_empty_location_tuple_is_the_config_error_sphinx_raises() {
         err.to_string(),
         "An invalid intersphinx_mapping entry was added after normalisation."
     );
+    // Marked, so sphinx-build mode gives it Sphinx's `Configuration error!`
+    // report rather than a generic failure.
+    assert!(
+        err.downcast_ref::<crate::error::ConfigError>().is_some(),
+        "{err:?}"
+    );
 }
 
 #[test]

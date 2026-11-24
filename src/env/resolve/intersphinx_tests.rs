@@ -145,6 +145,7 @@ fn resolve(isx: &Intersphinx, mut doctree: Doctree) -> Resolved {
         "index",
         &mut doctree,
         Path::new("index.rst"),
+        Path::new(""),
     );
     Resolved {
         doctree,

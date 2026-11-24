@@ -808,6 +808,68 @@ fn touching_an_embedded_image_re_reads_only_the_page_that_embeds_it() {
     );
 }
 
+/// docutils records the files `csv-table :file:` and `raw :file:` read
+/// (`settings.record_dependencies.add(source)`, `tables.py`, `misc.py`),
+/// which Sphinx's `DependenciesCollector` notes: touching either re-reads
+/// the page that reads it, and only that page. Probed on Sphinx 9.1.0: a
+/// warm build after the edit re-reads the page (`1 changed`) and indexes
+/// the new cell's word.
+#[test]
+fn touching_a_csv_or_raw_file_re_reads_the_page_that_reads_it() {
+    let src = temp_source(
+        "deps-csv-raw",
+        &[
+            ("index.rst", "Index\n=====\n\n.. toctree::\n\n   page\n"),
+            (
+                "page.rst",
+                "Page\n====\n\n.. csv-table:: T\n   :file: data.csv\n\n\
+                 .. raw:: html\n   :file: snippet.html\n",
+            ),
+            ("data.csv", "a, b\n"),
+            ("snippet.html", "<p>raw</p>\n"),
+        ],
+    );
+    let out = out_dir("deps-csv-raw-out");
+    let hits = |run: &Output, expected: &str, why: &str| {
+        assert!(
+            stderr_of(run).contains(expected),
+            "{why}, stderr: {}",
+            stderr_of(run)
+        );
+    };
+    let run1 = build(&src, &out, &["--incremental"]);
+    assert!(run1.status.success(), "stderr: {}", stderr_of(&run1));
+    hits(
+        &build(&src, &out, &["--incremental"]),
+        "Cache hits: 2",
+        "an unchanged project reads nothing",
+    );
+
+    std::fs::write(src.join("data.csv"), "a, uniquecsvword\n").unwrap();
+    hits(
+        &build(&src, &out, &["--incremental"]),
+        "Cache hits: 1",
+        "the csv file's page is re-read",
+    );
+    let terms = search_value(&out)["terms"].clone();
+    assert!(
+        terms.get("uniquecsvword").is_some(),
+        "the new cell is indexed: {terms}"
+    );
+    hits(
+        &build(&src, &out, &["--incremental"]),
+        "Cache hits: 2",
+        "the re-read settled it",
+    );
+
+    std::fs::write(src.join("snippet.html"), "<p>uniquerawword</p>\n").unwrap();
+    hits(
+        &build(&src, &out, &["--incremental"]),
+        "Cache hits: 1",
+        "the raw file's page is re-read",
+    );
+}
+
 /// The include dependency + orphan wiring, end to end (wave 4.5 T12,
 /// [INC PROBE 6] matrix): a cold build records the include targets as
 /// dependencies, a warm build reads nothing, touching an included `.rst`
@@ -1130,7 +1192,9 @@ fn operational_flags_do_not_invalidate_the_cache() {
         stderr_of(&run1)
     );
 
-    let run2 = sphinx_build(&[&s, &o]);
+    // The build's progress log, `Cache hits` among it, prints with `-v`:
+    // without it sphinx-build mode's stderr is the warning stream alone.
+    let run2 = sphinx_build(&[&s, &o, "-v"]);
     assert!(
         stderr_of(&run2).contains("Cache hits: 3"),
         "an unchanged project reads nothing, stderr: {}",
@@ -1139,7 +1203,7 @@ fn operational_flags_do_not_invalidate_the_cache() {
 
     // Adding -W must not wipe the cache, and must not fail the build over
     // warnings a warm build never re-emits.
-    let run3 = sphinx_build(&[&s, &o, "-W"]);
+    let run3 = sphinx_build(&[&s, &o, "-W", "-v"]);
     assert!(
         stderr_of(&run3).contains("Cache hits: 3"),
         "-W must not invalidate the cache, stderr: {}",
@@ -1162,13 +1226,13 @@ fn operational_flags_do_not_invalidate_the_cache() {
     );
 
     // Same for -n, and dropping the flags again is likewise free.
-    let run5 = sphinx_build(&[&s, &o, "-n"]);
+    let run5 = sphinx_build(&[&s, &o, "-n", "-v"]);
     assert!(
         stderr_of(&run5).contains("Cache hits: 3"),
         "-n must not invalidate the cache, stderr: {}",
         stderr_of(&run5)
     );
-    let run6 = sphinx_build(&[&s, &o]);
+    let run6 = sphinx_build(&[&s, &o, "-v"]);
     assert!(
         stderr_of(&run6).contains("Cache hits: 3"),
         "dropping the flags must not invalidate the cache either, stderr: {}",
@@ -1477,10 +1541,11 @@ fn sphinx_build_w_exits_one_with_sphinx_message() {
         "stderr: {}",
         stderr_of(&result)
     );
+    // Sphinx logs the summary on its status stream, stdout.
     assert!(
-        stderr_of(&result).contains("with warnings treated as errors"),
-        "sphinx 9.1 -W message, stderr: {}",
-        stderr_of(&result)
+        String::from_utf8_lossy(&result.stdout).contains("with warnings treated as errors"),
+        "sphinx 9.1 -W message, stdout: {}",
+        String::from_utf8_lossy(&result.stdout)
     );
 
     // keep-going is the default since Sphinx 8.1; the flag is an accepted no-op.
@@ -1554,21 +1619,23 @@ fn sphinx_build_incremental_by_default_and_fresh_env() {
     let run1 = sphinx_build(&[s, out.to_str().unwrap()]);
     assert!(run1.status.success(), "stderr: {}", stderr_of(&run1));
 
-    let run2 = sphinx_build(&[s, out.to_str().unwrap()]);
+    // The build's progress log, `Cache hits` among it, prints with `-v`:
+    // without it sphinx-build mode's stderr is the warning stream alone.
+    let run2 = sphinx_build(&[s, out.to_str().unwrap(), "-v"]);
     assert!(
         stderr_of(&run2).contains("Cache hits: 2"),
         "compat mode is incremental by default (sphinx-build parity), stderr: {}",
         stderr_of(&run2)
     );
 
-    let run3 = sphinx_build(&[s, out.to_str().unwrap(), "-E"]);
+    let run3 = sphinx_build(&[s, out.to_str().unwrap(), "-E", "-v"]);
     assert!(
         stderr_of(&run3).contains("Cache hits: 0"),
         "-E discards the saved environment, stderr: {}",
         stderr_of(&run3)
     );
 
-    let run4 = sphinx_build(&[s, out.to_str().unwrap(), "-a"]);
+    let run4 = sphinx_build(&[s, out.to_str().unwrap(), "-a", "-v"]);
     assert!(
         stderr_of(&run4).contains("Cache hits: 0"),
         "-a rewrites all files, stderr: {}",
@@ -1759,23 +1826,909 @@ fn directive_validation_silent_on_valid_sphinx() {
     }
 }
 
+/// Sphinx has no counterpart to M1's directive and role validators, so
+/// sphinx-build mode never runs them: an empty `note` gets no validator
+/// record, on stderr or in the `-w` file, without any `-D`.
 #[test]
-fn directive_validation_off_switch() {
-    let src = temp_source("dv-off", &[("index.rst", "Title\n=====\n\n.. note::\n")]);
-    let out = out_dir("dv-off");
+fn sphinx_build_mode_runs_no_validation() {
+    let src = temp_source(
+        "sb-no-validation",
+        &[("index.rst", "Title\n=====\n\n.. note::\n")],
+    );
+    let out = out_dir("sb-no-validation");
+    let warnings = out_dir("sb-no-validation-log").join("warnings.txt");
     let result = sphinx_build(&[
         src.to_str().unwrap(),
         out.to_str().unwrap(),
-        "-D",
-        "validate_directives=0",
+        "-w",
+        warnings.to_str().unwrap(),
     ]);
 
     assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    let written = std::fs::read_to_string(&warnings).unwrap();
+    for (sink, text) in [("stderr", stderr_of(&result)), ("-w file", written)] {
+        assert!(
+            !text.contains("Note directive requires content"),
+            "{sink} holds a validator record: {text}"
+        );
+    }
+}
+
+/// `|today|` formats the build date, which Sphinx's `format_date` takes
+/// from `SOURCE_DATE_EPOCH` when it is set, in UTC
+/// (`SP/sphinx/util/i18n.py:268-282`): the binary reads it from its own
+/// environment, once per build, and formats it with conf.py's
+/// `today_fmt`, which `-D` overrides; `-D today=` replaces the date with
+/// its text. The pages are 5b's, so the substituted text is read from the
+/// search index, which is fed from the read doctree: one term per run.
+#[test]
+fn today_follows_source_date_epoch() {
+    let src = temp_source(
+        "sb-today",
+        &[
+            ("conf.py", "project = 'Temp'\ntoday_fmt = 'on%Y%m%d'\n"),
+            ("index.rst", "Title\n=====\n\nBuilt |today|.\n"),
+        ],
+    );
+    // 1700000000 is 2023-11-14T22:13:20Z, day 318 of the year. The search
+    // index drops all-digit words, so each format leads with letters.
+    for (name, extra, term) in [
+        ("conf", &[][..], "on20231114"),
+        ("fmt", &["-D", "today_fmt=day%j%y"][..], "day31823"),
+        ("text", &["-D", "today=x19990101"][..], "x19990101"),
+    ] {
+        let out = out_dir(&format!("sb-today-{name}"));
+        let mut args = vec![src.to_str().unwrap(), out.to_str().unwrap(), "-q"];
+        args.extend_from_slice(extra);
+        let result = bin()
+            .args(&args)
+            .env("SOURCE_DATE_EPOCH", "1700000000")
+            .output()
+            .expect("binary should run");
+        assert!(result.status.success(), "{name}: {}", stderr_of(&result));
+        let terms = search_value(&out)["terms"].clone();
+        assert!(
+            terms.get(term).is_some(),
+            "{name}: no term {term:?} in {terms}"
+        );
+    }
+}
+
+/// The native subcommand keeps the validators, and `validate_directives`
+/// in its configuration file still switches them off.
+#[test]
+fn native_validation_off_switch() {
+    let src = temp_source(
+        "native-dv-off",
+        &[("index.rst", "Title\n=====\n\n.. note::\n")],
+    );
+    let conf = out_dir("native-dv-off-conf").join("off.yaml");
+    std::fs::create_dir_all(conf.parent().unwrap()).unwrap();
+    std::fs::write(&conf, "validate_directives: false\n").unwrap();
+
+    let out = out_dir("native-dv-off");
+    let off = bin()
+        .arg("--config")
+        .arg(&conf)
+        .arg("build")
+        .arg("--source")
+        .arg(&src)
+        .arg("--output")
+        .arg(&out)
+        .output()
+        .expect("binary should run");
+    assert!(off.status.success(), "stderr: {}", stderr_of(&off));
     assert!(
-        !stderr_of(&result).contains("Note directive requires content"),
-        "-D validate_directives=0 must disable the pass, stderr: {}",
+        !stderr_of(&off).contains("Note directive requires content"),
+        "validate_directives: false must disable the pass, stderr: {}",
+        stderr_of(&off)
+    );
+
+    let out_on = out_dir("native-dv-on");
+    let on = build(&src, &out_on, &[]);
+    assert!(on.status.success(), "stderr: {}", stderr_of(&on));
+    assert!(
+        stderr_of(&on).contains("index.rst:4: WARNING: Note directive requires content"),
+        "the same project without the switch is validated, stderr: {}",
+        stderr_of(&on)
+    );
+}
+
+/// sphinx-build mode prints each record bare, the same bytes the `-w`
+/// file gets (Sphinx's `TeeStripANSI`); under `-q` nothing else reaches
+/// stderr — the closing summary is on the status stream, stdout.
+#[test]
+fn sphinx_build_mode_stderr_equals_warning_file() {
+    let src = temp_source(
+        "sb-stderr-is-w",
+        &[("index.rst", "Title\n=====\n\n.. toctree::\n\n   missing\n")],
+    );
+    let out = out_dir("sb-stderr-is-w");
+    let warnings = out_dir("sb-stderr-is-w-log").join("warnings.txt");
+    let result = sphinx_build(&[
+        src.to_str().unwrap(),
+        out.to_str().unwrap(),
+        "-q",
+        "-w",
+        warnings.to_str().unwrap(),
+    ]);
+
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    // Strict UTF-8 on both sides, so the string comparison is byte-exact.
+    let written = String::from_utf8(std::fs::read(&warnings).unwrap()).unwrap();
+    let source = sphinx_ultra::utils::canonicalize_simplified(&src).unwrap();
+    assert_eq!(
+        written,
+        format!(
+            "{}:4: WARNING: toctree contains reference to nonexisting document 'missing' \
+             [toc.not_readable]\n",
+            source.join("index.rst").display()
+        )
+    );
+    assert_eq!(String::from_utf8(result.stderr).unwrap(), written);
+}
+
+/// Decision 8 holds without `-q` too: Sphinx writes its status to stdout,
+/// so its stderr is the warning stream alone, byte for byte the `-w` file,
+/// and empty for a project with no warnings. `-q` empties stdout even with
+/// extensions configured (Sphinx sets them up silently). The build's own
+/// progress log needs `-v`.
+#[test]
+fn sphinx_build_mode_stderr_is_the_warning_stream_without_q() {
+    let src = temp_source(
+        "sb-stderr-noq",
+        &[("index.rst", "Title\n=====\n\n.. toctree::\n\n   missing\n")],
+    );
+    let out = out_dir("sb-stderr-noq");
+    let warnings = out_dir("sb-stderr-noq-log").join("warnings.txt");
+    let result = sphinx_build(&[
+        src.to_str().unwrap(),
+        out.to_str().unwrap(),
+        "-w",
+        warnings.to_str().unwrap(),
+    ]);
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    let written = String::from_utf8(std::fs::read(&warnings).unwrap()).unwrap();
+    assert!(written.contains("[toc.not_readable]"), "{written}");
+    assert_eq!(String::from_utf8(result.stderr).unwrap(), written);
+
+    let clean = temp_source(
+        "sb-stderr-clean",
+        &[
+            (
+                "conf.py",
+                "extensions = ['sphinx.ext.autodoc', 'sphinx.ext.intersphinx']\n",
+            ),
+            ("index.rst", "Title\n=====\n\nBody.\n"),
+        ],
+    );
+    let out = out_dir("sb-stderr-clean");
+    let result = sphinx_build(&[clean.to_str().unwrap(), out.to_str().unwrap()]);
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert_eq!(stderr_of(&result), "");
+    let out = out_dir("sb-stderr-clean-q");
+    let result = sphinx_build(&[clean.to_str().unwrap(), out.to_str().unwrap(), "-q"]);
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert_eq!(String::from_utf8_lossy(&result.stdout), "");
+    assert_eq!(stderr_of(&result), "");
+}
+
+/// A logger warning raised inside an included file prints the path Sphinx's
+/// log translator makes of its location: a node location is the included
+/// file made absolute, a tuple location goes through `doc2path`, which
+/// appends `.rst` again. Bytes probed on Sphinx 9.1.0 (`-q -w`, cwd = the
+/// source directory) for this very project.
+#[test]
+fn included_file_logger_warnings_spell_sphinx_paths() {
+    let src = temp_source(
+        "sb-included-logger",
+        &[
+            ("conf.py", "project = 'p'\n"),
+            ("index.rst", "Index\n=====\n\n.. include:: part.inc\n"),
+            (
+                "part.inc",
+                "Part para.\n\n.. literalinclude:: example.py\n   :lines: 1,99\n\n\
+                 .. option:: =bad\n",
+            ),
+            ("example.py", "a = 1\nb = 2\n"),
+        ],
+    );
+    let out = out_dir("sb-included-logger");
+    let warnings = out_dir("sb-included-logger-log").join("warnings.txt");
+    let result = sphinx_build(&[
+        src.to_str().unwrap(),
+        out.to_str().unwrap(),
+        "-q",
+        "-w",
+        warnings.to_str().unwrap(),
+    ]);
+
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    let written = String::from_utf8(std::fs::read(&warnings).unwrap()).unwrap();
+    let source = sphinx_ultra::utils::canonicalize_simplified(&src).unwrap();
+    assert_eq!(
+        written,
+        format!(
+            "{}:3: WARNING: line number spec is out of range(1-2): '1,99'\n\
+             {}:6: WARNING: Malformed option description '=bad', should look like \"opt\", \
+             \"-opt args\", \"--opt args\", \"/opt args\" or \"+opt args\"\n",
+            source.join("part.inc.rst").display(),
+            source.join("part.inc").display()
+        )
+    );
+}
+
+/// `suppress_warnings` drops a record before it is printed or counted,
+/// and `show_warning_types = False` drops the ` [type.subtype]` suffix
+/// (`sphinx/util/logging.py:415-450`, `:531-551`).
+#[test]
+fn suppressed_warnings_neither_print_nor_count() {
+    let project = |name: &str, conf: &str| {
+        temp_source(
+            name,
+            &[
+                ("conf.py", conf),
+                ("index.rst", "Index\n=====\n\nBody.\n"),
+                ("orphan.rst", "Orphan\n======\n\nBody.\n"),
+            ],
+        )
+    };
+    let run = |src: &Path, name: &str| {
+        let out = out_dir(name);
+        let warnings = out_dir(&format!("{name}-log")).join("warnings.txt");
+        let result = sphinx_build(&[
+            src.to_str().unwrap(),
+            out.to_str().unwrap(),
+            "-q",
+            "-W",
+            "-w",
+            warnings.to_str().unwrap(),
+        ]);
+        let written = std::fs::read_to_string(&warnings).unwrap();
+        (result, written)
+    };
+
+    // The control: the orphan is the project's one record, and fails -W.
+    let plain = project("suppress-control", "project = 'p'\n");
+    let (result, written) = run(&plain, "suppress-control");
+    let source = sphinx_ultra::utils::canonicalize_simplified(&plain).unwrap();
+    let orphan = source.join("orphan.rst");
+    assert_eq!(
+        written,
+        format!(
+            "{}: WARNING: document isn't included in any toctree [toc.not_included]\n",
+            orphan.display()
+        )
+    );
+    assert_eq!(
+        result.status.code(),
+        Some(1),
+        "stderr: {}",
         stderr_of(&result)
     );
+
+    let suppressed = project(
+        "suppress-on",
+        "project = 'p'\nsuppress_warnings = ['toc.not_included']\n",
+    );
+    let (result, written) = run(&suppressed, "suppress-on");
+    assert_eq!(
+        result.status.code(),
+        Some(0),
+        "a suppressed record does not count toward -W, stderr: {}",
+        stderr_of(&result)
+    );
+    assert_eq!(written, "", "a suppressed record is not written");
+    assert_eq!(stderr_of(&result), "", "a suppressed record is not printed");
+
+    let untyped = project(
+        "suppress-untyped",
+        "project = 'p'\nshow_warning_types = False\n",
+    );
+    let (result, written) = run(&untyped, "suppress-untyped");
+    let source = sphinx_ultra::utils::canonicalize_simplified(&untyped).unwrap();
+    let line = format!(
+        "{}: WARNING: document isn't included in any toctree\n",
+        source.join("orphan.rst").display()
+    );
+    assert_eq!(written, line);
+    assert_eq!(stderr_of(&result), line);
+    assert_eq!(result.status.code(), Some(1), "still a record under -W");
+}
+
+// ---------------------------------------------------------------------------
+// docutils reporter records (wave 5a T8): every message the reporter creates
+// at level WARNING or above prints as a `[docutils]` record, with the text it
+// had when docutils created it, ordered by its creation among the document's
+// parse records. Every pinned stream below is Sphinx 9.1.0's own `-q -w`
+// output for the same project (cwd = the source directory), with the source
+// directory spelled `<SRCDIR>`.
+// ---------------------------------------------------------------------------
+
+/// A `-q -w` sphinx-build run of `src` into `out`, with `extra` flags: the
+/// run, and its `-w` file with the source directory spelled `<SRCDIR>` (and
+/// the separator after it `/`, so one literal holds on every platform).
+fn warning_stream(src: &Path, out: &Path, extra: &[&str]) -> (Output, String) {
+    let log = out.with_extension("w");
+    let _ = std::fs::remove_file(&log);
+    let mut args = vec![
+        src.to_str().unwrap(),
+        out.to_str().unwrap(),
+        "-q",
+        "-w",
+        log.to_str().unwrap(),
+    ];
+    args.extend_from_slice(extra);
+    let result = sphinx_build(&args);
+    (result, srcdir_spelled(&std::fs::read(&log).unwrap(), src))
+}
+
+/// `bytes` as strict UTF-8 with the canonical `src` (and the separator
+/// after it) spelled `<SRCDIR>/`.
+fn srcdir_spelled(bytes: &[u8], src: &Path) -> String {
+    let root = sphinx_ultra::utils::canonicalize_simplified(src).unwrap();
+    String::from_utf8(bytes.to_vec()).unwrap().replace(
+        &format!("{}{}", root.display(), std::path::MAIN_SEPARATOR),
+        "<SRCDIR>/",
+    )
+}
+
+/// Rewrites `path` with its own bytes, so its mtime moves past the build
+/// that read it.
+fn touch(path: &Path) {
+    let bytes = std::fs::read(path).unwrap();
+    std::fs::write(path, bytes).unwrap();
+}
+
+/// The read records of `b.rst` in [`touched_document_reemits_its_records`].
+const TOUCHED_B_RECORDS: &str = "\
+<SRCDIR>/b.rst:6: ERROR: Unexpected indentation. [docutils]
+<SRCDIR>/b.rst:8: WARNING: Inline emphasis start-string without end-string. [docutils]
+";
+
+/// The resolve records of `a.rst` and `d.rst`, in that docname order, in
+/// [`touched_document_reemits_its_records`].
+const UNDEFINED_LABEL_RECORDS: &str = "\
+<SRCDIR>/a.rst:4: WARNING: undefined label: 'elsewhere' [ref.ref]
+<SRCDIR>/d.rst:4: WARNING: undefined label: 'nowhere' [ref.ref]
+";
+
+/// Review Focus 1: a warm build re-reads the touched document and prints
+/// its read records — all of them, in the cold build's order — and none of
+/// the untouched documents' read records. Resolve records are recomputed
+/// for every document on every build, so `a`'s and `d`'s `undefined
+/// label`s follow, in sorted docname order: decision 6's documented
+/// divergence from `-b html`, which writes, and so resolves, only the
+/// outdated `b` (probed: Sphinx 9.1.0's warm `-b html` prints `b`'s two
+/// records alone, its `-b dummy` prints them and then `a`'s and `d`'s, as
+/// here).
+#[test]
+fn touched_document_reemits_its_records() {
+    let src = temp_source(
+        "t8-touch",
+        &[
+            (
+                "index.rst",
+                "Index\n=====\n\n.. toctree::\n\n   a\n   b\n   d\n\nSee *this.\n",
+            ),
+            ("a.rst", "A title\n=====\n\nSee :ref:`elsewhere`.\n"),
+            ("b.rst", "B\n=\n\nPara\nmore\n   indented.\n\nAnd *more.\n"),
+            ("d.rst", "D\n=\n\nSee :ref:`nowhere`.\n"),
+        ],
+    );
+    let out = out_dir("t8-touch");
+
+    let (cold, written) = warning_stream(&src, &out, &[]);
+    assert!(cold.status.success(), "stderr: {}", stderr_of(&cold));
+    assert_eq!(
+        written,
+        format!(
+            "<SRCDIR>/a.rst:2: WARNING: Title underline too short.\n\nA title\n===== \
+             [docutils]\n{TOUCHED_B_RECORDS}<SRCDIR>/index.rst:10: WARNING: Inline emphasis \
+             start-string without end-string. [docutils]\n{UNDEFINED_LABEL_RECORDS}"
+        )
+    );
+
+    touch(&src.join("b.rst"));
+    let (warm, written) = warning_stream(&src, &out, &[]);
+    assert!(warm.status.success(), "stderr: {}", stderr_of(&warm));
+    assert_eq!(
+        written,
+        format!("{TOUCHED_B_RECORDS}{UNDEFINED_LABEL_RECORDS}")
+    );
+}
+
+/// Review Focus 2: `-j 4` reads the documents in parallel — `e` is long,
+/// so its read finishes after the others' — and still prints the stream of
+/// `-j 1`: each document's records, in sorted docname order, each
+/// document's parse records first, then its transforms' and collectors'
+/// in transform order: `a`'s parse ERROR, `b`'s AnonymousHyperlinks (440)
+/// mismatch, which has no line, `c`'s unreferenced footnote (622) and `d`'s
+/// unreadable image (880), each after its document's later parse record. (Sphinx's own `-j 4` prints its
+/// read chunks in completion order; the pinned stream is its `-j 1` one,
+/// probed on Sphinx 9.1.0.)
+#[test]
+fn parallel_read_keeps_warning_order() {
+    let long = (0..4000)
+        .map(|n| format!("Paragraph {n} of filler text.\n\n"))
+        .collect::<String>();
+    let index = format!(
+        "Index\n=====\n\n.. toctree::\n\n{}\nSee *this.\n",
+        ('a'..='h').map(|d| format!("   {d}\n")).collect::<String>()
+    );
+    let e = format!("E\n=\n\n{long}Tail *e.\n");
+    let src = temp_source(
+        "t8-parallel",
+        &[
+            ("index.rst", &index),
+            ("a.rst", "A\n=\n\nText\nmore\n   indented.\n\nPara *a.\n"),
+            (
+                "b.rst",
+                "B\n=\n\nPara *b.\n\nSee `one`__ and `two`__.\n\n__ https://example.com\n",
+            ),
+            (
+                "c.rst",
+                "C\n=\n\n.. [1] An unreferenced footnote.\n\nPara *c.\n",
+            ),
+            ("d.rst", "D\n=\n\n.. image:: missing.png\n\nPara *d.\n"),
+            ("e.rst", &e),
+            ("f.rst", "F\n=\n\nClean.\n"),
+            ("g.rst", "G\n=\n\nPara *g.\n"),
+            ("h.rst", "H\n=\n\nText\nmore\n   indented.\n"),
+        ],
+    );
+    let expected = "\
+<SRCDIR>/a.rst:6: ERROR: Unexpected indentation. [docutils]
+<SRCDIR>/a.rst:8: WARNING: Inline emphasis start-string without end-string. [docutils]
+<SRCDIR>/b.rst:4: WARNING: Inline emphasis start-string without end-string. [docutils]
+<SRCDIR>/b.rst:: ERROR: Anonymous hyperlink mismatch: 2 references but 1 targets.
+See \"backrefs\" attribute for IDs. [docutils]
+<SRCDIR>/c.rst:6: WARNING: Inline emphasis start-string without end-string. [docutils]
+<SRCDIR>/c.rst:4: WARNING: Footnote [1] is not referenced. [ref.footnote]
+<SRCDIR>/d.rst:6: WARNING: Inline emphasis start-string without end-string. [docutils]
+<SRCDIR>/d.rst:4: WARNING: image file not readable: missing.png [image.not_readable]
+<SRCDIR>/e.rst:8004: WARNING: Inline emphasis start-string without end-string. [docutils]
+<SRCDIR>/g.rst:4: WARNING: Inline emphasis start-string without end-string. [docutils]
+<SRCDIR>/h.rst:6: ERROR: Unexpected indentation. [docutils]
+<SRCDIR>/index.rst:15: WARNING: Inline emphasis start-string without end-string. [docutils]
+";
+
+    for jobs in ["4", "1"] {
+        let (result, written) = warning_stream(
+            &src,
+            &out_dir(&format!("t8-parallel-j{jobs}")),
+            &["-j", jobs],
+        );
+        assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+        assert_eq!(written, expected, "-j {jobs}");
+    }
+}
+
+/// Review Focus 4: a CRLF project prints the reporter records of its LF
+/// twin byte for byte — line numbers, and a record's literal block, which
+/// holds no carriage return.
+#[test]
+fn crlf_reporter_lines_match_lf() {
+    let index = "Title\n====\n\n.. toctree::\n\n   part\n\nPara\nmore\n   indented.\n\n\
+                 | line one\n| line *two\n\n.. note:: x\n   :name: t\n\n.. _t:\n\nEnd *star.\n";
+    let part = "Part title\n=====\n\nText *x.\n";
+    let expected = "\
+<SRCDIR>/index.rst:2: WARNING: Title underline too short.
+
+Title
+==== [docutils]
+<SRCDIR>/index.rst:10: ERROR: Unexpected indentation. [docutils]
+<SRCDIR>/index.rst:13: WARNING: Inline emphasis start-string without end-string. [docutils]
+<SRCDIR>/index.rst:18: WARNING: Duplicate explicit target name: \"t\". [docutils]
+<SRCDIR>/index.rst:20: WARNING: Inline emphasis start-string without end-string. [docutils]
+<SRCDIR>/part.rst:2: WARNING: Title underline too short.
+
+Part title
+===== [docutils]
+<SRCDIR>/part.rst:4: WARNING: Inline emphasis start-string without end-string. [docutils]
+";
+    let crlf = |text: &str| text.replace('\n', "\r\n");
+    let (crlf_index, crlf_part) = (crlf(index), crlf(part));
+    for (name, index, part) in [
+        ("t8-lf", index, part),
+        ("t8-crlf", crlf_index.as_str(), crlf_part.as_str()),
+    ] {
+        let src = temp_source(name, &[("index.rst", index), ("part.rst", part)]);
+        let (result, written) = warning_stream(&src, &out_dir(name), &[]);
+        assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+        assert_eq!(written, expected, "{name}");
+    }
+}
+
+/// Review Focus 3: Sphinx counts docutils' records in its warning total, so
+/// `-W` fails a build whose only records are a reporter's, after printing
+/// them; `suppress_warnings = ['docutils']` drops the records before they
+/// are printed or counted, and the build passes.
+#[test]
+fn fail_on_warning_counts_reporter_records() {
+    let records = "<SRCDIR>/b.rst:2: WARNING: Title underline too short.\n\nB title\n===== \
+                   [docutils]\n<SRCDIR>/index.rst:2: WARNING: Title underline too short.\n\n\
+                   Title\n==== [docutils]\n";
+    let index = "Title\n====\n\n.. toctree::\n\n   b\n";
+    let b = "B title\n=====\n\nBody.\n";
+    let src = temp_source("t8-fail-on-warning", &[("index.rst", index), ("b.rst", b)]);
+    let (result, written) = warning_stream(&src, &out_dir("t8-fail-on-warning"), &["-W"]);
+    assert_eq!(written, records);
+    assert_eq!(srcdir_spelled(&result.stderr, &src), records);
+    assert_eq!(
+        result.status.code(),
+        Some(1),
+        "stderr: {}",
+        stderr_of(&result)
+    );
+
+    let suppressed = temp_source(
+        "t8-fail-on-warning-suppressed",
+        &[
+            (
+                "conf.py",
+                "project = 'p'\nsuppress_warnings = ['docutils']\n",
+            ),
+            ("index.rst", index),
+            ("b.rst", b),
+        ],
+    );
+    let (result, written) = warning_stream(
+        &suppressed,
+        &out_dir("t8-fail-on-warning-suppressed"),
+        &["-W"],
+    );
+    assert_eq!(written, "");
+    assert_eq!(stderr_of(&result), "");
+    assert_eq!(
+        result.status.code(),
+        Some(0),
+        "stderr: {}",
+        stderr_of(&result)
+    );
+}
+
+/// The citation domain checks its citations once every document has been
+/// read (`CitationDomain.check_consistency`,
+/// `SP/sphinx/domains/citation.py:88-97`): a citation no document refers
+/// to warns after every read-phase record, and after the toctree's own
+/// consistency check, in the order the citations were noted. The location
+/// is `(docname, lineno)`: the document's path and the citation's line,
+/// which for a citation an included file holds is its line in that file.
+/// Probed on Sphinx 9.1.0 (this project's warning stream).
+#[test]
+fn unreferenced_citation_warns_in_consistency() {
+    let src = temp_source(
+        "t13b-unreferenced",
+        &[
+            (
+                "index.rst",
+                "Index\n=====\n\n.. toctree::\n\n   a\n   b\n   d\n",
+            ),
+            (
+                "a.rst",
+                "A\n=\n\n.. [Z] Unreferenced.\n\n.. [Y] Referenced from b.\n",
+            ),
+            ("b.rst", "B\n=\n\nSee [Y]_ and *this.\n"),
+            ("c.rst", "C\n=\n\nOrphan.\n"),
+            ("d.rst", "D\n=\n\nIntro.\n\n.. include:: part.inc\n"),
+            ("part.inc", "Part.\n\n.. [INC] Included, unreferenced.\n"),
+        ],
+    );
+    let (result, written) = warning_stream(&src, &out_dir("t13b-unreferenced"), &[]);
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert_eq!(
+        written,
+        "\
+<SRCDIR>/b.rst:4: WARNING: Inline emphasis start-string without end-string. [docutils]
+<SRCDIR>/c.rst: WARNING: document isn't included in any toctree [toc.not_included]
+<SRCDIR>/a.rst:4: WARNING: Citation [Z] is not referenced. [ref.citation]
+<SRCDIR>/d.rst:3: WARNING: Citation [INC] is not referenced. [ref.citation]
+"
+    );
+}
+
+/// A citation reference becomes a `pending_xref` into the citation domain
+/// (619-017), which the write phase resolves against every document's
+/// citations (`CitationDomain.resolve_xref`); one that names no citation
+/// warns `citation not found` (`dangling_warnings`,
+/// `SP/sphinx/domains/citation.py:37-39`), `[ref.ref]`, after the
+/// consistency records. It is located where `copy_source_info` put it, the
+/// source and the line of the reference's nearest ancestors that have one:
+/// the paragraph's first line for both of `b`'s, the rubric's for the one
+/// a rubric holds, the end of the rubric's directive block, and, for a
+/// rubric in a list item, which has line 0, the item's line. Probed on
+/// Sphinx 9.1.0 (this project's warning stream).
+#[test]
+fn citation_not_found_warns_at_resolve() {
+    let src = temp_source(
+        "t13b-not-found",
+        &[
+            ("index.rst", "Index\n=====\n\n.. toctree::\n\n   a\n   b\n"),
+            ("a.rst", "A\n=\n\n.. [Z] Unreferenced.\n"),
+            (
+                "b.rst",
+                "B\n=\n\nSee [W]_ here,\nand [Q]_ there.\n\n.. rubric:: Rubric [R]_\n\nText *b.\n\n\
+                 - item\n\n  .. rubric:: Listed [L]_\n",
+            ),
+        ],
+    );
+    let (result, written) = warning_stream(&src, &out_dir("t13b-not-found"), &[]);
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert_eq!(
+        written,
+        "\
+<SRCDIR>/b.rst:9: WARNING: Inline emphasis start-string without end-string. [docutils]
+<SRCDIR>/a.rst:4: WARNING: Citation [Z] is not referenced. [ref.citation]
+<SRCDIR>/b.rst:4: WARNING: citation not found: W [ref.ref]
+<SRCDIR>/b.rst:4: WARNING: citation not found: Q [ref.ref]
+<SRCDIR>/b.rst:8: WARNING: citation not found: R [ref.ref]
+<SRCDIR>/b.rst:11: WARNING: citation not found: L [ref.ref]
+"
+    );
+}
+
+/// A `:doc:` whose target is a URL names no document, and Sphinx says so
+/// like for any other missing document (`dangling_warnings`,
+/// `SP/sphinx/domains/std/__init__.py:790-796`): `unknown document`, with
+/// the target as written (decision 17 ends the M1 carve-out that kept such
+/// targets silent). Probed on Sphinx 9.1.0 (this project's warning
+/// stream).
+#[test]
+fn doc_role_url_target_warns_unknown_document() {
+    let src = temp_source(
+        "t13b-doc-url",
+        &[(
+            "index.rst",
+            "Title\n=====\n\nCall x.\nSee :doc:`https://example.com/page` and :doc:`missing`.\n",
+        )],
+    );
+    let (result, written) = warning_stream(&src, &out_dir("t13b-doc-url"), &[]);
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert_eq!(
+        written,
+        "\
+<SRCDIR>/index.rst:4: WARNING: unknown document: 'https://example.com/page' [ref.doc]
+<SRCDIR>/index.rst:4: WARNING: unknown document: 'missing' [ref.doc]
+"
+    );
+}
+
+/// Review Focus 3, for a transform's record: Sphinx counts docutils'
+/// records in its warning total whichever stage made them, so `-W` fails a
+/// build whose one record is AnonymousHyperlinks' (440) mismatch, after
+/// printing it, to stderr and to `-w` alike. Probed on Sphinx 9.1.0 (the
+/// record).
+#[test]
+fn fail_on_warning_counts_transform_records() {
+    let record = "<SRCDIR>/index.rst:: ERROR: Anonymous hyperlink mismatch: 2 references but 1 \
+                  targets.\nSee \"backrefs\" attribute for IDs. [docutils]\n";
+    let src = temp_source(
+        "t13b-fail-on-transform-record",
+        &[(
+            "index.rst",
+            "Title\n=====\n\nSee `one`__ and `two`__.\n\n__ https://example.com\n",
+        )],
+    );
+    let (result, written) =
+        warning_stream(&src, &out_dir("t13b-fail-on-transform-record"), &["-W"]);
+    assert_eq!(written, record);
+    assert_eq!(srcdir_spelled(&result.stderr, &src), record);
+    assert_eq!(
+        result.status.code(),
+        Some(1),
+        "stderr: {}",
+        stderr_of(&result)
+    );
+}
+
+/// A reporter message raised inside an included file prints the included
+/// file's source as `render_records` spells it, srcdir-relative, which is
+/// docutils' own cwd-relative spelling when the cwd is the source directory
+/// ([TW §5.2]: `circ_b.rst:3`), as here. The same file read as a document
+/// of its own prints its absolute path.
+#[test]
+fn included_file_reporter_source_is_cwd_relative() {
+    let src = temp_source(
+        "t8-include",
+        &[
+            (
+                "index.rst",
+                "Index\n=====\n\nIntro *star.\n\n.. include:: part.rst\n\nAfter *star.\n",
+            ),
+            (
+                "part.rst",
+                "Part para.\n\nPart *star here.\n\nMore\ntext\n   indented.\n",
+            ),
+        ],
+    );
+    let out = out_dir("t8-include");
+    let log = out.with_extension("w");
+    let result = bin()
+        .current_dir(&src)
+        .args([
+            ".",
+            out.to_str().unwrap(),
+            "-q",
+            "-w",
+            log.to_str().unwrap(),
+        ])
+        .output()
+        .expect("binary should run");
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    let emphasis = "WARNING: Inline emphasis start-string without end-string. [docutils]";
+    let indentation = "ERROR: Unexpected indentation. [docutils]";
+    assert_eq!(
+        srcdir_spelled(&std::fs::read(&log).unwrap(), &src),
+        format!(
+            "<SRCDIR>/index.rst:4: {emphasis}\npart.rst:3: {emphasis}\npart.rst:7: {indentation}\n\
+             <SRCDIR>/index.rst:8: {emphasis}\n<SRCDIR>/part.rst:3: {emphasis}\n\
+             <SRCDIR>/part.rst:7: {indentation}\n"
+        )
+    );
+}
+
+/// A document's parse records print in the order the parse created them,
+/// whichever channel logged them: a logger warning (the malformed option),
+/// toctree warnings and reporter records interleave by their creation
+/// sequence, not grouped by channel.
+#[test]
+fn parse_records_print_in_creation_order() {
+    let src = temp_source(
+        "t8-interleave",
+        &[(
+            "index.rst",
+            "Index\n=====\n\n.. option:: =bad\n\n.. toctree::\n\n   missing\n\nSee *this.\n\n\
+             .. toctree::\n\n   gone\n\n:unknownrole:`x`\n",
+        )],
+    );
+    let (result, written) = warning_stream(&src, &out_dir("t8-interleave"), &[]);
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert_eq!(
+        written,
+        "<SRCDIR>/index.rst:4: WARNING: Malformed option description '=bad', should look like \
+         \"opt\", \"-opt args\", \"--opt args\", \"/opt args\" or \"+opt args\"\n\
+         <SRCDIR>/index.rst:6: WARNING: toctree contains reference to nonexisting document \
+         'missing' [toc.not_readable]\n\
+         <SRCDIR>/index.rst:10: WARNING: Inline emphasis start-string without end-string. \
+         [docutils]\n\
+         <SRCDIR>/index.rst:12: WARNING: toctree contains reference to nonexisting document \
+         'gone' [toc.not_readable]\n\
+         <SRCDIR>/index.rst:16: ERROR: Unknown interpreted text role \"unknownrole\". \
+         [docutils]\n"
+    );
+}
+
+/// sphinx-build logs its closing summary on the status stream, stdout,
+/// which `-q` silences (`sphinx/application.py:452-481`), never on the
+/// warning stream: the summary is not a record. Bytes probed on Sphinx
+/// 9.1.0: `build succeeded.` or `build succeeded, N warning(s).`, then a
+/// blank line and the final location; under `-W` with a record,
+/// `build finished with problems, …` and no final location. The final
+/// location names the output directory as it was given, where Sphinx
+/// names it relative to the working directory (`relpath(self.outdir)`,
+/// `:483-490`): the absolute path the test passes prints as given here and
+/// as `../…` there, a stdout-only divergence.
+#[test]
+fn closing_summary_goes_to_the_status_stream() {
+    let run = |name: &str, body: &str, extra: &[&str]| {
+        let src = temp_source(name, &[("index.rst", body)]);
+        let out = out_dir(name);
+        let mut args = vec![src.to_str().unwrap(), out.to_str().unwrap()];
+        args.extend_from_slice(extra);
+        (sphinx_build(&args), out)
+    };
+    let stdout = |result: &Output| String::from_utf8(result.stdout.clone()).unwrap();
+
+    let (result, out) = run("t8-summary-clean", "Title\n=====\n\nBody.\n", &[]);
+    assert_eq!(
+        stdout(&result),
+        format!(
+            "build succeeded.\n\nThe HTML pages are in {}.\n",
+            out.display()
+        )
+    );
+
+    let (result, out) = run("t8-summary-one", "Title\n====\n\nBody.\n", &[]);
+    assert_eq!(
+        stdout(&result),
+        format!(
+            "build succeeded, 1 warning.\n\nThe HTML pages are in {}.\n",
+            out.display()
+        )
+    );
+    assert!(
+        !stderr_of(&result).contains("build succeeded"),
+        "stderr: {}",
+        stderr_of(&result)
+    );
+
+    let (result, _) = run("t8-summary-quiet", "Title\n====\n\nBody.\n", &["-q"]);
+    assert_eq!(stdout(&result), "");
+
+    let (result, _) = run("t8-summary-w", "Title\n====\n\nBody.\n", &["-W"]);
+    assert_eq!(result.status.code(), Some(1));
+    assert_eq!(
+        stdout(&result),
+        "build finished with problems, 1 warning (with warnings treated as errors).\n"
+    );
+}
+
+/// Sphinx reads `<confdir>/docutils.conf`; this crate does not, and says so
+/// once on stderr, outside the warning stream: the record-free build stays
+/// record-free, the `-w` file empty and `-W` passing.
+#[test]
+fn docutils_conf_prints_a_notice_outside_the_stream() {
+    let files = [("index.rst", "Title\n=====\n\nSection\n-------\n\nBody.\n")];
+    let plain = temp_source("docutils-conf-control", &files);
+    let configured = temp_source("docutils-conf", &files);
+    std::fs::write(
+        configured.join("docutils.conf"),
+        "[general]\ninitial_header_level: 3\n",
+    )
+    .unwrap();
+
+    let run = |src: &Path, name: &str| {
+        let out = out_dir(name);
+        let warnings = out_dir(&format!("{name}-log")).join("warnings.txt");
+        let result = sphinx_build(&[
+            src.to_str().unwrap(),
+            out.to_str().unwrap(),
+            "-q",
+            "-W",
+            "-w",
+            warnings.to_str().unwrap(),
+        ]);
+        let written = std::fs::read_to_string(&warnings).unwrap();
+        let page = std::fs::read(out.join("index.html")).unwrap();
+        (result, written, page)
+    };
+    let (control, _, control_page) = run(&plain, "docutils-conf-control");
+    assert!(control.status.success(), "stderr: {}", stderr_of(&control));
+
+    let (result, written, page) = run(&configured, "docutils-conf");
+    assert!(
+        result.status.success(),
+        "the notice is not counted by -W, stderr: {}",
+        stderr_of(&result)
+    );
+    assert_eq!(written, "", "the notice is not a record of the -w file");
+    assert_eq!(
+        stderr_of(&result),
+        format!(
+            "NOTICE: docutils.conf is not read by sphinx-ultra: {}\n",
+            configured.join("docutils.conf").display()
+        ),
+        "the notice prints once"
+    );
+    assert_eq!(page, control_page, "the build is otherwise unchanged");
+}
+
+/// The notice is written as the warning stream writes stderr: a stderr
+/// whose reader is gone (a broken pipe) loses it, and the build goes on.
+#[test]
+fn docutils_conf_notice_survives_a_closed_stderr() {
+    let src = temp_source(
+        "docutils-conf-closed-stderr",
+        &[("index.rst", "Title\n=====\n\nBody.\n")],
+    );
+    std::fs::write(src.join("docutils.conf"), "[general]\n").unwrap();
+    let out = out_dir("docutils-conf-closed-stderr");
+    let mut child = bin()
+        .args([src.to_str().unwrap(), out.to_str().unwrap(), "-q"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("binary should run");
+    // Close the pipe's read end before the build writes the notice.
+    drop(child.stderr.take());
+    let status = child.wait().expect("the build ends");
+    assert_eq!(
+        status.code(),
+        Some(0),
+        "a closed stderr does not abort the build"
+    );
+    assert!(out.join("index.html").is_file());
 }
 
 #[test]
@@ -1829,7 +2782,9 @@ fn nitpicky_resolves_python_refs_and_counts_cross_domain_ones() {
         )],
     );
     let out = out_dir("nitpicky-py-domain");
-    let result = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap(), "-n"]);
+    // `-v` for the cross-domain notice, which is this crate's progress log,
+    // not a record.
+    let result = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap(), "-n", "-v"]);
 
     assert!(result.status.success(), "stderr: {}", stderr_of(&result));
     let stderr = stderr_of(&result);
@@ -1855,10 +2810,14 @@ fn nitpicky_resolves_python_refs_and_counts_cross_domain_ones() {
         "stderr: {stderr}"
     );
     // (c) A `:c:func:` ref trips the cross-domain counter exactly once, and
-    // the URL-shaped `:doc:` keeps the M1 carve-out (no `unknown document`).
+    // the URL-shaped `:doc:` names no document, which Sphinx 9.1.0 says
+    // as it says for any missing document (decision 17 ended the M1
+    // carve-out that kept it silent; probed, the same line).
     assert!(
-        !stderr.contains("unknown document"),
-        "URL doc refs must stay exempt, stderr: {stderr}"
+        stderr.contains(
+            "index.rst:6: WARNING: unknown document: 'https://example.com/page' [ref.doc]"
+        ),
+        "stderr: {stderr}"
     );
     assert_eq!(
         stderr
@@ -1975,14 +2934,25 @@ fn nitpicky_resolves_real_refs() {
 // ---------------------------------------------------------------------------
 // intersphinx (tests/fixtures/intersphinx): a project whose conf.py maps one
 // other project to a *local* inventory file, so the whole feature is
-// exercised end to end without ever touching the network.
+// exercised end to end without ever touching the network. Its conf.py does
+// not load `sphinx.ext.intersphinx` (the HTML oracle's `intersphinx` case
+// records what Sphinx does then); `-D extensions=sphinx.ext.intersphinx`
+// loads it, as it does in Sphinx (`config.py:316-321`).
 // ---------------------------------------------------------------------------
+
+/// The `-D` override that loads intersphinx into the fixture project.
+const LOAD_INTERSPHINX: [&str; 2] = ["-D", "extensions=sphinx.ext.intersphinx"];
 
 #[test]
 fn intersphinx_resolves_a_cross_project_ref_and_reports_a_missing_external() {
     let out = out_dir("intersphinx");
     let src = fixture("intersphinx");
-    let result = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap()]);
+    let result = sphinx_build(&[
+        src.to_str().unwrap(),
+        out.to_str().unwrap(),
+        LOAD_INTERSPHINX[0],
+        LOAD_INTERSPHINX[1],
+    ]);
 
     assert!(result.status.success(), "stderr: {}", stderr_of(&result));
     let stderr = stderr_of(&result);
@@ -2003,9 +2973,11 @@ fn intersphinx_resolves_a_cross_project_ref_and_reports_a_missing_external() {
         ),
         "stderr: {stderr}"
     );
+    // The closing summary is on the status stream, stdout.
+    let stdout = String::from_utf8_lossy(&result.stdout);
     assert!(
-        stderr.contains("build succeeded, 1 warning."),
-        "the external miss is the only warning, stderr: {stderr}"
+        stdout.contains("build succeeded, 1 warning."),
+        "the external miss is the only warning, stdout: {stdout}"
     );
 }
 
@@ -2020,6 +2992,8 @@ fn disabling_the_labels_objtype_takes_the_cross_project_ref_away_again() {
     let result = sphinx_build(&[
         src.to_str().unwrap(),
         out.to_str().unwrap(),
+        LOAD_INTERSPHINX[0],
+        LOAD_INTERSPHINX[1],
         "-D",
         "intersphinx_disabled_reftypes=std:label",
     ]);
@@ -2027,6 +3001,41 @@ fn disabling_the_labels_objtype_takes_the_cross_project_ref_away_again() {
     let stderr = stderr_of(&result);
     assert!(
         stderr.contains("index.rst:4: WARNING: undefined label: 'example' [ref.ref]"),
+        "stderr: {stderr}"
+    );
+}
+
+/// Without `sphinx.ext.intersphinx` in `extensions`, Sphinx loads no
+/// inventory and has no `:external:` role: the fixture's
+/// `:external:std:ref:` is an unknown domain role, logged with no
+/// location, then docutils' `[docutils]` ERROR for the role, and the label
+/// only the inventory holds stays undefined (the HTML oracle's
+/// `html_projects/intersphinx`, [TW F12]).
+#[test]
+fn without_the_extension_intersphinx_is_inert() {
+    let out = out_dir("intersphinx-not-loaded");
+    let src = fixture("intersphinx");
+    let result = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap()]);
+
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    let stderr = stderr_of(&result);
+    assert!(
+        stderr.contains(&format!(
+            "WARNING: unknown role name: external:std:ref\n{}:6: ERROR: Unknown interpreted \
+             text role \"external:std:ref\". [docutils]\n",
+            sphinx_ultra::utils::canonicalize_simplified(&src)
+                .unwrap()
+                .join("index.rst")
+                .display()
+        )),
+        "stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("index.rst:4: WARNING: undefined label: 'example' [ref.ref]"),
+        "stderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("reference target not found"),
         "stderr: {stderr}"
     );
 }
@@ -2041,7 +3050,8 @@ fn an_invalid_intersphinx_mapping_exits_two_with_sphinxs_config_error() {
             ("index.rst", "Title\n=====\n\nText.\n"),
             (
                 "conf.py",
-                "project = 'Bad'\nintersphinx_mapping = {'p': 'https://x/'}\n",
+                "project = 'Bad'\nextensions = ['sphinx.ext.intersphinx']\n\
+                 intersphinx_mapping = {'p': 'https://x/'}\n",
             ),
         ],
     );
@@ -2079,7 +3089,8 @@ fn an_empty_inventory_location_tuple_exits_two_with_sphinxs_invariant_error() {
             ("index.rst", "Title\n=====\n\nText.\n"),
             (
                 "conf.py",
-                "project = 'Empty'\nintersphinx_mapping = {'p': ('https://x/', ())}\n",
+                "project = 'Empty'\nextensions = ['sphinx.ext.intersphinx']\n\
+                 intersphinx_mapping = {'p': ('https://x/', ())}\n",
             ),
         ],
     );
@@ -2097,6 +3108,133 @@ fn an_empty_inventory_location_tuple_exits_two_with_sphinxs_invariant_error() {
         stderr.contains("An invalid intersphinx_mapping entry was added after normalisation."),
         "stderr: {stderr}"
     );
+}
+
+/// `intersphinx_mapping` is validated, and its inventories loaded, only
+/// with `sphinx.ext.intersphinx` loaded: without it the key is an ordinary
+/// `conf.py` variable, so neither a malformed entry nor one that would
+/// break an inventory invariant stops the build (Sphinx 9.1.0, probed:
+/// exit 0, an empty `-w` file).
+#[test]
+fn without_the_extension_intersphinx_mapping_is_not_validated() {
+    for (name, mapping) in [
+        ("intersphinx-bad-no-extension", "{'p': 'https://x/'}"),
+        (
+            "intersphinx-empty-no-extension",
+            "{'p': ('https://x/', ())}",
+        ),
+    ] {
+        let conf = format!("project = 'P'\nintersphinx_mapping = {mapping}\n");
+        let src = temp_source(
+            name,
+            &[
+                ("index.rst", "Title\n=====\n\nText.\n"),
+                ("conf.py", conf.as_str()),
+            ],
+        );
+        let out = out_dir(name);
+        let warnings = out_dir(&format!("{name}-log")).join("warnings.txt");
+        let result = sphinx_build(&[
+            src.to_str().unwrap(),
+            out.to_str().unwrap(),
+            "-q",
+            "-w",
+            warnings.to_str().unwrap(),
+        ]);
+        assert!(result.status.success(), "{name}: {}", stderr_of(&result));
+        assert_eq!(std::fs::read_to_string(&warnings).unwrap(), "", "{name}");
+    }
+}
+
+/// `validate_intersphinx_mapping` logs one bare `ERROR` record per rejected
+/// entry before it raises (`SP/sphinx/ext/intersphinx/_load.py:64-125`):
+/// the records reach the warning stream, stderr and the `-w` file alike,
+/// ahead of the `Configuration error!` report (Sphinx 9.1.0, probed; the
+/// report as the HTML oracle reduces it).
+#[test]
+fn intersphinx_mapping_errors_reach_both_halves_before_the_report() {
+    let src = temp_source(
+        "intersphinx-mapping-errors",
+        &[
+            ("index.rst", "Title\n=====\n\nText.\n"),
+            (
+                "conf.py",
+                "project = 'Bad'\nextensions = ['sphinx.ext.intersphinx']\n\
+                 intersphinx_mapping = {'p': 'https://x/'}\n",
+            ),
+        ],
+    );
+    let out = out_dir("intersphinx-mapping-errors");
+    let warnings = out_dir("intersphinx-mapping-errors-log").join("warnings.txt");
+    let result = sphinx_build(&[
+        src.to_str().unwrap(),
+        out.to_str().unwrap(),
+        "-q",
+        "-w",
+        warnings.to_str().unwrap(),
+    ]);
+
+    assert_eq!(
+        result.status.code(),
+        Some(2),
+        "stderr: {}",
+        stderr_of(&result)
+    );
+    let written = String::from_utf8(std::fs::read(&warnings).unwrap()).unwrap();
+    assert_eq!(
+        written,
+        "ERROR: Invalid value `'https://x/'` in intersphinx_mapping['p']. \
+         Expected a two-element tuple or list.\n\
+         \nConfiguration error!\n\n    sphinx.errors.ConfigError: Invalid \
+         `intersphinx_mapping` configuration (1 error).\n"
+    );
+    assert_eq!(String::from_utf8(result.stderr).unwrap(), written);
+}
+
+/// The `ConfigError` raised while the inventories load gets the report a
+/// configuration that fails to load gets: Sphinx's `handle_exception` writes
+/// it to `args.error`, the tee of stderr and the `-w` file
+/// (`sphinx/cmd/build.py:333-361`, `:395-452`), so both halves carry the
+/// same bytes. Sphinx 9.1.0, probed with this project, exits 2 and writes
+/// the identical report to both; the expected bytes are that report as the
+/// HTML oracle's `reduce_sphinx_error_report` reduces it.
+#[test]
+fn a_load_time_config_error_writes_sphinxs_report_to_both_halves() {
+    let src = temp_source(
+        "intersphinx-load-config-error",
+        &[
+            ("index.rst", "Title\n=====\n\nText.\n"),
+            (
+                "conf.py",
+                "extensions = ['sphinx.ext.intersphinx']\n\
+                 intersphinx_mapping = {'x': ('https://x.invalid/', ())}\n",
+            ),
+        ],
+    );
+    let out = out_dir("intersphinx-load-config-error");
+    let warnings = out_dir("intersphinx-load-config-error-log").join("warnings.txt");
+    let result = sphinx_build(&[
+        src.to_str().unwrap(),
+        out.to_str().unwrap(),
+        "-q",
+        "-w",
+        warnings.to_str().unwrap(),
+    ]);
+
+    assert_eq!(
+        result.status.code(),
+        Some(2),
+        "stderr: {}",
+        stderr_of(&result)
+    );
+    // Strict UTF-8 on both sides, so the string comparison is byte-exact.
+    let written = String::from_utf8(std::fs::read(&warnings).unwrap()).unwrap();
+    assert_eq!(
+        written,
+        "\nConfiguration error!\n\n    sphinx.errors.ConfigError: An invalid \
+         intersphinx_mapping entry was added after normalisation.\n"
+    );
+    assert_eq!(String::from_utf8(result.stderr).unwrap(), written);
 }
 
 /// `source_encoding` is a real key (panel fix round B, [19]): `-D` reaches
@@ -2147,4 +3285,162 @@ fn sphinx_build_d_source_encoding_warns_about_deprecation_like_sphinx() {
     ]);
     assert!(result.status.success());
     assert!(!stderr_of(&result).contains("deprecated"));
+}
+
+/// F8b: every logger warning located at a node (`location=node`) prints
+/// the node's source made absolute (`get_node_location`'s `abspath`), so a
+/// node from an included file prints `<SRCDIR>/part.inc:N`, while the
+/// reporter's records keep the include's relative spelling. Probed on
+/// Sphinx 9.1.0 for each phase that warns about a node: the parse-time
+/// duplicates (std and py), the index and std domains in stage M, the
+/// numbering (`location=toctreenode`), and the resolve pass's
+/// `ReferencesResolver` and `OnlyNodeTransform`; the math and citation
+/// domains already located theirs so. `abspath` does not depend on the
+/// cwd: the bytes are the same from the source directory and from its
+/// parent.
+#[test]
+fn included_file_node_locations_are_absolute() {
+    let src = temp_source(
+        "t14-node-locations",
+        &[
+            (
+                "index.rst",
+                "Index\n=====\n\n.. toctree::\n   :numbered:\n\n   a\n\n.. include:: num.inc\n\n\
+                 .. toctree::\n\n   other\n   zdoc\n",
+            ),
+            ("a.rst", "A\n=\n\nSec\n---\n"),
+            ("b.rst", "B\n=\n\nBsec\n----\n"),
+            (
+                "num.inc",
+                "Part\n\n.. toctree::\n   :numbered:\n\n   a\n   b\n",
+            ),
+            (
+                "other.rst",
+                "Other\n=====\n\n.. _lbl:\n\nSec\n---\n\n.. envvar:: XVAR\n\n\
+                 .. py:function:: f()\n\n.. [cit] other citation\n\n.. math::\n   :label: eq1\n\n   \
+                 x\n\nSee [cit]_ and :eq:`eq1`.\n",
+            ),
+            ("zdoc.rst", "Zdoc\n====\n\n.. include:: part.inc\n"),
+            (
+                "part.inc",
+                "Part para.\n\n.. _lbl:\n\nPsec\n----\n\n.. envvar:: XVAR\n\n\
+                 .. py:function:: f()\n\n.. index:: pair: lonely\n\n.. [cit] part citation\n\n\
+                 .. math::\n   :label: eq1\n\n   y\n\nSee :ref:`missing-target` and [cit]_ and \
+                 :eq:`nosuch` and [nocit]_.\n\n.. only:: html and\n\n   Kept.\n",
+            ),
+        ],
+    );
+    let expected = "\
+<SRCDIR>/part.inc:8: WARNING: duplicate envvar description of XVAR, other instance in other
+<SRCDIR>/part.inc:10: WARNING: duplicate object description of f, other instance in other, use :no-index: for one of them
+<SRCDIR>/part.inc:16: WARNING: duplicate label of equation eq1, other instance in other [ref.equation]
+<SRCDIR>/part.inc:14: WARNING: duplicate citation cit, other instance in <SRCDIR>/other.rst [ref.citation]
+<SRCDIR>/part.inc:12: WARNING: invalid pair index entry 'lonely' [index]
+<SRCDIR>/part.inc:6: WARNING: duplicate label lbl, other instance in <SRCDIR>/other.rst
+<SRCDIR>/num.inc:3: WARNING: a is already assigned section numbers (nested numbered toctree?) [toc.secnum]
+<SRCDIR>/part.inc:21: WARNING: undefined label: 'missing-target' [ref.ref]
+<SRCDIR>/part.inc:21: WARNING: equation not found: nosuch [ref.eq]
+<SRCDIR>/part.inc:21: WARNING: citation not found: nocit [ref.ref]
+<SRCDIR>/part.inc:23: WARNING: exception while evaluating only directive expression: unexpected token 'end of template'
+  line 1
+";
+    let parent = src.parent().expect("the source directory has a parent");
+    for (name, cwd, source) in [("srcdir", src.as_path(), "."), ("parent", parent, "")] {
+        let out = out_dir(&format!("t14-node-locations-{name}"));
+        let log = out.with_extension("w");
+        let source = if source.is_empty() {
+            src.to_str().unwrap()
+        } else {
+            source
+        };
+        let result = bin()
+            .current_dir(cwd)
+            .args([
+                source,
+                out.to_str().unwrap(),
+                "-q",
+                "-w",
+                log.to_str().unwrap(),
+            ])
+            .output()
+            .expect("binary should run");
+        assert!(result.status.success(), "{name}: {}", stderr_of(&result));
+        assert_eq!(
+            srcdir_spelled(&std::fs::read(&log).unwrap(), &src),
+            expected,
+            "{name}"
+        );
+    }
+}
+
+/// `-t` adds a tag to the build's, which `.. only::` reads in the resolve
+/// pass (`OnlyNodeTransform`): with `-t mytag` the content of `.. only::
+/// mytag` stays and that of `.. only:: not mytag` goes, and without it the
+/// other way round. Seen in what the search index holds, which Sphinx
+/// feeds from the resolved doctree; probed on Sphinx 9.1.0 (`-b html`):
+/// `keptalpha` and `word` with the tag, `droppedbeta` and `word` without.
+#[test]
+fn only_directive_follows_cli_tags() {
+    let src = temp_source(
+        "t14-only-tags",
+        &[(
+            "index.rst",
+            "Tags\n====\n\n.. only:: mytag\n\n   Keptalpha words.\n\n.. only:: not mytag\n\n   \
+             Droppedbeta words.\n",
+        )],
+    );
+    for (name, extra, terms) in [
+        ("tagged", &["-t", "mytag"][..], ["keptalpha", "word"]),
+        ("untagged", &[][..], ["droppedbeta", "word"]),
+    ] {
+        let out = out_dir(&format!("t14-only-tags-{name}"));
+        let mut args = vec![src.to_str().unwrap(), out.to_str().unwrap(), "-q"];
+        args.extend_from_slice(extra);
+        let result = sphinx_build(&args);
+        assert!(result.status.success(), "{name}: {}", stderr_of(&result));
+        let indexed: Vec<String> = search_value(&out)["terms"]
+            .as_object()
+            .expect("terms is an object")
+            .keys()
+            .cloned()
+            .collect();
+        assert_eq!(indexed, terms, "{name}");
+    }
+}
+
+/// `trim_doctest_flags` reaches the resolve pass: the search index, which
+/// Sphinx feeds from the resolved doctree, holds no `# doctest:` comment of
+/// a doctest block by default and holds it under `-D
+/// trim_doctest_flags=0`. Probed on Sphinx 9.1.0 (`-b html`): `comput` and
+/// `result`, then `comput`, `doctest`, `result` and `skip`.
+#[test]
+fn trim_doctest_flags_reaches_the_search_index() {
+    let src = temp_source(
+        "t14-trim-flags",
+        &[(
+            "index.rst",
+            "Trim\n====\n\n>>> compute()  # doctest: +SKIP\nresult\n",
+        )],
+    );
+    for (name, extra, terms) in [
+        ("default", &[][..], &["comput", "result"][..]),
+        (
+            "off",
+            &["-D", "trim_doctest_flags=0"][..],
+            &["comput", "doctest", "result", "skip"][..],
+        ),
+    ] {
+        let out = out_dir(&format!("t14-trim-flags-{name}"));
+        let mut args = vec![src.to_str().unwrap(), out.to_str().unwrap(), "-q"];
+        args.extend_from_slice(extra);
+        let result = sphinx_build(&args);
+        assert!(result.status.success(), "{name}: {}", stderr_of(&result));
+        let indexed: Vec<String> = search_value(&out)["terms"]
+            .as_object()
+            .expect("terms is an object")
+            .keys()
+            .cloned()
+            .collect();
+        assert_eq!(indexed, terms, "{name}");
+    }
 }

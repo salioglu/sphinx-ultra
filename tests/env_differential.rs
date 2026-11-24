@@ -34,7 +34,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::OnceLock;
 
-use sphinx_ultra::error::BuildWarning;
+use sphinx_ultra::builder::BuilderKind;
+use sphinx_ultra::diagnostics::Diagnostic;
 use sphinx_ultra::{BuildConfig, SphinxBuilder};
 
 /// `[parent, prev, next]` as recorded by `env.collect_relations()`.
@@ -316,11 +317,19 @@ fn canon_scope8(text: &str) -> String {
     text.replace(concat!("<project>", "/"), "")
 }
 
-/// [`normalize_source_paths`] over a build's rendered warnings.
-fn normalize_warnings(warnings: &[BuildWarning], root: &str) -> Vec<String> {
+/// [`normalize_source_paths`] over a build's records, rendered with
+/// Sphinx's default `show_warning_types = True`, which no oracle project
+/// overrides, one entry per line of the stream, as the oracle records it: a
+/// multi-line record (a reporter message holding its block) spans several.
+fn normalize_warnings(warnings: &[Diagnostic], root: &str) -> Vec<String> {
     warnings
         .iter()
-        .map(|warning| normalize_source_paths(&warning.render(), root))
+        .flat_map(|warning| {
+            normalize_source_paths(&warning.render(true), root)
+                .split('\n')
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
         .collect()
 }
 
@@ -392,6 +401,9 @@ fn build_project(project: &Project) -> Built {
     let config = config_of(project);
     let mut builder = SphinxBuilder::new(config, source_dir.clone(), output_dir)
         .unwrap_or_else(|e| panic!("project {}: builder setup failed: {e:#}", project.name));
+    // The oracle builds with Sphinx's dummy builder, whose tags `.. only::`
+    // reads in the resolve pass.
+    builder.set_builder_kind(BuilderKind::Dummy);
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -415,7 +427,17 @@ fn build_project(project: &Project) -> Built {
 /// fixture project that starts setting something the harness cannot apply
 /// fails loudly here.
 fn config_of(project: &Project) -> BuildConfig {
-    let mut config = BuildConfig::default();
+    // The oracle is Sphinx, which has no counterpart to M1's directive and
+    // role validators: sphinx-build mode turns them off, and so does every
+    // in-process oracle harness.
+    let mut config = BuildConfig {
+        validate_directives: false,
+        // The generator's `conf.py` loads no extension
+        // (`tools/gen_env_fixture.py`), and the extension list steers the
+        // read: `:external:` is a role only with intersphinx loaded.
+        extensions: Vec::new(),
+        ..BuildConfig::default()
+    };
     let conf = project.conf.as_object().expect("conf is an object");
     for (key, value) in conf {
         if KNOWN_INERT_CONF.contains(&key.as_str()) {
@@ -452,6 +474,10 @@ fn config_of(project: &Project) -> BuildConfig {
 
 /// One conf value rendered as the string a `-D` override carries.
 ///
+/// A boolean is spelled `1` or `0`, Sphinx's `-D` grammar for a bool
+/// (`convert_overrides`, `config.py:366-374`), which `apply_override`
+/// accepts for every bool key and requires for the strict ones.
+///
 /// A `-D` value is a single scalar, so most non-scalar (nested, or null)
 /// conf entries have no faithful spelling here: stringifying one would hand
 /// `apply_override` something like `["a","b"]`, which its `Value::Array`
@@ -468,7 +494,8 @@ fn config_of(project: &Project) -> BuildConfig {
 fn scalar_override(project: &str, key: &str, value: &serde_json::Value) -> String {
     match value {
         serde_json::Value::String(text) => text.clone(),
-        serde_json::Value::Bool(_) | serde_json::Value::Number(_) => value.to_string(),
+        serde_json::Value::Bool(flag) => if *flag { "1" } else { "0" }.to_string(),
+        serde_json::Value::Number(_) => value.to_string(),
         serde_json::Value::Array(items) => {
             let elements: Vec<&str> = items
                 .iter()
@@ -538,271 +565,16 @@ fn known_toc_gap(project: &str, docname: &str) -> Option<&'static str> {
 /// **strictly**, exactly like [`KNOWN_TOC_GAPS`]: a listed project whose
 /// warnings start matching fails the test, so the exemption is deleted
 /// rather than left to rot.
-const KNOWN_WARNING_GAPS: &[(&str, &str)] = &[
-    (
-        "toctree_circular",
-        "the three `circular toctree references detected` warnings come from \
-         the write phase's toctree *resolution* (`_resolve_toctree` / \
-         `_toctree_entry`, adapters/toctree.py), which lands with the \
-         resolved-doctree task",
-    ),
-    (
-        "toctree_numbered_depth2",
-        "`image file not readable` — image collection is not ported yet",
-    ),
-    (
-        "numfig_on",
-        "`image file not readable` — image collection is not ported yet",
-    ),
-    (
-        "numfig_off_numref",
-        "`image file not readable` — image collection is not ported yet (the \
-         project's other warning, `numfig is disabled. :numref: is ignored.`, \
-         this task does produce)",
-    ),
-    (
-        "inc_basic",
-        "every one of this project's oracle warnings is a docutils *reporter* \
-         message (the `[docutils]` suffix): Sphinx's `LoggingReporter` streams \
-         each `system_message` it builds to the warning log as well as into \
-         the doctree, while this crate keeps reporter messages in-tree only. \
-         That split is pre-existing and project-wide (wave-4.5 task 12 \
-         verified it is not include-specific), and it is why the project sets \
-         `keep_warnings`: the same bytes are compared at full strength as \
-         `system_message` nodes in `resolved_pformat` — the missing-file and \
-         `start-after` SEVEREs, the multi-line circular-inclusion chains, and \
-         the `:pyobject:` not-found text. The sibling `inc_warn` project \
-         carries the include/literalinclude warnings that DO go through the \
-         logger on both sides, and compares byte-for-byte",
-    ),
-];
+const KNOWN_WARNING_GAPS: &[(&str, &str)] = &[];
 
 /// Projects whose oracle `std` data this task deliberately does not
 /// reproduce. Checked **strictly**, exactly like [`KNOWN_TOC_GAPS`].
 const KNOWN_STD_GAPS: &[(&str, &str)] = &[];
 
-/// The one normalization this harness applies to the oracle's
-/// `resolved_pformat`: docutils' i18n totaliser stamps every `document` node
-/// with a `translation_progress` attribute, which `tools/gen_sphinx_fixture.py`
-/// already strips from *its* oracle as a harness artifact (see that file's
-/// `TP_ATTR`) and which nothing in this crate models. Stripping it here keeps
-/// the two fixtures' document lines comparable to the same parse output.
-const TRANSLATION_PROGRESS_ATTR: &str = " translation_progress=\"{'total': 0, 'translated': 0}\"";
-
-/// Reasons shared by several [`KNOWN_RESOLVED_GAPS`] entries.
-const TOCTREE_RESOLUTION: &str = "the write-phase toctree resolution that turns a \
-     `toctree` node into a `compact_paragraph` entry tree is not ported yet";
-const IMAGE_CANDIDATES: &str = "`ImageCollector.process_doc` stamps `candidates` onto \
-     every `image`; no image collection exists yet";
-const PROPAGATE_TARGETS: &str = "docutils' `PropagateTargets` transform (which moves a \
-     block-level target's ids and names onto the node after it) is replayed for label \
-     collection but not applied to the tree itself";
-const PROPAGATE_MODULE_TARGETS: &str = "plan §Scope-3: a `py:module` target's ids \
-     migrate onto the following node in Sphinx's tree (docutils `PropagateTargets`, \
-     plus the index/target reorder around it) — the in-tree application is deferred \
-     to wave 5; the registration records (`py_objects`/`py_modules`) pin the \
-     pre-propagation node ids for these same documents, and a module registered as \
-     a document's LAST node (py_dup's `a`) compares clean because a trailing \
-     target has nothing to propagate onto";
-
 /// Per-document `resolved_pformat` divergences this task deliberately does
 /// not close, each pinned to what would close it. Checked **strictly**,
 /// exactly like [`KNOWN_TOC_GAPS`].
-const KNOWN_RESOLVED_GAPS: &[(&str, &str, &str)] = &[
-    // Write-phase toctree resolution (`adapters/toctree.py`'s
-    // `_resolve_toctree`), which replaces a `toctree` node with the
-    // `compact_paragraph`/`bullet_list` tree of entry references. Not part
-    // of this task; every document below carries a `toctree` and nothing
-    // else it needs.
-    ("toctree_nested", "a", TOCTREE_RESOLUTION),
-    ("toctree_nested", "index", TOCTREE_RESOLUTION),
-    ("toctree_glob", "index", TOCTREE_RESOLUTION),
-    ("toctree_numbered", "index", TOCTREE_RESOLUTION),
-    ("toctree_numbered_depth2", "index", TOCTREE_RESOLUTION),
-    ("toctree_self_ref", "index", TOCTREE_RESOLUTION),
-    ("toctree_circular", "a", TOCTREE_RESOLUTION),
-    ("toctree_circular", "b", TOCTREE_RESOLUTION),
-    ("toctree_circular", "index", TOCTREE_RESOLUTION),
-    ("toctree_multi_parent", "a", TOCTREE_RESOLUTION),
-    ("toctree_multi_parent", "b", TOCTREE_RESOLUTION),
-    ("toctree_multi_parent", "index", TOCTREE_RESOLUTION),
-    ("orphan_doc", "index", TOCTREE_RESOLUTION),
-    ("numfig_on", "index", TOCTREE_RESOLUTION),
-    ("numfig_off_numref", "index", TOCTREE_RESOLUTION),
-    ("labels_dups", "index", TOCTREE_RESOLUTION),
-    ("glossary_terms", "index", TOCTREE_RESOLUTION),
-    ("index_entries", "index", TOCTREE_RESOLUTION),
-    ("doc_refs", "index", TOCTREE_RESOLUTION),
-    ("std_objects", "index", TOCTREE_RESOLUTION),
-    // Read-phase gaps of other subsystems, each already tracked by the
-    // task that owns it.
-    ("toctree_numbered_depth2", "a", IMAGE_CANDIDATES),
-    ("numfig_off_numref", "a", IMAGE_CANDIDATES),
-    (
-        "numfig_on",
-        "a",
-        "`image[candidates]` (see IMAGE_CANDIDATES) plus the `linenos` flag \
-         a captioned `code-block` stamps onto its `literal_block`",
-    ),
-    (
-        "orphan_doc",
-        "orphan",
-        "`MetadataCollector.process_doc` *removes* the docinfo field list \
-         from the doctree after reading it (`collectors/metadata.py:40`); \
-         ours reads it and leaves the node in place",
-    ),
-    ("labels_dups", "a", PROPAGATE_TARGETS),
-    ("labels_dups", "b", PROPAGATE_TARGETS),
-    ("index_entries", "a", PROPAGATE_TARGETS),
-    // Wave 4.5 py projects: toctree-bearing index documents share the
-    // write-phase gap above; module-bearing documents are §Scope-3
-    // propagation-visible (verified: each diff is exactly the module
-    // target ids moving onto the section/following target, nothing else).
-    ("py_basic", "index", TOCTREE_RESOLUTION),
-    ("py_dup", "index", TOCTREE_RESOLUTION),
-    ("py_toc", "index", TOCTREE_RESOLUTION),
-    ("py_toc_parents", "index", TOCTREE_RESOLUTION),
-    ("py_basic", "a", PROPAGATE_MODULE_TARGETS),
-    ("py_dup", "b", PROPAGATE_MODULE_TARGETS),
-    ("py_toc", "mod", PROPAGATE_MODULE_TARGETS),
-    ("py_toc_parents", "mod", PROPAGATE_MODULE_TARGETS),
-    ("py_modindex", "index", PROPAGATE_MODULE_TARGETS),
-    ("py_modindex_prefix", "index", PROPAGATE_MODULE_TARGETS),
-    // Wave 4.5 include/literalinclude projects. Only the toctree-bearing
-    // index documents and the one image-bearing document are skipped
-    // outright; every other document of these three projects is compared,
-    // six of them through the narrow [`KNOWN_HIGHLIGHT_STAMP_GAPS`]
-    // exemption rather than being dropped.
-    ("inc_basic", "index", TOCTREE_RESOLUTION),
-    ("inc_warn", "index", TOCTREE_RESOLUTION),
-    ("inc_deps", "index", TOCTREE_RESOLUTION),
-    // Panel fix round B: `py_any` keeps every `:any:` reference in `a`
-    // (compared at full strength) and its definitions in `b`, whose two
-    // labels sit before section titles — the PropagateTargets shape. The
-    // module is the document's LAST node, so its target propagates onto
-    // nothing (the py_dup shape) and is not part of the diff.
-    ("py_any", "index", TOCTREE_RESOLUTION),
-    ("py_any", "b", PROPAGATE_TARGETS),
-    (
-        "inc_deps",
-        "a",
-        "`image[candidates]` (see IMAGE_CANDIDATES) — and, on the same \
-         document's `literal_block`, the highlight stamp of \
-         KNOWN_HIGHLIGHT_STAMP_GAPS, which cannot be applied to a document \
-         that already diverges structurally",
-    ),
-];
-
-/// The attributes Sphinx's `HighlightLanguageTransform`
-/// (`transforms/post_transforms/code.py`, priority 400) stamps onto a
-/// `literal_block` that does not already carry them: `language` (+ `force`)
-/// from the `highlight_language` setting in scope, and `linenos` from the
-/// `.. highlight::` line-number threshold.
-const HIGHLIGHT_STAMP_ATTRS: [&str; 3] = ["language", "force", "linenos"];
-
-/// Documents whose ONLY `resolved_pformat` divergence is that transform.
-///
-/// Unlike [`KNOWN_RESOLVED_GAPS`], which skips a document wholesale, an
-/// entry here still compares the entire tree — every node, every other
-/// attribute, every character of text — and exempts nothing but the
-/// *presence* of a [`HIGHLIGHT_STAMP_ATTRS`] attribute the oracle's
-/// `literal_block` carries and ours does not have at all. A value both
-/// sides do carry still has to agree. That keeps these projects doing the
-/// job they exist for (they are the oracle venue for the file-inserting
-/// directives' node shapes — see tools/gen_env_fixture.py) instead of
-/// dropping out of the comparison over three stamped attributes.
-///
-/// The transform belongs to wave 5 (docs/plans/
-/// 2026-08-07-m2-wave-map.md lists it among the exemptions that wave is
-/// expected to delete, as "the `linenos` flag a captioned `code-block`
-/// stamps onto its `literal_block`" — the same pass, met there through
-/// `numfig_on`/`a`). Checked **strictly** in both directions: a listed
-/// document that starts matching outright fails, and one that diverges by
-/// anything beyond the stamp is reported as a real divergence.
-///
-/// BOUNDARY, stated so the next reader does not have to derive it: the
-/// forgiveness is keyed on OUR side lacking the attribute entirely
-/// ([`drop_unstamped_highlight_attrs`] skips any attribute we do carry).
-/// On these six documents that means a `language`/`force` value set
-/// explicitly BY A DIRECTIVE would be forgiven if we failed to emit it at
-/// all — e.g. a `:language:` added to `inc_basic/a`, where the whole
-/// attribute going missing on our side would read as an unstamped
-/// attribute rather than as the bug it is. (Panel fix round B, [21]: the
-/// earlier claim that none of the six carries a directive-set value was
-/// false — `inc_basic/b`'s `:lineno-match:` literalinclude carries
-/// `linenos="1"`, set by the directive, `code.py:476-481`.) `linenos` is
-/// therefore held to a tighter rule: the transform only ever stamps
-/// `linenos` from the `linenothreshold` comparison, which this corpus
-/// never lowers below its `sys.maxsize` default, so a stamped value is
-/// always `"0"` and an oracle `linenos="1"` is by construction
-/// directive-set — [`drop_unstamped_highlight_attrs`] refuses to drop it.
-/// A `language`/`force` value set by a directive on one of these six
-/// documents still belongs in a document outside this table, or the
-/// table shrinks. The full-strength venue for all three attributes is
-/// `inc_highlight/index` (two literalincludes with `:language:` plus
-/// `:linenos:`/`:lineno-start:`, one with `:force:`, and a `:linenos:`
-/// code-block), which is in neither table; every other `literal_block`
-/// in the corpus lives in a document one of the two tables covers.
-const KNOWN_HIGHLIGHT_STAMP_GAPS: &[(&str, &str)] = &[
-    ("inc_basic", "a"),
-    ("inc_basic", "b"),
-    ("inc_basic", "circ_a"),
-    ("inc_basic", "circ_b"),
-    ("inc_basic", "shared/frag"),
-    ("inc_warn", "a"),
-];
-
-fn known_highlight_stamp_gap(project: &str, docname: &str) -> bool {
-    KNOWN_HIGHLIGHT_STAMP_GAPS
-        .iter()
-        .any(|(p, d)| *p == project && *d == docname)
-}
-
-/// `expected` with every [`HIGHLIGHT_STAMP_ATTRS`] attribute dropped from a
-/// `literal_block` open tag whose counterpart in `actual` does not carry
-/// that attribute at all — i.e. exactly the stamping
-/// `HighlightLanguageTransform` performs, undone.
-///
-/// The two texts are walked line by line, which is sound because a
-/// `pformat` renders one node per line: if the trees differ structurally
-/// the paired lines stop being the same node and the comparison fails,
-/// which is the outcome we want. A line is only touched when BOTH sides
-/// open a `literal_block` there, so a stray `<literal_block ` inside
-/// literal *text* would have to appear at the same position on both sides
-/// AND carry a stamped attribute on the oracle side alone to be misread.
-fn drop_unstamped_highlight_attrs(expected: &str, actual: &str) -> String {
-    let mut ours = actual.lines();
-    let mut out = String::with_capacity(expected.len());
-    for oracle_line in expected.lines() {
-        let our_line = ours.next().unwrap_or_default();
-        let mut oracle_line = oracle_line.to_string();
-        if oracle_line.trim_start().starts_with("<literal_block ")
-            && our_line.trim_start().starts_with("<literal_block ")
-        {
-            for attr in HIGHLIGHT_STAMP_ATTRS {
-                let needle = format!(" {attr}=\"");
-                if our_line.contains(&needle) {
-                    continue;
-                }
-                // A `linenos="1"` cannot be the transform's doing in this
-                // corpus (see the table's BOUNDARY note): never forgive it.
-                if attr == "linenos" && oracle_line.contains(" linenos=\"1\"") {
-                    continue;
-                }
-                let Some(start) = oracle_line.find(&needle) else {
-                    continue;
-                };
-                let value = start + needle.len();
-                if let Some(offset) = oracle_line[value..].find('"') {
-                    oracle_line.replace_range(start..value + offset + 1, "");
-                }
-            }
-        }
-        out.push_str(&oracle_line);
-        out.push('\n');
-    }
-    out
-}
+const KNOWN_RESOLVED_GAPS: &[(&str, &str, &str)] = &[];
 
 fn known_resolved_gap(project: &str, docname: &str) -> Option<&'static str> {
     KNOWN_RESOLVED_GAPS
@@ -831,7 +603,7 @@ fn known_warning_gap(project: &str) -> Option<&'static str> {
 /// sides still DIFFER — so a project that started emitting a warning of its
 /// own would go on passing under an exemption written for a warning it
 /// FAILS to emit. Every entry's stated reason is of that second kind ("not
-/// ported yet", "the oracle logs reporter messages we keep in-tree"), so
+/// ported yet", "a transform not ported yet reports it"), so
 /// the sound invariant is a one-directional one: our warnings must be a
 /// subset of the oracle's. A warning on our side that the oracle lacks is
 /// a fabricated diagnostic, which is precisely what breaks `-W` on a
@@ -863,21 +635,6 @@ fn assert_warning_gap_is_sound(project: &str, actual: &[String], expected: &[Str
          does not (or emits one more often than it does) — the exemption \
          covers MISSING warnings, never invented ones: {extra:#?}"
     );
-    if project == "inc_basic" {
-        // Its reason is specifically that the whole set is reporter-side,
-        // so anything at all on our side contradicts the exemption.
-        assert!(
-            actual.is_empty(),
-            "[inc_basic] the exemption says every oracle warning is a \
-             docutils reporter message we keep in-tree only, so our logger \
-             side must be empty: {actual:#?}"
-        );
-        assert!(
-            !expected.is_empty(),
-            "[inc_basic] the oracle side went empty — the exemption has \
-             nothing left to excuse; delete it"
-        );
-    }
 }
 
 /// Fixture `conf` keys that provably steer no behavior this crate has
@@ -886,45 +643,23 @@ fn assert_warning_gap_is_sound(project: &str, actual: &[String], expected: &[Str
 ///
 /// `smartquotes`: no smart-quote transform exists.
 ///
-/// `keep_warnings`: no `FilterSystemMessages` transform exists — this crate
-/// never removes a reporter `system_message` from a doctree, which is
-/// precisely what `keep_warnings=True` asks Sphinx to do (its transform
-/// keeps every message of level >= 2). The *stripping* half — the `False`
-/// default, which drops every system_message below SEVERE — is the
-/// unimplemented one, so the entry is sound only while every project that
-/// sets the key sets it `True`; [`assert_inert_conf_is_sound`] pins that.
-/// Projects that leave it unset are self-defending: Sphinx strips their
-/// messages, so a system_message appearing on our side alone would fail the
-/// `resolved_pformat` comparison rather than pass silently.
-///
 /// A new fixture project introducing another such key must either have it
 /// added here (with the same kind of justification) or be expressible as a
 /// `-D` override.
-const KNOWN_INERT_CONF: &[&str] = &["smartquotes", "keep_warnings"];
+const KNOWN_INERT_CONF: &[&str] = &["smartquotes"];
 
 /// The side-condition that makes one [`KNOWN_INERT_CONF`] entry sound.
-///
-/// `keep_warnings` is inert only in its `True` sense (see the constant's
-/// docs), so a project setting it any other way must fail here rather than
-/// be compared against a differently filtered oracle.
 ///
 /// Exhaustive on purpose. A future key added to [`KNOWN_INERT_CONF`] with
 /// no arm here fails the first project that sets it, with instructions —
 /// the mechanical forcing the table otherwise lacks, so "inert" cannot be
 /// claimed for a new key without either a side-condition or an explicit
 /// statement that every value is inert.
-fn assert_inert_conf_is_sound(project: &str, key: &str, value: &serde_json::Value) {
+fn assert_inert_conf_is_sound(project: &str, key: &str, _value: &serde_json::Value) {
     match key {
         // Inert in EVERY sense: no smart-quote transform exists at all, so
         // neither `True` nor `False` steers anything.
         "smartquotes" => {}
-        "keep_warnings" => assert_eq!(
-            value,
-            &serde_json::Value::Bool(true),
-            "project {project:?}: keep_warnings={value}, but the harness treats the key \
-             as inert only in its `True` sense — this crate never strips reporter \
-             system_messages, and the stripping half is unimplemented"
-        ),
         other => panic!(
             "project {project:?} sets {other:?}, which is listed in KNOWN_INERT_CONF \
              but has no soundness arm in assert_inert_conf_is_sound. Add one: either \
@@ -1061,7 +796,7 @@ fn conf_arrays_of_comma_free_strings_render_as_the_comma_joined_override() {
 
     assert_eq!(
         scalar_override("p", "nitpicky", &serde_json::json!(true)),
-        "true"
+        "1"
     );
     assert_eq!(
         scalar_override("p", "numfig_secnum_depth", &serde_json::json!(2)),
@@ -1069,69 +804,35 @@ fn conf_arrays_of_comma_free_strings_render_as_the_comma_joined_override() {
     );
 }
 
-/// [`drop_unstamped_highlight_attrs`] removes an oracle-only highlight
-/// stamp and nothing else: a value both sides carry stays (and keeps
-/// diverging if it differs), a non-`literal_block` line is untouched, and
-/// the surrounding tree text is preserved byte for byte.
+/// A JSON boolean renders as Sphinx's `-D` spelling of a bool, `1` or `0`:
+/// `convert_overrides` accepts nothing else for a key whose only type is
+/// `bool` (`config.py:366-374`), and `apply_override` takes that spelling
+/// for every bool key, the strict `keep_warnings` included.
 #[test]
-fn only_oracle_only_highlight_stamps_are_dropped() {
-    let oracle = concat!(
-        "<document source=\"a.rst\">\n",
-        "    <literal_block force=\"0\" language=\"default\" linenos=\"0\" ",
-        "source=\"x.inc\" xml:space=\"preserve\">\n",
-        "        text\n",
-        "    <paragraph language=\"default\">\n",
-        "        not a literal block\n",
-    );
-    // Ours carries `force`; `language`/`linenos` it has never heard of.
-    let ours = concat!(
-        "<document source=\"a.rst\">\n",
-        "    <literal_block force=\"0\" source=\"x.inc\" xml:space=\"preserve\">\n",
-        "        text\n",
-        "    <paragraph language=\"default\">\n",
-        "        not a literal block\n",
-    );
-    assert_eq!(drop_unstamped_highlight_attrs(oracle, ours), ours);
-
-    // A stamped attribute BOTH sides carry is left in place, so a wrong
-    // value still diverges.
-    let ours_wrong_force = ours.replace("force=\"0\"", "force=\"1\"");
+fn scalar_override_spells_booleans_like_sphinx() {
     assert_eq!(
-        drop_unstamped_highlight_attrs(oracle, &ours_wrong_force),
-        ours,
-        "only `language` and `linenos` come off when ours carries `force`"
+        scalar_override("p", "numfig", &serde_json::json!(true)),
+        "1"
     );
-    assert_ne!(
-        drop_unstamped_highlight_attrs(oracle, &ours_wrong_force),
-        ours_wrong_force,
-        "a `force` value we disagree on still diverges"
+    assert_eq!(
+        scalar_override("p", "numfig", &serde_json::json!(false)),
+        "0"
     );
-
-    // Any other divergence survives: the text of the block still has to
-    // match.
-    let ours_wrong_text = ours.replace("        text\n", "        other\n");
-    assert_ne!(
-        drop_unstamped_highlight_attrs(oracle, &ours_wrong_text),
-        ours_wrong_text
-    );
-
-    // A `linenos="1"` is never forgiven, even when ours carries no
-    // `linenos` at all: the transform only ever stamps `"0"` in this
-    // corpus, so an oracle `"1"` we fail to emit is a directive-set value
-    // going missing — a real divergence, which the BOUNDARY refusal keeps
-    // (panel round C pin for [21]). `language` still comes off beside it.
-    let oracle_directive_linenos = oracle.replace("linenos=\"0\"", "linenos=\"1\"");
-    let kept = drop_unstamped_highlight_attrs(&oracle_directive_linenos, ours);
-    let block = kept
-        .lines()
-        .find(|line| line.trim_start().starts_with("<literal_block "))
-        .expect("the literal_block line survives");
-    assert!(block.contains(" linenos=\"1\""), "{kept}");
-    assert!(!block.contains(" language="), "{kept}");
-    assert_ne!(
-        kept, ours,
-        "a directive-set `linenos` we do not emit still diverges"
-    );
+    let mut config = BuildConfig::default();
+    for (key, value) in [
+        ("numfig", true),
+        ("keep_warnings", true),
+        ("nitpicky", false),
+    ] {
+        let spelled = scalar_override("p", key, &serde_json::json!(value));
+        let ignored = config.apply_override(key, &spelled);
+        assert!(
+            matches!(ignored, Ok(None)),
+            "-D {key}={spelled}: {ignored:?}"
+        );
+    }
+    assert!(config.numfig && config.keep_warnings && !config.nitpicky);
+    assert!(config.apply_override("keep_warnings", "true").is_err());
 }
 
 #[test]
@@ -1322,9 +1023,8 @@ fn relations_match_oracle() {
 /// message text, `file:line` location, and the `[type.subtype]` suffix
 /// `show_warning_types` appends.
 ///
-/// Live for the projects whose oracle warnings are toctree diagnostics;
-/// the rest are pinned in [`KNOWN_WARNING_GAPS`] to the task that will
-/// produce them.
+/// Live for every project; a project whose warnings diverge on purpose is
+/// pinned in [`KNOWN_WARNING_GAPS`] to the task that will produce them.
 #[test]
 fn warnings_match_oracle() {
     let fixture = load_fixture();
@@ -1630,20 +1330,15 @@ fn dependencies_and_included_match_oracle() {
 }
 
 /// `env.get_and_resolve_doctree(docname, builder)` as pseudo-XML — every
-/// document's doctree after cross-reference resolution.
-///
-/// Compared per document, because only part of that pass exists: the
-/// `pending_xref` resolution this task ports is live, while the write-phase
-/// *toctree* resolution (`adapters/toctree.py`) that turns a `toctree` node
-/// into a `compact_paragraph` tree is not — so every document carrying a
-/// toctree, plus the handful with read-phase gaps of their own, is pinned in
-/// [`KNOWN_RESOLVED_GAPS`] rather than compared.
+/// document's doctree after the post-transforms and the resolution of its
+/// own toctrees, which the build runs as the dummy builder, as the oracle
+/// does. Compared per document; a document that diverges on purpose is
+/// pinned in [`KNOWN_RESOLVED_GAPS`] rather than compared.
 #[test]
 fn resolved_doctrees_match_oracle() {
     let fixture = load_fixture();
     let mut divergences = Vec::new();
     let mut visited_gaps: Vec<(&str, &str)> = Vec::new();
-    let mut visited_stamps: Vec<(&str, &str)> = Vec::new();
 
     for project in &fixture.projects {
         let env = env_of(project);
@@ -1659,20 +1354,12 @@ fn resolved_doctrees_match_oracle() {
         for (docname, expected) in &project.expect.resolved_pformat {
             // Both sides pass through the §Scope-8 canonicalization; see
             // [`canon_scope8`] for why this is comparison-preserving.
-            let expected = canon_scope8(&expected.replace(TRANSLATION_PROGRESS_ATTR, ""));
+            let expected = canon_scope8(expected);
             let actual = canon_scope8(&resolved[docname]);
             let matches = actual == expected;
-            let stamp_exempt = known_highlight_stamp_gap(&project.name, docname);
 
             match known_resolved_gap(&project.name, docname) {
                 Some(why) => {
-                    assert!(
-                        !stamp_exempt,
-                        "[{}] {docname} is in both KNOWN_RESOLVED_GAPS ({why}) and \
-                         KNOWN_HIGHLIGHT_STAMP_GAPS — a skipped document cannot also \
-                         be compared modulo the highlight stamp; keep one",
-                        project.name
-                    );
                     visited_gaps.push((project.name.as_str(), docname.as_str()));
                     assert!(
                         !matches,
@@ -1681,25 +1368,6 @@ fn resolved_doctrees_match_oracle() {
                          exemption",
                         project.name
                     );
-                }
-                None if stamp_exempt => {
-                    visited_stamps.push((project.name.as_str(), docname.as_str()));
-                    assert!(
-                        !matches,
-                        "[{}] {docname}: listed in KNOWN_HIGHLIGHT_STAMP_GAPS but the \
-                         resolved doctree now matches the oracle outright — delete the \
-                         exemption",
-                        project.name
-                    );
-                    let unstamped = drop_unstamped_highlight_attrs(&expected, &actual);
-                    if actual != unstamped {
-                        divergences.push(format!(
-                            "[{}] {docname} (beyond the HighlightLanguageTransform \
-                             stamp)\n--- oracle, unstamped ---\n{unstamped}\
-                             --- ours ---\n{actual}",
-                            project.name
-                        ));
-                    }
                 }
                 None if !matches => divergences.push(format!(
                     "[{}] {docname}\n--- oracle ---\n{expected}--- ours ---\n{actual}",
@@ -1717,34 +1385,25 @@ fn resolved_doctrees_match_oracle() {
              never visited: no such project/document in the fixture. Delete it."
         );
     }
-    for (project, docname) in KNOWN_HIGHLIGHT_STAMP_GAPS {
-        assert!(
-            visited_stamps.contains(&(*project, *docname)),
-            "KNOWN_HIGHLIGHT_STAMP_GAPS entry ({project}, {docname}) was never \
-             visited: no such project/document in the fixture. Delete it."
-        );
-    }
 
     report(&divergences, "resolved_pformat");
 }
 
 /// The exemption arithmetic the docs quote (docs/IMPLEMENTATION_STATUS.md,
-/// docs/ROADMAP.md, CHANGELOG.md, README.md), computed from the tables and the
+/// docs/ROADMAP.md, README.md), computed from the tables and the
 /// fixture rather than by hand (panel fix round B, [29]): how many
 /// documents' resolved doctrees and how many projects' warning streams are
-/// compared byte-for-byte, how many documents are skipped wholesale, and
-/// how many are compared modulo the highlight stamp. The subtraction is
-/// sound on its own terms — the test first proves that each table names a
-/// fixture document (or project) exactly once and that the two document
-/// tables are disjoint — so the table lengths ARE the exemption counts.
-/// Update the seven constants and the doc sites together.
-const DOCUMENTED_PROJECTS: usize = 29;
-const DOCUMENTED_DOCUMENTS: usize = 84;
-const DOCUMENTED_WHOLESALE_EXEMPT_DOCUMENTS: usize = 43;
-const DOCUMENTED_STAMP_EXEMPT_DOCUMENTS: usize = 6;
-const DOCUMENTED_BYTE_EXACT_DOCUMENTS: usize = 35;
-const DOCUMENTED_WARNING_EXEMPT_PROJECTS: usize = 5;
-const DOCUMENTED_BYTE_EXACT_WARNING_PROJECTS: usize = 24;
+/// compared byte-for-byte, and how many documents are skipped wholesale.
+/// The subtraction is sound on its own terms — the test first proves that
+/// each table names a fixture document (or project) exactly once — so the
+/// table lengths ARE the exemption counts. Update the six constants and
+/// the doc sites together.
+const DOCUMENTED_PROJECTS: usize = 31;
+const DOCUMENTED_DOCUMENTS: usize = 89;
+const DOCUMENTED_WHOLESALE_EXEMPT_DOCUMENTS: usize = 0;
+const DOCUMENTED_BYTE_EXACT_DOCUMENTS: usize = 89;
+const DOCUMENTED_WARNING_EXEMPT_PROJECTS: usize = 0;
+const DOCUMENTED_BYTE_EXACT_WARNING_PROJECTS: usize = 31;
 
 #[test]
 fn exemption_arithmetic_matches_the_documented_numbers() {
@@ -1771,7 +1430,6 @@ fn exemption_arithmetic_matches_the_documented_numbers() {
         .iter()
         .map(|(project, docname, _)| (*project, *docname))
         .collect();
-    let stamp: BTreeSet<(&str, &str)> = KNOWN_HIGHLIGHT_STAMP_GAPS.iter().copied().collect();
     let warning_exempt: BTreeSet<&str> = KNOWN_WARNING_GAPS.iter().map(|(p, _)| *p).collect();
     assert_eq!(
         wholesale.len(),
@@ -1779,37 +1437,26 @@ fn exemption_arithmetic_matches_the_documented_numbers() {
         "KNOWN_RESOLVED_GAPS lists a document twice"
     );
     assert_eq!(
-        stamp.len(),
-        KNOWN_HIGHLIGHT_STAMP_GAPS.len(),
-        "KNOWN_HIGHLIGHT_STAMP_GAPS lists a document twice"
-    );
-    assert_eq!(
         warning_exempt.len(),
         KNOWN_WARNING_GAPS.len(),
         "KNOWN_WARNING_GAPS lists a project twice"
     );
     assert!(
-        wholesale.is_disjoint(&stamp),
-        "a document is in both document tables: {:?}",
-        wholesale.intersection(&stamp).collect::<Vec<_>>()
-    );
-    assert!(
-        wholesale.is_subset(&documents) && stamp.is_subset(&documents),
-        "a document table names a document the fixture does not have"
+        wholesale.is_subset(&documents),
+        "KNOWN_RESOLVED_GAPS names a document the fixture does not have"
     );
     assert!(
         warning_exempt.is_subset(&projects),
         "KNOWN_WARNING_GAPS names a project the fixture does not have"
     );
 
-    let byte_exact_documents = documents.len() - wholesale.len() - stamp.len();
+    let byte_exact_documents = documents.len() - wholesale.len();
     let byte_exact_warning_projects = projects.len() - warning_exempt.len();
     assert_eq!(
         (
             projects.len(),
             documents.len(),
             wholesale.len(),
-            stamp.len(),
             byte_exact_documents,
             warning_exempt.len(),
             byte_exact_warning_projects,
@@ -1818,20 +1465,18 @@ fn exemption_arithmetic_matches_the_documented_numbers() {
             DOCUMENTED_PROJECTS,
             DOCUMENTED_DOCUMENTS,
             DOCUMENTED_WHOLESALE_EXEMPT_DOCUMENTS,
-            DOCUMENTED_STAMP_EXEMPT_DOCUMENTS,
             DOCUMENTED_BYTE_EXACT_DOCUMENTS,
             DOCUMENTED_WARNING_EXEMPT_PROJECTS,
             DOCUMENTED_BYTE_EXACT_WARNING_PROJECTS,
         ),
-        "the corpus or a table changed: {} projects, {} documents, {} wholesale-exempt, \
-         {} stamp-exempt ({byte_exact_documents} documents byte-for-byte), {} \
-         warning-exempt projects ({byte_exact_warning_projects} warning streams \
-         byte-for-byte) — update the constants AND the doc sites \
-         (docs/IMPLEMENTATION_STATUS.md, docs/ROADMAP.md, CHANGELOG.md, README.md)",
+        "the corpus or a table changed: {} projects, {} documents, {} wholesale-exempt \
+         ({byte_exact_documents} documents byte-for-byte), {} warning-exempt projects \
+         ({byte_exact_warning_projects} warning streams byte-for-byte) — update the \
+         constants AND the doc sites (docs/IMPLEMENTATION_STATUS.md, docs/ROADMAP.md, \
+         README.md)",
         projects.len(),
         documents.len(),
         wholesale.len(),
-        stamp.len(),
         warning_exempt.len(),
     );
 }
@@ -2405,7 +2050,7 @@ fn an_orphan_marked_after_a_raw_block_is_still_exempt() {
     let warnings: Vec<String> = stats
         .warning_details
         .iter()
-        .map(|warning| warning.render())
+        .map(|warning| warning.render(true))
         .collect();
     assert!(
         warnings.is_empty(),
@@ -2432,7 +2077,7 @@ fn warnings_of(files: &[(&str, &str)], config: BuildConfig) -> Vec<String> {
     stats
         .warning_details
         .iter()
-        .map(|warning| warning.render())
+        .map(|warning| warning.render(true))
         .collect()
 }
 
@@ -2465,7 +2110,8 @@ fn sphinxs_non_xref_roles_do_not_report_missing_references() {
 
 /// `:numref:` is registered with `lowercase=True`, so a `:name:` that was
 /// written in mixed case still resolves (docutils lowercases the label it
-/// registers, and the role has to match).
+/// registers, and the role has to match). The figure's image is remote, so
+/// that the image collector has no file to find.
 #[test]
 fn a_numref_target_is_lowercased_like_the_label_it_names() {
     let config = BuildConfig {
@@ -2477,7 +2123,8 @@ fn a_numref_target_is_lowercased_like_the_label_it_names() {
             ("index", "Index\n=====\n\n.. toctree::\n\n   a\n   b\n"),
             (
                 "a",
-                "A\n=\n\n.. figure:: pic.png\n   :name: Fig-A\n\n   The Caption\n",
+                "A\n=\n\n.. figure:: https://example.com/pic.png\n   :name: Fig-A\n\n   \
+                 The Caption\n",
             ),
             ("b", "B\n=\n\nSee :numref:`FIG-A` and :ref:`Fig-A`.\n"),
         ],
@@ -2852,7 +2499,7 @@ fn a_warm_rebuild_reports_the_same_toctree_warnings() {
         stats
             .warning_details
             .iter()
-            .map(|warning| warning.render())
+            .map(|warning| warning.render(true))
             .collect()
     };
 
@@ -3258,6 +2905,8 @@ fn py_builtins_in_a_loaded_inventory_resolve_externally_before_the_silencer() {
             encoder.finish().unwrap();
             std::fs::write(source_dir.join("local.inv"), compressed).unwrap();
             config.nitpicky = true;
+            // Sphinx loads inventories only with the extension loaded.
+            config.extensions = vec!["sphinx.ext.intersphinx".to_string()];
             config.intersphinx_mapping.insert(
                 "other".to_string(),
                 (

@@ -6249,6 +6249,255 @@
         "index": "Round D names\n=============\n\nLabels: :ref:`Pad <pad lbl>`, :ref:`AB <a b>` and :ref:`AB2 <a\u001fb>`.\n\nDangling: :ref:`X <only comment>` and :ref:`only comment`.\n\nEnvironment: :envvar:`FOO BAR` and :envvar:`FOO\u001fBAR`.\n\nOption: :option:`git\u001fadd -x` and :option:`git-add -x`.\n\n.. envvar:: FOO\u001fBAR\n\n   Variable.\n\n.. program:: git\u001fadd\n\n.. option:: -x\n\n   Option.\n\n.. _pad  lbl:\n.. _ pad  lbl :\n\n.. _a\u001fb:\n.. _ a b :\n\n.. _ only comment :\n"
       },
       "name": "names_round_d"
+    },
+    {
+      "conf": {
+        "smartquotes": false
+      },
+      "expect": {
+        "dependencies": {},
+        "files_to_rebuild": {
+          "a": [
+            "index"
+          ],
+          "b": [
+            "index"
+          ]
+        },
+        "genindex": [],
+        "included": {},
+        "index_entries": {
+          "a": [],
+          "b": [],
+          "index": []
+        },
+        "py_modindex": {
+          "collapse": false,
+          "groups": []
+        },
+        "py_modules": [],
+        "py_objects": [],
+        "relations": {
+          "a": [
+            "index",
+            "index",
+            "b"
+          ],
+          "b": [
+            "index",
+            "a",
+            null
+          ],
+          "index": [
+            null,
+            null,
+            "a"
+          ]
+        },
+        "resolved_pformat": {
+          "a": "<document source=\"<project>/a.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <target refid=\"zeta\">\n    <target refid=\"alpha\">\n    <section ids=\"a alpha zeta\" names=\"a alpha zeta\">\n        <title>\n            A\n        <paragraph>\n            Text.\n",
+          "b": "<document source=\"<project>/b.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <target refid=\"zeta\">\n    <target refid=\"alpha\">\n    <section ids=\"b alpha zeta\" names=\"b alpha zeta\">\n        <title>\n            B\n        <paragraph>\n            Text.\n",
+          "index": "<document source=\"<project>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"index\" names=\"index\">\n        <title>\n            Index\n        <compound classes=\"toctree-wrapper\">\n            <compact_paragraph toctree=\"1\">\n                <bullet_list>\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                A\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                B\n"
+        },
+        "std": {
+          "anonlabels": {
+            "alpha": [
+              "b",
+              "alpha"
+            ],
+            "genindex": [
+              "genindex",
+              ""
+            ],
+            "modindex": [
+              "py-modindex",
+              ""
+            ],
+            "py-modindex": [
+              "py-modindex",
+              ""
+            ],
+            "search": [
+              "search",
+              ""
+            ],
+            "zeta": [
+              "b",
+              "zeta"
+            ]
+          },
+          "labels": {
+            "alpha": [
+              "b",
+              "alpha",
+              "B"
+            ],
+            "genindex": [
+              "genindex",
+              "",
+              "Index"
+            ],
+            "modindex": [
+              "py-modindex",
+              "",
+              "Module Index"
+            ],
+            "py-modindex": [
+              "py-modindex",
+              "",
+              "Python Module Index"
+            ],
+            "search": [
+              "search",
+              "",
+              "Search Page"
+            ],
+            "zeta": [
+              "b",
+              "zeta",
+              "B"
+            ]
+          },
+          "objects": [],
+          "progoptions": [],
+          "terms": {}
+        },
+        "toc_fignumbers": {},
+        "toc_num_entries": {
+          "a": 1,
+          "b": 1,
+          "index": 1
+        },
+        "toc_secnumbers": {},
+        "tocs_pformat": {
+          "a": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"a\">\n                A\n",
+          "b": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"b\">\n                B\n",
+          "index": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"index\">\n                Index\n        <bullet_list>\n            <toctree caption=\"True\" entries=\"(None,\\ 'a') (None,\\ 'b')\" glob=\"0\" hidden=\"0\" includefiles=\"a b\" includehidden=\"0\" maxdepth=\"-1\" numbered=\"0\" parent=\"index\" rawentries=\"\" titlesonly=\"0\">\n"
+        },
+        "toctree_includes": {
+          "index": [
+            "a",
+            "b"
+          ]
+        },
+        "warnings": [
+          "<project>/b.rst:5: WARNING: duplicate label zeta, other instance in <project>/a.rst",
+          "<project>/b.rst:5: WARNING: duplicate label alpha, other instance in <project>/a.rst"
+        ]
+      },
+      "files": {
+        "a": ".. _zeta:\n.. _alpha:\n\nA\n=\n\nText.\n",
+        "b": ".. _zeta:\n.. _alpha:\n\nB\n=\n\nText.\n",
+        "index": "Index\n=====\n\n.. toctree::\n\n   a\n   b\n"
+      },
+      "name": "state.label_order"
+    },
+    {
+      "conf": {
+        "smartquotes": false
+      },
+      "expect": {
+        "dependencies": {
+          "index": [
+            "<project>/part.rst"
+          ]
+        },
+        "files_to_rebuild": {},
+        "genindex": [],
+        "included": {
+          "index": [
+            "part"
+          ]
+        },
+        "index_entries": {
+          "index": [],
+          "part": []
+        },
+        "py_modindex": {
+          "collapse": false,
+          "groups": []
+        },
+        "py_modules": [],
+        "py_objects": [],
+        "relations": {
+          "index": [
+            null,
+            null,
+            null
+          ]
+        },
+        "resolved_pformat": {
+          "index": "<document source=\"<project>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"index\" names=\"index\">\n        <title>\n            Index\n        <paragraph>\n            Intro.\n        <paragraph>\n            Para \n            <problematic ids=\"id2\" refid=\"id1\">\n                `x`__\n            .\n",
+          "part": "<document source=\"<project>/part.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n"
+        },
+        "std": {
+          "anonlabels": {
+            "genindex": [
+              "genindex",
+              ""
+            ],
+            "modindex": [
+              "py-modindex",
+              ""
+            ],
+            "py-modindex": [
+              "py-modindex",
+              ""
+            ],
+            "search": [
+              "search",
+              ""
+            ]
+          },
+          "labels": {
+            "genindex": [
+              "genindex",
+              "",
+              "Index"
+            ],
+            "modindex": [
+              "py-modindex",
+              "",
+              "Module Index"
+            ],
+            "py-modindex": [
+              "py-modindex",
+              "",
+              "Python Module Index"
+            ],
+            "search": [
+              "search",
+              "",
+              "Search Page"
+            ]
+          },
+          "objects": [],
+          "progoptions": [],
+          "terms": {}
+        },
+        "toc_fignumbers": {},
+        "toc_num_entries": {
+          "index": 1,
+          "part": 0
+        },
+        "toc_secnumbers": {},
+        "tocs_pformat": {
+          "index": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"index\">\n                Index\n",
+          "part": "<bullet_list>\n"
+        },
+        "toctree_includes": {},
+        "warnings": [
+          "internal padding after <project>/part.rst:5: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+          "See \"backrefs\" attribute for IDs. [docutils]",
+          "<project>/part.rst:2: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+          "See \"backrefs\" attribute for IDs. [docutils]"
+        ]
+      },
+      "files": {
+        "index": "Index\n=====\n\nIntro.\n\n.. include:: part.rst\n",
+        "part": "Para `x`__.\n"
+      },
+      "name": "state.final_position_include"
     }
   ],
   "sphinx_version": "9.1.0"

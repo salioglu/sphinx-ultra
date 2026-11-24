@@ -744,12 +744,12 @@ Leaf content for sub/c.
     },
     # -----------------------------------------------------------------------
     # Wave 4.5: py-domain projects (plan Task 14). Documents that carry a
-    # `py:module` directive are PropagateTargets-visible (plan Scope-3: the
-    # module target's ids migrate onto the following node in Sphinx's tree,
-    # a transform this crate defers to wave 5), so their resolved_pformat is
-    # gap-tabled in the consumer while every other key — registration
-    # records, modindex, tocs, warnings, xref-bearing sibling documents —
-    # compares in full.
+    # `py:module` directive are PropagateTargets-visible (the module
+    # target's ids migrate onto the following node in Sphinx's tree); the
+    # consumer gap-tabled their resolved_pformat until wave 5a ported the
+    # transform (T10), while every other key — registration records,
+    # modindex, tocs, warnings, xref-bearing sibling documents — compared
+    # in full.
     # -----------------------------------------------------------------------
     {
         # module + class + method + functions registered in NON-alphabetical
@@ -1235,11 +1235,12 @@ part para
         #
         # Layout: every reference lives in `a`, which therefore compares at
         # FULL strength; the definitions live in `b`, whose resolved tree
-        # is Scope-3 propagation-visible (the `.. _dup:` label's ids move
-        # onto its section, a KNOWN_RESOLVED_GAPS shape) — the module sits
-        # LAST in `b`, the py_dup shape, so its target has nothing to
-        # propagate onto, and the label's name differs from its section's
-        # slug so the section's FIRST id (the toc anchor) still agrees.
+        # is propagation-visible (the `.. _dup:` label's ids move onto its
+        # section, gap-tabled until wave 5a T10 ported PropagateTargets) —
+        # the module sits LAST in `b`, the py_dup shape, so its target has
+        # nothing to propagate onto, and the label's name differs from its
+        # section's slug so the section's FIRST id (the toc anchor) still
+        # agrees.
         "name": "py_any",
         "conf": {},
         "files": {
@@ -1430,6 +1431,76 @@ Option: :option:`git\x1fadd -x` and :option:`git-add -x`.
 .. _ a b :
 
 .. _ only comment :
+""",
+        },
+    },
+    # -----------------------------------------------------------------------
+    # Wave 5a: the read-state cases that need more than one document (the
+    # read-state report's §11; the one-document cases are
+    # tools/gen_read_state_fixture.py's).
+    #
+    # `state.label_order` (report §7.4): `StandardDomain.process_doc` walks a
+    # document's `nametypes` in insertion order, so `b`'s two labels, both
+    # already taken by `a`, warn `duplicate label zeta` before `alpha` --
+    # registration order, not a name sort.
+    # -----------------------------------------------------------------------
+    {
+        "name": "state.label_order",
+        "conf": {},
+        "files": {
+            "index": """\
+Index
+=====
+
+.. toctree::
+
+   a
+   b
+""",
+            "a": """\
+.. _zeta:
+.. _alpha:
+
+A
+=
+
+Text.
+""",
+            "b": """\
+.. _zeta:
+.. _alpha:
+
+B
+=
+
+Text.
+""",
+        },
+    },
+    # -----------------------------------------------------------------------
+    # `state.final_position_include` (report §6.2): a document that ends
+    # inside an `.. include::` ends on the padding line docutils inserts after
+    # the included lines, so the line-less `Anonymous hyperlink mismatch`
+    # (AnonymousHyperlinks, 440) of `index` is located at `internal padding
+    # after <the include path as docutils spells it, cwd-relative>`. `part` is
+    # a document too (it reports its own mismatch at its own final position)
+    # and is exempt from the not-in-any-toctree warning because `index`
+    # includes it.
+    # -----------------------------------------------------------------------
+    {
+        "name": "state.final_position_include",
+        "conf": {},
+        "files": {
+            "index": """\
+Index
+=====
+
+Intro.
+
+.. include:: part.rst
+""",
+            "part": """\
+Para `x`__.
 """,
         },
     },

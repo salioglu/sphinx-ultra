@@ -7,14 +7,18 @@
 //! marker + char before recognition (`escape2null`); at Text emission the
 //! markers strip (`\x00 ` and `\x00\n` remove BOTH chars, joining words;
 //! bare `\x00` drops, keeping the escaped char). Inline literals restore
-//! backslashes instead. Behavior sources: the wave-2 probe notes
+//! backslashes instead. Where docutils builds its Text from the
+//! null-escaped text, the node keeps that data in its side-car
+//! ([`Node::text_node_escaped`]; SmartQuotes reads it), while its `text` is
+//! the stripped form. Behavior sources: the wave-2 probe notes
 //! (2026-08-07-m2-wave2-probes.md) and the differential fixture — never
 //! memory.
 
-use crate::doctree::ids::IdRegistry;
 use crate::doctree::{kinds, messages, AttrValue, Node, Span};
+use crate::transforms::state::{DocLoc, DocumentState};
 
 use super::punctuation;
+use super::roles::{self, DispatchCtx, Resolution, RoleFn, RoleTable};
 
 const NULL: char = '\u{0}';
 
@@ -36,29 +40,9 @@ pub fn escape2null(text: &str) -> String {
     out
 }
 
-/// docutils `nodes.unescape`: drop `\x00 ` and `\x00\n` (both chars),
-/// then bare `\x00` markers. With `restore_backslashes` every marker
-/// becomes a literal `\` instead (inline literals).
-pub fn unescape(text: &str, restore_backslashes: bool) -> String {
-    if restore_backslashes {
-        return text.replace(NULL, "\\");
-    }
-    let mut out = String::with_capacity(text.len());
-    let mut chars = text.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == NULL {
-            match chars.peek() {
-                Some(' ') | Some('\n') => {
-                    chars.next();
-                }
-                _ => {}
-            }
-        } else {
-            out.push(c);
-        }
-    }
-    out
-}
+/// docutils `nodes.unescape`, which lives with the doctree IR as it does
+/// in docutils (`nodes.py`): [`Node::text_node_escaped`] unescapes too.
+pub use crate::doctree::unescape;
 
 /// Result of inline-parsing one text block: the paragraph/title children,
 /// plus system_messages the caller attaches AFTER the enclosing element.
@@ -317,11 +301,15 @@ struct Inliner<'a> {
     failed_end_search: std::collections::HashMap<(char, usize), usize>,
     span: Span,
     lineno: u32,
-    source_path: &'a str,
-    registry: &'a mut IdRegistry,
-    /// Sphinx mode: unknown-in-docutils roles become pending_xref nodes
-    /// (no messages) and every role occurrence is recorded.
-    sphinx: bool,
+    /// The document state: ids, names and serials are document-level, and
+    /// its reporter builds and logs the messages, located at `lineno` of
+    /// the span's source.
+    state: &'a mut DocumentState,
+    /// The role registries the parse looks roles up in.
+    table: &'a RoleTable,
+    /// The mode and document state the lookup depends on; in Sphinx mode
+    /// every role occurrence is also recorded.
+    dispatch: DispatchCtx,
     docname: &'a str,
     /// The enclosing document's ref_context state (see [`RefContext`]).
     ctx: RefContext<'a>,
@@ -336,6 +324,19 @@ struct Inliner<'a> {
 }
 
 impl<'a> Inliner<'a> {
+    /// Where the inliner's messages are located: `lineno` of the text
+    /// block's source.
+    fn loc(&self) -> DocLoc {
+        DocLoc::at(self.span.source, self.lineno)
+    }
+
+    /// `self.reporter.<level>(text, line=lineno)`: reported through the
+    /// document state, which logs it ([`DocumentState::report`]).
+    fn report(&mut self, level: u8, text: &str) -> Node {
+        let loc = self.loc();
+        self.state.report(level, text, loc, Vec::new())
+    }
+
     /// docutils `quoted_start`: the start-string is suppressed silently
     /// when enclosed in a matching delimiter pair, or when it sits at the
     /// very end of the text.
@@ -410,6 +411,17 @@ impl<'a> Inliner<'a> {
         }
     }
 
+    /// A plain-text run's `nodes.Text(text)` (`states.py:1160`), built from
+    /// the null-escaped run so it keeps docutils' data. A run that
+    /// unescapes to nothing (escaped whitespace only) adds no node; docutils
+    /// keeps that Text, which pformat and the writers print as nothing.
+    fn push_plain_text(&mut self, data: &str) {
+        let node = Node::text_node_escaped(data, self.span);
+        if node.text.as_deref().is_some_and(|text| !text.is_empty()) {
+            self.nodes.push(node);
+        }
+    }
+
     /// docutils `implicit_inline`: standalone URIs and emails inside plain
     /// text runs become reference nodes.
     fn implicit_inline(&mut self, text: &str) {
@@ -417,10 +429,7 @@ impl<'a> Inliner<'a> {
         // '@' no email can match (kills quadratic rescans over ordinary
         // hyphenated text).
         if !text.contains(':') && !text.contains('@') {
-            let out = unescape(text, false);
-            if !out.is_empty() {
-                self.nodes.push(Node::text_node(out, self.span));
-            }
+            self.push_plain_text(text);
             return;
         }
         let chars: Vec<char> = text.chars().collect();
@@ -433,14 +442,15 @@ impl<'a> Inliner<'a> {
             if at_start {
                 if let Some((len, refuri, display)) = match_standalone_uri(&chars, i) {
                     let before: String = chars[emitted_upto..i].iter().collect();
-                    let before = unescape(&before, false);
-                    if !before.is_empty() {
-                        self.nodes.push(Node::text_node(before, self.span));
-                    }
+                    self.push_plain_text(&before);
+                    // `nodes.reference(unescape(text, True), text, ...)`
+                    // (`states.py:1110-1111`): the Text keeps the markers,
+                    // the rawsource has the backslashes back.
                     let mut r = Node::elem(kinds::REFERENCE, self.span);
+                    r.set_rawsource(&unescape(&display, true));
                     r.set("refuri", AttrValue::Str(unescape(&refuri, false)));
                     r.children
-                        .push(Node::text_node(unescape(&display, false), self.span));
+                        .push(Node::text_node_escaped(&display, self.span));
                     self.nodes.push(r);
                     i += len;
                     emitted_upto = i;
@@ -450,17 +460,21 @@ impl<'a> Inliner<'a> {
             i += 1;
         }
         let rest: String = chars[emitted_upto..].iter().collect();
-        let rest = unescape(&rest, false);
-        if !rest.is_empty() {
-            self.nodes.push(Node::text_node(rest, self.span));
-        }
+        self.push_plain_text(&rest);
     }
 
+    /// `inline_obj` (`states.py:821-844`) and docutils' generic roles: the
+    /// Text keeps the null-escaped data, except where `restore` puts the
+    /// backslashes back (inline literals, `:math:`).
     fn emit_inline(&mut self, kind: &'static str, content: &str, restore: bool) {
         self.flush_text();
         let mut node = Node::elem(kind, self.span);
-        node.children
-            .push(Node::text_node(unescape(content, restore), self.span));
+        let text = if restore {
+            Node::text_node(unescape(content, true), self.span)
+        } else {
+            Node::text_node_escaped(content, self.span)
+        };
+        node.children.push(text);
         self.nodes.push(node);
     }
 
@@ -468,19 +482,18 @@ impl<'a> Inliner<'a> {
     /// + a WARNING message; the rest of the text re-scans.
     fn emit_problematic(&mut self, start_str: &str, construct: &str) {
         self.flush_text();
-        let msg_id = self.registry.allocate_auto_id();
-        let prob_id = self.registry.allocate_auto_id();
+        // `Inliner.problematic`: `set_id(msg)`, then `set_id(prb)`.
+        let msg_id = self.state.ids.allocate(kinds::SYSTEM_MESSAGE, &[], None);
+        let prob_id = self.state.ids.allocate(kinds::PROBLEMATIC, &[], None);
         let mut prob = Node::elem(kinds::PROBLEMATIC, self.span);
         prob.attrs.ids.push(prob_id.clone());
         prob.set("refid", AttrValue::Str(msg_id.clone()));
         prob.children
             .push(Node::text_node(start_str.to_string(), self.span));
         self.nodes.push(prob);
-        let mut msg = messages::system_message(
+        let mut msg = self.report(
             messages::WARNING,
             &format!("Inline {construct} start-string without end-string."),
-            self.lineno,
-            self.source_path,
         );
         msg.attrs.ids.push(msg_id);
         msg.attrs.backrefs.push(prob_id);
@@ -587,7 +600,9 @@ impl<'a> Inliner<'a> {
             return None;
         }
         self.flush_text();
+        // `nodes.reference(referencename + refend, ...)` (`states.py:1084`).
         let mut r = Node::elem(kinds::REFERENCE, self.span);
+        r.set_rawsource(&format!("{name}{}", "_".repeat(underscores)));
         if underscores == 2 {
             r.set("anonymous", AttrValue::Int(1));
             r.set(
@@ -603,6 +618,7 @@ impl<'a> Inliner<'a> {
                 "refname",
                 AttrValue::Str(crate::doctree::ids::fully_normalize_name(&name)),
             );
+            self.state.note_refname(&mut r);
         }
         r.children.push(Node::text_node(name, self.span));
         self.nodes.push(r);
@@ -654,19 +670,10 @@ impl<'a> Inliner<'a> {
                     .push(crate::doctree::ids::fully_normalize_name(&unescape(
                         &raw, false,
                     )));
-                let msg = self.registry.set_id_explicit(
-                    &mut t,
-                    self.lineno,
-                    self.source_path,
-                    true,
-                    None,
-                );
-                t.children
-                    .push(Node::text_node(unescape(&raw, false), self.span));
+                let msgs = self.state.note_explicit_target(&mut t, self.loc());
+                t.children.push(Node::text_node_escaped(&raw, self.span));
                 self.nodes.push(t);
-                if let Some(m) = msg {
-                    self.messages.push(m);
-                }
+                self.messages.extend(msgs);
                 end + 1
             }
             None => {
@@ -695,7 +702,11 @@ impl<'a> Inliner<'a> {
         };
         let raw: String = self.chars[content_from..end].iter().collect();
         if underscores > 0 && prefix_role.is_none() {
-            self.phrase_reference(&raw, underscores);
+            // `rawsource = unescape(string[matchstart:textend], True)`
+            // (`states.py:890`): the whole construct, backquotes and
+            // underscores included.
+            let construct: String = self.chars[i..end + 1 + underscores].iter().collect();
+            self.phrase_reference(&raw, &unescape(&construct, true), underscores);
             return end + 1 + underscores;
         }
         // Suffix role `text`:name: (only when no trailing underscores).
@@ -810,22 +821,19 @@ impl<'a> Inliner<'a> {
     fn role_problematic(&mut self, rawsource: &str, info: Option<String>, level: u8, text: &str) {
         self.flush_text();
         if let Some(info_text) = info {
-            self.messages.push(messages::system_message(
-                messages::INFO,
-                &info_text,
-                self.lineno,
-                self.source_path,
-            ));
+            let info = self.report(messages::INFO, &info_text);
+            self.messages.push(info);
         }
-        let msg_id = self.registry.allocate_auto_id();
-        let prob_id = self.registry.allocate_auto_id();
+        // `Inliner.problematic`: `set_id(msg)`, then `set_id(prb)`.
+        let msg_id = self.state.ids.allocate(kinds::SYSTEM_MESSAGE, &[], None);
+        let prob_id = self.state.ids.allocate(kinds::PROBLEMATIC, &[], None);
         let mut prob = Node::elem(kinds::PROBLEMATIC, self.span);
         prob.attrs.ids.push(prob_id.clone());
         prob.set("refid", AttrValue::Str(msg_id.clone()));
         prob.children
             .push(Node::text_node(unescape(rawsource, true), self.span));
         self.nodes.push(prob);
-        let mut msg = messages::system_message(level, text, self.lineno, self.source_path);
+        let mut msg = self.report(level, text);
         msg.attrs.ids.push(msg_id);
         msg.attrs.backrefs.push(prob_id);
         self.messages.push(msg);
@@ -950,7 +958,7 @@ impl<'a> Inliner<'a> {
                 )
             }
         };
-        let serial = self.registry.new_index_serialno();
+        let serial = self.state.new_index_serialno();
         let target_id = format!("index-{serial}");
         self.flush_text();
         let mut index = Node::elem("index", self.span);
@@ -969,7 +977,7 @@ impl<'a> Inliner<'a> {
         tnode.attrs.ids.push(target_id.clone());
         // `self.inliner.document.note_explicit_target(target)` (`roles.py`):
         // the id joins `document.ids`, so a later `make_id` cannot reuse it.
-        self.registry.note_explicit_id(&target_id);
+        self.state.ids.register(&target_id, None);
         self.nodes.push(tnode);
         let mut reference = Node::elem(kinds::REFERENCE, self.span);
         reference.attrs.classes.push(kind_key.to_string());
@@ -984,50 +992,11 @@ impl<'a> Inliner<'a> {
         self.nodes.push(reference);
     }
 
-    /// sphinx.roles.XRefRole anatomy (probe-verified via :doc: in the
-    /// wave-3 probes): pending_xref with refdoc/refdomain/refexplicit/
-    /// reftarget/reftype/refwarn attrs and an `inline classes="xref
-    /// {domain} {domain}-{type}"` child. Role→domain mapping covers the
-    /// std and py domains; explicit `domain:role` names pass through.
-    fn emit_sphinx_xref(&mut self, lower: &str, raw: &str) {
-        let (domain, reftype) = match lower.rsplit_once(':') {
-            Some((d, t)) => (d.to_string(), t.to_string()),
-            None => {
-                let d = match lower {
-                    "doc" | "ref" | "term" | "option" | "envvar" | "numref" | "keyword"
-                    | "token" | "program" | "confval" => "std",
-                    // The eleven `PythonDomain.roles` keys
-                    // (`domains/python/__init__.py:755-767`). An
-                    // unqualified role name resolves against
-                    // `primary_domain` (default `py`) BEFORE the std
-                    // fallback (`util/docutils.py`, `sphinx_domains.role`),
-                    // and `type` is a py role with no std counterpart.
-                    "func" | "class" | "meth" | "mod" | "attr" | "data" | "exc" | "obj"
-                    | "const" | "deco" | "type" => "py",
-                    // `AnyXRefRole` is registered domainless (`roles.py`
-                    // `specific_docroles`), so `XRefRole.run`'s name split
-                    // leaves `refdomain=''` — which is what routes the node
-                    // into `_resolve_pending_any_xref` instead of a domain.
-                    "any" => "",
-                    // `:eq:` is the math domain's, registered domainless
-                    // like `:any:` (`app.add_role('eq',
-                    // MathReferenceRole(warn_dangling=True))`,
-                    // `domains/math.py:163`); `result_nodes` then stamps
-                    // `refdomain = 'math'` onto the node (`:32-44`).
-                    "eq" => "math",
-                    _ => "std",
-                };
-                (d.to_string(), lower.to_string())
-            }
-        };
-        self.emit_xref_node(&domain, &reftype, raw, None);
-    }
-
     /// The `:external:`/`:external+inv:` roles, which
-    /// `IntersphinxDispatcher` claims *before* docutils' own role lookup
-    /// (`ext/intersphinx/_resolve.py:350-366`) — and therefore before the
-    /// generic `domain:role` split above, which would otherwise read
-    /// `external:py:func` as domain `external:py`.
+    /// `IntersphinxDispatcher` claims *before* any other role lookup
+    /// (`ext/intersphinx/_resolve.py:350-366`) when `sphinx.ext.intersphinx`
+    /// is loaded ([`roles::resolve_role`]); without it the name is an
+    /// unknown domain's.
     ///
     /// The name is the one the author wrote, not the lowercased one: the
     /// inventory name inside it is case-sensitive
@@ -1100,10 +1069,13 @@ impl<'a> Inliner<'a> {
         (target, title)
     }
 
-    /// The body of [`Self::emit_sphinx_xref`], with the domain and role
-    /// already decided. `external` is `Some(inventory)` for a node the
-    /// `:external:` role produced — `Some(None)` when that role named no
-    /// inventory.
+    /// sphinx.roles.XRefRole anatomy (probe-verified via :doc: in the
+    /// wave-3 probes): a `pending_xref` with refdoc/refdomain/refexplicit/
+    /// reftarget/reftype/refwarn attrs and an `inline classes="xref
+    /// {domain} {domain}-{type}"` child, for the role the dispatch found
+    /// ([`roles::resolve_role`]). `external` is `Some(inventory)` for a
+    /// node the `:external:` role produced — `Some(None)` when that role
+    /// named no inventory.
     fn emit_xref_node(
         &mut self,
         domain: &str,
@@ -1379,7 +1351,7 @@ impl<'a> Inliner<'a> {
                 Some(AttrValue::Str(target)) => target.clone(),
                 _ => String::new(),
             };
-            let target_id = format!("index-{}", self.registry.new_index_serialno());
+            let target_id = format!("index-{}", self.state.new_index_serialno());
             let mut index = Node::elem("index", self.span);
             index.set(
                 "entries",
@@ -1397,18 +1369,23 @@ impl<'a> Inliner<'a> {
             self.nodes.push(index);
             let mut tnode = Node::elem(kinds::TARGET, self.span);
             tnode.attrs.ids.push(target_id.clone());
-            self.registry.note_explicit_id(&target_id);
+            self.state.ids.register(&target_id, None);
             self.nodes.push(tnode);
         }
         self.nodes.push(node);
     }
 
-    /// Apply a built-in role by (raw, unlowercased) name.
+    /// The interpreted text `:given_name:` + `raw` (`Inliner.interpreted`,
+    /// `SP/docutils/parsers/rst/states.py:996-1007`): look the role up
+    /// ([`roles::resolve_role`]) and run it, or report docutils'
+    /// `Unknown interpreted text role` ERROR, naming the role as written,
+    /// over a `problematic` of the whole construct. `rawsource` is the
+    /// construct, null-escaped.
     fn apply_role(&mut self, given_name: &str, raw: &str, rawsource: &str) {
-        let lower = given_name.to_lowercase();
-        if self.sphinx {
+        if self.dispatch.sphinx {
             // Record EVERY role occurrence for the build pipeline
             // (validation + nitpicky), M1-scanner display-split semantics.
+            let lower = given_name.to_lowercase();
             let text = unescape(raw, false);
             let (target, display) = match (text.rfind('<'), text.ends_with('>')) {
                 (Some(lt), true) => (
@@ -1427,80 +1404,33 @@ impl<'a> Inliner<'a> {
                 line: self.lineno,
             });
         }
-        // en language aliases -> canonical names
-        let canonical = match lower.as_str() {
-            "abbreviation" | "ab" => "abbreviation",
-            "acronym" | "ac" => "acronym",
-            "code" => "code",
-            "emphasis" => "emphasis",
-            "literal" => "literal",
-            "math" => "math",
-            "pep-reference" | "pep" => "pep-reference",
-            "rfc-reference" | "rfc" => "rfc-reference",
-            "strong" => "strong",
-            "subscript" | "sub" => "subscript",
-            "superscript" | "sup" => "superscript",
-            "title-reference" | "title" | "t" => "title-reference",
-            "raw" => "raw",
-            "index" | "i" => "index",
-            "named-reference" => "named-reference",
-            "anonymous-reference" => "anonymous-reference",
-            "footnote-reference" => "footnote-reference",
-            "citation-reference" => "citation-reference",
-            "substitution-reference" => "substitution-reference",
-            "target" => "target",
-            "uri-reference" | "uri" | "url" => "uri-reference",
-            _ if self.sphinx && crate::intersphinx::is_external_role(given_name) => {
-                self.emit_external_xref(given_name, raw);
-                return;
-            }
-            _ if self.sphinx && matches!(lower.as_str(), "cve" | "cwe") => {
-                self.emit_sphinx_extlink(&lower, raw);
-                return;
-            }
-            _ if self.sphinx => {
-                // Sphinx mode: non-docutils roles resolve through the
-                // domain registries; at parse layer they become
-                // pending_xref nodes and NEVER message. (Genuinely unknown
-                // roles would error in real Sphinx — hardening note.)
-                self.emit_sphinx_xref(&lower, raw);
-                return;
-            }
-            _ => {
-                // Not in the language module: INFO + canonical lookup, which
-                // also fails for anything we do not know -> ERROR.
-                let info = format!(
-                    "No role entry for \"{given_name}\" in module \"docutils.parsers.rst.languages.en\".\nTrying \"{given_name}\" as canonical role name."
-                );
-                if lower == "restructuredtext-unimplemented-role" {
+        let (role, call_name) =
+            match roles::resolve_role(self.table, &self.dispatch, given_name, self.state) {
+                Resolution::Found {
+                    role,
+                    call_name,
+                    info,
+                } => {
+                    if let Some(info) = info {
+                        let message = self.report(messages::INFO, &info);
+                        self.messages.push(message);
+                    }
+                    (role, call_name)
+                }
+                Resolution::NotFound { info } => {
                     self.role_problematic(
                         rawsource,
-                        Some(info),
-                        messages::ERROR,
-                        &format!("Interpreted text role \"{given_name}\" not implemented."),
-                    );
-                } else {
-                    self.role_problematic(
-                        rawsource,
-                        Some(info),
+                        info,
                         messages::ERROR,
                         &format!("Unknown interpreted text role \"{given_name}\"."),
                     );
+                    return;
                 }
-                return;
-            }
-        };
-        match canonical {
-            "emphasis" => self.emit_inline(kinds::EMPHASIS, raw, false),
-            "strong" => self.emit_inline(kinds::STRONG, raw, false),
-            "literal" => self.emit_inline(kinds::LITERAL, raw, false),
-            "subscript" => self.emit_inline(kinds::SUBSCRIPT, raw, false),
-            "superscript" => self.emit_inline(kinds::SUPERSCRIPT, raw, false),
-            "title-reference" => self.emit_inline(kinds::TITLE_REFERENCE, raw, false),
-            "abbreviation" => self.emit_inline(kinds::ABBREVIATION, raw, false),
-            "acronym" => self.emit_inline(kinds::ACRONYM, raw, false),
-            "math" => self.emit_inline(kinds::MATH, raw, true),
-            "code" => {
+            };
+        match role {
+            RoleFn::Generic(kind) => self.emit_inline(kind, raw, false),
+            RoleFn::Math => self.emit_inline(kinds::MATH, raw, true),
+            RoleFn::DocutilsCode => {
                 self.flush_text();
                 let mut node = Node::elem(kinds::LITERAL, self.span);
                 node.attrs.classes.push("code".to_string());
@@ -1508,85 +1438,179 @@ impl<'a> Inliner<'a> {
                     .push(Node::text_node(unescape(raw, true), self.span));
                 self.nodes.push(node);
             }
-            "pep-reference" => {
-                if self.sphinx {
-                    // Sphinx overrides pep with an index-emitting external.
-                    self.emit_sphinx_extlink("pep", raw);
-                    return;
-                }
-                let text = unescape(raw, false);
-                match text.parse::<u32>().ok().filter(|n| *n <= 9999) {
-                    Some(n) => {
-                        self.flush_text();
-                        let mut r = Node::elem(kinds::REFERENCE, self.span);
-                        r.set(
-                            "refuri",
-                            AttrValue::Str(format!("https://peps.python.org/pep-{n:04}")),
-                        );
-                        r.children
-                            .push(Node::text_node(format!("PEP {text}"), self.span));
-                        self.nodes.push(r);
-                    }
-                    None => self.role_problematic(
-                        rawsource,
-                        None,
-                        messages::ERROR,
-                        &format!(
-                            "PEP number must be a number from 0 to 9999; \"{text}\" is invalid."
-                        ),
-                    ),
-                }
-            }
-            "rfc-reference" => {
-                if self.sphinx {
-                    self.emit_sphinx_extlink("rfc", raw);
-                    return;
-                }
-                let text = unescape(raw, false);
-                let (numpart, fragment) = match text.split_once('#') {
-                    Some((a, b)) => (a.to_string(), Some(b.to_string())),
-                    None => (text.clone(), None),
-                };
-                match numpart.parse::<u32>().ok().filter(|n| *n >= 1) {
-                    Some(n) => {
-                        self.flush_text();
-                        let mut r = Node::elem(kinds::REFERENCE, self.span);
-                        let mut uri = format!("https://tools.ietf.org/html/rfc{n}.html");
-                        if let Some(f) = fragment {
-                            uri = format!("{uri}#{f}");
-                        }
-                        r.set("refuri", AttrValue::Str(uri));
-                        r.children
-                            .push(Node::text_node(format!("RFC {n}"), self.span));
-                        self.nodes.push(r);
-                    }
-                    None => self.role_problematic(
-                        rawsource,
-                        None,
-                        messages::ERROR,
-                        &format!(
-                            "RFC number must be a number greater than or equal to 1; \"{numpart}\" is invalid."
-                        ),
-                    ),
-                }
-            }
-            "raw" => self.role_problematic(
+            RoleFn::SphinxCode => self.sphinx_code(raw, rawsource),
+            RoleFn::PepReference => self.pep_reference(raw, rawsource),
+            RoleFn::RfcReference => self.rfc_reference(raw, rawsource),
+            RoleFn::Raw => self.role_problematic(
                 rawsource,
                 None,
                 messages::ERROR,
-                "No format (Writer name) is associated with this role: \"raw\".\nThe \"raw\" role cannot be used directly.\nInstead, use the \"role\" directive to create a new role with an associated format.",
+                &format!(
+                    "No format (Writer name) is associated with this role: \"{call_name}\".\n\
+                     The \"raw\" role cannot be used directly.\n\
+                     Instead, use the \"role\" directive to create a new role with an \
+                     associated format."
+                ),
             ),
-            other => self.role_problematic(
+            RoleFn::Unimplemented => self.role_problematic(
                 rawsource,
                 None,
                 messages::ERROR,
-                &format!("Interpreted text role \"{other}\" not implemented."),
+                &format!("Interpreted text role \"{call_name}\" not implemented."),
+            ),
+            RoleFn::Index => self.index_role(raw),
+            RoleFn::Pep => self.emit_sphinx_extlink("pep", raw),
+            RoleFn::Rfc => self.emit_sphinx_extlink("rfc", raw),
+            RoleFn::Cve => self.emit_sphinx_extlink("cve", raw),
+            RoleFn::Cwe => self.emit_sphinx_extlink("cwe", raw),
+            // `AnyXRefRole` is registered domainless (`roles.py`
+            // `specific_docroles`), so `XRefRole.run`'s name split leaves
+            // `refdomain=''` — which is what routes the node into
+            // `_resolve_pending_any_xref` instead of a domain.
+            RoleFn::Any => self.emit_xref_node("", "any", raw, None),
+            // `:eq:` is the math domain's, registered domainless like
+            // `:any:` (`app.add_role('eq', MathReferenceRole(warn_dangling=True))`,
+            // `domains/math.py:163`); `result_nodes` then stamps
+            // `refdomain = 'math'` onto the node (`:32-44`).
+            RoleFn::Eq => self.emit_xref_node("math", "eq", raw, None),
+            RoleFn::Domain(domain, name) => self.emit_xref_node(domain.name(), name, raw, None),
+            RoleFn::Unported(name) => self.emit_xref_node("std", name, raw, None),
+            RoleFn::External => self.emit_external_xref(given_name, raw),
+        }
+    }
+
+    /// docutils `pep_reference_role` (`SP/docutils/parsers/rst/roles.py:272-292`):
+    /// a plain `reference` to `pep_base_url` + `pep-%04d`, which Sphinx
+    /// leaves at docutils' `https://peps.python.org/`.
+    fn pep_reference(&mut self, raw: &str, rawsource: &str) {
+        let text = unescape(raw, false);
+        match text.parse::<u32>().ok().filter(|n| *n <= 9999) {
+            Some(n) => {
+                self.flush_text();
+                // `nodes.reference(rawtext, ...)`: the whole role text.
+                let mut r = Node::elem(kinds::REFERENCE, self.span);
+                r.set_rawsource(&unescape(rawsource, true));
+                r.set(
+                    "refuri",
+                    AttrValue::Str(format!("https://peps.python.org/pep-{n:04}")),
+                );
+                r.children
+                    .push(Node::text_node(format!("PEP {text}"), self.span));
+                self.nodes.push(r);
+            }
+            None => self.role_problematic(
+                rawsource,
+                None,
+                messages::ERROR,
+                &format!("PEP number must be a number from 0 to 9999; \"{text}\" is invalid."),
             ),
         }
     }
 
-    /// Phrase reference body handling incl. embedded `<uri>`/`<alias_>`.
-    fn phrase_reference(&mut self, raw: &str, underscores: usize) {
+    /// docutils `rfc_reference_role` (`roles.py:295-319`): a plain
+    /// `reference` to `rfc_base_url` + `rfc%d.html`, the section after `#`
+    /// kept as the fragment. Sphinx sets `rfc_base_url` to the IETF
+    /// datatracker (`SP/sphinx/environment/__init__.py:66`).
+    fn rfc_reference(&mut self, raw: &str, rawsource: &str) {
+        let text = unescape(raw, false);
+        let (numpart, fragment) = match text.split_once('#') {
+            Some((a, b)) => (a.to_string(), Some(b.to_string())),
+            None => (text.clone(), None),
+        };
+        match numpart.parse::<u32>().ok().filter(|n| *n >= 1) {
+            Some(n) => {
+                self.flush_text();
+                // `rfc_reference_role`: `reference(rawtext, ...)`.
+                let mut r = Node::elem(kinds::REFERENCE, self.span);
+                r.set_rawsource(&unescape(rawsource, true));
+                let base = if self.dispatch.sphinx {
+                    "https://datatracker.ietf.org/doc/html/"
+                } else {
+                    "https://tools.ietf.org/html/"
+                };
+                let mut uri = format!("{base}rfc{n}.html");
+                if let Some(f) = fragment {
+                    uri = format!("{uri}#{f}");
+                }
+                r.set("refuri", AttrValue::Str(uri));
+                r.children
+                    .push(Node::text_node(format!("RFC {n}"), self.span));
+                self.nodes.push(r);
+            }
+            None => self.role_problematic(
+                rawsource,
+                None,
+                messages::ERROR,
+                // `'... "%s" is invalid.' % text`: the whole text, the
+                // section included.
+                &format!(
+                    "RFC number must be a number greater than or equal to 1; \"{text}\" is invalid."
+                ),
+            ),
+        }
+    }
+
+    /// Sphinx's `code_role` (`SP/sphinx/roles.py:577-605`), the canonical
+    /// `code` of a Sphinx build: a `literal` with `classes="code"` and a
+    /// `language`, empty with no `.. role::` options, over the null-escaped
+    /// text — the escapes are gone, where docutils' `code` puts the
+    /// backslashes back ([RC §3.11]).
+    fn sphinx_code(&mut self, raw: &str, rawsource: &str) {
+        self.flush_text();
+        let mut node = Node::elem(kinds::LITERAL, self.span);
+        node.set_rawsource(&unescape(rawsource, true));
+        node.attrs.classes.push("code".to_string());
+        node.set("language", AttrValue::Str(String::new()));
+        node.children.push(Node::text_node_escaped(raw, self.span));
+        self.nodes.push(node);
+    }
+
+    /// Sphinx's `IndexRole` (`SP/sphinx/domains/index.py:97-117`), a
+    /// `ReferenceRole`: a fresh `index-N` serial, then an `index` node
+    /// holding the entries — an explicit target is a full entry
+    /// (`process_index_entry`), an implicit one a single entry, main when
+    /// it starts with `!` — a `target` holding the id, which the role does
+    /// not register (`note_explicit_target` is the directive's), and the
+    /// title as text ([RC §3.9]).
+    fn index_role(&mut self, raw: &str) {
+        let target_id = format!("index-{}", self.state.new_index_serialno());
+        let (title, entries) = match explicit_title(raw) {
+            Some((title, target)) => (
+                title,
+                super::block::process_index_entry(&target, &target_id),
+            ),
+            None => {
+                let text = unescape(raw, false);
+                match text.strip_prefix('!') {
+                    Some(rest) => (
+                        rest.to_string(),
+                        vec![super::block::index_entry_tuple(
+                            "single", rest, &target_id, "main", None,
+                        )],
+                    ),
+                    None => (
+                        text.clone(),
+                        vec![super::block::index_entry_tuple(
+                            "single", &text, &target_id, "", None,
+                        )],
+                    ),
+                }
+            }
+        };
+        self.flush_text();
+        let mut index = Node::elem("index", self.span);
+        index.set("entries", AttrValue::List(entries));
+        self.nodes.push(index);
+        let mut target = Node::elem(kinds::TARGET, self.span);
+        target.attrs.ids.push(target_id);
+        self.nodes.push(target);
+        self.nodes.push(Node::text_node(title, self.span));
+    }
+
+    /// Phrase reference body handling incl. embedded `<uri>`/`<alias_>`
+    /// (`phrase_ref`, `states.py:913-986`). `rawsource` is the whole
+    /// construct, the reference's docutils `rawsource`.
+    fn phrase_reference(&mut self, raw: &str, rawsource: &str, underscores: usize) {
         self.flush_text();
         let ids = |s: &str| crate::doctree::ids::fully_normalize_name(s);
         let wsn = |s: &str| crate::doctree::ids::whitespace_normalize_name(s);
@@ -1595,8 +1619,13 @@ impl<'a> Inliner<'a> {
         // whitespace (or the whole content).
         let embedded = find_embedded_link(raw);
         let mut r = Node::elem(kinds::REFERENCE, self.span);
+        r.set_rawsource(rawsource);
         match embedded {
             Some((text_part, link)) => {
+                // `match.group(1)`: the link with the whitespace before it,
+                // the rawsource of the target the link makes
+                // (`states.py:929`, `:941`).
+                let link_source = &raw[text_part.len()..];
                 let is_alias = link.ends_with('_')
                     && !link.ends_with("\u{0}_")
                     && !link
@@ -1606,30 +1635,44 @@ impl<'a> Inliner<'a> {
                         .map(|c| c == NULL)
                         .unwrap_or(false)
                     && !looks_like_uri(&link);
+                // The reference's Text is docutils' `text = escaped[:match
+                // .start(0)]` (`states.py:918`), markers kept; an empty text
+                // falls back to the alias or URI, already unescaped — the
+                // alias normalized, as `refname` is (`states.py:946-949`).
                 let display_text;
                 if is_alias {
                     let alias = ids(&unescape(&link[..link.len() - 1], false));
-                    display_text = if text_part.is_empty() {
-                        unescape(&link[..link.len() - 1], false)
+                    let display_data = if text_part.is_empty() {
+                        alias.clone()
                     } else {
-                        unescape(&text_part, false)
+                        text_part.clone()
                     };
+                    display_text = unescape(&display_data, false);
                     r.set("name", AttrValue::Str(wsn(&display_text)));
                     r.set("refname", AttrValue::Str(alias.clone()));
                     r.children
-                        .push(Node::text_node(display_text.clone(), self.span));
-                    self.nodes.push(r);
+                        .push(Node::text_node_escaped(&display_data, self.span));
                     if underscores == 1 {
+                        // `nodes.target(..., refname=alias)` is built with its
+                        // reference, which binding its name compares. The
+                        // target is noted as an indirect target BEFORE the
+                        // reference's `refname` (`states.py:975-980`), so
+                        // `refnames[alias]` lists the target first.
                         let mut t = Node::elem(kinds::TARGET, self.span);
+                        t.set_rawsource(link_source);
                         t.attrs.names.push(ids(&display_text));
-                        let msg =
-                            self.registry
-                                .set_id_implicit(&mut t, self.lineno, self.source_path);
                         t.set("refname", AttrValue::Str(alias));
+                        self.state.note_indirect_target(&mut t);
+                        self.state.note_refname(&mut r);
+                        let msgs = self.state.note_implicit_target(&mut t, self.loc());
+                        self.nodes.push(r);
                         self.nodes.push(t);
-                        if let Some(m) = msg {
-                            self.messages.push(m);
-                        }
+                        self.messages.extend(msgs);
+                    } else {
+                        // `__` with an alias: `reference['refname'] = alias`
+                        // and `note_refname(reference)` (`states.py:964-966`).
+                        self.state.note_refname(&mut r);
+                        self.nodes.push(r);
                     }
                 } else {
                     // URI: strip escaped trailing underscore marker, remove
@@ -1652,27 +1695,26 @@ impl<'a> Inliner<'a> {
                     } else {
                         uri
                     };
-                    display_text = if text_part.is_empty() {
+                    let display_data = if text_part.is_empty() {
                         uri.clone()
                     } else {
-                        unescape(&text_part, false)
+                        text_part.clone()
                     };
+                    display_text = unescape(&display_data, false);
                     r.set("name", AttrValue::Str(wsn(&display_text)));
                     r.set("refuri", AttrValue::Str(uri.clone()));
                     r.children
-                        .push(Node::text_node(display_text.clone(), self.span));
+                        .push(Node::text_node_escaped(&display_data, self.span));
                     self.nodes.push(r);
                     if underscores == 1 {
+                        // `nodes.target(..., refuri=alias)`, as above.
                         let mut t = Node::elem(kinds::TARGET, self.span);
+                        t.set_rawsource(link_source);
                         t.attrs.names.push(ids(&display_text));
-                        let msg =
-                            self.registry
-                                .set_id_implicit(&mut t, self.lineno, self.source_path);
                         t.set("refuri", AttrValue::Str(uri));
+                        let msgs = self.state.note_implicit_target(&mut t, self.loc());
                         self.nodes.push(t);
-                        if let Some(m) = msg {
-                            self.messages.push(m);
-                        }
+                        self.messages.extend(msgs);
                     }
                 }
             }
@@ -1683,8 +1725,10 @@ impl<'a> Inliner<'a> {
                     r.set("anonymous", AttrValue::Int(1));
                 } else {
                     r.set("refname", AttrValue::Str(ids(&text)));
+                    self.state.note_refname(&mut r);
                 }
-                r.children.push(Node::text_node(text, self.span));
+                // `text = escaped` (`states.py:951`).
+                r.children.push(Node::text_node_escaped(raw, self.span));
                 self.nodes.push(r);
             }
         }
@@ -1718,37 +1762,44 @@ impl<'a> Inliner<'a> {
         self.flush_text();
         let is_citation =
             !label.starts_with('#') && label != "*" && !label.chars().all(|c| c.is_ascii_digit());
-        let id = self.registry.allocate_auto_id();
-        let mut node = if is_citation {
-            let mut c = Node::elem(kinds::CITATION_REFERENCE, self.span);
-            c.set(
+        // `footnote_reference` (`states.py:1050-1080`): both node kinds
+        // carry `'[%s]_' % label` as their rawsource, and each `note_*`
+        // call runs `set_id` — twice on one node for `[#name]_`, whose
+        // second call re-registers the id the first allocated.
+        let set_refname = |node: &mut Node, label: &str| {
+            node.set(
                 "refname",
-                AttrValue::Str(crate::doctree::ids::fully_normalize_name(&label)),
+                AttrValue::Str(crate::doctree::ids::fully_normalize_name(label)),
             );
+        };
+        let node = if is_citation {
+            let mut c = Node::elem(kinds::CITATION_REFERENCE, self.span);
+            c.set_rawsource(&format!("[{label}]_"));
+            set_refname(&mut c, &label);
             c.children.push(Node::text_node(label.clone(), self.span));
+            self.state.note_citation_ref(&mut c);
             c
         } else {
             let mut f = Node::elem(kinds::FOOTNOTE_REFERENCE, self.span);
-            if label == "*" {
+            f.set_rawsource(&format!("[{label}]_"));
+            let refname = if label == "*" {
                 f.set("auto", AttrValue::Str("*".to_string()));
+                self.state.note_symbol_footnote_ref(&mut f);
+                ""
             } else if let Some(rest) = label.strip_prefix('#') {
                 f.set("auto", AttrValue::Int(1));
-                if !rest.is_empty() {
-                    f.set(
-                        "refname",
-                        AttrValue::Str(crate::doctree::ids::fully_normalize_name(rest)),
-                    );
-                }
+                self.state.note_autofootnote_ref(&mut f);
+                rest
             } else {
-                f.set(
-                    "refname",
-                    AttrValue::Str(crate::doctree::ids::fully_normalize_name(&label)),
-                );
                 f.children.push(Node::text_node(label.clone(), self.span));
+                &label
+            };
+            if !refname.is_empty() {
+                set_refname(&mut f, refname);
+                self.state.note_footnote_ref(&mut f);
             }
             f
         };
-        node.attrs.ids.push(id);
         self.nodes.push(node);
         Some(after)
     }
@@ -1767,18 +1818,27 @@ impl<'a> Inliner<'a> {
         let raw: String = self.chars[content_from..end].iter().collect();
         let text = unescape(&raw, false);
         self.flush_text();
+        // `inline_obj`'s `rawsource = unescape(string[matchstart:textend],
+        // True)` (`states.py:834`): the end pattern `\|_{0,2}` puts the
+        // underscores inside it.
+        let construct: String = self.chars[i..after].iter().collect();
         let mut subref = Node::elem(kinds::SUBSTITUTION_REFERENCE, self.span);
+        subref.set_rawsource(&unescape(&construct, true));
         subref.set(
             "refname",
             AttrValue::Str(crate::doctree::ids::whitespace_normalize_name(&text)),
         );
         subref
             .children
-            .push(Node::text_node(text.clone(), self.span));
+            .push(Node::text_node_escaped(&raw, self.span));
         if underscores == 0 {
             self.nodes.push(subref);
         } else {
+            // `nodes.reference('|%s%s' % (subref_text, endstring), '')`
+            // (`states.py:1035-1036`), noted under its `refname` unless
+            // anonymous.
             let mut outer = Node::elem(kinds::REFERENCE, self.span);
+            outer.set_rawsource(&format!("|{text}|{}", "_".repeat(underscores)));
             if underscores == 2 {
                 outer.set("anonymous", AttrValue::Int(1));
             } else {
@@ -1786,12 +1846,36 @@ impl<'a> Inliner<'a> {
                     "refname",
                     AttrValue::Str(crate::doctree::ids::fully_normalize_name(&text)),
                 );
+                self.state.note_refname(&mut outer);
             }
             outer.children.push(subref);
             self.nodes.push(outer);
         }
         after
     }
+}
+
+/// `ReferenceRole.explicit_title_re`, `^(.+?)\s*(?<!\x00)<(.*?)>$` with
+/// DOTALL (`SP/sphinx/util/docutils.py:730`), over the null-escaped text,
+/// as `(title, target)`, both unescaped: the first `<` that is not
+/// escaped, has a title before it and opens a target the closing `>` of
+/// the text ends. The lazy title gives its trailing whitespace (Python's
+/// `\s`) to `\s*`, but keeps one character. (T17a's `ReferenceParts`
+/// takes this split to every reference role, [RC §3.17].)
+fn explicit_title(escaped: &str) -> Option<(String, String)> {
+    let chars: Vec<char> = escaped.chars().collect();
+    let n = chars.len();
+    if n < 3 || chars[n - 1] != '>' {
+        return None;
+    }
+    let open = (1..n - 1).find(|&j| chars[j] == '<' && chars[j - 1] != NULL)?;
+    let mut title_end = open;
+    while title_end > 1 && crate::utils::py_isspace(chars[title_end - 1]) {
+        title_end -= 1;
+    }
+    let title: String = chars[..title_end].iter().collect();
+    let target: String = chars[open + 1..n - 1].iter().collect();
+    Some((unescape(&title, false), unescape(&target, false)))
 }
 
 /// Remove whitespace per line from a URI (escaped whitespace survives as
@@ -1977,14 +2061,19 @@ fn match_standalone_uri(chars: &[char], at: usize) -> Option<(usize, String, Str
 }
 
 /// Inline-parse one logical text block (a paragraph's joined lines, a
-/// title, a term…). `lineno` anchors any generated messages.
+/// title, a term…) on its own, in docutils mode. `lineno` anchors any
+/// generated messages, which stamp `source_path` when the state has no
+/// source table yet (a state the block parser threads already has one).
 pub fn parse_inline(
     text: &str,
     span: Span,
     lineno: u32,
-    registry: &mut IdRegistry,
+    state: &mut DocumentState,
     source_path: &str,
 ) -> InlineResult {
+    if state.parse.sources.is_empty() {
+        state.parse.sources.push(std::sync::Arc::from(source_path));
+    }
     // Docutils mode: no sphinx role reads the py configuration, so the
     // defaults are as good as any.
     let py = crate::py::PySigConfig::default();
@@ -1992,23 +2081,28 @@ pub fn parse_inline(
         text,
         span,
         lineno,
-        registry,
-        source_path,
-        false,
+        state,
+        DispatchCtx {
+            sphinx: false,
+            default_domain: None,
+            intersphinx: false,
+        },
         "index",
         RefContext::default(),
         &py,
     )
 }
 
+/// [`parse_inline`] with the mode, role dispatch and context the block
+/// parser passes; messages stamp the path of `span`'s source from the
+/// state's source table.
 #[allow(clippy::too_many_arguments)]
-pub fn parse_inline_ext(
+pub(crate) fn parse_inline_ext(
     text: &str,
     span: Span,
     lineno: u32,
-    registry: &mut IdRegistry,
-    source_path: &str,
-    sphinx: bool,
+    state: &mut DocumentState,
+    dispatch: DispatchCtx,
     docname: &str,
     ctx: RefContext<'_>,
     py: &crate::py::PySigConfig,
@@ -2018,9 +2112,9 @@ pub fn parse_inline_ext(
         chars: escaped.chars().collect(),
         span,
         lineno,
-        source_path,
-        registry,
-        sphinx,
+        state,
+        table: RoleTable::builtin(dispatch.sphinx),
+        dispatch,
         docname,
         ctx,
         py,
@@ -2051,8 +2145,8 @@ mod tests {
     }
 
     fn pi(text: &str) -> (Vec<Node>, Vec<Node>) {
-        let mut reg = IdRegistry::new();
-        let r = parse_inline(text, Span::ZERO, 1, &mut reg, "<snippet>");
+        let mut state = DocumentState::default();
+        let r = parse_inline(text, Span::ZERO, 1, &mut state, "<snippet>");
         (r.nodes, r.messages)
     }
 
@@ -2143,7 +2237,9 @@ mod tests {
         assert_eq!(nodes[0].text.as_deref(), Some("*not markup*"));
     }
 
-    /// Sphinx-mode inline parse, for the roles that only exist there.
+    /// Sphinx-mode inline parse, for the roles that only exist there: the
+    /// default domain is `py`, and `sphinx.ext.intersphinx` is loaded, so
+    /// the `:external:` roles exist.
     fn sphinx_nodes(text: &str) -> Vec<Node> {
         sphinx_nodes_with(text, &crate::py::PySigConfig::default())
     }
@@ -2155,19 +2251,13 @@ mod tests {
 
     /// The same, under a chosen ref_context.
     fn sphinx_nodes_in(text: &str, ctx: RefContext<'_>, py: &crate::py::PySigConfig) -> Vec<Node> {
-        let mut reg = IdRegistry::new();
-        parse_inline_ext(
-            text,
-            Span::ZERO,
-            1,
-            &mut reg,
-            "<snippet>",
-            true,
-            "index",
-            ctx,
-            py,
-        )
-        .nodes
+        let mut state = DocumentState::default();
+        let dispatch = DispatchCtx {
+            sphinx: true,
+            default_domain: Some(roles::DomainId::Py),
+            intersphinx: true,
+        };
+        parse_inline_ext(text, Span::ZERO, 1, &mut state, dispatch, "index", ctx, py).nodes
     }
 
     fn attr<'a>(node: &'a Node, key: &'static str) -> Option<&'a AttrValue> {
@@ -2245,15 +2335,14 @@ mod tests {
         }
     }
 
-    /// The interception is by name, so an ordinary role whose name merely
-    /// starts with the same letters is untouched.
+    /// The interception is by name, so a name that merely starts with the
+    /// same letters goes through the ordinary lookup, which has no
+    /// `externally` role: docutils' unknown-role `problematic`, no
+    /// intersphinx node.
     #[test]
-    fn a_role_named_like_external_is_still_an_ordinary_xref() {
+    fn a_role_named_like_external_is_not_intercepted() {
         let nodes = sphinx_nodes(":externally:`x`");
-        assert_eq!(
-            attr(&nodes[0], "reftype"),
-            Some(&AttrValue::Str("externally".into()))
-        );
+        assert_eq!(nodes[0].kind, kinds::PROBLEMATIC);
         assert_eq!(attr(&nodes[0], "intersphinx"), None);
     }
 

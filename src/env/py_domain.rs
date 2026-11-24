@@ -24,7 +24,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::env::std_domain::{source_path_of, DocumentIds, DocumentSource};
+use crate::env::std_domain::{source_path_of, DocumentSource};
 use crate::env::BuildEnvironment;
 use crate::error::{BuildWarning, WarningType};
 
@@ -920,11 +920,10 @@ pub fn builtin_resolver(reftype: &str, target: &str) -> bool {
 /// the parser's ref_context, and a `:no-typesetting:` object registers
 /// itself and then vanishes from the tree).
 ///
-/// Duplicate warnings join `out` keyed by the registered node's position
-/// in the doctree — the same document-order merge key
-/// [`crate::env::std_domain::process_doc`] uses for its glossary and
-/// description passes, because in Sphinx all three warning streams are
-/// parse-time and interleave in document order (see the module comment).
+/// Duplicate warnings join `out` with the seq the parse drew for their
+/// registration: in Sphinx they are parse-time records, which interleave
+/// with the parse's own and with the std domain's in the order the parse
+/// made them ([`crate::env::std_domain::process_doc`]).
 ///
 /// `note_module` runs before `note_object` for the whole record stream
 /// where Sphinx alternates per directive; the two registries are disjoint
@@ -932,8 +931,7 @@ pub fn builtin_resolver(reftype: &str, target: &str) -> bool {
 pub(crate) fn collect_registrations(
     env: &mut BuildEnvironment,
     doc: &DocumentSource<'_>,
-    ids: &DocumentIds<'_>,
-    warnings: &mut Vec<(usize, BuildWarning)>,
+    warnings: &mut Vec<(u32, BuildWarning)>,
 ) {
     for record in &doc.registry.py_modules {
         env.py.note_module(
@@ -959,12 +957,8 @@ pub(crate) fn collect_registrations(
         ) else {
             continue;
         };
-        let order = ids
-            .get(&record.node_id)
-            .map(|(order, _)| order)
-            .unwrap_or(usize::MAX);
         warnings.push((
-            order,
+            record.seq,
             // [PY §5]: plain `logger.warning` with no type/subtype — no
             // `[category]` suffix, and no objtype in the text (unlike the
             // std domain's `duplicate {objtype} description`).
@@ -987,7 +981,7 @@ pub(crate) fn collect_registrations(
 mod tests {
     use super::*;
     use crate::env::std_domain;
-    use crate::rst::{parse_rst_full, ParseOptions};
+    use crate::rst::ParseOptions;
     use std::path::PathBuf;
 
     fn entry(docname: &str, node_id: &str, objtype: &str, aliased: bool) -> PyObjectEntry {
@@ -1831,8 +1825,10 @@ mod tests {
 
     // ---- the replay through std_domain::process_doc --------------------
 
+    /// Stage R's read of `source` ([`crate::read::read_document`]): the
+    /// post-read doctree `SphinxDomains` (850) sees.
     fn parse(source: &str, docname: &str) -> crate::rst::ParseOutput {
-        parse_rst_full(
+        crate::read::read_document(
             source,
             &ParseOptions {
                 source_path: format!("<{docname}>"),
@@ -1844,7 +1840,9 @@ mod tests {
                 srcdir: None,
                 ..Default::default()
             },
+            &crate::read::ReadSettings::sphinx_defaults(),
         )
+        .output
     }
 
     /// Fold sources into a fresh environment through the real per-document
@@ -1857,17 +1855,20 @@ mod tests {
         for (docname, source) in sources {
             let parsed = parse(source, docname);
             let path = PathBuf::from(format!("/src/{docname}.rst"));
-            std_domain::process_doc(
+            let found = std_domain::process_doc(
                 &mut env,
                 &DocumentSource {
                     docname,
                     doctree: &parsed.doctree,
                     registry: &parsed.registry,
+                    names: &parsed.state.names,
                     path: &path,
+                    source_dir: std::path::Path::new(""),
+                    label_locations: &std::collections::HashMap::new(),
                 },
                 &doc2path,
-                &mut warnings,
             );
+            warnings.extend(std_domain::tests::in_print_order(found));
         }
         (env, warnings)
     }

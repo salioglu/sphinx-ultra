@@ -26,6 +26,7 @@
 pub mod builder;
 pub mod cache;
 pub mod config;
+pub mod diagnostics;
 pub mod directives;
 pub mod doctree;
 pub mod document;
@@ -39,9 +40,11 @@ pub mod matching;
 pub mod parser;
 pub mod py;
 pub mod python_config;
+pub mod read;
 pub mod rst;
 pub mod search;
 pub mod template;
+pub mod transforms;
 pub mod utils;
 pub mod validation;
 

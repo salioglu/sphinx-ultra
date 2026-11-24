@@ -47,6 +47,31 @@ pub enum BuildError {
     ValidationError(String),
 }
 
+/// Sphinx's `sphinx.errors.ConfigError` raised once the build has started:
+/// the intersphinx inventories' invariants, which Sphinx checks when it
+/// loads them at `builder-inited` (`ext/intersphinx/_load.py:150-160`).
+/// sphinx-build mode reports it as it reports a configuration that fails to
+/// load: `Configuration error!` on stderr and in the `-w` file, exit 2.
+/// `Display` prints Sphinx's message alone.
+#[derive(Error, Debug)]
+#[error("{0}")]
+pub struct ConfigError(pub String);
+
+/// A `ConfigError` a `config-inited` handler raises after logging an
+/// `ERROR` record (no location, no type) for each problem it found, as
+/// `validate_intersphinx_mapping` does for every rejected
+/// `intersphinx_mapping` entry (`ext/intersphinx/_load.py:64-125`).
+/// sphinx-build mode prints the records to the warning stream, then the
+/// `Configuration error!` report. `Display` prints Sphinx's message alone.
+#[derive(Error, Debug)]
+#[error("{message}")]
+pub struct ConfigInitError {
+    /// The `ERROR` records, in the order the handler logged them.
+    pub errors: Vec<String>,
+    /// The `ConfigError` message.
+    pub message: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct BuildWarning {
     pub file: PathBuf,
@@ -120,34 +145,21 @@ impl BuildWarning {
         self
     }
 
-    /// The warning as `sphinx-build` prints it:
-    /// `path[:line]: WARNING: message[ [type.subtype]]`.
+    /// The warning as `sphinx-build` prints it under Sphinx's default
+    /// `show_warning_types = True`: `path[:line]: WARNING: message[ [type.subtype]]`.
     ///
-    /// One renderer for every sink (stderr, `-w` warning file, the
-    /// environment-oracle differential) so a message can only ever be
-    /// formatted one way.
+    /// Not the build's output path: the builder converts each warning into
+    /// a [`crate::diagnostics::Diagnostic`] when it pushes it into a phase's
+    /// sink, and the stream renders that with the configured
+    /// `show_warning_types`. This renders through the same conversion, so a
+    /// warning can only ever be formatted one way.
     ///
     /// An empty `file` is a warning Sphinx logs with no `location` at all
     /// (the intersphinx "failed to reach any of the inventories" report, for
     /// one): those print as a bare `WARNING: ...`, with no location prefix
     /// and no stray colon.
     pub fn render(&self) -> String {
-        let category = match &self.category {
-            Some(category) => format!(" [{category}]"),
-            None => String::new(),
-        };
-        if self.file.as_os_str().is_empty() {
-            return format!("WARNING: {}{category}", self.message);
-        }
-        let line = match self.line {
-            Some(line) => format!(":{line}"),
-            None => String::new(),
-        };
-        format!(
-            "{}{line}: WARNING: {}{category}",
-            self.file.display(),
-            self.message
-        )
+        crate::diagnostics::Diagnostic::from(self.clone()).render(true)
     }
 
     #[allow(dead_code)]

@@ -8,6 +8,8 @@
 //! - NO XML escaping anywhere. List-attribute items go through docutils
 //!   `serial_escape` (`\` -> `\\`, then ` ` -> `\ `) and join with a space.
 //! - Text nodes: each line of the text on its own line at child indent.
+//! - A `pending` node prints its `.. internal attributes:` block after its
+//!   children, at child indent (`pending.pformat`).
 //! - Every emitted line ends with `\n`.
 
 use super::{kinds, AttrValue, Node};
@@ -27,26 +29,15 @@ fn push_list_attr(out: &mut Vec<(&str, String)>, name: &'static str, values: &[S
     }
 }
 
-fn write_node(node: &Node, depth: usize, out: &mut String) {
-    let indent = "    ".repeat(depth);
-    if node.kind == kinds::TEXT {
-        if let Some(text) = &node.text {
-            // `Text.pformat`: `lines = [indent*level + v for v in
-            // self.astext().splitlines()]`, then `if not lines: return ''`.
-            // It is Python's FULL `splitlines()` — `\v`, `\f`, `\x1c`-`\x1e`,
-            // U+0085, U+2028 and U+2029 all break a line, which matters for
-            // the raw file bytes `include :literal:` puts in a Text node —
-            // and an EMPTY Text contributes nothing at all, not an
-            // indent-only line.
-            for line in crate::utils::py_splitlines(text) {
-                out.push_str(&indent);
-                out.push_str(line);
-                out.push('\n');
-            }
-        }
-        return;
-    }
+/// docutils `Element.starttag()` (`SP/docutils/nodes.py`): `<kind attrs>`,
+/// the element line [`pformat`] prints, without its indent.
+pub fn starttag(node: &Node) -> String {
+    let mut out = String::new();
+    write_starttag(node, &mut out);
+    out
+}
 
+fn write_starttag(node: &Node, out: &mut String) {
     let mut attrs: Vec<(&str, String)> = Vec::new();
     push_list_attr(&mut attrs, "backrefs", &node.attrs.backrefs);
     push_list_attr(&mut attrs, "classes", &node.attrs.classes);
@@ -73,7 +64,6 @@ fn write_node(node: &Node, depth: usize, out: &mut String) {
     }
     attrs.sort_by(|a, b| a.0.cmp(b.0));
 
-    out.push_str(&indent);
     out.push('<');
     out.push_str(node.kind);
     for (name, value) in &attrs {
@@ -83,10 +73,46 @@ fn write_node(node: &Node, depth: usize, out: &mut String) {
         out.push_str(value);
         out.push('"');
     }
-    out.push_str(">\n");
+    out.push('>');
+}
+
+fn write_node(node: &Node, depth: usize, out: &mut String) {
+    let indent = "    ".repeat(depth);
+    if node.kind == kinds::TEXT {
+        if let Some(text) = &node.text {
+            // `Text.pformat`: `lines = [indent*level + v for v in
+            // self.astext().splitlines()]`, then `if not lines: return ''`.
+            // It is Python's FULL `splitlines()` — `\v`, `\f`, `\x1c`-`\x1e`,
+            // U+0085, U+2028 and U+2029 all break a line, which matters for
+            // the raw file bytes `include :literal:` puts in a Text node —
+            // and an EMPTY Text contributes nothing at all, not an
+            // indent-only line.
+            for line in crate::utils::py_splitlines(text) {
+                out.push_str(&indent);
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+        return;
+    }
+
+    out.push_str(&indent);
+    write_starttag(node, out);
+    out.push('\n');
 
     for child in &node.children {
         write_node(child, depth + 1, out);
+    }
+
+    // `pending.pformat` (nodes.py:2567-2589): `Element.pformat(...)` and
+    // then each internals line as `'    %s%s\n' % (indent * level, line)`.
+    if let Some(pending) = node.pending() {
+        for line in pending.internals() {
+            out.push_str("    ");
+            out.push_str(&indent);
+            out.push_str(&line);
+            out.push('\n');
+        }
     }
 }
 

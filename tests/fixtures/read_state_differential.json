@@ -1,0 +1,6096 @@
+{
+  "cases": [
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        2
+      ],
+      "id_trace": [
+        [
+          "docutils.transforms.references.Substitutions",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.Substitutions",
+          "problematic",
+          "id2",
+          true
+        ],
+        [
+          "docutils.transforms.references.Substitutions",
+          "system_message",
+          "id3",
+          false
+        ],
+        [
+          "docutils.transforms.references.Substitutions",
+          "problematic",
+          "id4",
+          false
+        ],
+        [
+          "docutils.transforms.references.Substitutions",
+          "system_message",
+          "id5",
+          false
+        ],
+        [
+          "docutils.transforms.references.Substitutions",
+          "problematic",
+          "id6",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id7",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id8",
+          true
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id9",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id10",
+          true
+        ]
+      ],
+      "name": "state.loose_ids_chain",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        A \n        <problematic ids=\"id2\" refid=\"id1\">\n            |sub|\n         B \n        <problematic ids=\"id10\" refid=\"id9\">\n            |sub2|_\n         C \n        <problematic ids=\"id8\" refid=\"id7\">\n            |sub3|__\n         D.\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [
+          [
+            "sub2",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "A |sub| B |sub2|_ C |sub3|__ D.\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:1: ERROR: Undefined substitution referenced: \"sub\". [docutils]",
+        "<SRCDIR>/index.rst:1: ERROR: Undefined substitution referenced: \"sub2\". [docutils]",
+        "<SRCDIR>/index.rst:1: ERROR: Undefined substitution referenced: \"sub3\". [docutils]",
+        "<SRCDIR>/index.rst:2: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]",
+        "<SRCDIR>/index.rst:1: ERROR: Unknown target name: \"sub2\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        5
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "footnote_reference",
+          "id1",
+          false
+        ],
+        [
+          "parse",
+          "section",
+          "title-1-here",
+          true
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id2",
+          false
+        ]
+      ],
+      "name": "state.dangling_footnote_ref_in_title",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title-1-here\" names=\"title\\ 1\\ here\">\n        <title>\n            Title \n            <problematic ids=\"id1\" refid=\"id2\">\n                [1]_\n             Here\n        <paragraph>\n            body\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [
+          [
+            "1",
+            [
+              [
+                "footnote_reference",
+                [
+                  "id1"
+                ],
+                true
+              ]
+            ]
+          ]
+        ],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [
+          [
+            "title 1 here",
+            "title-1-here",
+            false
+          ]
+        ],
+        "refnames": [
+          [
+            "1",
+            [
+              [
+                "footnote_reference",
+                [
+                  "id1"
+                ],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Title [1]_ Here\n===============\n\nbody\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:2: ERROR: Unknown target name: \"1\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        2
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "footnote_reference",
+          "id1",
+          false
+        ],
+        [
+          "parse",
+          "footnote_reference",
+          "id2",
+          false
+        ],
+        [
+          "parse",
+          "footnote_reference",
+          "id3",
+          false
+        ],
+        [
+          "parse",
+          "footnote_reference",
+          "id4",
+          false
+        ],
+        [
+          "docutils.transforms.references.Footnotes",
+          "system_message",
+          "id5",
+          false
+        ],
+        [
+          "docutils.transforms.references.Footnotes",
+          "problematic",
+          "id6",
+          true
+        ],
+        [
+          "docutils.transforms.references.Footnotes",
+          "system_message",
+          "id7",
+          false
+        ],
+        [
+          "docutils.transforms.references.Footnotes",
+          "problematic",
+          "id8",
+          true
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id9",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id10",
+          false
+        ]
+      ],
+      "name": "state.problematic_id_shapes",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Refs \n        <problematic ids=\"id1\" refid=\"id9\">\n            [1]_\n         \n        <problematic ids=\"id6 id2\" refid=\"id5\">\n            [#]_\n         \n        <problematic ids=\"id3\" refid=\"id10\">\n            [#label]_\n         \n        <problematic ids=\"id8 id4\" refid=\"id7\">\n            [*]_\n         end.\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [
+          [
+            "footnote_reference",
+            [
+              "id2"
+            ],
+            true
+          ],
+          [
+            "footnote_reference",
+            [
+              "id3"
+            ],
+            true
+          ]
+        ],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [
+          [
+            "1",
+            [
+              [
+                "footnote_reference",
+                [
+                  "id1"
+                ],
+                true
+              ]
+            ]
+          ],
+          [
+            "label",
+            [
+              [
+                "footnote_reference",
+                [
+                  "id3"
+                ],
+                true
+              ]
+            ]
+          ]
+        ],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [
+          [
+            "1",
+            [
+              [
+                "footnote_reference",
+                [
+                  "id1"
+                ],
+                true
+              ]
+            ]
+          ],
+          [
+            "label",
+            [
+              [
+                "footnote_reference",
+                [
+                  "id3"
+                ],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [
+          [
+            "footnote_reference",
+            [
+              "id4"
+            ],
+            true
+          ]
+        ],
+        "symbol_footnotes": []
+      },
+      "rst": "Refs [1]_ [#]_ [#label]_ [*]_ end.\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:1: ERROR: Too many autonumbered footnote references: only 0 corresponding footnote available. [docutils]",
+        "<SRCDIR>/index.rst:1: ERROR: Too many symbol footnote references: only 0 corresponding footnotes available. [docutils]",
+        "<SRCDIR>/index.rst:1: ERROR: Unknown target name: \"1\". [docutils]",
+        "<SRCDIR>/index.rst:1: ERROR: Unknown target name: \"label\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "footnote_reference",
+          "id1",
+          false
+        ],
+        [
+          "parse",
+          "footnote_reference",
+          "id2",
+          false
+        ],
+        [
+          "parse",
+          "footnote",
+          "id3",
+          true
+        ],
+        [
+          "docutils.transforms.references.Footnotes",
+          "system_message",
+          "id4",
+          false
+        ],
+        [
+          "docutils.transforms.references.Footnotes",
+          "problematic",
+          "id5",
+          true
+        ]
+      ],
+      "name": "state.rejected_subst_autofootnote",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            References to auto-numbered and auto-symbol footnotes are not supported in a substitution definition.\n        <literal_block xml:space=\"preserve\">\n            .. |f| replace:: note [#]_\n    <paragraph>\n        Text \n        <problematic ids=\"id5 id2\" refid=\"id4\">\n            [#]_\n        .\n    <footnote auto=\"1\" backrefs=\"id1\" docname=\"index\" ids=\"id3\" names=\"1\">\n        <label>\n            1\n        <paragraph>\n            the footnote\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [
+          [
+            "footnote_reference",
+            [
+              "id1"
+            ],
+            false
+          ],
+          [
+            "footnote_reference",
+            [
+              "id2"
+            ],
+            true
+          ]
+        ],
+        "autofootnotes": [
+          [
+            "footnote",
+            [
+              "id3"
+            ],
+            true
+          ]
+        ],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": ".. |f| replace:: note [#]_\n\nText [#]_.\n\n.. [#] the footnote\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:1: ERROR: References to auto-numbered and auto-symbol footnotes are not supported in a substitution definition.",
+        "",
+        ".. |f| replace:: note [#]_ [docutils]",
+        "<SRCDIR>/index.rst:3: ERROR: Too many autonumbered footnote references: only 1 corresponding footnote available. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        4
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "target",
+          "x",
+          false
+        ],
+        [
+          "docutils.transforms.references.IndirectHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ]
+      ],
+      "name": "state.rejected_subst_indirect_target",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Targets (names and identifiers) are not supported in a substitution definition.\n        <literal_block xml:space=\"preserve\">\n            .. |f| replace:: `x <a_>`_\n    <paragraph>\n        Text.\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [
+          [
+            "target",
+            [
+              "x"
+            ],
+            false
+          ]
+        ],
+        "names": [
+          [
+            "x",
+            "x",
+            false
+          ]
+        ],
+        "refnames": [
+          [
+            "a",
+            [
+              [
+                "target",
+                [
+                  "x"
+                ],
+                false
+              ],
+              [
+                "reference",
+                [],
+                false
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": ".. |f| replace:: `x <a_>`_\n\nText.\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:1: ERROR: Targets (names and identifiers) are not supported in a substitution definition.",
+        "",
+        ".. |f| replace:: `x <a_>`_ [docutils]",
+        "<SRCDIR>/index.rst:1: ERROR: Indirect hyperlink target \"x\" (id=\"x\") refers to target \"a\", which does not exist. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        4
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "target",
+          "x",
+          false
+        ]
+      ],
+      "name": "state.rejected_subst_plain_target",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Targets (names and identifiers) are not supported in a substitution definition.\n        <literal_block xml:space=\"preserve\">\n            .. |f| replace:: _`x`\n    <paragraph>\n        Text \n        <reference name=\"x\" refid=\"x\">\n            x\n        .\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [
+          [
+            "x",
+            "x",
+            true
+          ]
+        ],
+        "refnames": [
+          [
+            "x",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": ".. |f| replace:: _`x`\n\nText x_.\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:1: ERROR: Targets (names and identifiers) are not supported in a substitution definition.",
+        "",
+        ".. |f| replace:: _`x` [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "footnote_reference",
+          "id1",
+          false
+        ],
+        [
+          "parse",
+          "footnote_reference",
+          "id2",
+          false
+        ],
+        [
+          "parse",
+          "footnote_reference",
+          "id3",
+          false
+        ],
+        [
+          "parse",
+          "footnote",
+          "id4",
+          true
+        ],
+        [
+          "parse",
+          "footnote",
+          "id5",
+          true
+        ],
+        [
+          "docutils.transforms.references.Footnotes",
+          "system_message",
+          "id6",
+          false
+        ],
+        [
+          "docutils.transforms.references.Footnotes",
+          "problematic",
+          "id7",
+          true
+        ]
+      ],
+      "name": "state.rejected_table_refs",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error parsing content block for the \"table\" directive: exactly one table expected.\n        <literal_block xml:space=\"preserve\">\n            .. table:: Cap [#]_\n            \n               not a table [#]_\n    <paragraph>\n        Text \n        <problematic ids=\"id7 id3\" refid=\"id6\">\n            [#]_\n        .\n    <footnote auto=\"1\" backrefs=\"id1\" docname=\"index\" ids=\"id4\" names=\"1\">\n        <label>\n            1\n        <paragraph>\n            a\n    <footnote auto=\"1\" backrefs=\"id2\" docname=\"index\" ids=\"id5\" names=\"2\">\n        <label>\n            2\n        <paragraph>\n            b\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [
+          [
+            "footnote_reference",
+            [
+              "id1"
+            ],
+            false
+          ],
+          [
+            "footnote_reference",
+            [
+              "id2"
+            ],
+            false
+          ],
+          [
+            "footnote_reference",
+            [
+              "id3"
+            ],
+            true
+          ]
+        ],
+        "autofootnotes": [
+          [
+            "footnote",
+            [
+              "id4"
+            ],
+            true
+          ],
+          [
+            "footnote",
+            [
+              "id5"
+            ],
+            true
+          ]
+        ],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": ".. table:: Cap [#]_\n\n   not a table [#]_\n\nText [#]_.\n\n.. [#] a\n.. [#] b\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:1: ERROR: Error parsing content block for the \"table\" directive: exactly one table expected.",
+        "",
+        ".. table:: Cap [#]_",
+        "",
+        "   not a table [#]_ [docutils]",
+        "<SRCDIR>/index.rst:5: ERROR: Too many autonumbered footnote references: only 2 corresponding footnotes available. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "footnote_reference",
+          "id1",
+          false
+        ],
+        [
+          "parse",
+          "footnote_reference",
+          "id2",
+          false
+        ],
+        [
+          "parse",
+          "footnote",
+          "id3",
+          true
+        ],
+        [
+          "docutils.transforms.references.Footnotes",
+          "system_message",
+          "id4",
+          false
+        ],
+        [
+          "docutils.transforms.references.Footnotes",
+          "problematic",
+          "id5",
+          true
+        ]
+      ],
+      "name": "state.rejected_list_table_refs",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error parsing content block for the \"list-table\" directive: exactly one bullet list expected.\n        <literal_block xml:space=\"preserve\">\n            .. list-table::\n            \n               not a list [#]_\n    <paragraph>\n        Text \n        <problematic ids=\"id5 id2\" refid=\"id4\">\n            [#]_\n        .\n    <footnote auto=\"1\" backrefs=\"id1\" docname=\"index\" ids=\"id3\" names=\"1\">\n        <label>\n            1\n        <paragraph>\n            a\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [
+          [
+            "footnote_reference",
+            [
+              "id1"
+            ],
+            false
+          ],
+          [
+            "footnote_reference",
+            [
+              "id2"
+            ],
+            true
+          ]
+        ],
+        "autofootnotes": [
+          [
+            "footnote",
+            [
+              "id3"
+            ],
+            true
+          ]
+        ],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": ".. list-table::\n\n   not a list [#]_\n\nText [#]_.\n\n.. [#] a\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:1: ERROR: Error parsing content block for the \"list-table\" directive: exactly one bullet list expected.",
+        "",
+        ".. list-table::",
+        "",
+        "   not a list [#]_ [docutils]",
+        "<SRCDIR>/index.rst:5: ERROR: Too many autonumbered footnote references: only 1 corresponding footnote available. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "footnote_reference",
+          "id1",
+          true
+        ],
+        [
+          "parse",
+          "footnote_reference",
+          "id2",
+          true
+        ],
+        [
+          "parse",
+          "footnote_reference",
+          "id3",
+          true
+        ],
+        [
+          "parse",
+          "footnote",
+          "id4",
+          true
+        ],
+        [
+          "parse",
+          "footnote",
+          "id5",
+          true
+        ],
+        [
+          "parse",
+          "footnote",
+          "id6",
+          true
+        ]
+      ],
+      "name": "state.docfields_footnote_order",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <index entries=\"('pair',\\ 'built-in\\ function;\\ f()',\\ 'f',\\ '',\\ None)\">\n    <desc classes=\"py function\" desctype=\"function\" domain=\"py\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"function\">\n        <desc_signature _toc_name=\"f()\" _toc_parts=\"('f',)\" class=\"\" classes=\"sig sig-object\" fullname=\"f\" ids=\"f\" module=\"True\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                f\n            <desc_parameterlist multi_line_parameter_list=\"0\" multi_line_trailing_comma=\"1\" xml:space=\"preserve\">\n                <desc_parameter xml:space=\"preserve\">\n                    <desc_sig_name classes=\"n\">\n                        a\n                <desc_parameter xml:space=\"preserve\">\n                    <desc_sig_name classes=\"n\">\n                        b\n        <desc_content>\n            <field_list>\n                <field>\n                    <field_name>\n                        Parameters\n                    <field_body>\n                        <bullet_list>\n                            <list_item>\n                                <paragraph>\n                                    <literal_strong>\n                                        a\n                                     -- \n                                    first \n                                    <footnote_reference auto=\"1\" docname=\"index\" ids=\"id1\" refid=\"id4\">\n                                        1\n                            <list_item>\n                                <paragraph>\n                                    <literal_strong>\n                                        b\n                                     -- \n                                    second \n                                    <footnote_reference auto=\"1\" docname=\"index\" ids=\"id3\" refid=\"id6\">\n                                        3\n                <field>\n                    <field_name>\n                        Returns\n                    <field_body>\n                        <paragraph>\n                            result \n                            <footnote_reference auto=\"1\" docname=\"index\" ids=\"id2\" refid=\"id5\">\n                                2\n    <footnote auto=\"1\" backrefs=\"id1\" docname=\"index\" ids=\"id4\" names=\"1\">\n        <label>\n            1\n        <paragraph>\n            one\n    <footnote auto=\"1\" backrefs=\"id2\" docname=\"index\" ids=\"id5\" names=\"2\">\n        <label>\n            2\n        <paragraph>\n            two\n    <footnote auto=\"1\" backrefs=\"id3\" docname=\"index\" ids=\"id6\" names=\"3\">\n        <label>\n            3\n        <paragraph>\n            three\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [
+          [
+            "footnote_reference",
+            [
+              "id1"
+            ],
+            true
+          ],
+          [
+            "footnote_reference",
+            [
+              "id2"
+            ],
+            true
+          ],
+          [
+            "footnote_reference",
+            [
+              "id3"
+            ],
+            true
+          ]
+        ],
+        "autofootnotes": [
+          [
+            "footnote",
+            [
+              "id4"
+            ],
+            true
+          ],
+          [
+            "footnote",
+            [
+              "id5"
+            ],
+            true
+          ],
+          [
+            "footnote",
+            [
+              "id6"
+            ],
+            true
+          ]
+        ],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": ".. py:function:: f(a, b)\n\n   :param a: first [#]_\n   :returns: result [#]_\n   :param b: second [#]_\n\n.. [#] one\n.. [#] two\n.. [#] three\n",
+      "warnings": []
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "footnote_reference",
+          "id1",
+          true
+        ],
+        [
+          "parse",
+          "footnote_reference",
+          "id2",
+          true
+        ],
+        [
+          "parse",
+          "footnote",
+          "id3",
+          true
+        ],
+        [
+          "parse",
+          "footnote",
+          "id4",
+          true
+        ]
+      ],
+      "name": "state.glossary_sorted_footnote_order",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <glossary sorted=\"1\">\n        <definition_list classes=\"glossary\">\n            <definition_list_item>\n                <term ids=\"term-alpha\">\n                    alpha\n                    <index entries=\"('single',\\ 'alpha',\\ 'term-alpha',\\ 'main',\\ None)\">\n                <definition>\n                    <paragraph>\n                        First letter \n                        <footnote_reference auto=\"1\" docname=\"index\" ids=\"id2\" refid=\"id4\">\n                            2\n                        .\n            <definition_list_item>\n                <term ids=\"term-zeta\">\n                    zeta\n                    <index entries=\"('single',\\ 'zeta',\\ 'term-zeta',\\ 'main',\\ None)\">\n                <definition>\n                    <paragraph>\n                        Last letter \n                        <footnote_reference auto=\"1\" docname=\"index\" ids=\"id1\" refid=\"id3\">\n                            1\n                        .\n    <footnote auto=\"1\" backrefs=\"id1\" docname=\"index\" ids=\"id3\" names=\"1\">\n        <label>\n            1\n        <paragraph>\n            z note\n    <footnote auto=\"1\" backrefs=\"id2\" docname=\"index\" ids=\"id4\" names=\"2\">\n        <label>\n            2\n        <paragraph>\n            a note\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [
+          [
+            "footnote_reference",
+            [
+              "id1"
+            ],
+            true
+          ],
+          [
+            "footnote_reference",
+            [
+              "id2"
+            ],
+            true
+          ]
+        ],
+        "autofootnotes": [
+          [
+            "footnote",
+            [
+              "id3"
+            ],
+            true
+          ],
+          [
+            "footnote",
+            [
+              "id4"
+            ],
+            true
+          ]
+        ],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": ".. glossary::\n   :sorted:\n\n   zeta\n      Last letter [#]_.\n\n   alpha\n      First letter [#]_.\n\n.. [#] z note\n.. [#] a note\n",
+      "warnings": []
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "footnote_reference",
+          "id1",
+          true
+        ],
+        [
+          "parse",
+          "footnote_reference",
+          "id2",
+          false
+        ],
+        [
+          "parse",
+          "footnote",
+          "id3",
+          true
+        ],
+        [
+          "parse",
+          "footnote",
+          "id4",
+          true
+        ]
+      ],
+      "name": "state.docinfo_abstract_footnote_order",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <topic classes=\"abstract\">\n        <title>\n            Abstract\n        <paragraph>\n            abstract text \n            <footnote_reference auto=\"1\" docname=\"index\" ids=\"id1\" refid=\"id3\">\n                1\n    <paragraph>\n        Body.\n    <footnote auto=\"1\" backrefs=\"id1\" docname=\"index\" ids=\"id3\" names=\"1\">\n        <label>\n            1\n        <paragraph>\n            abstract note\n    <footnote auto=\"1\" backrefs=\"id2\" docname=\"index\" ids=\"id4\" names=\"2\">\n        <label>\n            2\n        <paragraph>\n            author note\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [
+          [
+            "footnote_reference",
+            [
+              "id1"
+            ],
+            true
+          ],
+          [
+            "footnote_reference",
+            [
+              "id2"
+            ],
+            true
+          ]
+        ],
+        "autofootnotes": [
+          [
+            "footnote",
+            [
+              "id3"
+            ],
+            true
+          ],
+          [
+            "footnote",
+            [
+              "id4"
+            ],
+            true
+          ]
+        ],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": ":Abstract: abstract text [#]_\n:Author: someone [#]_\n\nBody.\n\n.. [#] abstract note\n.. [#] author note\n",
+      "warnings": []
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "target",
+          "indirect",
+          true
+        ],
+        [
+          "docutils.transforms.references.IndirectHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.IndirectHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ],
+        [
+          "docutils.transforms.references.IndirectHyperlinks",
+          "problematic",
+          "id3",
+          true
+        ],
+        [
+          "docutils.transforms.references.IndirectHyperlinks",
+          "problematic",
+          "id4",
+          true
+        ]
+      ],
+      "name": "state.subst_copy_refnames_order",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        One \n        <problematic ids=\"id3\" refid=\"id1\">\n            indirect_\n         two \n        <problematic ids=\"id4\" refid=\"id1\">\n            indirect_\n        .\n    <target ids=\"indirect\" names=\"indirect\" refname=\"missing\">\n    <substitution_definition names=\"s\">\n        <problematic ids=\"id2\" refid=\"id1\">\n            indirect_\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [
+          [
+            "target",
+            [
+              "indirect"
+            ],
+            true
+          ]
+        ],
+        "names": [
+          [
+            "indirect",
+            "indirect",
+            true
+          ]
+        ],
+        "refnames": [
+          [
+            "missing",
+            [
+              [
+                "target",
+                [
+                  "indirect"
+                ],
+                true
+              ]
+            ]
+          ],
+          [
+            "indirect",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [
+          [
+            "s",
+            [
+              "substitution_definition",
+              [],
+              true
+            ]
+          ]
+        ],
+        "substitution_names": [
+          [
+            "s",
+            "s"
+          ]
+        ],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "One |s| two |s|.\n\n.. _indirect: missing_\n\n.. |s| replace:: indirect_\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:3: ERROR: Indirect hyperlink target \"indirect\" (id=\"indirect\") refers to target \"missing\", which does not exist. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        2
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "target",
+          "text",
+          true
+        ],
+        [
+          "docutils.transforms.references.IndirectHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.IndirectHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id3",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id4",
+          true
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id5",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id6",
+          true
+        ]
+      ],
+      "name": "state.alias_target_before_reference",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        See \n        <problematic ids=\"id4\" refid=\"id3\">\n            `text <alias_>`_\n        <target ids=\"text\" names=\"text\" refname=\"alias\">\n         and \n        <problematic ids=\"id6\" refid=\"id5\">\n            alias_\n         and \n        <problematic ids=\"id2\" refid=\"id1\">\n            text_\n        .\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [
+          [
+            "target",
+            [
+              "text"
+            ],
+            true
+          ]
+        ],
+        "names": [
+          [
+            "text",
+            "text",
+            false
+          ]
+        ],
+        "refnames": [
+          [
+            "alias",
+            [
+              [
+                "target",
+                [
+                  "text"
+                ],
+                true
+              ],
+              [
+                "reference",
+                [],
+                true
+              ],
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ],
+          [
+            "text",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "See `text <alias_>`_ and alias_ and text_.\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:1: ERROR: Indirect hyperlink target \"text\" (id=\"text\") refers to target \"alias\", which does not exist. [docutils]",
+        "<SRCDIR>/index.rst:1: ERROR: Unknown target name: \"alias\". [docutils]",
+        "<SRCDIR>/index.rst:1: ERROR: Unknown target name: \"alias\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "citation_reference",
+          "id1",
+          false
+        ],
+        [
+          "parse",
+          "citation_reference",
+          "id2",
+          false
+        ],
+        [
+          "parse",
+          "citation",
+          "cit",
+          true
+        ]
+      ],
+      "name": "state.citation_backrefs",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Cite \n        <pending_xref ids=\"id1\" refdomain=\"citation\" reftarget=\"CIT\" reftype=\"ref\" refwarn=\"1\" support_smartquotes=\"0\">\n            <inline>\n                [CIT]\n         and \n        <pending_xref ids=\"id2\" refdomain=\"citation\" reftarget=\"CIT\" reftype=\"ref\" refwarn=\"1\" support_smartquotes=\"0\">\n            <inline>\n                [CIT]\n        .\n    <citation backrefs=\"id1 id2\" docname=\"index\" ids=\"cit\" names=\"cit\">\n        <label support_smartquotes=\"0\">\n            CIT\n        <paragraph>\n            The citation.\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [
+          [
+            "cit",
+            [
+              [
+                "citation_reference",
+                [
+                  "id1"
+                ],
+                true
+              ],
+              [
+                "citation_reference",
+                [
+                  "id2"
+                ],
+                true
+              ]
+            ]
+          ]
+        ],
+        "citations": [
+          [
+            "citation",
+            [
+              "cit"
+            ],
+            true
+          ]
+        ],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [
+          [
+            "cit",
+            "cit",
+            true
+          ]
+        ],
+        "refnames": [
+          [
+            "cit",
+            [
+              [
+                "citation_reference",
+                [
+                  "id1"
+                ],
+                true
+              ],
+              [
+                "citation_reference",
+                [
+                  "id2"
+                ],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Cite [CIT]_ and [CIT]_.\n\n.. [CIT] The citation.\n",
+      "warnings": []
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "footnote",
+          "id1",
+          true
+        ],
+        [
+          "parse",
+          "footnote",
+          "id2",
+          true
+        ],
+        [
+          "parse",
+          "footnote",
+          "id3",
+          true
+        ],
+        [
+          "parse",
+          "footnote",
+          "b",
+          true
+        ]
+      ],
+      "name": "state.unreferenced_order",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <footnote auto=\"1\" docname=\"index\" ids=\"id1\" names=\"2\">\n        <label>\n            2\n        <paragraph>\n            auto one\n    <footnote auto=\"*\" docname=\"index\" ids=\"id2\">\n        <label>\n            *\n        <paragraph>\n            sym\n    <footnote docname=\"index\" ids=\"id3\" names=\"1\">\n        <label>\n            1\n        <paragraph>\n            manual\n    <footnote auto=\"1\" docname=\"index\" ids=\"b\" names=\"b\">\n        <label>\n            3\n        <paragraph>\n            auto labeled\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [
+          [
+            "footnote",
+            [
+              "id1"
+            ],
+            true
+          ],
+          [
+            "footnote",
+            [
+              "b"
+            ],
+            true
+          ]
+        ],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [
+          [
+            "footnote",
+            [
+              "id3"
+            ],
+            true
+          ]
+        ],
+        "indirect_targets": [],
+        "names": [
+          [
+            "1",
+            "id3",
+            true
+          ],
+          [
+            "b",
+            "b",
+            true
+          ]
+        ],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": [
+          [
+            "footnote",
+            [
+              "id2"
+            ],
+            true
+          ]
+        ]
+      },
+      "rst": ".. [#] auto one\n.. [*] sym\n.. [1] manual\n.. [#b] auto labeled\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:3: WARNING: Footnote [1] is not referenced. [ref.footnote]",
+        "<SRCDIR>/index.rst:2: WARNING: Footnote [*] is not referenced. [ref.footnote]",
+        "<SRCDIR>/index.rst:1: WARNING: Footnote [#] is not referenced. [ref.footnote]",
+        "<SRCDIR>/index.rst:4: WARNING: Footnote [#] is not referenced. [ref.footnote]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "section",
+          "doc",
+          true
+        ],
+        [
+          "parse",
+          "topic",
+          "contents",
+          true
+        ],
+        [
+          "parse",
+          "footnote_reference",
+          "id1",
+          true
+        ],
+        [
+          "parse",
+          "section",
+          "sec-a",
+          true
+        ],
+        [
+          "parse",
+          "target",
+          "python",
+          true
+        ],
+        [
+          "parse",
+          "target",
+          "docs",
+          true
+        ],
+        [
+          "parse",
+          "section",
+          "sec-b",
+          true
+        ],
+        [
+          "parse",
+          "footnote",
+          "id2",
+          true
+        ],
+        [
+          "docutils.transforms.references.TargetNotes",
+          "footnote",
+          "id3",
+          true
+        ],
+        [
+          "docutils.transforms.references.TargetNotes",
+          "footnote_reference",
+          "id4",
+          true
+        ],
+        [
+          "docutils.transforms.parts.Contents",
+          "reference",
+          "id5",
+          true
+        ],
+        [
+          "docutils.transforms.parts.Contents",
+          "reference",
+          "id6",
+          true
+        ],
+        [
+          "docutils.transforms.parts.Contents",
+          "reference",
+          "id7",
+          true
+        ]
+      ],
+      "name": "state.pending_serials",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"doc\" names=\"doc\">\n        <title auto=\"1\" refid=\"id5\">\n            <generated classes=\"sectnum\">\n                1   \n            Doc\n        <topic classes=\"contents\" ids=\"contents\" names=\"contents\">\n            <title>\n                Contents\n            <bullet_list classes=\"auto-toc\">\n                <list_item>\n                    <paragraph>\n                        <reference ids=\"id5\" refid=\"doc\">\n                            <generated classes=\"sectnum\">\n                                1   \n                            Doc\n                    <bullet_list classes=\"auto-toc\">\n                        <list_item>\n                            <paragraph>\n                                <reference ids=\"id6\" refid=\"sec-a\">\n                                    <generated classes=\"sectnum\">\n                                        1.1   \n                                    Sec A \n                        <list_item>\n                            <paragraph>\n                                <reference ids=\"id7\" refid=\"sec-b\">\n                                    <generated classes=\"sectnum\">\n                                        1.2   \n                                    Sec B\n        <section classes=\"special\" ids=\"sec-a\" names=\"sec\\ a\">\n            <title auto=\"1\" refid=\"id6\">\n                <generated classes=\"sectnum\">\n                    1.1   \n                Sec A \n                <footnote_reference auto=\"1\" docname=\"index\" ids=\"id1\" refid=\"id2\">\n                    1\n            <paragraph>\n                See \n                <reference name=\"Python\" refuri=\"https://python.org\">\n                    Python\n                <target ids=\"python\" names=\"python\" refuri=\"https://python.org\">\n                 and \n                <reference name=\"Docs\" refuri=\"https://docs.example\">\n                    Docs\n                 \n                <footnote_reference auto=\"1\" docname=\"index\" ids=\"id4\" refid=\"id3\">\n                    2\n                 and \n                <reference name=\"anon\" refuri=\"https://anon.example\">\n                    anon\n                .\n            <target ids=\"docs\" names=\"docs\" refuri=\"https://docs.example\">\n        <section ids=\"sec-b\" names=\"sec\\ b\">\n            <title auto=\"1\" refid=\"id7\">\n                <generated classes=\"sectnum\">\n                    1.2   \n                Sec B\n            <footnote auto=\"1\" backrefs=\"id1\" docname=\"index\" ids=\"id2\" names=\"1\">\n                <label>\n                    1\n                <paragraph>\n                    note\n            <footnote auto=\"1\" backrefs=\"id4\" docname=\"index\" ids=\"id3\" names=\"TARGET_NOTE:\\ id3\">\n                <label>\n                    2\n                <paragraph>\n                    <reference refuri=\"https://docs.example\">\n                        https://docs.example\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [
+          [
+            "footnote_reference",
+            [
+              "id1"
+            ],
+            true
+          ]
+        ],
+        "autofootnotes": [
+          [
+            "footnote",
+            [
+              "id2"
+            ],
+            true
+          ]
+        ],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [
+          [
+            "doc",
+            "doc",
+            false
+          ],
+          [
+            "contents",
+            "contents",
+            false
+          ],
+          [
+            "sec a",
+            "sec-a",
+            false
+          ],
+          [
+            "python",
+            "python",
+            false
+          ],
+          [
+            "docs",
+            "docs",
+            true
+          ],
+          [
+            "sec b",
+            "sec-b",
+            false
+          ]
+        ],
+        "refnames": [
+          [
+            "docs",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Doc\n===\n\n.. contents::\n\n.. sectnum::\n\n.. rst-class:: special\n\nSec A [#]_\n----------\n\nSee `Python <https://python.org>`_ and Docs_ and `anon <https://anon.example>`__.\n\n.. _Docs: https://docs.example\n\nSec B\n-----\n\n.. [#] note\n\n.. target-notes::\n",
+      "warnings": []
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        7
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "section",
+          "sec",
+          true
+        ]
+      ],
+      "name": "state.rst_class_before_section",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section classes=\"special\" ids=\"sec\" names=\"sec\">\n        <title>\n            Sec\n        <paragraph>\n            Text.\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [
+          [
+            "sec",
+            "sec",
+            false
+          ]
+        ],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": ".. rst-class:: special\n\nSec\n===\n\nText.\n",
+      "warnings": []
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        7
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "target",
+          "mylabel",
+          true
+        ],
+        [
+          "parse",
+          "section",
+          "identity",
+          true
+        ]
+      ],
+      "name": "state.sortids_startswith",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <target refid=\"mylabel\">\n    <section ids=\"mylabel identity\" names=\"identity mylabel\">\n        <title>\n            Identity\n        <paragraph>\n            Text.\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [
+          [
+            "mylabel",
+            "mylabel",
+            true
+          ],
+          [
+            "identity",
+            "identity",
+            false
+          ]
+        ],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": ".. _mylabel:\n\nIdentity\n========\n\nText.\n",
+      "warnings": []
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "target",
+          "a",
+          true
+        ],
+        [
+          "parse",
+          "target",
+          "id1",
+          true
+        ],
+        [
+          "parse",
+          "target",
+          "x",
+          true
+        ]
+      ],
+      "name": "state.dup_indirect_same_refname",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Text \n        <reference name=\"a\" refuri=\"https://x/\">\n            a\n        .\n    <target ids=\"a\" names=\"a\" refuri=\"https://x/\">\n    <target dupnames=\"a\" ids=\"id1\" refuri=\"https://x/\">\n    <target ids=\"x\" names=\"x\" refuri=\"https://x/\">\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [
+          [
+            "target",
+            [
+              "a"
+            ],
+            true
+          ],
+          [
+            "target",
+            [
+              "id1"
+            ],
+            true
+          ]
+        ],
+        "names": [
+          [
+            "a",
+            "a",
+            true
+          ],
+          [
+            "x",
+            "x",
+            true
+          ]
+        ],
+        "refnames": [
+          [
+            "a",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ],
+          [
+            "x",
+            [
+              [
+                "target",
+                [
+                  "a"
+                ],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Text a_.\n\n.. _a: x_\n.. _a: x_\n.. _x: https://x/\n",
+      "warnings": []
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "footnote_reference",
+          "id1",
+          true
+        ],
+        [
+          "parse",
+          "footnote_reference",
+          "id2",
+          true
+        ],
+        [
+          "parse",
+          "footnote_reference",
+          "id3",
+          true
+        ],
+        [
+          "parse",
+          "footnote",
+          "n",
+          true
+        ],
+        [
+          "parse",
+          "footnote",
+          "id4",
+          true
+        ],
+        [
+          "parse",
+          "footnote",
+          "id5",
+          true
+        ]
+      ],
+      "name": "state.footnote_ref_kinds",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        See \n        <footnote_reference auto=\"1\" docname=\"index\" ids=\"id1\" refid=\"n\">\n            2\n        , \n        <footnote_reference auto=\"*\" docname=\"index\" ids=\"id2\" refid=\"id4\">\n            *\n         and \n        <footnote_reference docname=\"index\" ids=\"id3\" refid=\"id5\">\n            1\n        .\n    <footnote auto=\"1\" backrefs=\"id1\" docname=\"index\" ids=\"n\" names=\"n\">\n        <label>\n            2\n        <paragraph>\n            named auto\n    <footnote auto=\"*\" backrefs=\"id2\" docname=\"index\" ids=\"id4\">\n        <label>\n            *\n        <paragraph>\n            symbol\n    <footnote backrefs=\"id3\" docname=\"index\" ids=\"id5\" names=\"1\">\n        <label>\n            1\n        <paragraph>\n            manual\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [
+          [
+            "footnote_reference",
+            [
+              "id1"
+            ],
+            true
+          ]
+        ],
+        "autofootnotes": [
+          [
+            "footnote",
+            [
+              "n"
+            ],
+            true
+          ]
+        ],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [
+          [
+            "n",
+            [
+              [
+                "footnote_reference",
+                [
+                  "id1"
+                ],
+                true
+              ]
+            ]
+          ],
+          [
+            "1",
+            [
+              [
+                "footnote_reference",
+                [
+                  "id3"
+                ],
+                true
+              ]
+            ]
+          ]
+        ],
+        "footnotes": [
+          [
+            "footnote",
+            [
+              "id5"
+            ],
+            true
+          ]
+        ],
+        "indirect_targets": [],
+        "names": [
+          [
+            "n",
+            "n",
+            true
+          ],
+          [
+            "1",
+            "id5",
+            true
+          ]
+        ],
+        "refnames": [
+          [
+            "n",
+            [
+              [
+                "footnote_reference",
+                [
+                  "id1"
+                ],
+                true
+              ]
+            ]
+          ],
+          [
+            "1",
+            [
+              [
+                "footnote_reference",
+                [
+                  "id3"
+                ],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [
+          [
+            "footnote_reference",
+            [
+              "id2"
+            ],
+            true
+          ]
+        ],
+        "symbol_footnotes": [
+          [
+            "footnote",
+            [
+              "id4"
+            ],
+            true
+          ]
+        ]
+      },
+      "rst": "See [#n]_, [*]_ and [1]_.\n\n.. [#n] named auto\n.. [*] symbol\n.. [1] manual\n",
+      "warnings": []
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        4
+      ],
+      "id_trace": [
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.final_position.paragraph",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <paragraph>\n        Last para.\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\nLast para.\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:4: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        6
+      ],
+      "id_trace": [
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.final_position.paragraph_trailing_blanks",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <paragraph>\n        Para\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\nPara\n\n\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:6: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        3
+      ],
+      "id_trace": [
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.final_position.literal_expected",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <paragraph>\n        Para:\n    <system_message level=\"2\" line=\"4\" source=\"<SRCDIR>/index.rst\" type=\"WARNING\">\n        <paragraph>\n            Literal block expected; none found.\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\nPara::\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:4: WARNING: Literal block expected; none found. [docutils]",
+        "<SRCDIR>/index.rst:3: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        5
+      ],
+      "id_trace": [
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.final_position.literal_expected_blank",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <paragraph>\n        Para:\n    <system_message level=\"2\" line=\"5\" source=\"<SRCDIR>/index.rst\" type=\"WARNING\">\n        <paragraph>\n            Literal block expected; none found.\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\nPara::\n\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:5: WARNING: Literal block expected; none found. [docutils]",
+        "<SRCDIR>/index.rst:5: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        6
+      ],
+      "id_trace": [
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.final_position.literal_block",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <paragraph>\n        Para:\n    <literal_block xml:space=\"preserve\">\n        code\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\nPara::\n\n  code\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:6: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.final_position.quoted_literal",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <paragraph>\n        Para:\n    <literal_block xml:space=\"preserve\">\n        > a\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\nPara::\n\n> a\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        7
+      ],
+      "id_trace": [
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.final_position.quoted_literal_blank",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <paragraph>\n        Para:\n    <literal_block xml:space=\"preserve\">\n        > a\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\nPara::\n\n> a\n\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:7: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        5
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "section",
+          "title",
+          true
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.final_position.section_title",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [
+          [
+            "title",
+            "title",
+            false
+          ]
+        ],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\nTitle\n=====\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:5: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        6
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "section",
+          "title",
+          true
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.final_position.section_overline",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [
+          [
+            "title",
+            "title",
+            false
+          ]
+        ],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\n=====\nTitle\n=====\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:6: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        6
+      ],
+      "id_trace": [
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.final_position.transition",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <paragraph>\n        Para.\n    <transition>\n    <system_message level=\"2\" line=\"5\" source=\"<SRCDIR>/index.rst\" type=\"WARNING\">\n        <paragraph>\n            Document may not end with a transition.\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\nPara.\n\n----\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:6: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]",
+        "<SRCDIR>/index.rst:5: WARNING: Document may not end with a transition. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        4
+      ],
+      "id_trace": [
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.final_position.block_quote",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <block_quote>\n        <paragraph>\n            quote\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\n  quote\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:4: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        4
+      ],
+      "id_trace": [
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.final_position.doctest_block",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <doctest_block classes=\"doctest\" xml:space=\"preserve\">\n        >>> x\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\n>>> x\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:4: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        6
+      ],
+      "id_trace": [
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.final_position.grid_table",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <table>\n        <tgroup cols=\"1\">\n            <colspec colwidth=\"3\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            a\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\n+---+\n| a |\n+---+\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:6: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        6
+      ],
+      "id_trace": [
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.final_position.simple_table",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"1\">\n            <colspec colwidth=\"1\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            a\n                    <entry>\n                        <paragraph>\n                            b\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\n=  =\na  b\n=  =\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:6: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        4
+      ],
+      "id_trace": [
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.final_position.line_block_single",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <line_block>\n        <line>\n            a\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\n| a\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:4: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.final_position.line_block",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <line_block>\n        <line>\n            a\n        <line>\n            b\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\n| a\n| b\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        6
+      ],
+      "id_trace": [
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.final_position.line_block_blank",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <line_block>\n        <line>\n            a\n        <line>\n            b\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\n| a\n| b\n\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:6: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.final_position.bullet_list",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                a\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\n- a\n\n\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.final_position.enumerated_list",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <enumerated_list enumtype=\"arabic\" prefix=\"\" suffix=\".\">\n        <list_item>\n            <paragraph>\n                a\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\n1. a\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.final_position.definition_list",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <definition_list>\n        <definition_list_item>\n            <term>\n                term\n            <definition>\n                <paragraph>\n                    def\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\nterm\n  def\n\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.final_position.field_list",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <field_list>\n        <field>\n            <field_name>\n                f\n            <field_body>\n                <paragraph>\n                    v\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\n:f: v\n\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.final_position.option_list",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <option_list>\n        <option_list_item>\n            <option_group>\n                <option>\n                    <option_string>\n                        -a\n            <description>\n                <paragraph>\n                    opt\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\n-a  opt\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "section",
+          "title",
+          true
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.final_position.section_ends_in_list",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <bullet_list bullet=\"-\">\n            <list_item>\n                <paragraph>\n                    a\n            <list_item>\n                <paragraph>\n                    b\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [
+          [
+            "title",
+            "title",
+            false
+          ]
+        ],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\nTitle\n=====\n\n- a\n- b\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.final_position.directive",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <note>\n        <paragraph>\n            x\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\n.. note:: x\n\n\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.final_position.comment",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <comment xml:space=\"preserve\">\n        comment\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\n.. comment\n\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "footnote",
+          "id1",
+          true
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id2",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id3",
+          true
+        ]
+      ],
+      "name": "state.final_position.footnote",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id3\" refid=\"id2\">\n            `x`__\n        .\n    <footnote docname=\"index\" ids=\"id1\" names=\"1\">\n        <label>\n            1\n        <paragraph>\n            fn\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [
+          [
+            "footnote",
+            [
+              "id1"
+            ],
+            true
+          ]
+        ],
+        "indirect_targets": [],
+        "names": [
+          [
+            "1",
+            "id1",
+            true
+          ]
+        ],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\n.. [1] fn\n\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]",
+        "<SRCDIR>/index.rst:3: WARNING: Footnote [1] is not referenced. [ref.footnote]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.final_position.substitution_definition",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <substitution_definition names=\"s\">\n        x\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [],
+        "substitution_defs": [
+          [
+            "s",
+            [
+              "substitution_definition",
+              [],
+              true
+            ]
+          ]
+        ],
+        "substitution_names": [
+          [
+            "s",
+            "s"
+          ]
+        ],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\n.. |s| replace:: x\n\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.final_position.empty_comment",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <comment xml:space=\"preserve\">\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\n..\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        5
+      ],
+      "id_trace": [
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.final_position.empty_comment_blank",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <comment xml:space=\"preserve\">\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\n..\n\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:5: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "target",
+          "x",
+          true
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.final_position.target",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <paragraph>\n        Para.\n    <target ids=\"x\" names=\"x\">\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [
+          [
+            "x",
+            "x",
+            true
+          ]
+        ],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\nPara.\n\n.. _x:\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        8
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "target",
+          "x",
+          true
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.final_position.target_trailing_blanks",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <paragraph>\n        Para.\n    <target ids=\"x\" names=\"x\">\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [
+          [
+            "x",
+            "x",
+            true
+          ]
+        ],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\nPara.\n\n.. _x:\n\n\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:8: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        6
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "target",
+          "x",
+          true
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.final_position.external_target_continued",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <target ids=\"x\" names=\"x\" refuri=\"http://xcont\">\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [
+          [
+            "x",
+            "x",
+            true
+          ]
+        ],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\n.. _x: http://x\n   cont\n\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:6: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        5
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "target",
+          "id1",
+          true
+        ]
+      ],
+      "name": "state.final_position.anonymous_target",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <reference anonymous=\"1\" name=\"x\" refuri=\"http://x\">\n            x\n        .\n    <target anonymous=\"1\" ids=\"id1\" refuri=\"http://x\">\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\n__ http://x\n\n",
+      "warnings": []
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        6
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "target",
+          "a",
+          true
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.final_position.directive_then_target",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <note>\n        <paragraph>\n            x\n    <target ids=\"a\" names=\"a\">\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [
+          [
+            "a",
+            "a",
+            true
+          ]
+        ],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\n.. note:: x\n.. _a:\n\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:6: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        8
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "target",
+          "x",
+          true
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.final_position.paragraph_after_target",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <paragraph>\n        Para.\n    <target refid=\"x\">\n    <paragraph ids=\"x\" names=\"x\">\n        Para2\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [
+          [
+            "x",
+            "x",
+            true
+          ]
+        ],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\nPara.\n\n.. _x:\n\nPara2\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:8: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.final_position.image",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <image candidates=\"{'*': 'pic.png'}\" uri=\"pic.png\">\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\n.. image:: pic.png\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]",
+        "<SRCDIR>/index.rst:3: WARNING: image file not readable: pic.png [image.not_readable]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "citation",
+          "cit",
+          true
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.final_position.citation",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <citation docname=\"index\" ids=\"cit\" names=\"cit\">\n        <label support_smartquotes=\"0\">\n            CIT\n        <paragraph>\n            c\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [
+          [
+            "citation",
+            [
+              "cit"
+            ],
+            true
+          ]
+        ],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [
+          [
+            "cit",
+            "cit",
+            true
+          ]
+        ],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\n.. [CIT] c\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        10
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "section",
+          "a",
+          true
+        ],
+        [
+          "parse",
+          "section",
+          "b",
+          true
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.final_position.nested_section_paragraph",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <section ids=\"a\" names=\"a\">\n        <title>\n            A\n        <section ids=\"b\" names=\"b\">\n            <title>\n                B\n            <paragraph>\n                para\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [
+          [
+            "a",
+            "a",
+            false
+          ],
+          [
+            "b",
+            "b",
+            false
+          ]
+        ],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\nA\n=\n\nB\n-\n\npara\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:10: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "section",
+          "a",
+          true
+        ],
+        [
+          "parse",
+          "section",
+          "b",
+          true
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.final_position.nested_section_list",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <section ids=\"a\" names=\"a\">\n        <title>\n            A\n        <section ids=\"b\" names=\"b\">\n            <title>\n                B\n            <bullet_list bullet=\"-\">\n                <list_item>\n                    <paragraph>\n                        a\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [
+          [
+            "a",
+            "a",
+            false
+          ],
+          [
+            "b",
+            "b",
+            false
+          ]
+        ],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\nA\n=\n\nB\n-\n\n- a\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "section",
+          "title",
+          true
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.final_position.title_then_directive",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <note>\n            <paragraph>\n                x\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [
+          [
+            "title",
+            "title",
+            false
+          ]
+        ],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\nTitle\n=====\n\n.. note:: x\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.final_position.list_item_paragraph",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                a\n            <paragraph>\n                para\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\n- a\n\n  para\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        6
+      ],
+      "id_trace": [
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "docutils.transforms.references.AnonymousHyperlinks",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.final_position.block_quote_ending_in_list",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para \n        <problematic ids=\"id2\" refid=\"id1\">\n            `x`__\n        .\n    <block_quote>\n        <paragraph>\n            quote\n        <bullet_list bullet=\"-\">\n            <list_item>\n                <paragraph>\n                    item\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para `x`__.\n\n  quote\n\n  - item\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:6: ERROR: Anonymous hyperlink mismatch: 1 references but 0 targets.",
+        "See \"backrefs\" attribute for IDs. [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        4
+      ],
+      "id_trace": [
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.location.paragraph_continuation",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para line one\n        line two\n        and \n        <problematic ids=\"id2\" refid=\"id1\">\n            bad_\n         here.\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para line one\nline two\nand bad_ here.\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:1: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        6
+      ],
+      "id_trace": [
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.location.grid_table_cell",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"6\">\n            <colspec colwidth=\"6\">\n            <thead>\n                <row>\n                    <entry>\n                        <paragraph>\n                            a\n                    <entry>\n                        <paragraph>\n                            b\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            c\n                    <entry>\n                        <paragraph>\n                            <problematic ids=\"id2\" refid=\"id1\">\n                                bad_\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "+------+------+\n| a    | b    |\n+======+======+\n| c    | bad_ |\n+------+------+\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:4: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        6
+      ],
+      "id_trace": [
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.location.simple_table_cell",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"4\">\n            <colspec colwidth=\"4\">\n            <thead>\n                <row>\n                    <entry>\n                        <paragraph>\n                            a\n                    <entry>\n                        <paragraph>\n                            b\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            c\n                    <entry>\n                        <paragraph>\n                            <problematic ids=\"id2\" refid=\"id1\">\n                                bad_\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "====  ====\na     b\n====  ====\nc     bad_\n====  ====\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:4: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.location.bullet_item",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                one\n        <list_item>\n            <paragraph>\n                two \n                <problematic ids=\"id2\" refid=\"id1\">\n                    bad_\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "- one\n- two bad_\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:2: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.location.enumerated_item",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <enumerated_list enumtype=\"arabic\" prefix=\"\" suffix=\".\">\n        <list_item>\n            <paragraph>\n                one\n        <list_item>\n            <paragraph>\n                two \n                <problematic ids=\"id2\" refid=\"id1\">\n                    bad_\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "1. one\n2. two bad_\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:2: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.location.definition",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                term\n            <definition>\n                <paragraph>\n                    definition \n                    <problematic ids=\"id2\" refid=\"id1\">\n                        bad_\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "term\n   definition bad_\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:2: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.location.classifier",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                term\n            <classifier>\n                classifier \n                <problematic ids=\"id2\" refid=\"id1\">\n                    bad_\n            <definition>\n                <paragraph>\n                    definition\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "term : classifier bad_\n   definition\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          false
+        ]
+      ],
+      "name": "state.location.field_body",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": ":field: body bad_\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:1: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.location.option_description",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <option_list>\n        <option_list_item>\n            <option_group>\n                <option>\n                    <option_string>\n                        -a\n            <description>\n                <paragraph>\n                    option \n                    <problematic ids=\"id2\" refid=\"id1\">\n                        bad_\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "-a  option bad_\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:1: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        4
+      ],
+      "id_trace": [
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.location.block_quote",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para.\n    <block_quote>\n        <paragraph>\n            quoted \n            <problematic ids=\"id2\" refid=\"id1\">\n                bad_\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para.\n\n   quoted bad_\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:3: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        4
+      ],
+      "id_trace": [
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.location.attribution",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <block_quote>\n        <paragraph>\n            Quote.\n        <attribution>\n            Author \n            <problematic ids=\"id2\" refid=\"id1\">\n                bad_\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "   Quote.\n\n   -- Author bad_\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:3: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.location.line_block",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <line_block>\n        <line>\n            line one\n        <line>\n            line \n            <problematic ids=\"id2\" refid=\"id1\">\n                bad_\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "| line one\n| line bad_\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:2: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.location.note_body",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <note>\n        <paragraph>\n            Body \n            <problematic ids=\"id2\" refid=\"id1\">\n                bad_\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": ".. note::\n\n   Body bad_\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:3: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        5
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "section",
+          "title-bad",
+          true
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.location.section_title",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title-bad\" names=\"title\\ bad\">\n        <title>\n            Title \n            <problematic ids=\"id2\" refid=\"id1\">\n                bad_\n        <paragraph>\n            Text.\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [
+          [
+            "title bad",
+            "title-bad",
+            false
+          ]
+        ],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Title bad_\n==========\n\nText.\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:2: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.location.rubric",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <rubric>\n        Rubric \n        <problematic ids=\"id2\" refid=\"id1\">\n            bad_\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": ".. rubric:: Rubric bad_\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:1: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.location.topic_title",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <topic>\n        <title>\n            Topic \n            <problematic ids=\"id2\" refid=\"id1\">\n                bad_\n        <paragraph>\n            Body.\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": ".. topic:: Topic bad_\n\n   Body.\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:1: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.location.sidebar_title",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <sidebar>\n        <title>\n            Side \n            <problematic ids=\"id2\" refid=\"id1\">\n                bad_\n        <paragraph>\n            Body.\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": ".. sidebar:: Side bad_\n\n   Body.\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:1: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.location.admonition_title",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <admonition classes=\"admonition-adm-bad\">\n        <title>\n            Adm \n            <problematic ids=\"id2\" refid=\"id1\">\n                bad_\n        <paragraph>\n            Body.\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": ".. admonition:: Adm bad_\n\n   Body.\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:1: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "sphinx.transforms.AutoNumbering",
+          "figure",
+          "id1",
+          true
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id2",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id3",
+          true
+        ]
+      ],
+      "name": "state.location.figure_caption",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <figure ids=\"id1\">\n        <image candidates=\"{'*': 'pic.png'}\" uri=\"pic.png\">\n        <caption>\n            Caption \n            <problematic ids=\"id3\" refid=\"id2\">\n                bad_\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": ".. figure:: pic.png\n\n   Caption bad_\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:3: ERROR: Unknown target name: \"bad\". [docutils]",
+        "<SRCDIR>/index.rst:1: WARNING: image file not readable: pic.png [image.not_readable]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.location.image_target",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <problematic ids=\"id2\" refid=\"id1\">\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": ".. image:: pic.png\n   :target: bad_\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        7
+      ],
+      "id_trace": [
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.location.image_target_mid",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para before.\n    <problematic ids=\"id2\" refid=\"id1\">\n    <paragraph>\n        Para after.\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para before.\n\n.. image:: pic.png\n   :target: bad_\n\nPara after.\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          true
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id3",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id4",
+          true
+        ]
+      ],
+      "name": "state.location.substitution_definition",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Use \n        <problematic ids=\"id2\" refid=\"id1\">\n            bad_\n         here.\n    <substitution_definition names=\"s\">\n        <problematic ids=\"id4\" refid=\"id3\">\n            bad_\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [
+          [
+            "s",
+            [
+              "substitution_definition",
+              [],
+              true
+            ]
+          ]
+        ],
+        "substitution_names": [
+          [
+            "s",
+            "s"
+          ]
+        ],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Use |s| here.\n\n.. |s| replace:: bad_\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:1: ERROR: Unknown target name: \"bad\". [docutils]",
+        "<SRCDIR>/index.rst:3: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "footnote_reference",
+          "id1",
+          true
+        ],
+        [
+          "parse",
+          "footnote",
+          "id2",
+          true
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id3",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id4",
+          true
+        ]
+      ],
+      "name": "state.location.footnote_body",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        See \n        <footnote_reference docname=\"index\" ids=\"id1\" refid=\"id2\">\n            1\n        .\n    <footnote backrefs=\"id1\" docname=\"index\" ids=\"id2\" names=\"1\">\n        <label>\n            1\n        <paragraph>\n            Note \n            <problematic ids=\"id4\" refid=\"id3\">\n                bad_\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [
+          [
+            "1",
+            [
+              [
+                "footnote_reference",
+                [
+                  "id1"
+                ],
+                true
+              ]
+            ]
+          ]
+        ],
+        "footnotes": [
+          [
+            "footnote",
+            [
+              "id2"
+            ],
+            true
+          ]
+        ],
+        "indirect_targets": [],
+        "names": [
+          [
+            "1",
+            "id2",
+            true
+          ]
+        ],
+        "refnames": [
+          [
+            "1",
+            [
+              [
+                "footnote_reference",
+                [
+                  "id1"
+                ],
+                true
+              ]
+            ]
+          ],
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "See [1]_.\n\n.. [1] Note bad_\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:3: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "citation_reference",
+          "id1",
+          false
+        ],
+        [
+          "parse",
+          "citation",
+          "cit",
+          true
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id2",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id3",
+          true
+        ]
+      ],
+      "name": "state.location.citation_body",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        See \n        <pending_xref ids=\"id1\" refdomain=\"citation\" reftarget=\"CIT\" reftype=\"ref\" refwarn=\"1\" support_smartquotes=\"0\">\n            <inline>\n                [CIT]\n        .\n    <citation backrefs=\"id1\" docname=\"index\" ids=\"cit\" names=\"cit\">\n        <label support_smartquotes=\"0\">\n            CIT\n        <paragraph>\n            Cite \n            <problematic ids=\"id3\" refid=\"id2\">\n                bad_\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [
+          [
+            "cit",
+            [
+              [
+                "citation_reference",
+                [
+                  "id1"
+                ],
+                true
+              ]
+            ]
+          ]
+        ],
+        "citations": [
+          [
+            "citation",
+            [
+              "cit"
+            ],
+            true
+          ]
+        ],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [
+          [
+            "cit",
+            "cit",
+            true
+          ]
+        ],
+        "refnames": [
+          [
+            "cit",
+            [
+              [
+                "citation_reference",
+                [
+                  "id1"
+                ],
+                true
+              ]
+            ]
+          ],
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "See [CIT]_.\n\n.. [CIT] Cite bad_\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:3: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "sphinx.transforms.AutoNumbering",
+          "table",
+          "id1",
+          true
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id2",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id3",
+          true
+        ]
+      ],
+      "name": "state.location.table_title",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <table ids=\"id1\">\n        <title>\n            Cap \n            <problematic ids=\"id3\" refid=\"id2\">\n                bad_\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"1\">\n            <colspec colwidth=\"1\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            a\n                    <entry>\n                        <paragraph>\n                            b\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": ".. table:: Cap bad_\n\n   =  =\n   a  b\n   =  =\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:1: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.location.list_table_cell",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"50\">\n            <colspec colwidth=\"50\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            a\n                    <entry>\n                        <paragraph>\n                            <problematic ids=\"id2\" refid=\"id1\">\n                                bad_\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": ".. list-table::\n\n   * - a\n     - bad_\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:4: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.location.glossary_definition",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <glossary sorted=\"0\">\n        <definition_list classes=\"glossary\">\n            <definition_list_item>\n                <term ids=\"term-term\">\n                    term\n                    <index entries=\"('single',\\ 'term',\\ 'term-term',\\ 'main',\\ None)\">\n                <definition>\n                    <paragraph>\n                        Definition \n                        <problematic ids=\"id2\" refid=\"id1\">\n                            bad_\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": ".. glossary::\n\n   term\n      Definition bad_\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:4: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "target",
+          "id1",
+          true
+        ],
+        [
+          "parse",
+          "target",
+          "id2",
+          true
+        ],
+        [
+          "docutils.transforms.references.Substitutions",
+          "system_message",
+          "id3",
+          false
+        ],
+        [
+          "docutils.transforms.references.Substitutions",
+          "problematic",
+          "id4",
+          true
+        ],
+        [
+          "docutils.transforms.references.Substitutions",
+          "system_message",
+          "id5",
+          false
+        ],
+        [
+          "docutils.transforms.references.Substitutions",
+          "problematic",
+          "id6",
+          true
+        ]
+      ],
+      "name": "state.glossary_sorted_anonymous_refs",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <glossary sorted=\"1\">\n        <definition_list classes=\"glossary\">\n            <definition_list_item>\n                <term ids=\"term-alpha\">\n                    alpha\n                    <index entries=\"('single',\\ 'alpha',\\ 'term-alpha',\\ 'main',\\ None)\">\n                <definition>\n                    <paragraph>\n                        First \n                        <problematic ids=\"id6\" refid=\"id5\">\n                            |asub|\n                         and \n                        <reference anonymous=\"1\" name=\"y\" refuri=\"https://y.example/\">\n                            y\n                        .\n            <definition_list_item>\n                <term ids=\"term-zeta\">\n                    zeta\n                    <index entries=\"('single',\\ 'zeta',\\ 'term-zeta',\\ 'main',\\ None)\">\n                <definition>\n                    <paragraph>\n                        Last \n                        <problematic ids=\"id4\" refid=\"id3\">\n                            |zsub|\n                         and \n                        <reference anonymous=\"1\" name=\"x\" refuri=\"https://x.example/\">\n                            x\n                        .\n    <target anonymous=\"1\" ids=\"id1\" refuri=\"https://x.example/\">\n    <target anonymous=\"1\" ids=\"id2\" refuri=\"https://y.example/\">\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": ".. glossary::\n   :sorted:\n\n   zeta\n      Last |zsub| and `x`__.\n\n   alpha\n      First |asub| and `y`__.\n\n__ https://x.example/\n__ https://y.example/\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:5: ERROR: Undefined substitution referenced: \"zsub\". [docutils]",
+        "<SRCDIR>/index.rst:8: ERROR: Undefined substitution referenced: \"asub\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.location.parsed_literal",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para.\n    <literal_block xml:space=\"preserve\">\n        code \n        <problematic ids=\"id2\" refid=\"id1\">\n            bad_\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Para.\n\n.. parsed-literal::\n\n   code bad_\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:5: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.location.parsed_literal_list_item",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                item\n            <literal_block xml:space=\"preserve\">\n                code \n                <problematic ids=\"id2\" refid=\"id1\">\n                    bad_\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "- item\n\n  .. parsed-literal::\n\n     code bad_\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:5: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        6
+      ],
+      "id_trace": [
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.location.parsed_literal_table_cell",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <table>\n        <tgroup cols=\"1\">\n            <colspec colwidth=\"24\">\n            <tbody>\n                <row>\n                    <entry>\n                        <literal_block xml:space=\"preserve\">\n                            code \n                            <problematic ids=\"id2\" refid=\"id1\">\n                                bad_\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "+------------------------+\n| .. parsed-literal::    |\n|                        |\n|    code bad_           |\n+------------------------+\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:5: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        4
+      ],
+      "id_trace": [
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.location.rubric_before_paragraph",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <rubric>\n        Rubric \n        <problematic ids=\"id2\" refid=\"id1\">\n            bad_\n    <paragraph>\n        Para.\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": ".. rubric:: Rubric bad_\n\nPara.\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:2: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        "<SRCDIR>/index.rst",
+        5
+      ],
+      "id_trace": [
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.location.rubric_option",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <rubric classes=\"x\">\n        Rubric \n        <problematic ids=\"id2\" refid=\"id1\">\n            bad_\n    <paragraph>\n        Para.\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": ".. rubric:: Rubric bad_\n   :class: x\n\nPara.\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.location.rubric_list_item",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                item\n            <rubric>\n                Rubric \n                <problematic ids=\"id2\" refid=\"id1\">\n                    bad_\n            <paragraph>\n                Para.\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "- item\n\n  .. rubric:: Rubric bad_\n\n  Para.\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:0: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.location.rubric_in_only",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <only expr=\"html\">\n        <rubric>\n            Rubric \n            <problematic ids=\"id2\" refid=\"id1\">\n                bad_\n        <paragraph>\n            Para.\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": ".. only:: html\n\n   .. rubric:: Rubric bad_\n\n   Para.\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:4: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "section",
+          "title",
+          true
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          true
+        ]
+      ],
+      "name": "state.location.field_name",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Para.\n        <field_list>\n            <field>\n                <field_name>\n                    See \n                    <problematic ids=\"id2\" refid=\"id1\">\n                        bad_\n                <field_body>\n                    <paragraph>\n                        body\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [
+          [
+            "title",
+            "title",
+            false
+          ]
+        ],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Title\n=====\n\nPara.\n\n:See bad_: body\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:0: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    },
+    {
+      "final_position": [
+        null,
+        null
+      ],
+      "id_trace": [
+        [
+          "parse",
+          "section",
+          "title",
+          true
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id1",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id2",
+          true
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "system_message",
+          "id3",
+          false
+        ],
+        [
+          "sphinx.transforms.references.SphinxDanglingReferences",
+          "problematic",
+          "id4",
+          true
+        ]
+      ],
+      "name": "state.location.line_block_directive",
+      "pseudo_xml": "<document source=\"<SRCDIR>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <line_block>\n            <line>\n                First \n                <problematic ids=\"id2\" refid=\"id1\">\n                    bad_\n                 line\n            <line>\n                Second \n                <problematic ids=\"id4\" refid=\"id3\">\n                    bad_\n                 line\n",
+      "registries_post_parse": {
+        "autofootnote_refs": [],
+        "autofootnotes": [],
+        "citation_refs": [],
+        "citations": [],
+        "footnote_refs": [],
+        "footnotes": [],
+        "indirect_targets": [],
+        "names": [
+          [
+            "title",
+            "title",
+            false
+          ]
+        ],
+        "refnames": [
+          [
+            "bad",
+            [
+              [
+                "reference",
+                [],
+                true
+              ],
+              [
+                "reference",
+                [],
+                true
+              ]
+            ]
+          ]
+        ],
+        "substitution_defs": [],
+        "substitution_names": [],
+        "symbol_footnote_refs": [],
+        "symbol_footnotes": []
+      },
+      "rst": "Title\n=====\n\n.. line-block::\n\n   First bad_ line\n   Second bad_ line\n",
+      "warnings": [
+        "<SRCDIR>/index.rst:4: ERROR: Unknown target name: \"bad\". [docutils]",
+        "<SRCDIR>/index.rst:5: ERROR: Unknown target name: \"bad\". [docutils]"
+      ]
+    }
+  ],
+  "docutils_version": "0.22.4",
+  "generator": "tools/gen_read_state_fixture.py",
+  "harness": "tools/gen_sphinx_fixture.py's probe (sphinx.util.docutils._parse_str_to_doctree with env.settings + registry transforms, one docutils_namespace() per read), instrumented: document.set_id (id_trace), Transformer.apply_transforms (the trace's phase), RSTParser.parse (registries_post_parse, final_position)",
+  "normalizations": [
+    "srcdir absolute path -> <SRCDIR>"
+  ],
+  "settings": {
+    "auto_id_prefix": "id",
+    "docname": "index",
+    "doctitle_xform": false,
+    "extensions": [],
+    "halt_level": 5,
+    "id_prefix": "",
+    "keep_warnings": true,
+    "language": "en",
+    "report_level": 2,
+    "sectsubtitle_xform": false,
+    "smartquotes": false
+  },
+  "sphinx_version": "9.1.0"
+}

@@ -44,6 +44,17 @@ pub struct BuildConfig {
     /// Project release
     pub release: Option<String>,
 
+    /// `today`, default `''` (`config.py:227`, rebuild class `'env'`): the
+    /// text of the `|today|` default substitution when it is set
+    /// ([`crate::read::ReadSettings::today`]).
+    pub today: String,
+
+    /// `today_fmt`, default `None` (`config.py:229`, rebuild class
+    /// `'env'`): the strftime format `|today|` gives the build date when
+    /// `today` is empty; unset, the language's own, `'%b %d, %Y'` in `en`
+    /// ([`crate::read::ReadSettings::today_fmt`]).
+    pub today_fmt: Option<String>,
+
     /// Copyright notice
     pub copyright: Option<String>,
 
@@ -129,7 +140,8 @@ pub struct BuildConfig {
     /// match in full (`nitpick_ignore_regex`, `:274-282`).
     pub nitpick_ignore_regex: Vec<(String, String)>,
 
-    /// Tags set via `-t` (consumed by `only`/`ifconfig` once M2 lands)
+    /// Tags set via `-t`, which `.. only::` reads beside the builder's own
+    /// ([`crate::transforms::tags::Tags`])
     pub tags: Vec<String>,
 
     /// Cache/doctree directory override (Sphinx `-d`); defaults to
@@ -158,6 +170,45 @@ pub struct BuildConfig {
 
     /// Run directive/role validation during the build
     pub validate_directives: bool,
+
+    /// `suppress_warnings`, default `[]` (`config.py:262`, a list or tuple):
+    /// `type`, `type.*` or `type.subtype` patterns whose records are dropped
+    /// before they are printed or counted
+    /// ([`crate::diagnostics::WarningFilter`]).
+    pub suppress_warnings: Vec<String>,
+
+    /// `show_warning_types`, default `True` (`config.py:263`): whether a
+    /// record carries its ` [type.subtype]` suffix
+    /// ([`crate::diagnostics::Diagnostic::render`]).
+    pub show_warning_types: bool,
+
+    /// `keep_warnings`, default `False` (`config.py:261`, rebuild class
+    /// `'env'`): whether `FilterSystemMessages` keeps the reporter's
+    /// `system_message`s of level WARNING and up in the post-read doctree
+    /// ([`crate::read::ReadSettings::keep_warnings`]). A `-D` override takes
+    /// Sphinx's bool grammar, `0` or `1` only ([`STRICT_BOOL_KEYS`]).
+    pub keep_warnings: bool,
+
+    /// `trim_doctest_flags`, default `True` (`config.py:267`, rebuild class
+    /// `'env'`): whether `TrimDoctestFlagsTransform`, the post-transform at
+    /// priority 401, strips `# doctest: +FLAG` comments and `<BLANKLINE>`
+    /// markers from doctest blocks and Python console literal blocks
+    /// ([`crate::transforms::post`]). A `-D` override takes Sphinx's bool
+    /// grammar, `0` or `1` only ([`STRICT_BOOL_KEYS`]).
+    pub trim_doctest_flags: bool,
+
+    /// `primary_domain`, default `'py'` (`config.py:268`, rebuild class
+    /// `'env'`, `None` allowed): every document's default domain
+    /// ([`crate::rst::ReadConfig::primary_domain`]). A name no domain is
+    /// registered under warns at `config-inited` ([`Self::validate`]) and,
+    /// like `None`, leaves documents without a default domain.
+    pub primary_domain: Option<String>,
+
+    /// `highlight_language`, default `'default'` (`config.py:257`, rebuild
+    /// class `'env'`): the language of a `code-block` or `code` directive
+    /// with no argument and no `.. highlight::` before it
+    /// ([`crate::rst::ReadConfig::highlight_language`]).
+    pub highlight_language: String,
 
     /// Number figures, tables and code blocks (`numfig`, `config.py:275`).
     /// Off by default, exactly like Sphinx; when off,
@@ -265,11 +316,14 @@ pub struct BuildConfig {
     /// `'html'`-rebuild key in this family.
     pub modindex_common_prefix: Vec<String>,
 
-    /// `intersphinx_mapping`, already normalised and validated
+    /// `intersphinx_mapping`, normalised and validated
     /// (`ext/intersphinx/_load.py:38-136`): project name -> (target URI,
-    /// inventory locations). Loading a `conf.py` whose mapping fails
-    /// validation is an error, exactly as Sphinx's `ConfigError` aborts the
-    /// build — see [`crate::intersphinx::validate_mapping`].
+    /// inventory locations). [`Self::init_intersphinx_mapping`] fills it
+    /// from the `conf.py` value at `config-inited`, after the `-D`
+    /// overrides, and only with `sphinx.ext.intersphinx` loaded; a mapping
+    /// that fails validation is then an error, exactly as Sphinx's
+    /// `ConfigError` aborts the build — see
+    /// [`crate::intersphinx::validate_mapping`].
     pub intersphinx_mapping: crate::intersphinx::IntersphinxMapping,
 
     /// `intersphinx_disabled_reftypes`, default `['std:doc']`
@@ -314,6 +368,13 @@ const NONE_DEFAULT_INT_KEYS: [&str; 2] = [
     "maximum_signature_line_length",
     "python_maximum_signature_line_length",
 ];
+
+/// The config keys whose only valid type is `bool` and that this crate
+/// types, whose `-D` value takes Sphinx's bool grammar: `convert_overrides`
+/// turns `'0'` and `'1'` into `False` and `True` and raises `ConfigError`
+/// for anything else (`config.py:366-374`). The crate's other bool keys
+/// still also take `true`/`false`.
+const STRICT_BOOL_KEYS: [&str; 2] = ["keep_warnings", "trim_doctest_flags"];
 
 /// `deprecate_source_encoding` (`config.py:886-896`, a `config-inited`
 /// handler at priority 790): the encodings it does NOT warn about.
@@ -419,6 +480,8 @@ impl Default for BuildConfig {
             // that same default while explicit conf.py values remain intact.
             version: None,
             release: None,
+            today: String::new(),
+            today_fmt: None,
             copyright: Some("2024, Sphinx Ultra".to_string()),
             language: Some("en".to_string()),
             root_doc: Some("index".to_string()),
@@ -455,6 +518,12 @@ impl Default for BuildConfig {
             html_context: std::collections::BTreeMap::new(),
             conf_values: std::collections::BTreeMap::new(),
             validate_directives: true,
+            suppress_warnings: Vec::new(),
+            show_warning_types: true,
+            keep_warnings: false,
+            trim_doctest_flags: true,
+            primary_domain: Some("py".to_string()),
+            highlight_language: "default".to_string(),
 
             numfig: false,
             numfig_format: default_numfig_format(),
@@ -624,6 +693,12 @@ impl BuildConfig {
     /// (`config.py:279`) before the py domain's
     /// `python_maximum_signature_line_length`. Each message is logged
     /// `once=True`, so a key is reported at most once.
+    ///
+    /// `check_primary_domain` (800, registered after
+    /// `check_confval_types`, `config.py:854-858`) closes the list: a
+    /// `primary_domain` that names no registered domain warns. Sphinx then
+    /// sets it to `None`; [`crate::rst::ReadConfig`] reads such a name as
+    /// no domain anyway.
     pub fn validate(&self) -> Vec<String> {
         let mut warnings = Vec::new();
 
@@ -679,6 +754,20 @@ impl BuildConfig {
                 ));
             }
         }
+        // config-inited @800: `check_primary_domain`, registered after
+        // `check_confval_types`.
+        if let Some(primary_domain) = self
+            .primary_domain
+            .as_deref()
+            .filter(|name| !name.is_empty())
+        {
+            if crate::rst::roles::DomainId::from_name(primary_domain).is_none() {
+                warnings.push(format!(
+                    "primary_domain {} not found, ignored.",
+                    crate::utils::py_repr_str(primary_domain)
+                ));
+            }
+        }
         warnings
     }
 
@@ -694,6 +783,43 @@ impl BuildConfig {
             self.confval_type_mismatches
                 .push((key.to_string(), type_name.to_string()));
         }
+    }
+
+    /// Whether `sphinx.ext.intersphinx` is in `extensions`. Without it,
+    /// Sphinx registers none of intersphinx's configuration values, loads
+    /// no inventory and has no `:external:` role: `intersphinx_mapping` is
+    /// an ordinary `conf.py` variable ([TW F12]).
+    pub fn intersphinx_enabled(&self) -> bool {
+        self.extensions
+            .iter()
+            .any(|extension| extension == "sphinx.ext.intersphinx")
+    }
+
+    /// `validate_intersphinx_mapping` (`ext/intersphinx/_load.py:38-136`),
+    /// the `config-inited` handler `sphinx.ext.intersphinx` registers
+    /// (priority 800, after Sphinx's own): with the extension, normalise
+    /// `intersphinx_mapping` as `conf.py` wrote it ([`Self::conf_values`]),
+    /// or fail with the `ERROR` records it logs for each rejected entry and
+    /// the `ConfigError` it raises; a mapping no `conf.py` wrote (a YAML or
+    /// JSON configuration's typed value) stands. Without the extension
+    /// there is no such configuration value, and no inventory loads.
+    pub fn init_intersphinx_mapping(&mut self) -> Result<(), crate::error::ConfigInitError> {
+        if !self.intersphinx_enabled() {
+            self.intersphinx_mapping.clear();
+            return Ok(());
+        }
+        let Some(raw) = self.conf_values.get("intersphinx_mapping") else {
+            return Ok(());
+        };
+        let (mapping, errors) = crate::intersphinx::validate_mapping(raw);
+        if !errors.is_empty() {
+            return Err(crate::error::ConfigInitError {
+                message: crate::intersphinx::mapping_config_error(errors.len()),
+                errors,
+            });
+        }
+        self.intersphinx_mapping = mapping;
+        Ok(())
     }
 
     /// `validate_html_logo`/`validate_html_favicon`
@@ -777,6 +903,12 @@ impl BuildConfig {
             }
             self.note_confval_type_mismatch(key, "str");
             return Ok(None);
+        }
+
+        // Sphinx's bool grammar: anything but `0` and `1` is a `ConfigError`,
+        // which aborts configuration (`config.py:366-374`).
+        if STRICT_BOOL_KEYS.contains(&key) && !matches!(value, "0" | "1") {
+            anyhow::bail!("'{key}' must be '0' or '1', got '{value}'");
         }
 
         let mut tree = serde_json::to_value(&*self)?;
@@ -1126,23 +1258,184 @@ output:
         assert_eq!(config.user_agent, None);
     }
 
+    /// Sphinx validates `intersphinx_mapping` at `config-inited` only with
+    /// `sphinx.ext.intersphinx` loaded — after the `-D` overrides, so
+    /// `-D extensions=sphinx.ext.intersphinx` loads it (`config.py:316-321`)
+    /// — and aborts with `ConfigError` after logging each rejected entry.
+    /// Without the extension the mapping is an ordinary variable: nothing
+    /// is validated and no inventory loads. A mapping that no `conf.py`
+    /// wrote (a YAML or JSON configuration's typed value) stands.
     #[test]
-    fn an_invalid_intersphinx_mapping_fails_configuration_loading() {
-        // Sphinx raises ConfigError here, which aborts the build before it
-        // starts; the CLI turns a config-loading error into exit code 2.
+    fn intersphinx_mapping_needs_the_extension() {
         let temp_dir = TempDir::new().unwrap();
         let p = temp_dir.path().join("conf.py");
-        fs::write(
-            &p,
-            "intersphinx_mapping = {'a': ('https://x/', None), 'b': ('https://x/', None)}\n",
-        )
-        .unwrap();
+        let duplicated =
+            "intersphinx_mapping = {'a': ('https://x/', None), 'b': ('https://x/', None)}\n";
+        fs::write(&p, duplicated).unwrap();
+        let mut config = BuildConfig::from_file(&p).expect("loading does not validate it");
+        assert!(!config.intersphinx_enabled());
+        config.init_intersphinx_mapping().expect("not validated");
+        assert!(config.intersphinx_mapping.is_empty());
 
-        let err = BuildConfig::from_file(&p).expect_err("a duplicate target URI must abort");
+        let mut config = BuildConfig::from_file(&p).unwrap();
+        assert_eq!(
+            config
+                .apply_override("extensions", "sphinx.ext.intersphinx")
+                .unwrap(),
+            None
+        );
+        assert!(config.intersphinx_enabled());
+        let err = config
+            .init_intersphinx_mapping()
+            .expect_err("a duplicate target URI must abort");
         assert_eq!(
             err.to_string(),
             "Invalid `intersphinx_mapping` configuration (1 error)."
         );
+        assert_eq!(
+            err.errors,
+            [
+                "Invalid target URI value `'https://x/'` in intersphinx_mapping['b'][0]. \
+              Target URIs must be unique (other instance in intersphinx_mapping['a'])."
+            ]
+        );
+
+        fs::write(
+            &p,
+            "extensions = ['sphinx.ext.intersphinx']\n\
+             intersphinx_mapping = {'a': ('https://x/', None)}\n",
+        )
+        .unwrap();
+        let mut config = BuildConfig::from_file(&p).unwrap();
+        config.init_intersphinx_mapping().unwrap();
+        assert_eq!(
+            config.intersphinx_mapping["a"],
+            ("https://x/".to_string(), vec![None])
+        );
+        // Without the extension, even a valid mapping loads nothing.
+        config.extensions.clear();
+        config.init_intersphinx_mapping().unwrap();
+        assert!(config.intersphinx_mapping.is_empty());
+
+        let mut typed = BuildConfig {
+            extensions: vec!["sphinx.ext.intersphinx".to_string()],
+            ..BuildConfig::default()
+        };
+        typed
+            .intersphinx_mapping
+            .insert("t".to_string(), ("https://t/".to_string(), vec![None]));
+        typed.init_intersphinx_mapping().unwrap();
+        assert_eq!(typed.intersphinx_mapping.len(), 1);
+    }
+
+    /// `primary_domain` and `highlight_language` are read-side keys with
+    /// Sphinx's defaults (`config.py:257`, `:268`). Their `-D` value is the
+    /// string `convert_overrides` returns for a `str` default, `'None'`
+    /// included; the parse reads them, and the extension list, through
+    /// [`crate::rst::ReadConfig`].
+    #[test]
+    fn read_config_keys_take_sphinxs_defaults_and_overrides() {
+        // Sphinx's own `extensions` default is empty; this crate's default
+        // configuration lists three extensions, intersphinx among them.
+        assert!(crate::rst::ReadConfig::from(&BuildConfig::default()).intersphinx);
+        let mut config = BuildConfig {
+            extensions: Vec::new(),
+            ..BuildConfig::default()
+        };
+        assert_eq!(config.primary_domain.as_deref(), Some("py"));
+        assert_eq!(config.highlight_language, "default");
+        assert_eq!(
+            crate::rst::ReadConfig::from(&config),
+            crate::rst::ReadConfig::default()
+        );
+
+        assert_eq!(config.apply_override("primary_domain", "js").unwrap(), None);
+        assert_eq!(
+            config
+                .apply_override("highlight_language", "python3")
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            config
+                .apply_override("extensions", "sphinx.ext.intersphinx")
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            crate::rst::ReadConfig::from(&config),
+            crate::rst::ReadConfig {
+                primary_domain: Some("js".to_string()),
+                highlight_language: "python3".to_string(),
+                intersphinx: true,
+            }
+        );
+        assert_eq!(
+            config.conf_values.get("highlight_language"),
+            Some(&serde_json::Value::String("python3".to_string()))
+        );
+
+        assert_eq!(
+            config.apply_override("primary_domain", "None").unwrap(),
+            None
+        );
+        assert_eq!(config.primary_domain.as_deref(), Some("None"));
+        let mut unset = BuildConfig {
+            primary_domain: None,
+            ..BuildConfig::default()
+        };
+        assert_eq!(unset.apply_override("primary_domain", "c").unwrap(), None);
+        assert_eq!(unset.primary_domain.as_deref(), Some("c"));
+    }
+
+    /// `check_primary_domain` (`config-inited`, 800, `config.py:854-858`):
+    /// a `primary_domain` no domain is registered under warns, after the
+    /// type checks; an unset or empty one does not (probed on Sphinx
+    /// 9.1.0: `primary_domain = 'nope'` prints
+    /// `WARNING: primary_domain 'nope' not found, ignored.`).
+    #[test]
+    fn an_unknown_primary_domain_warns_at_config_inited() {
+        let warnings = |primary_domain: Option<&str>| {
+            BuildConfig {
+                primary_domain: primary_domain.map(str::to_string),
+                ..BuildConfig::default()
+            }
+            .validate()
+        };
+        assert_eq!(
+            warnings(Some("nope")),
+            ["primary_domain 'nope' not found, ignored."]
+        );
+        assert_eq!(
+            warnings(Some("None")),
+            ["primary_domain 'None' not found, ignored."]
+        );
+        for domain in [
+            "py",
+            "std",
+            "c",
+            "cpp",
+            "js",
+            "rst",
+            "math",
+            "index",
+            "citation",
+            "changeset",
+        ] {
+            assert!(warnings(Some(domain)).is_empty(), "{domain}");
+        }
+        assert!(warnings(None).is_empty());
+        assert!(warnings(Some("")).is_empty());
+
+        let mut config = BuildConfig {
+            primary_domain: Some("nope".to_string()),
+            toc_object_entries_show_parents: "bogus".to_string(),
+            ..BuildConfig::default()
+        };
+        config.note_confval_type_mismatch("maximum_signature_line_length", "str");
+        let warnings = config.validate();
+        assert_eq!(warnings.len(), 3);
+        assert_eq!(warnings[2], "primary_domain 'nope' not found, ignored.");
     }
 
     #[test]
@@ -1178,6 +1471,137 @@ output:
             .unwrap()
             .is_none());
         assert_eq!(config.intersphinx_timeout, Some(5.0));
+    }
+
+    /// `suppress_warnings` (default `[]`) and `show_warning_types` (default
+    /// `True`), `config.py:262-263`. `-D` splits a list on commas, as
+    /// Sphinx's `convert_overrides` does, and takes `0`/`1` for a bool.
+    #[test]
+    fn warning_stream_keys_default_like_sphinx_and_take_overrides() {
+        let mut config = BuildConfig::default();
+        assert!(config.suppress_warnings.is_empty());
+        assert!(config.show_warning_types);
+
+        assert!(config
+            .apply_override("suppress_warnings", "toc.not_included,ref.*")
+            .unwrap()
+            .is_none());
+        assert_eq!(config.suppress_warnings, ["toc.not_included", "ref.*"]);
+        assert!(config
+            .apply_override("show_warning_types", "0")
+            .unwrap()
+            .is_none());
+        assert!(!config.show_warning_types);
+    }
+
+    /// `keep_warnings` (`config.py:261`: default `False`, type `bool` only).
+    /// Its `-D` value is Sphinx's bool grammar: `convert_overrides` takes
+    /// `'0'` and `'1'` and raises `ConfigError` for anything else
+    /// (`config.py:366-374`), `true` included, with the message Sphinx
+    /// prints. The override reaches `conf_values` like any other.
+    #[test]
+    fn keep_warnings_takes_sphinxs_bool_grammar() {
+        let mut config = BuildConfig::default();
+        assert!(!config.keep_warnings);
+
+        assert!(config
+            .apply_override("keep_warnings", "1")
+            .unwrap()
+            .is_none());
+        assert!(config.keep_warnings);
+        assert_eq!(
+            config.conf_values.get("keep_warnings"),
+            Some(&serde_json::Value::Bool(true))
+        );
+        assert!(config
+            .apply_override("keep_warnings", "0")
+            .unwrap()
+            .is_none());
+        assert!(!config.keep_warnings);
+
+        for value in ["true", "True", "false", "yes", ""] {
+            let error = config
+                .apply_override("keep_warnings", value)
+                .expect_err(value);
+            assert_eq!(
+                error.to_string(),
+                format!("'keep_warnings' must be '0' or '1', got '{value}'")
+            );
+            assert!(!config.keep_warnings, "{value}: the setting is unchanged");
+        }
+    }
+
+    /// `trim_doctest_flags` (`config.py:267`: default `True`, type `bool`
+    /// only) takes the same bool grammar on `-D` as `keep_warnings`, and
+    /// its override reaches `conf_values`.
+    #[test]
+    fn trim_doctest_flags_takes_sphinxs_bool_grammar() {
+        let mut config = BuildConfig::default();
+        assert!(config.trim_doctest_flags);
+
+        assert!(config
+            .apply_override("trim_doctest_flags", "0")
+            .unwrap()
+            .is_none());
+        assert!(!config.trim_doctest_flags);
+        assert_eq!(
+            config.conf_values.get("trim_doctest_flags"),
+            Some(&serde_json::Value::Bool(false))
+        );
+        assert!(config
+            .apply_override("trim_doctest_flags", "1")
+            .unwrap()
+            .is_none());
+        assert!(config.trim_doctest_flags);
+
+        for value in ["false", "False", "true", "no", ""] {
+            let error = config
+                .apply_override("trim_doctest_flags", value)
+                .expect_err(value);
+            assert_eq!(
+                error.to_string(),
+                format!("'trim_doctest_flags' must be '0' or '1', got '{value}'")
+            );
+            assert!(
+                config.trim_doctest_flags,
+                "{value}: the setting is unchanged"
+            );
+        }
+    }
+
+    /// `today` (`config.py:227`, default `''`) and `today_fmt` (`:229`,
+    /// default `None`) are strings, which a `-D` override sets verbatim
+    /// (`convert_overrides`: a `str` or `None` default returns the value,
+    /// `config.py:393-394`), a number-looking one included. The override
+    /// reaches `conf_values` like any other.
+    #[test]
+    fn today_and_today_fmt_take_string_overrides() {
+        let mut config = BuildConfig::default();
+        assert_eq!(
+            (config.today.as_str(), config.today_fmt.as_deref()),
+            ("", None)
+        );
+        for (key, value) in [
+            ("today", "April 1, 2026"),
+            ("today", "2026"),
+            ("today_fmt", "%B %-d, %Y"),
+            ("today_fmt", "2026"),
+        ] {
+            assert!(
+                config.apply_override(key, value).unwrap().is_none(),
+                "{key}={value}"
+            );
+            let set = match key {
+                "today" => Some(config.today.as_str()),
+                _ => config.today_fmt.as_deref(),
+            };
+            assert_eq!(set, Some(value), "{key}={value}");
+            assert_eq!(
+                config.conf_values.get(key),
+                Some(&serde_json::Value::String(value.to_string())),
+                "{key}={value}"
+            );
+        }
     }
 
     #[test]

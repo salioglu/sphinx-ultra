@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 
 use crate::doctree::{kinds, AttrValue, Doctree, Node};
 use crate::env::numbers::clean_astext;
-use crate::env::std_domain::{DocumentIds, PropagatedIds};
+use crate::env::std_domain::DocumentIds;
 use crate::env::toctree::docname_join;
 use crate::env::BuildEnvironment;
 use crate::error::{BuildWarning, WarningType};
@@ -84,6 +84,9 @@ pub enum Inner {
     /// A fresh `inline` node (`build_reference_node`, and the `:doc:`
     /// caption).
     Inline { text: String, classes: Vec<String> },
+    /// A fresh Text node: the number a reference to an equation shows
+    /// (`MathDomain.resolve_xref`'s `title`).
+    Text(String),
     /// Existing nodes moved under the reference: the
     /// `pending_xref_condition(condition='resolved')` children a resolved
     /// py xref adopts (`PythonDomain.resolve_xref`, `:986-992`).
@@ -121,6 +124,50 @@ impl Resolver<'_> {
             "option" => self.resolve_option(req),
             "term" => self.resolve_term(req),
             _ => self.resolve_obj(req),
+        }
+    }
+
+    /// `domain.resolve_xref` for the domain `refdomain` names: the citation
+    /// domain's ([`Self::resolve_citation`]), the math domain's
+    /// ([`Self::resolve_math`]), or the standard domain's
+    /// ([`Self::resolve_xref`]) for `std` and a role with no domain. The
+    /// python domain has a path of its own ([`resolve_py`]).
+    fn resolve_in_domain(&self, refdomain: &str, req: &XrefRequest<'_>) -> XrefOutcome {
+        match refdomain {
+            "citation" => self.resolve_citation(req),
+            "math" => self.resolve_math(req),
+            _ => self.resolve_xref(req),
+        }
+    }
+
+    /// `CitationDomain.resolve_xref` (`SP/sphinx/domains/citation.py:99-113`):
+    /// the citation the target labels, in any document, linked through its
+    /// first id, the content node kept (`make_refnode`).
+    fn resolve_citation(&self, req: &XrefRequest<'_>) -> XrefOutcome {
+        match self.env.citation.get(req.reftarget) {
+            Some(entry) => XrefOutcome::Resolved(self.make_refnode(
+                req.fromdoc,
+                &entry.docname,
+                Some(entry.labelid.as_str()).filter(|labelid| !labelid.is_empty()),
+            )),
+            None => XrefOutcome::Missing,
+        }
+    }
+
+    /// `MathDomain.resolve_xref` (`SP/sphinx/domains/math.py:99-134`), for
+    /// both of the domain's roles, `eq` and `numref`: the equation the
+    /// target labels ([`crate::env::math::resolve_xref`]), linked through
+    /// its target's id, with its number, `(N)`, in place of the content
+    /// node.
+    fn resolve_math(&self, req: &XrefRequest<'_>) -> XrefOutcome {
+        match crate::env::math::resolve_xref(self.env, self.numfig, req.reftarget) {
+            Some(target) => {
+                let mut node =
+                    self.make_refnode(req.fromdoc, target.docname, Some(&target.node_id));
+                node.inner = Inner::Text(target.title);
+                XrefOutcome::Resolved(node)
+            }
+            None => XrefOutcome::Missing,
         }
     }
 
@@ -185,9 +232,10 @@ impl Resolver<'_> {
             Some((
                 enumerable_node_type(node).map(str::to_string),
                 // `target_node['ids']`, which for a `.. _label:` written
-                // above the node holds the propagated id — the same key
-                // `assign_figure_numbers` filed the number under.
-                PropagatedIds::of(&doctree).effective_ids(node),
+                // above the node holds the label's id (`PropagateTargets`,
+                // 260) — the same key `assign_figure_numbers` filed the
+                // number under.
+                node.attrs.ids.clone(),
             ))
         }) else {
             return XrefOutcome::Missing;
@@ -476,8 +524,10 @@ impl Resolver<'_> {
     /// `std:` prefix), then `StandardDomain.resolve_any_xref`
     /// (`std/__init__.py`: `'ref'` with the LOWERCASED target, `'option'`
     /// with the target as written, then the `objects` walk over
-    /// [`STD_OBJECT_TYPE_ROLES`]), then — `domains.sorted()` is
-    /// alphabetical and only `py` has a resolver here —
+    /// [`STD_OBJECT_TYPE_ROLES`]), then the other domains in
+    /// `domains.sorted()` order, of those this build resolves:
+    /// `CitationDomain.resolve_any_xref` (role `'ref'`),
+    /// `MathDomain.resolve_any_xref` (role `'eq'`) and
     /// `PythonDomain.resolve_any_xref`.
     fn resolve_any(
         &self,
@@ -490,7 +540,7 @@ impl Resolver<'_> {
         let mut push = |role: String, node: ResolvedXref| {
             // `_stringify`: `node.get('reftitle', node.astext())`.
             let label = node.reftitle.clone().unwrap_or_else(|| match &node.inner {
-                Inner::Inline { text, .. } => text.clone(),
+                Inner::Inline { text, .. } | Inner::Text(text) => text.clone(),
                 Inner::Contnode => req.contnode_text.to_string(),
                 Inner::Children(children) => children.iter().map(Node::astext).collect(),
             });
@@ -541,6 +591,15 @@ impl Resolver<'_> {
                     self.make_refnode(req.fromdoc, docname, Some(labelid)),
                 );
             }
+        }
+
+        // CitationDomain and MathDomain.resolve_any_xref: each its
+        // `resolve_xref`, under the role it reports.
+        if let XrefOutcome::Resolved(node) = self.resolve_citation(req) {
+            push("ref".to_string(), node);
+        }
+        if let XrefOutcome::Resolved(node) = self.resolve_math(req) {
+            push("eq".to_string(), node);
         }
 
         // PythonDomain.resolve_any_xref, non-module entries adopting the
@@ -766,26 +825,38 @@ pub struct NitpickConfig<'a> {
 pub struct DocumentResolution {
     pub warnings: Vec<BuildWarning>,
     /// References into a domain this build has no implementation for —
-    /// every `refdomain` outside `{"", "std", "py"}` (`c:`, `cpp:`, `js:`,
-    /// ...) — counted rather than warned about.
+    /// every `refdomain` outside `{"", "std", "py", "citation", "math"}`
+    /// (`c:`, `cpp:`, `js:`, ...) — counted rather than warned about.
     pub unresolvable_domain_refs: usize,
 }
 
 /// Resolve every `pending_xref` in one document, rewriting the tree the way
 /// `ReferencesResolver.run` does: the node is replaced by the reference
 /// that resolution built, or by its own content node when it failed.
+///
+/// Every warning it logs is about a node (`location=node`), so it names
+/// the node's source as `get_node_location` does, made absolute against
+/// the project's source directory `source_dir`
+/// ([`crate::rst::node_source_path`]): a node from an included file names
+/// `<srcdir>/part.rst`, whatever the cwd. `path`, the document's own
+/// source, stands for a source the table does not know.
 pub fn resolve_document(
     resolver: &Resolver<'_>,
     nitpick: &NitpickConfig<'_>,
     docname: &str,
     doctree: &mut Doctree,
     path: &Path,
+    source_dir: &Path,
 ) -> DocumentResolution {
     let mut out = DocumentResolution::default();
     // The walk mutates `root` while warnings read the source table for
-    // each node's `(source, line)`; the table is tiny, so a clone is the
-    // simplest split.
-    let sources = doctree.sources.clone();
+    // each node's `(source, line)`; the table is tiny, so a copy of it,
+    // its paths made absolute, is the simplest split.
+    let sources: Vec<String> = doctree
+        .sources
+        .iter()
+        .map(|source| crate::rst::node_source_path(source, source_dir))
+        .collect();
     resolve_children(
         resolver,
         nitpick,
@@ -796,7 +867,6 @@ pub fn resolve_document(
         None,
         &mut out,
     );
-    propagate_desc_domain(&mut doctree.root);
     out
 }
 
@@ -822,28 +892,6 @@ type Location = Option<(u16, u32)>;
 /// for any kind.
 fn contributes_location(node: &Node) -> bool {
     node.span.line != 0 && !matches!(node.kind, kinds::DOCUMENT | "desc" | "desc_content")
-}
-
-/// `PropagateDescDomain` (`post_transforms/__init__.py:382-390`, priority
-/// 200): "Add the domain name of the parent node as a class in each
-/// desc_signature node." Only descriptions that named a domain get one, so
-/// `describe`/`object` (`domain=""`) are left alone.
-fn propagate_desc_domain(node: &mut Node) {
-    if node.kind == "desc" {
-        if let Some(AttrValue::Str(domain)) = node.get("domain") {
-            if !domain.is_empty() {
-                let domain = domain.clone();
-                for child in &mut node.children {
-                    if child.kind == "desc_signature" {
-                        child.attrs.classes.push(domain.clone());
-                    }
-                }
-            }
-        }
-    }
-    for child in &mut node.children {
-        propagate_desc_domain(child);
-    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -875,14 +923,55 @@ fn resolve_children(
         return;
     }
     let children = std::mem::take(&mut node.children);
-    for child in children {
+    for mut child in children {
         if child.kind != kinds::PENDING_XREF {
             node.children.push(child);
             continue;
         }
-        node.children.extend(resolve_one(
+        // `node.replace_self(new_nodes)` (`post_transforms/__init__.py:92`,
+        // `SP/docutils/nodes.py:1110-1130`): the first new node, when it is
+        // an element, takes the pending_xref's basic attributes — a
+        // citation reference's ids, which its citation's backlink names.
+        let basic = take_basic_atts(&mut child);
+        let mut replacement = resolve_one(
             resolver, nitpick, docname, child, sources, path, location, out,
-        ));
+        );
+        if let Some(first) = replacement.first_mut() {
+            if first.kind != kinds::TEXT {
+                update_basic_atts(first, basic);
+            }
+        }
+        node.children.extend(replacement);
+    }
+}
+
+/// docutils' `Element.basic_attributes` taken out of `node`: its `ids`,
+/// `classes`, `names` and `dupnames`.
+pub(crate) fn take_basic_atts(node: &mut Node) -> [Vec<String>; 4] {
+    [
+        std::mem::take(&mut node.attrs.ids),
+        std::mem::take(&mut node.attrs.classes),
+        std::mem::take(&mut node.attrs.names),
+        std::mem::take(&mut node.attrs.dupnames),
+    ]
+}
+
+/// docutils `Element.update_basic_atts` (`SP/docutils/nodes.py:850-871`):
+/// each basic attribute of `node` gains, in order, the values of `basic`'s
+/// ([`take_basic_atts`]) it does not hold yet.
+pub(crate) fn update_basic_atts(node: &mut Node, basic: [Vec<String>; 4]) {
+    let [ids, classes, names, dupnames] = basic;
+    for (list, values) in [
+        (&mut node.attrs.ids, ids),
+        (&mut node.attrs.classes, classes),
+        (&mut node.attrs.names, names),
+        (&mut node.attrs.dupnames, dupnames),
+    ] {
+        for value in values {
+            if !list.contains(&value) {
+                list.push(value);
+            }
+        }
     }
 }
 
@@ -1015,7 +1104,7 @@ fn resolve_one(
     // in every project as broken. The count feeds the build's one-line
     // notice. Intersphinx still gets a look first — a reference into
     // another project's inventory is exactly what it is for.
-    if !matches!(refdomain.as_str(), "" | "std" | "py") {
+    if !matches!(refdomain.as_str(), "" | "std" | "py" | "citation" | "math") {
         let mut diagnostics = Vec::new();
         let outcome = resolver
             .intersphinx
@@ -1046,14 +1135,6 @@ fn resolve_one(
             out,
         );
     }
-    // An M1 heuristic kept deliberately: a `:doc:` target that is a URL is
-    // somebody linking out, not a broken document reference. Sphinx has no
-    // such carve-out and warns; ours stays silent (pinned by the CLI e2e
-    // suite).
-    if reftype == "doc" && is_url(&reftarget) {
-        return contnode.into_iter().collect();
-    }
-
     let req = XrefRequest {
         fromdoc: docname,
         refdoc: &refdoc,
@@ -1063,7 +1144,7 @@ fn resolve_one(
         program: program.as_deref(),
         contnode_text: &contnode_text,
     };
-    let outcome = resolver.resolve_xref(&req);
+    let outcome = resolver.resolve_in_domain(&refdomain, &req);
 
     match outcome {
         XrefOutcome::Resolved(resolved) => {
@@ -1099,10 +1180,13 @@ fn resolve_one(
                 // with the prefix stripped. The warning below still reports
                 // the target as written, because Sphinx never rewrote it.
                 HookOutcome::SelfReferential(stripped) => {
-                    let retry = resolver.resolve_xref(&XrefRequest {
-                        reftarget: &stripped,
-                        ..req
-                    });
+                    let retry = resolver.resolve_in_domain(
+                        &refdomain,
+                        &XrefRequest {
+                            reftarget: &stripped,
+                            ..req
+                        },
+                    );
                     if let XrefOutcome::Resolved(resolved) = retry {
                         return vec![reference_node(resolved, contnode, span)];
                     }
@@ -1596,11 +1680,12 @@ fn intersphinx_node(
 /// `None` means "resolution failed silently", which is the default for
 /// roles that are not `warn_dangling` outside nitpicky mode.
 ///
-/// `refdomain` is `"py"`, `"std"` or `""` (a domainless std role). Sphinx's
-/// nitpick-ignore matching tries the bare `(typ, target)` form ON TOP of
-/// `(domain:typ, target)` only "for 'std' types" — `not domain or
-/// domain.name == 'std'` — so a `('func', 'x')` entry does NOT silence a
-/// missing `:py:func:`x`` (probe-verified; `('py:func', 'x')` does).
+/// `refdomain` is `"py"`, `"citation"`, `"math"`, `"std"` or `""` (a
+/// domainless std role). Sphinx's nitpick-ignore matching tries the bare
+/// `(typ, target)` form ON TOP of `(domain:typ, target)` only "for 'std'
+/// types" — `not domain or domain.name == 'std'` — so a `('func', 'x')`
+/// entry does NOT silence a missing `:py:func:`x`` (probe-verified;
+/// `('py:func', 'x')` does).
 fn missing_reference_warning(
     env: &BuildEnvironment,
     nitpick: &NitpickConfig<'_>,
@@ -1609,20 +1694,18 @@ fn missing_reference_warning(
     target: &str,
     refwarn: bool,
 ) -> Option<String> {
-    let py = refdomain == "py";
+    let std_types = refdomain.is_empty() || refdomain == "std";
     let mut warn = refwarn;
     if nitpick.nitpicky {
         warn = true;
         // `dtype = f'{domain.name}:{typ}' if domain else typ` — a
         // domainless node (`:any:`) has NO domain-qualified spelling.
-        let dtype = if py {
-            format!("py:{typ}")
-        } else if refdomain.is_empty() {
+        let dtype = if refdomain.is_empty() {
             typ.to_string()
         } else {
-            format!("std:{typ}")
+            format!("{refdomain}:{typ}")
         };
-        let bare = !py;
+        let bare = std_types;
         let ignored =
             nitpick.ignore.iter().any(|(ityp, itarget)| {
                 (ityp == &dtype || (bare && ityp == typ)) && itarget == target
@@ -1638,12 +1721,20 @@ fn missing_reference_warning(
         return None;
     }
 
-    // The generic branch for a non-std domain
-    // (`post_transforms/__init__.py:290-295`) — the py domain defines no
-    // `dangling_warnings` and no `warn-missing-reference` handler, so every
-    // missing py ref takes this exact shape.
-    if py {
-        return Some(format!("py:{typ} reference target not found: {target}"));
+    // A non-std domain: the std domain's `warn-missing-reference` handler
+    // declines it, so the message is the domain's `dangling_warnings`
+    // entry for the role — the citation domain's `ref`
+    // (`SP/sphinx/domains/citation.py:37-39`) and the math domain's `eq`
+    // (`SP/sphinx/domains/math.py:55-57`), `%(target)s` — or else the
+    // generic non-std branch (`post_transforms/__init__.py:290-295`). The
+    // py domain defines no `dangling_warnings`, so every missing py ref
+    // takes the generic shape.
+    if !std_types {
+        return Some(match (refdomain, typ) {
+            ("citation", "ref") => format!("citation not found: {target}"),
+            ("math", "eq") => format!("equation not found: {target}"),
+            _ => format!("{refdomain}:{typ} reference target not found: {target}"),
+        });
     }
 
     // `:ref:` goes through the std domain's event handler, which
@@ -1682,10 +1773,6 @@ fn full_match(pattern: &str, text: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn is_url(target: &str) -> bool {
-    target.starts_with("http://") || target.starts_with("https://") || target.starts_with("file://")
-}
-
 fn attr_str<'a>(node: &'a Node, key: &'static str) -> Option<&'a str> {
     match node.get(key) {
         Some(AttrValue::Str(value)) => Some(value.as_str()),
@@ -1721,6 +1808,7 @@ fn reference_node(
             inner.children.push(Node::text_node(text, span));
             node.children.push(inner);
         }
+        Inner::Text(text) => node.children.push(Node::text_node(text, span)),
         Inner::Children(children) => node.children.extend(children),
     }
     node

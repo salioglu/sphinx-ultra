@@ -72,13 +72,15 @@ pub struct Document {
     /// Explicit hyperlink-target labels (docutils-normalized names).
     pub labels: Vec<LabelRecord>,
 
-    /// The parse's id/name registry snapshot (docutils `document.nameids`),
-    /// which the std-domain label harvest consumes. It rides the `Document`
-    /// — rather than being a separate read-phase value — so an incremental
-    /// cache hit, which skips parsing entirely, still has the real registry
+    /// What Sphinx registered while the parse ran ([`RegistryExport`]),
+    /// which the env collectors consume. It rides the `Document` — rather
+    /// than being a separate read-phase value — so an incremental cache
+    /// hit, which skips parsing entirely, still has the real registrations
     /// instead of an empty stand-in. Deliberately *not* `#[serde(default)]`:
     /// a cache entry written before this field existed fails to decode and
     /// is re-parsed, which is the honest outcome.
+    ///
+    /// [`RegistryExport`]: crate::rst::RegistryExport
     pub registry: crate::rst::RegistryExport,
 }
 

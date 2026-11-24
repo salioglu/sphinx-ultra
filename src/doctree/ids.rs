@@ -1,17 +1,27 @@
-//! docutils-exact id/name normalization and the document id registry.
+//! docutils-exact id/name normalization, and the parser's registration
+//! calls over the document state.
 //!
 //! Algorithms ported from docutils 0.22.4 `nodes.py` (`make_id`,
-//! `fully_normalize_name`, `whitespace_normalize_name`, `document.set_id`,
-//! `set_name_id_map`/`set_duplicate_name_id`), with the Sphinx settings
-//! `id_prefix=''`, `auto_id_prefix='id'` baked in (sphinx/environment
-//! overrides docutils' `'%'` default — auto ids are `id1`, `id2`, …).
+//! `fully_normalize_name`, `whitespace_normalize_name`, and the
+//! `document` registration methods: `set_id`, `note_implicit_target`,
+//! `note_explicit_target` and the `note_*` calls that fill the node
+//! registries) and Sphinx's `make_id`. The id and name bookkeeping they
+//! drive, with the Sphinx settings `id_prefix=''`, `auto_id_prefix='id'`
+//! (sphinx/environment overrides docutils' `'%'` default — auto ids are
+//! `id1`, `id2`, …), is the document state's
+//! [`IdAllocator`](crate::transforms::state::IdAllocator) and
+//! [`NameTable`](crate::transforms::state::NameTable); the registries,
+//! which hold nodes by identity ([`Uid`]), are its
+//! [`Registries`](crate::transforms::state::Registries).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use unicode_normalization::UnicodeNormalization;
 
-use super::messages;
-use super::Node;
+use super::pending::PendingTransform;
+use super::{AttrValue, Node, Uid};
+use crate::transforms::reporter::LogRecord;
+use crate::transforms::state::{DocLoc, DocumentState, NodeView, PendingRecord};
 use crate::utils::py_isspace;
 
 /// docutils `_non_id_translate_digraphs` (applied after lowercasing).
@@ -193,46 +203,349 @@ pub struct DupnameFixup {
     pub node_id: String,
 }
 
-/// Document-level id/name registry (docutils `document.ids`/`nameids`/
-/// `id_counter` with Sphinx auto-id settings).
-#[derive(Debug, Clone)]
-struct NameEntry {
-    /// Some(id) while the name maps uniquely; None once duplicated away.
-    id: Option<String>,
-    explicit: bool,
-    refuri: Option<String>,
-}
+// ----------------------------------------------------------------------
+// The parser's registration calls: docutils' and Sphinx's `document`
+// registration methods, over the document state (its id allocator and name
+// table, `crate::transforms::state`) and the node the parser holds. The
+// messages a duplicate name raises are built here and handed back for the
+// caller to place.
+// ----------------------------------------------------------------------
 
-#[derive(Debug, Default)]
-pub struct IdRegistry {
-    ids: HashSet<String>,
-    nameids: HashMap<String, NameEntry>,
-    /// per-prefix auto-id counters (only "id" in wave 1).
-    id_counter: HashMap<&'static str, u64>,
-    fixups: Vec<DupnameFixup>,
-    /// sphinx env.new_serialno('index') — shared by the index directive
-    /// and the index-entry-emitting roles (pep/rfc/cve/cwe/:index:).
-    index_serial: u32,
-    /// The other `env.new_serialno(category)` counters, keyed by the
-    /// `sphinx.util.nodes.make_id` prefix that asked for one
-    /// (`cmdoption-myprog`, `confval`, …). Kept apart from
-    /// [`Self::index_serial`] only because that one has a public accessor
-    /// (`index_serial`) that rides the parse export; the semantics are the
-    /// same per-document, per-category counter starting at 0.
-    serialnos: HashMap<String, u32>,
-}
-
-impl IdRegistry {
-    pub fn new() -> Self {
-        Self::default()
+impl DocumentState {
+    /// docutils `document.set_id(node)` (`nodes.py:1827-1875`) on a node
+    /// the parser holds. A node that already carries ids registers them
+    /// and keeps the last one (`set_id` returns its loop variable); a node
+    /// without ids takes a new one from the allocator. Either way the ids
+    /// are held by the node's identity, when it has one.
+    pub(crate) fn set_id(&mut self, node: &mut Node) -> String {
+        let holder = node.uid();
+        if let Some(last) = node.attrs.ids.last().cloned() {
+            for id in &node.attrs.ids {
+                self.ids.register(id, holder);
+            }
+            return last;
+        }
+        let id = self.ids.allocate(node.kind, &node.attrs.names, holder);
+        node.attrs.ids.push(id.clone());
+        id
     }
 
-    /// sphinx env.new_serialno('index'): returns the current value and
+    /// [`Self::set_id`] for a node `base_node` locates at `loc`, which
+    /// docutils reports a preset id of when another node holds it
+    /// (`SP/docutils/nodes.py:1832-1843`): `Duplicate ID`, an ERROR at the
+    /// node's location, placed in no tree (no `msgnode`). The holder's
+    /// start tag is spelled once the tree is complete
+    /// ([`Self::spell_duplicate_ids`]).
+    pub(crate) fn set_id_at(&mut self, node: &mut Node, loc: DocLoc) -> String {
+        if node.attrs.ids.is_empty() {
+            return self.set_id(node);
+        }
+        let holder = node.uid();
+        let ids = node.attrs.ids.clone();
+        for id in &ids {
+            if !self.ids.register(id, holder) {
+                let uid = self.identify(node);
+                let starttag = super::pformat::starttag(node);
+                drop(self.report(
+                    super::messages::ERROR,
+                    &format!("Duplicate ID: \"{id}\" used by "),
+                    loc,
+                    Vec::new(),
+                ));
+                self.parse.duplicate_ids.push(crate::rst::DuplicateId {
+                    record: self.log.len() - 1,
+                    id: id.clone(),
+                    node: uid,
+                    starttag,
+                });
+            }
+        }
+        ids.last().cloned().unwrap_or_default()
+    }
+
+    /// Completes each `Duplicate ID` record [`Self::set_id_at`] logged with
+    /// the start tag of the node that holds the id: the first node in the
+    /// tree under `root`, or in a detached subtree, that carries it and is
+    /// not the node the id was preset on, else the node a subtree the parse
+    /// dropped held it by ([`crate::rst::ParseOnlyState::dropped_id_holders`]).
+    /// A record no node completes leaves the log rather than print half a
+    /// sentence: every node docutils' `document.ids` can name is in one of
+    /// those places, so the parse found no node holding the id. Its removal
+    /// is logged at debug level, so that a holder a parse path loses
+    /// without [`Self::detach`] leaves a trace.
+    pub(crate) fn spell_duplicate_ids(&mut self, root: &Node) {
+        let mut unspelled = Vec::new();
+        for duplicate in std::mem::take(&mut self.parse.duplicate_ids) {
+            let holder = std::iter::once(root)
+                .chain(self.detached.iter())
+                .find_map(|tree| find_holder(tree, &duplicate.id, duplicate.node))
+                .map(super::pformat::starttag)
+                .or_else(|| self.parse.dropped_id_holders.get(&duplicate.id).cloned());
+            let Some(holder) = holder else {
+                log::debug!(
+                    "dropping the Duplicate ID record for \"{}\": no node in the tree, \
+                     a detached subtree or dropped content holds the id",
+                    duplicate.id
+                );
+                unspelled.push(duplicate.record);
+                continue;
+            };
+            let text = format!(
+                "Duplicate ID: \"{}\" used by {holder} and {}",
+                duplicate.id, duplicate.starttag
+            );
+            if let Some(LogRecord::Reporter { text: logged, .. }) =
+                self.log.get_mut(duplicate.record)
+            {
+                *logged = text;
+            }
+        }
+        // The records hold their place in the log by index: remove the
+        // last first.
+        unspelled.sort_unstable();
+        for record in unspelled.into_iter().rev() {
+            if record < self.log.len() {
+                self.log.remove(record);
+            }
+        }
+    }
+
+    /// The node's identity: the [`Uid`] it carries, or a newly minted one
+    /// it is stamped with. Every node a registry or a pending record
+    /// holds has one.
+    pub(crate) fn identify(&mut self, node: &mut Node) -> Uid {
+        match node.uid() {
+            Some(uid) => uid,
+            None => {
+                let uid = self.mint_uid();
+                node.set_uid(uid);
+                uid
+            }
+        }
+    }
+
+    /// docutils `note_refname(node)` (`nodes.py:2009-2010`):
+    /// `refnames[node['refname']].append(node)`. A node without a
+    /// `refname` is a caller error (docutils raises `KeyError`) and is
+    /// not noted.
+    pub(crate) fn note_refname(&mut self, node: &mut Node) {
+        let Some(AttrValue::Str(refname)) = node.get("refname") else {
+            debug_assert!(false, "note_refname on a {} without a refname", node.kind);
+            return;
+        };
+        let refname = refname.clone();
+        let uid = self.identify(node);
+        self.registries.refnames.push(&refname, uid);
+    }
+
+    /// docutils `note_indirect_target(target)` (`nodes.py:2015-2018`): the
+    /// target joins `indirect_targets` and, when it has a name, `refnames`
+    /// under the name it refers to.
+    pub(crate) fn note_indirect_target(&mut self, target: &mut Node) {
+        let uid = self.identify(target);
+        self.registries.indirect_targets.push(uid);
+        if !target.attrs.names.is_empty() {
+            self.note_refname(target);
+        }
+    }
+
+    /// docutils `note_autofootnote(footnote)`: `set_id`, then
+    /// `autofootnotes.append` (`nodes.py:2023-2025`).
+    pub(crate) fn note_autofootnote(&mut self, footnote: &mut Node) {
+        let uid = self.identify(footnote);
+        self.set_id(footnote);
+        self.registries.autofootnotes.push(uid);
+    }
+
+    /// docutils `note_autofootnote_ref(ref)` (`nodes.py:2027-2029`).
+    pub(crate) fn note_autofootnote_ref(&mut self, reference: &mut Node) {
+        let uid = self.identify(reference);
+        self.set_id(reference);
+        self.registries.autofootnote_refs.push(uid);
+    }
+
+    /// docutils `note_symbol_footnote(footnote)` (`nodes.py:2031-2033`).
+    pub(crate) fn note_symbol_footnote(&mut self, footnote: &mut Node) {
+        let uid = self.identify(footnote);
+        self.set_id(footnote);
+        self.registries.symbol_footnotes.push(uid);
+    }
+
+    /// docutils `note_symbol_footnote_ref(ref)` (`nodes.py:2035-2037`).
+    pub(crate) fn note_symbol_footnote_ref(&mut self, reference: &mut Node) {
+        let uid = self.identify(reference);
+        self.set_id(reference);
+        self.registries.symbol_footnote_refs.push(uid);
+    }
+
+    /// docutils `note_footnote(footnote)` (`nodes.py:2039-2041`): a
+    /// manually numbered footnote.
+    pub(crate) fn note_footnote(&mut self, footnote: &mut Node) {
+        let uid = self.identify(footnote);
+        self.set_id(footnote);
+        self.registries.footnotes.push(uid);
+    }
+
+    /// docutils `note_footnote_ref(ref)` (`nodes.py:2043-2046`):
+    /// `set_id`, `footnote_refs[refname].append`, `note_refname`. A
+    /// `[#name]_` reference arrives here after `note_autofootnote_ref`,
+    /// so its `set_id` registers the id the node already holds.
+    pub(crate) fn note_footnote_ref(&mut self, reference: &mut Node) {
+        let uid = self.identify(reference);
+        self.set_id(reference);
+        if let Some(AttrValue::Str(refname)) = reference.get("refname") {
+            let refname = refname.clone();
+            self.registries.footnote_refs.push(&refname, uid);
+        }
+        self.note_refname(reference);
+    }
+
+    /// docutils `note_citation(citation)` (`nodes.py:2048-2049`): no
+    /// `set_id`; the caller's `note_explicit_target` gives the id.
+    pub(crate) fn note_citation(&mut self, citation: &mut Node) {
+        let uid = self.identify(citation);
+        self.registries.citations.push(uid);
+    }
+
+    /// docutils `note_citation_ref(ref)` (`nodes.py:2051-2054`).
+    pub(crate) fn note_citation_ref(&mut self, reference: &mut Node) {
+        let uid = self.identify(reference);
+        self.set_id(reference);
+        if let Some(AttrValue::Str(refname)) = reference.get("refname") {
+            let refname = refname.clone();
+            self.registries.citation_refs.push(&refname, uid);
+        }
+        self.note_refname(reference);
+    }
+
+    /// The registry half of docutils `note_substitution_def(subdef,
+    /// def_name, msgnode)` (`nodes.py:2056-2073`), for the whitespace-
+    /// normalized `name`: the definition is the name's latest, and its
+    /// fully normalized form maps to it. The duplicate-name error stays
+    /// with the caller, which holds the tree; the old definition's
+    /// `dupname` waits for the complete tree
+    /// ([`Self::dupname_redefined_substitutions`]).
+    pub(crate) fn note_substitution_def(&mut self, subdef: &mut Node, name: &str) {
+        let uid = self.identify(subdef);
+        self.registries
+            .substitution_defs
+            .push((name.to_string(), uid));
+        self.registries
+            .substitution_names
+            .insert(fully_normalize_name(name), name.to_string());
+    }
+
+    /// docutils `note_substitution_def`'s `dupname(oldnode, name)`
+    /// (`nodes.py:2056-2073`), once the tree is complete: each definition
+    /// of a name but the last one registered loses the name, whether it
+    /// sits in `root` or in a subtree the parse detached.
+    pub(crate) fn dupname_redefined_substitutions(&mut self, root: &mut Node) {
+        let definitions = &self.registries.substitution_defs;
+        let last: HashMap<&str, Uid> = definitions
+            .iter()
+            .map(|(name, uid)| (name.as_str(), *uid))
+            .collect();
+        let redefined: HashMap<Uid, &str> = definitions
+            .iter()
+            .filter(|(name, uid)| last[name.as_str()] != *uid)
+            .map(|(name, uid)| (*uid, name.as_str()))
+            .collect();
+        if redefined.is_empty() {
+            return;
+        }
+        fn walk(node: &mut Node, redefined: &HashMap<Uid, &str>) {
+            if let Some(name) = node.uid().and_then(|uid| redefined.get(&uid)) {
+                dupname(node, name);
+            }
+            for child in &mut node.children {
+                walk(child, redefined);
+            }
+        }
+        walk(root, &redefined);
+        for node in &mut self.detached {
+            walk(node, &redefined);
+        }
+    }
+
+    /// docutils `note_pending(pending)` (`nodes.py:2081-2083`): queues the
+    /// node's transform, in parse order, by the node's identity.
+    pub(crate) fn note_pending(
+        &mut self,
+        node: &mut Node,
+        transform: PendingTransform,
+        order: u32,
+    ) {
+        let node = self.identify(node);
+        self.pending.push(PendingRecord {
+            transform,
+            order,
+            node,
+        });
+    }
+
+    /// docutils `note_implicit_target(node, msgnode)` (`nodes.py:1996-2000`):
+    /// [`Self::set_id`], then `set_name_id_map(..., explicit=False)`.
+    /// Returns the messages the node's duplicate names raise, reported at
+    /// `loc` ([`Self::report`]). docutils appends them to `msgnode`; the
+    /// caller places them there, or drops them where docutils has none.
+    pub(crate) fn note_implicit_target(&mut self, node: &mut Node, loc: DocLoc) -> Vec<Node> {
+        self.note_target(node, false, loc)
+    }
+
+    /// docutils `note_explicit_target(node, msgnode)` (`nodes.py:2002-2007`):
+    /// [`Self::note_implicit_target`] with the names bound as explicit.
+    pub(crate) fn note_explicit_target(&mut self, node: &mut Node, loc: DocLoc) -> Vec<Node> {
+        self.note_target(node, true, loc)
+    }
+
+    /// `set_id` plus `set_name_id_map`, applying each reported duplicate
+    /// the way `set_duplicate_name_id` does: the node in hand loses the
+    /// name at once, an earlier node (already placed in the parser's tree)
+    /// through a [`DupnameFixup`], and the message is reported here.
+    fn note_target(&mut self, node: &mut Node, explicit: bool, loc: DocLoc) -> Vec<Node> {
+        let id = self.set_id_at(node, loc);
+        let duplicates = self.names.bind(NodeView::of(node), &id, explicit);
+        let mut reported = Vec::with_capacity(duplicates.len());
+        for duplicate in duplicates {
+            if duplicate.dupname_new {
+                dupname(node, &duplicate.name);
+            }
+            if let Some(node_id) = duplicate.dupname_old {
+                self.parse.dupname_fixups.push(DupnameFixup {
+                    name: duplicate.name.clone(),
+                    node_id,
+                });
+            }
+            let mut message = self.report(duplicate.level, &duplicate.message, loc, Vec::new());
+            if duplicate.backrefs {
+                message.attrs.backrefs.push(id.clone());
+            }
+            reported.push(message);
+        }
+        reported
+    }
+
+    /// sphinx `env.new_serialno('index')`: returns the current value and
     /// increments (serials start at 0 per document).
-    pub fn new_index_serialno(&mut self) -> u32 {
-        let n = self.index_serial;
-        self.index_serial += 1;
-        n
+    pub(crate) fn new_index_serialno(&mut self) -> u32 {
+        let serial = self.parse.index_serial;
+        self.parse.index_serial += 1;
+        serial
+    }
+
+    /// sphinx `env.new_serialno(category)`
+    /// (`SP/sphinx/environment/__init__.py:598-603`): the document's next
+    /// serial number of `category`, from 0 (`index` keeps its own counter,
+    /// [`Self::new_index_serialno`]).
+    pub(crate) fn new_serialno(&mut self, category: &str) -> u32 {
+        let counter = self
+            .parse
+            .serialnos
+            .entry(category.to_string())
+            .or_insert(0);
+        let serial = *counter;
+        *counter += 1;
+        serial
     }
 
     /// sphinx `util.nodes.make_id(env, document, prefix, term)` (`:610-637`),
@@ -251,8 +564,8 @@ impl IdRegistry {
     ///
     /// Sphinx does NOT register the result in `document.ids` here —
     /// `note_explicit_target` → `document.set_id` does, which is
-    /// [`Self::note_explicit_id`].
-    pub fn sphinx_make_id(&mut self, prefix: &str, term: &str) -> String {
+    /// [`IdAllocator::register`](crate::transforms::state::IdAllocator::register).
+    pub(crate) fn sphinx_make_id(&mut self, prefix: &str, term: &str) -> String {
         let mut node_id = if term.is_empty() {
             None
         } else if prefix.is_empty() {
@@ -266,12 +579,10 @@ impl IdRegistry {
         };
         loop {
             match &node_id {
-                Some(id) if !self.ids.contains(id) => return id.clone(),
+                Some(id) if !self.ids.is_taken(id) => return id.clone(),
                 _ => {}
             }
-            let counter = self.serialnos.entry(prefix.to_string()).or_insert(0);
-            let serial = *counter;
-            *counter += 1;
+            let serial = self.new_serialno(prefix);
             node_id = Some(if prefix.is_empty() {
                 format!("id{serial}")
             } else {
@@ -279,243 +590,44 @@ impl IdRegistry {
             });
         }
     }
+}
 
-    /// docutils `document.set_id` for a node that already carries ids
-    /// (`nodes.py:1832-1843`): registration only — the duplicate-id ERROR
-    /// path cannot fire for the ids [`Self::sphinx_make_id`] hands out,
-    /// which are chosen to be free.
-    pub fn note_explicit_id(&mut self, id: &str) {
-        self.ids.insert(id.to_string());
-    }
-
-    /// docutils `document.set_id` (id_prefix='', auto_id_prefix='id'):
-    /// first unregistered nonempty `make_id(name)` wins; otherwise `idN`.
-    fn allocate_id(&mut self, names: &[String]) -> String {
-        for name in names {
-            let base = make_id(name);
-            if !base.is_empty() && !self.ids.contains(&base) {
-                self.ids.insert(base.clone());
-                return base;
-            }
-        }
-        loop {
-            let counter = self.id_counter.entry("id").or_insert(0);
-            *counter += 1;
-            let id = format!("id{counter}");
-            if !self.ids.contains(&id) {
-                self.ids.insert(id.clone());
-                return id;
-            }
-        }
-    }
-
-    fn dupname_new(node: &mut Node, name: &str) {
-        if let Some(pos) = node.attrs.names.iter().position(|n| n == name) {
-            node.attrs.names.remove(pos);
-            node.attrs.dupnames.push(name.to_string());
-        }
-    }
-
-    /// docutils `set_name_id_map`/`set_duplicate_name_id` with the
-    /// explicit-vs-implicit precedence table (fixture-verified):
-    /// - implicit vs implicit: BOTH dupname'd, INFO "Duplicate implicit …"
-    /// - explicit vs explicit: BOTH dupname'd, WARNING "Duplicate explicit …"
-    ///   (unless both share an identical refuri: new dupname'd silently)
-    /// - new implicit vs old explicit: only the NEW node dupname'd, INFO
-    /// - new explicit vs old implicit: OLD dupname'd, new KEEPS the name,
-    ///   INFO "Target name overrides implicit target name …"
-    fn register(
-        &mut self,
-        node: &mut Node,
-        line: u32,
-        source: &str,
-        explicit: bool,
-        backrefs_on_msg: bool,
-        refuri: Option<&str>,
-    ) -> Option<Node> {
-        let id = self.allocate_id(&node.attrs.names);
-        node.attrs.ids.push(id.clone());
-
-        let mut message = None;
-        let names = node.attrs.names.clone();
-        for name in names {
-            let Some(entry) = self.nameids.get(&name).cloned() else {
-                self.nameids.insert(
-                    name,
-                    NameEntry {
-                        id: Some(id.clone()),
-                        explicit,
-                        refuri: refuri.map(str::to_string),
-                    },
-                );
-                continue;
-            };
-            let dup_info = |level: u8, text: String, with_backrefs: bool| {
-                let mut msg = messages::system_message(level, &text, line, source);
-                if with_backrefs {
-                    msg.attrs.backrefs.push(id.clone());
-                }
-                msg
-            };
-            match (entry.explicit, explicit) {
-                (true, true) => {
-                    if refuri.is_some() && entry.refuri.as_deref() == refuri {
-                        // Identical external duplicate: silent, new dupname'd.
-                        Self::dupname_new(node, &name);
-                        continue;
-                    }
-                    if let Some(old_id) = entry.id.clone() {
-                        self.fixups.push(DupnameFixup {
-                            name: name.clone(),
-                            node_id: old_id,
-                        });
-                    }
-                    self.nameids.insert(
-                        name.clone(),
-                        NameEntry {
-                            id: None,
-                            explicit: true,
-                            refuri: None,
-                        },
-                    );
-                    Self::dupname_new(node, &name);
-                    message = Some(dup_info(
-                        messages::WARNING,
-                        format!("Duplicate explicit target name: \"{name}\"."),
-                        backrefs_on_msg,
-                    ));
-                }
-                (true, false) => {
-                    // Old explicit wins: only the new node is dupname'd.
-                    Self::dupname_new(node, &name);
-                    message = Some(dup_info(
-                        messages::INFO,
-                        format!("Duplicate implicit target name: \"{name}\"."),
-                        backrefs_on_msg,
-                    ));
-                }
-                (false, true) => {
-                    // New explicit overrides: old dupname'd, new keeps name.
-                    if let Some(old_id) = entry.id.clone() {
-                        self.fixups.push(DupnameFixup {
-                            name: name.clone(),
-                            node_id: old_id,
-                        });
-                    }
-                    self.nameids.insert(
-                        name.clone(),
-                        NameEntry {
-                            id: Some(id.clone()),
-                            explicit: true,
-                            refuri: refuri.map(str::to_string),
-                        },
-                    );
-                    message = Some(dup_info(
-                        messages::INFO,
-                        format!("Target name overrides implicit target name \"{name}\"."),
-                        false,
-                    ));
-                }
-                (false, false) => {
-                    if let Some(old_id) = entry.id.clone() {
-                        self.fixups.push(DupnameFixup {
-                            name: name.clone(),
-                            node_id: old_id,
-                        });
-                    }
-                    self.nameids.insert(
-                        name.clone(),
-                        NameEntry {
-                            id: None,
-                            explicit: false,
-                            refuri: None,
-                        },
-                    );
-                    Self::dupname_new(node, &name);
-                    message = Some(dup_info(
-                        messages::INFO,
-                        format!("Duplicate implicit target name: \"{name}\"."),
-                        backrefs_on_msg,
-                    ));
-                }
-            }
-        }
-        message
-    }
-
-    /// Register an implicit target (section). On duplicate: INFO/1 message
-    /// (placed by the caller inside the new section after its title), new
-    /// node dupname'd immediately, old node queued for
-    /// [`apply_dupname_fixups`].
-    pub fn set_id_implicit(&mut self, node: &mut Node, line: u32, source: &str) -> Option<Node> {
-        self.register(node, line, source, false, true, None)
-    }
-
-    /// Register an explicit target (`.. _name:` forms). On duplicate:
-    /// WARNING/2; `backrefs` appear on the message only for internal targets
-    /// (probe-verified: external/refuri duplicates carry no backrefs).
-    pub fn set_id_explicit(
-        &mut self,
-        node: &mut Node,
-        line: u32,
-        source: &str,
-        internal: bool,
-        refuri: Option<&str>,
-    ) -> Option<Node> {
-        self.register(node, line, source, true, internal, refuri)
-    }
-
-    /// Register an anonymous target: always an auto id, never a name.
-    pub fn set_id_anonymous(&mut self, node: &mut Node) {
-        let id = self.allocate_id(&[]);
-        node.attrs.ids.push(id);
-    }
-
-    /// Allocate a bare auto id (`idN`) — used by the inline parser for
-    /// problematic/system_message pairs.
-    pub fn allocate_auto_id(&mut self) -> String {
-        self.allocate_id(&[])
-    }
-
-    pub fn take_fixups(&mut self) -> Vec<DupnameFixup> {
-        std::mem::take(&mut self.fixups)
-    }
-
-    /// Snapshot of the name->id table for downstream consumers (wave 4's
-    /// std-domain label harvest) that need name -> (id, explicit) after
-    /// this registry itself is dropped: `(name, id, explicit)`. `id` is
-    /// `None` once a name has been duplicated away (see [`Self::register`]).
-    pub fn nameids_snapshot(&self) -> Vec<(String, Option<String>, bool)> {
-        self.nameids
-            .iter()
-            .map(|(name, entry)| (name.clone(), entry.id.clone(), entry.explicit))
-            .collect()
-    }
-
-    /// Current value of the `env.new_serialno('index')` counter (see
-    /// [`Self::new_index_serialno`]).
-    pub fn index_serial(&self) -> u32 {
-        self.index_serial
+/// docutils `dupname(node, name)`: the name moves from `names` to
+/// `dupnames`. A name the node does not carry stays put (docutils
+/// raises).
+fn dupname(node: &mut Node, name: &str) {
+    if let Some(pos) = node.attrs.names.iter().position(|n| n == name) {
+        node.attrs.names.remove(pos);
+        node.attrs.dupnames.push(name.to_string());
     }
 }
 
-/// Post-parse pass: move `name` from `names` to `dupnames` on the node
-/// carrying `node_id` (the FIRST occurrence keeps its id, loses its name).
-pub fn apply_dupname_fixups(root: &mut Node, fixups: &[DupnameFixup]) {
-    if fixups.is_empty() {
-        return;
+/// The first node in pre-order under `node` that carries `id` and is not
+/// `except` ([`DocumentState::spell_duplicate_ids`]).
+fn find_holder<'n>(node: &'n Node, id: &str, except: Uid) -> Option<&'n Node> {
+    if node.uid() != Some(except) && node.attrs.ids.iter().any(|held| held == id) {
+        return Some(node);
     }
+    node.children
+        .iter()
+        .find_map(|child| find_holder(child, id, except))
+}
+
+/// Post-parse pass: move `name` from `names` to `dupnames` on the node
+/// carrying `node_id` (the FIRST occurrence keeps its id, loses its name),
+/// in the tree or in a subtree the parse detached: docutils marks the node
+/// object wherever it lives.
+pub fn apply_dupname_fixups(root: &mut Node, detached: &mut [Node], fixups: &[DupnameFixup]) {
     for fixup in fixups {
-        apply_one_fixup(root, fixup);
+        if !apply_one_fixup(root, fixup) {
+            detached.iter_mut().any(|node| apply_one_fixup(node, fixup));
+        }
     }
 }
 
 fn apply_one_fixup(node: &mut Node, fixup: &DupnameFixup) -> bool {
     if node.attrs.ids.contains(&fixup.node_id) {
-        if let Some(pos) = node.attrs.names.iter().position(|n| *n == fixup.name) {
-            node.attrs.names.remove(pos);
-            node.attrs.dupnames.push(fixup.name.clone());
-        }
+        dupname(node, &fixup.name);
         return true;
     }
     node.children
@@ -584,19 +696,20 @@ mod tests {
     }
 
     #[test]
-    fn sphinx_registry_make_id_falls_back_to_a_per_prefix_serial() {
-        let mut reg = IdRegistry::new();
-        assert_eq!(reg.sphinx_make_id("envvar", "HOME"), "envvar-HOME");
-        // Not registered until note_explicit_id, so the same call repeats.
-        assert_eq!(reg.sphinx_make_id("envvar", "HOME"), "envvar-HOME");
-        reg.note_explicit_id("envvar-HOME");
-        assert_eq!(reg.sphinx_make_id("envvar", "HOME"), "envvar-0");
-        reg.note_explicit_id("envvar-0");
-        assert_eq!(reg.sphinx_make_id("envvar", "HOME"), "envvar-1");
+    fn state_sphinx_make_id_falls_back_to_a_per_prefix_serial() {
+        let mut state = DocumentState::default();
+        assert_eq!(state.sphinx_make_id("envvar", "HOME"), "envvar-HOME");
+        // Not registered until `IdAllocator::register`, so the same call
+        // repeats.
+        assert_eq!(state.sphinx_make_id("envvar", "HOME"), "envvar-HOME");
+        state.ids.register("envvar-HOME", None);
+        assert_eq!(state.sphinx_make_id("envvar", "HOME"), "envvar-0");
+        state.ids.register("envvar-0", None);
+        assert_eq!(state.sphinx_make_id("envvar", "HOME"), "envvar-1");
         // A term that collapses to the prefix itself is "not good to
         // generate a node_id" and goes straight to the serial; the counter
         // is per prefix.
-        assert_eq!(reg.sphinx_make_id("cmdoption", "!!!"), "cmdoption-0");
+        assert_eq!(state.sphinx_make_id("cmdoption", "!!!"), "cmdoption-0");
     }
 
     /// The empty-prefix regime the py domain's `make_id(env, doc, '',
@@ -605,20 +718,72 @@ mod tests {
     /// fullname — and the serial fallback switches to `id{n}` starting at
     /// `id0` (probe `duplicate_functions`: second `dup` gets `id0`).
     #[test]
-    fn sphinx_registry_make_id_empty_prefix_keeps_fullname_and_serials_as_id_n() {
-        let mut reg = IdRegistry::new();
-        assert_eq!(reg.sphinx_make_id("", "mymod.C.meth"), "mymod.C.meth");
-        reg.note_explicit_id("mymod.C.meth");
-        assert_eq!(reg.sphinx_make_id("", "mymod.C.meth"), "id0");
-        reg.note_explicit_id("id0");
-        assert_eq!(reg.sphinx_make_id("", "mymod.C.meth"), "id1");
+    fn state_sphinx_make_id_empty_prefix_keeps_fullname_and_serials_as_id_n() {
+        let mut state = DocumentState::default();
+        assert_eq!(state.sphinx_make_id("", "mymod.C.meth"), "mymod.C.meth");
+        state.ids.register("mymod.C.meth", None);
+        assert_eq!(state.sphinx_make_id("", "mymod.C.meth"), "id0");
+        state.ids.register("id0", None);
+        assert_eq!(state.sphinx_make_id("", "mymod.C.meth"), "id1");
         // A term whose hash is empty goes straight to the serial; the
         // counter is shared per prefix ('' here), not per term.
-        reg.note_explicit_id("id1");
-        assert_eq!(reg.sphinx_make_id("", "!!!"), "id2");
+        state.ids.register("id1", None);
+        assert_eq!(state.sphinx_make_id("", "!!!"), "id2");
         // Empty term likewise.
-        reg.note_explicit_id("id2");
-        assert_eq!(reg.sphinx_make_id("", ""), "id3");
+        state.ids.register("id2", None);
+        assert_eq!(state.sphinx_make_id("", ""), "id3");
+    }
+
+    /// A `Duplicate ID` record no node completes, its holder in no tree, no
+    /// detached subtree and no subtree the parse dropped, leaves the log
+    /// rather than print the text it was logged with, which lacks the
+    /// holder's start tag ([`DocumentState::spell_duplicate_ids`]). With
+    /// two such records among spelled ones, the spelled records before,
+    /// between and after them stay, in order, each with its own text.
+    #[test]
+    fn an_unspelled_duplicate_id_leaves_the_log() {
+        let mut state = DocumentState::default();
+        let mut root = Node::elem(kinds::DOCUMENT, Span::ZERO);
+        // `a`, `c` and `e` are held by targets the tree keeps; `index-0`
+        // and `index-1` by nodes the parse kept nowhere.
+        for (line, id, kept) in [
+            (3, "a", true),
+            (5, "index-0", false),
+            (7, "c", true),
+            (9, "index-1", false),
+            (11, "e", true),
+        ] {
+            if kept {
+                let mut holder = Node::elem(kinds::TARGET, Span::ZERO);
+                holder.attrs.ids.push(id.into());
+                holder.attrs.names.push(id.into());
+                state.set_id(&mut holder);
+                root.children.push(holder);
+            } else {
+                assert!(state.ids.register(id, None));
+            }
+            let mut target = Node::elem(kinds::TARGET, Span::ZERO);
+            target.attrs.ids.push(id.into());
+            state.set_id_at(&mut target, DocLoc::at(0, line));
+        }
+        assert_eq!(state.log.len(), 5);
+        state.spell_duplicate_ids(&root);
+        let texts: Vec<&str> = state
+            .log
+            .iter()
+            .map(|record| match record {
+                LogRecord::Reporter { text, .. } => text.as_str(),
+                LogRecord::Logger { .. } => panic!("a logger record in the parse log"),
+            })
+            .collect();
+        assert_eq!(
+            texts,
+            [
+                r#"Duplicate ID: "a" used by <target ids="a" names="a"> and <target ids="a">"#,
+                r#"Duplicate ID: "c" used by <target ids="c" names="c"> and <target ids="c">"#,
+                r#"Duplicate ID: "e" used by <target ids="e" names="e"> and <target ids="e">"#,
+            ]
+        );
     }
 
     #[test]
@@ -633,18 +798,21 @@ mod tests {
     }
 
     #[test]
-    fn registry_assigns_ids_and_handles_implicit_duplicates() {
-        let mut reg = IdRegistry::new();
+    fn note_implicit_target_assigns_ids_and_handles_implicit_duplicates() {
+        let mut state = DocumentState::default();
         let mut s1 = Node::elem(kinds::SECTION, Span::ZERO);
         s1.attrs.names.push("duplicate".into());
-        assert!(reg.set_id_implicit(&mut s1, 3, "<snippet>").is_none());
+        assert!(state
+            .note_implicit_target(&mut s1, DocLoc::at(0, 3))
+            .is_empty());
         assert_eq!(s1.attrs.ids, vec!["duplicate"]);
 
         let mut s2 = Node::elem(kinds::SECTION, Span::ZERO);
         s2.attrs.names.push("duplicate".into());
-        let msg = reg
-            .set_id_implicit(&mut s2, 7, "<snippet>")
-            .expect("dup INFO");
+        let reported = state.note_implicit_target(&mut s2, DocLoc::at(0, 7));
+        let [msg] = reported.as_slice() else {
+            panic!("one INFO, got {reported:?}");
+        };
         assert_eq!(s2.attrs.ids, vec!["id1"]);
         assert!(s2.attrs.names.is_empty());
         assert_eq!(s2.attrs.dupnames, vec!["duplicate"]);
@@ -653,7 +821,7 @@ mod tests {
         assert_eq!(msg.attrs.backrefs, vec!["id1"]);
 
         // The FIRST node's fixup is deferred (it lives in the tree):
-        let fixups = reg.take_fixups();
+        let fixups = std::mem::take(&mut state.parse.dupname_fixups);
         assert_eq!(
             fixups,
             vec![DupnameFixup {
@@ -663,7 +831,7 @@ mod tests {
         );
         let mut root = Node::elem(kinds::DOCUMENT, Span::ZERO);
         root.children.push(s1);
-        apply_dupname_fixups(&mut root, &fixups);
+        apply_dupname_fixups(&mut root, &mut [], &fixups);
         let s1 = &root.children[0];
         assert!(s1.attrs.names.is_empty());
         assert_eq!(s1.attrs.dupnames, vec!["duplicate"]);
@@ -671,45 +839,69 @@ mod tests {
     }
 
     #[test]
-    fn registry_auto_ids_for_unmakeable_names() {
-        let mut reg = IdRegistry::new();
+    fn note_implicit_target_gives_unmakeable_names_auto_ids() {
+        let mut state = DocumentState::default();
         for (i, title) in ["!!!", "123", "..."].iter().enumerate() {
             let mut s = Node::elem(kinds::SECTION, Span::ZERO);
             s.attrs.names.push(fully_normalize_name(title));
-            reg.set_id_implicit(&mut s, 1, "<snippet>");
+            state.note_implicit_target(&mut s, DocLoc::at(0, 1));
             assert_eq!(s.attrs.ids, vec![format!("id{}", i + 1)]);
             assert_eq!(s.attrs.names.len(), 1); // names kept, no collision
         }
     }
 
+    /// docutils puts the new id in a duplicate's `backrefs` unless the
+    /// node is a `target` with a `refuri` (`nodes.py:1974-1977`).
     #[test]
-    fn explicit_duplicate_warning_backrefs_only_when_internal() {
-        let mut reg = IdRegistry::new();
-        let mut t1 = Node::elem(kinds::TARGET, Span::ZERO);
-        t1.attrs.names.push("dup".into());
-        assert!(reg
-            .set_id_explicit(&mut t1, 1, "<snippet>", false, Some("https://1/"))
-            .is_none());
-
-        let mut t2 = Node::elem(kinds::TARGET, Span::ZERO);
-        t2.attrs.names.push("dup".into());
-        let msg = reg
-            .set_id_explicit(&mut t2, 3, "<snippet>", false, Some("https://2/"))
-            .expect("dup WARNING");
+    fn explicit_duplicate_warning_backrefs_unless_a_target_has_a_refuri() {
+        let target = |name: &str, refuri: Option<&str>| {
+            let mut node = Node::elem(kinds::TARGET, Span::ZERO);
+            node.attrs.names.push(name.into());
+            if let Some(refuri) = refuri {
+                node.set("refuri", AttrValue::Str(refuri.into()));
+            }
+            node
+        };
+        let mut state = DocumentState::default();
+        let mut t1 = target("dup", Some("https://1/"));
+        assert!(state
+            .note_explicit_target(&mut t1, DocLoc::at(0, 1))
+            .is_empty());
+        let mut t2 = target("dup", Some("https://2/"));
+        let reported = state.note_explicit_target(&mut t2, DocLoc::at(0, 3));
+        let [msg] = reported.as_slice() else {
+            panic!("one WARNING, got {reported:?}");
+        };
         assert_eq!(msg.get("type"), Some(&AttrValue::Str("WARNING".into())));
         assert!(msg.attrs.backrefs.is_empty()); // external: no backrefs
         assert_eq!(t2.attrs.ids, vec!["id1"]);
         assert_eq!(t2.attrs.dupnames, vec!["dup"]);
 
-        let mut reg = IdRegistry::new();
-        let mut i1 = Node::elem(kinds::TARGET, Span::ZERO);
-        i1.attrs.names.push("t".into());
-        reg.set_id_explicit(&mut i1, 1, "<snippet>", true, None);
-        let mut i2 = Node::elem(kinds::TARGET, Span::ZERO);
-        i2.attrs.names.push("t".into());
-        let msg = reg
-            .set_id_explicit(&mut i2, 5, "<snippet>", true, None)
-            .expect("dup WARNING");
+        let mut state = DocumentState::default();
+        let mut i1 = target("t", None);
+        state.note_explicit_target(&mut i1, DocLoc::at(0, 1));
+        let mut i2 = target("t", None);
+        let reported = state.note_explicit_target(&mut i2, DocLoc::at(0, 5));
+        let [msg] = reported.as_slice() else {
+            panic!("one WARNING, got {reported:?}");
+        };
         assert_eq!(msg.attrs.backrefs, vec!["id1"]); // internal: backrefs
+    }
+
+    /// docutils `set_id` on a node that already carries ids registers
+    /// every one, allocates nothing and returns the last.
+    #[test]
+    fn set_id_on_a_node_with_ids_registers_them_and_returns_the_last() {
+        let mut state = DocumentState::default();
+        state.ids.enable_trace();
+        let mut node = Node::elem(kinds::TARGET, Span::ZERO);
+        node.attrs.ids = vec!["first".into(), "second".into()];
+        assert_eq!(state.set_id(&mut node), "second");
+        assert_eq!(node.attrs.ids, vec!["first", "second"]);
+        assert!(state.ids.is_taken("first") && state.ids.is_taken("second"));
+        assert!(state.ids.trace().is_empty());
+        let mut fresh = Node::elem(kinds::PROBLEMATIC, Span::ZERO);
+        assert_eq!(state.set_id(&mut fresh), "id1");
+        assert_eq!(state.ids.trace().len(), 1);
     }
 }

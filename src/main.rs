@@ -1,10 +1,12 @@
 use anyhow::Result;
 use clap::{ArgAction, Parser, Subcommand};
 use log::{info, warn};
-use std::fs::OpenOptions;
+use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use sphinx_ultra::diagnostics::{Category, Diagnostic, Location, Severity, WarningFilter};
+use sphinx_ultra::error::ConfigError;
 use sphinx_ultra::{analyze_project, BuildConfig, SphinxBuilder};
 
 #[derive(Parser)]
@@ -114,7 +116,7 @@ struct SphinxBuildCli {
     #[arg(short = 'A', value_name = "name=value", value_parser = parse_key_val, action = ArgAction::Append)]
     html_define: Vec<(String, String)>,
 
-    /// Define a tag (consumed by only/ifconfig once M2 lands)
+    /// Define a tag, which `.. only::` reads
     #[arg(short = 't', long = "tag", value_name = "TAG", action = ArgAction::Append)]
     tags: Vec<String>,
 
@@ -238,8 +240,16 @@ struct RunArgs {
     fresh_env: bool,
     fail_on_warning: bool,
     warning_file: Option<PathBuf>,
-    /// Print sphinx-build's closing "The HTML pages are in …" line
-    print_final_location: bool,
+    /// sphinx-build's status stream, stdout: the closing summary and the
+    /// "The HTML pages are in …" line, which `-q` silences. Off in the
+    /// native subcommand, which reports its summary on its own channels.
+    status_stream: bool,
+    /// sphinx-build compatible mode: Sphinx's warning stream (bare records,
+    /// the same bytes on stderr and in `-w`, which opens before the
+    /// configuration loads), its `Configuration error!` report, its closing
+    /// summary on the status stream, and no M1 validation pass. The native
+    /// `build` subcommand keeps its env_logger output.
+    sphinx_build_mode: bool,
 }
 
 impl RunArgs {
@@ -262,13 +272,139 @@ impl RunArgs {
             fresh_env: false,
             fail_on_warning: false,
             warning_file: None,
-            print_final_location: false,
+            status_stream: false,
+            sphinx_build_mode: false,
         }
     }
 }
 
-/// Shared build driver for both CLI modes. Returns the process exit code.
-async fn run_build(args: RunArgs) -> Result<i32> {
+/// The warning stream's two halves: stderr, and the `-w` file when one is
+/// given — Sphinx's `TeeStripANSI` (`sphinx/cmd/build.py:333-361`).
+struct WarningStream {
+    /// sphinx-build mode prints each record bare, the same bytes the file
+    /// gets; the native subcommand logs it through env_logger.
+    bare: bool,
+    show_warning_types: bool,
+    file: Option<File>,
+}
+
+impl WarningStream {
+    fn new(bare: bool) -> Self {
+        Self {
+            bare,
+            show_warning_types: true,
+            file: None,
+        }
+    }
+
+    /// Create (or truncate) the `-w` file, and its directory.
+    fn open(&mut self, path: Option<&Path>) -> Result<()> {
+        let Some(path) = path else {
+            return Ok(());
+        };
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        self.file = Some(
+            OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(path)?,
+        );
+        Ok(())
+    }
+
+    /// One record, `render(show_warning_types) + "\n"`, to both halves.
+    fn record(&mut self, record: &Diagnostic) -> Result<()> {
+        let line = record.render(self.show_warning_types);
+        if self.bare {
+            to_stderr(&format!("{line}\n"));
+        } else {
+            warn!("{line}");
+        }
+        self.write_line(&line)
+    }
+
+    /// A per-file failure, printed bare in either mode.
+    fn error(&mut self, error: &Diagnostic) -> Result<()> {
+        let line = error.render(self.show_warning_types);
+        to_stderr(&format!("{line}\n"));
+        self.write_line(&line)
+    }
+
+    /// One record to the file alone (the native subcommand logged it to
+    /// stderr when it happened).
+    fn write_record(&mut self, record: &Diagnostic) -> Result<()> {
+        self.write_line(&record.render(self.show_warning_types))
+    }
+
+    /// Text outside the record grammar, verbatim, to both halves.
+    fn raw(&mut self, text: &str) -> Result<()> {
+        to_stderr(text);
+        if let Some(file) = &mut self.file {
+            file.write_all(text.as_bytes())?;
+        }
+        Ok(())
+    }
+
+    fn write_line(&mut self, line: &str) -> Result<()> {
+        if let Some(file) = &mut self.file {
+            writeln!(file, "{line}")?;
+        }
+        Ok(())
+    }
+}
+
+/// Writes `text` to stderr in one call. A closed or broken stderr loses the
+/// text but does not abort the build — the `-w` file and the exit status
+/// still carry the outcome — so a failed write is ignored, as env_logger
+/// ignores it.
+fn to_stderr(text: &str) {
+    let _ = std::io::stderr().write_all(text.as_bytes());
+}
+
+/// A loaded configuration, the directory it was read from, and the records
+/// Sphinx logs while setting it up: ignored `-D` overrides, then the
+/// `config-inited` checks.
+struct Configured {
+    config: BuildConfig,
+    confdir: PathBuf,
+    records: Vec<Diagnostic>,
+}
+
+/// A configuration-time record: Sphinx logs these with neither a location
+/// nor a type.
+fn config_record(message: String) -> Diagnostic {
+    Diagnostic {
+        location: Location::None,
+        severity: Severity::Warning,
+        message,
+        category: Category::None,
+    }
+}
+
+/// `path` the way Sphinx spells a directory in an error message:
+/// `Path.resolve()`, absolute with symlinks resolved.
+fn resolved(path: &Path) -> PathBuf {
+    sphinx_ultra::utils::canonicalize_simplified(path)
+        .or_else(|_| std::path::absolute(path))
+        .unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// Sphinx's report of a `ConfigError` (`handle_exception`,
+/// `sphinx/_cli/util/errors.py:162-245`) as the HTML oracle records it: the
+/// traceback context reduced to the exception line, which is all this crate
+/// can say. sphinx-build mode writes it to both halves of the stream, as
+/// Sphinx writes it to its error stream, the tee of stderr and `-w`.
+fn config_error_report(error: &anyhow::Error) -> String {
+    format!("\nConfiguration error!\n\n    sphinx.errors.ConfigError: {error:#}\n")
+}
+
+/// Load the configuration and apply the command line to it. A failure here
+/// is a configuration error, which sphinx-build mode reports the way Sphinx
+/// reports its `ConfigError`: `Configuration error!`, exit 2.
+fn configure(args: &RunArgs) -> Result<Configured> {
     let mut config = if let Some(ref config_path) = args.config_file {
         BuildConfig::from_file(config_path)?
     } else if let Some(ref confdir) = args.confdir {
@@ -280,23 +416,41 @@ async fn run_build(args: RunArgs) -> Result<i32> {
         if !conf_path.exists() {
             anyhow::bail!(
                 "config directory doesn't contain a conf.py file ({})",
-                confdir.display()
+                resolved(confdir).display()
             );
         }
         BuildConfig::from_file(&conf_path)?
     } else {
-        // Try to auto-detect configuration (including conf.py)
+        // sphinx-build requires a configuration; silently building a
+        // mistyped path with defaults would be the opposite of drop-in
+        // behavior. (The sphinx-ultra.* files are this crate's native
+        // extension of the rule; the native subcommand falls back to
+        // defaults.)
+        if args.sphinx_build_mode
+            && ![
+                "conf.py",
+                "sphinx-ultra.yaml",
+                "sphinx-ultra.yml",
+                "sphinx-ultra.json",
+            ]
+            .iter()
+            .any(|file| args.source.join(file).exists())
+        {
+            anyhow::bail!(
+                "config directory doesn't contain a conf.py file ({})",
+                resolved(&args.source).display()
+            );
+        }
         BuildConfig::auto_detect(&args.source)?
     };
 
     // Override config with CLI arguments (config file < -D < dedicated flags).
     // Ignored overrides are warnings in sphinx-build too — they must count
     // toward -W and reach the -w file.
-    let mut config_warnings: Vec<String> = Vec::new();
+    let mut records = Vec::new();
     for (key, value) in &args.overrides {
         if let Some(message) = config.apply_override(key, value)? {
-            warn!("{}", message);
-            config_warnings.push(message);
+            records.push(config_record(message));
         }
     }
     for (key, value) in &args.html_defines {
@@ -318,10 +472,7 @@ async fn run_build(args: RunArgs) -> Result<i32> {
     // Sphinx type-checks the finished configuration once at `config-inited`,
     // i.e. after conf.py AND after every override — a rejected value only
     // warns, and the build continues with it.
-    for message in config.validate() {
-        warn!("{}", message);
-        config_warnings.push(message);
-    }
+    records.extend(config.validate().into_iter().map(config_record));
     // ... and checks that a configured logo/favicon exists, also at
     // `config-inited`, dropping the setting when it does not.
     let confdir = match (&args.config_file, &args.confdir) {
@@ -336,9 +487,100 @@ async fn run_build(args: RunArgs) -> Result<i32> {
             .unwrap_or_else(|| args.source.clone()),
         (None, None) => args.source.clone(),
     };
-    for message in config.validate_html_logo_and_favicon(&confdir) {
-        warn!("{}", message);
-        config_warnings.push(message);
+    records.extend(
+        config
+            .validate_html_logo_and_favicon(&confdir)
+            .into_iter()
+            .map(config_record),
+    );
+    Ok(Configured {
+        config,
+        confdir,
+        records,
+    })
+}
+
+/// Shared build driver for both CLI modes. Returns the process exit code.
+async fn run_build(args: RunArgs) -> Result<i32> {
+    let sphinx_mode = args.sphinx_build_mode;
+    let mut stream = WarningStream::new(sphinx_mode);
+    // sphinx-build opens the warning file before the application, and so
+    // the configuration, exists (`_parse_logging`): a configuration error
+    // lands in it too. The native subcommand opens it once the build is done.
+    if sphinx_mode {
+        stream.open(args.warning_file.as_deref())?;
+    }
+
+    let Configured {
+        mut config,
+        confdir,
+        records: config_records,
+    } = match configure(&args) {
+        Ok(configured) => configured,
+        Err(error) if sphinx_mode => {
+            stream.raw(&config_error_report(&error))?;
+            return Ok(2);
+        }
+        Err(error) => return Err(error),
+    };
+
+    let filter = WarningFilter::from_config(&config);
+    stream.show_warning_types = filter.show_warning_types();
+    // Configuration records have no type, so `suppress_warnings` keeps them
+    // all; they go through the filter like every other record.
+    let config_records: Vec<Diagnostic> = config_records
+        .into_iter()
+        .filter(|record| !filter.is_suppressed(&record.category))
+        .collect();
+
+    if sphinx_mode {
+        // M1's directive and role validators report problems Sphinx never
+        // prints — the parser already holds docutils' own messages for the
+        // same input — so sphinx-build mode never runs them.
+        config.validate_directives = false;
+        // Sphinx points docutils at `<confdir>/docutils.conf`
+        // (`patch_docutils`, `sphinx/util/docutils.py:217-229`). This crate
+        // reads no docutils.conf, and says so outside the warning stream:
+        // not a record, not in the `-w` file, not counted by `-W`.
+        let docutils_conf = confdir.join("docutils.conf");
+        if docutils_conf.is_file() {
+            to_stderr(&format!(
+                "NOTICE: docutils.conf is not read by sphinx-ultra: {}\n",
+                docutils_conf.display()
+            ));
+        }
+    }
+
+    // Configuration records open the stream: Sphinx logs them at
+    // `config-inited`, before the builder exists.
+    for record in &config_records {
+        if sphinx_mode {
+            stream.record(record)?;
+        } else {
+            warn!("{}", record.message);
+        }
+    }
+
+    // `config-inited`'s last handler, the one `sphinx.ext.intersphinx`
+    // registers: an `ERROR` record for each rejected `intersphinx_mapping`
+    // entry, then the `ConfigError` (`ext/intersphinx/_load.py:64-136`).
+    if let Err(error) = config.init_intersphinx_mapping() {
+        if !sphinx_mode {
+            for message in &error.errors {
+                log::error!("{message}");
+            }
+            return Err(error.into());
+        }
+        for message in &error.errors {
+            stream.record(&Diagnostic {
+                location: Location::None,
+                severity: Severity::Error,
+                message: message.clone(),
+                category: Category::None,
+            })?;
+        }
+        stream.raw(&config_error_report(&anyhow::Error::new(error)))?;
+        return Ok(2);
     }
 
     // Save the fail_on_warning flag before moving config
@@ -362,88 +604,72 @@ async fn run_build(args: RunArgs) -> Result<i32> {
         builder.enable_incremental();
     }
 
-    let stats = builder.build().await?;
-
-    // Handle warning file output if specified
-    let mut warning_file_handle = if let Some(ref warning_file_path) = args.warning_file {
-        // Create parent directories if they don't exist
-        if let Some(parent) = warning_file_path.parent() {
-            std::fs::create_dir_all(parent)?;
+    let stats = match builder.build().await {
+        Ok(stats) => stats,
+        // A `ConfigError` raised once the build has started (the intersphinx
+        // inventories' invariants, checked as they load) gets the same
+        // report as one raised while the configuration loads, after the
+        // configuration records, as in Sphinx.
+        Err(error) if sphinx_mode && error.downcast_ref::<ConfigError>().is_some() => {
+            stream.raw(&config_error_report(&error))?;
+            return Ok(2);
         }
-        Some(
-            OpenOptions::new()
-                .create(true)
-                .write(true)
-                .truncate(true)
-                .open(warning_file_path)?,
-        )
-    } else {
-        None
+        Err(error) => return Err(error),
     };
 
-    // Config-time warnings (already logged when they occurred) go to the
-    // warning file and count toward the totals below.
-    if let Some(ref mut file) = warning_file_handle {
-        for message in &config_warnings {
-            writeln!(file, "WARNING: {}", message)?;
+    if !sphinx_mode {
+        stream.open(args.warning_file.as_deref())?;
+        for record in &config_records {
+            stream.write_record(record)?;
         }
     }
-    let total_warnings = stats.warnings + config_warnings.len();
-
-    // Print warnings in Sphinx-like format
-    for warning in &stats.warning_details {
-        let warning_msg = warning.render();
-
-        // Write to warning file if specified
-        if let Some(ref mut file) = warning_file_handle {
-            writeln!(file, "{}", warning_msg)?;
-        }
-
-        warn!("{}", warning_msg);
+    // The build's records, in the order Sphinx emits them, then the
+    // per-file failures (which also reach the warning file in Sphinx).
+    for record in &stats.warning_details {
+        stream.record(record)?;
     }
-
-    // Print errors in Sphinx-like format
     for error in &stats.error_details {
-        let file_path = error.file.display();
-        let line_info = if let Some(line) = error.line {
-            format!(":{}", line)
-        } else {
-            String::new()
-        };
-        let error_msg = format!("{}{}: ERROR: {}", file_path, line_info, error.message);
-
-        // Write to warning file if specified (errors also go to warning file in Sphinx)
-        if let Some(ref mut file) = warning_file_handle {
-            writeln!(file, "{}", error_msg)?;
-        }
-
-        eprintln!("{}", error_msg);
+        stream.error(&Diagnostic::from(error))?;
     }
 
-    // Flush and close the warning file
-    if let Some(mut file) = warning_file_handle {
-        file.flush()?;
-    }
-
+    let total_warnings = config_records.len() + stats.warnings;
     let plural = |n: usize| if n == 1 { "" } else { "s" };
 
-    // sphinx-build 9.1 parity: -W collects every warning (keep-going is the
-    // default since Sphinx 8.1) and fails the build afterwards.
+    // Sphinx logs its closing summary at INFO, on its status stream
+    // (`sphinx/application.py:452-481`): stdout, which `-q` silences, and
+    // never the warning stream or `-w`. The native subcommand keeps its own
+    // channels.
+    let status = |line: &str| {
+        if args.status_stream {
+            println!("{line}");
+        }
+    };
+
+    // The exit status follows Sphinx's (`sphinx/cmd/build.py:395-452`,
+    // `sphinx/application.py:453-481`): records never change it, whatever
+    // their severity, except under `-W`, which fails the build once every
+    // record is out (keep-going is the default since Sphinx 8.1).
     if should_fail_on_warning && total_warnings > 0 {
-        eprintln!(
+        let summary = format!(
             "build finished with problems, {} warning{} (with warnings treated as errors).",
             total_warnings,
             plural(total_warnings)
         );
+        if sphinx_mode {
+            status(&summary);
+        } else {
+            eprintln!("{summary}");
+        }
         return Ok(1);
     }
 
-    // Deliberately STRICTER than sphinx-build here: real sphinx-build 9.1
-    // exits 0 on logged ERRORs unless -W is set. Unreadable or unparseable
-    // sources failing CI silently is exactly the M1 trust problem, so builds
-    // with errors exit 1.
+    // Deliberately STRICTER than sphinx-build here, and only here: a
+    // genuine per-file failure (an unreadable or undecodable source, an
+    // output that could not be written) exits 1. Such failures are never
+    // records of the warning stream; letting them pass CI silently is
+    // exactly the M1 trust problem.
     if stats.errors > 0 {
-        eprintln!(
+        let summary = format!(
             "build finished with problems, {} error{}{}.",
             stats.errors,
             plural(stats.errors),
@@ -453,16 +679,28 @@ async fn run_build(args: RunArgs) -> Result<i32> {
                 String::new()
             }
         );
+        if sphinx_mode {
+            status(&summary);
+        } else {
+            eprintln!("{summary}");
+        }
         return Ok(1);
     }
 
     // Print final summary
     if total_warnings > 0 {
-        warn!(
+        let summary = format!(
             "build succeeded, {} warning{}.",
             total_warnings,
             plural(total_warnings)
         );
+        if sphinx_mode {
+            status(&summary);
+        } else {
+            warn!("{summary}");
+        }
+    } else if sphinx_mode {
+        status("build succeeded.");
     }
 
     info!("Build completed successfully!");
@@ -472,23 +710,23 @@ async fn run_build(args: RunArgs) -> Result<i32> {
     info!("Build time: {:?}", stats.build_time);
     info!("Output size: {} MB", stats.output_size_mb);
 
-    if args.print_final_location {
-        println!("\nThe HTML pages are in {}.", args.output.display());
-    }
+    // Sphinx's epilog, after an empty status line.
+    status("");
+    status(&format!("The HTML pages are in {}.", args.output.display()));
 
     Ok(0)
 }
 
 /// sphinx-build compatible mode entry point. Returns the process exit code.
 async fn run_sphinx_build_mode(sb: SphinxBuildCli) -> i32 {
-    let default_level = if sb.quiet {
-        "warn"
-    } else {
-        match sb.verbose {
-            0 => "info",
-            1 => "debug",
-            _ => "trace",
-        }
+    // Sphinx writes its status to stdout, so its stderr carries the warning
+    // stream alone (decision 8): this crate's own progress log stays off it
+    // unless `-v` asks for it (`-q` or not), and `RUST_LOG` still wins.
+    let default_level = match sb.verbose {
+        0 => "warn",
+        1 => "info",
+        2 => "debug",
+        _ => "trace",
     };
     init_logging(default_level);
 
@@ -540,26 +778,6 @@ async fn run_sphinx_build_mode(sb: SphinxBuildCli) -> i32 {
     };
     debug_assert!(is_build);
 
-    // sphinx-build requires a configuration; silently building a mistyped
-    // path with defaults would be the opposite of drop-in behavior. (The
-    // sphinx-ultra.* probes are our native extension of the rule.)
-    if sb.confdir.is_none()
-        && ![
-            "conf.py",
-            "sphinx-ultra.yaml",
-            "sphinx-ultra.yml",
-            "sphinx-ultra.json",
-        ]
-        .iter()
-        .any(|f| sb.sourcedir.join(f).exists())
-    {
-        eprintln!(
-            "Error: config directory doesn't contain a conf.py file ({})",
-            sb.sourcedir.display()
-        );
-        return 2;
-    }
-
     info!(
         "Running sphinx-ultra v{} (sphinx-build compatible mode)",
         env!("CARGO_PKG_VERSION")
@@ -596,7 +814,8 @@ async fn run_sphinx_build_mode(sb: SphinxBuildCli) -> i32 {
         fresh_env: sb.fresh_env,
         fail_on_warning: sb.fail_on_warning,
         warning_file: sb.warning_file.clone(),
-        print_final_location: !sb.quiet,
+        status_stream: !sb.quiet,
+        sphinx_build_mode: true,
         ..RunArgs::base(sb.sourcedir.clone(), output)
     };
 

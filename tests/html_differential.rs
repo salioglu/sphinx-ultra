@@ -1,28 +1,33 @@
 mod support {
     pub mod diagnostics;
     pub mod html_oracle;
+    pub mod text_diff;
 }
 
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
+use regex::Regex;
 use serde_json::json;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::io::Write;
 use std::path::Path;
 use std::process::Command;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{mpsc, Arc, LazyLock, Mutex};
 use std::time::Duration;
 use support::diagnostics::{run_bounded, run_bounded_with_timeout, ExitStatusKind, ProcessOutput};
 use support::html_oracle::{
-    apply_retention, bounded_assertion_message, build_report, case_key, compare_file,
-    compare_trees, compare_warnings, compare_warnings_with_roots, diagnose_html,
+    apply_retention, aux_component_of, bounded_assertion_message, build_report, case_key,
+    compare_file, compare_trees, compare_warnings, compare_warnings_with_roots, diagnose_html,
     diagnose_inventory, diagnose_needs_json, diagnose_searchindex, diagnose_warnings,
     group_first_divergences, load_fixture_suite, materialize_case_expected,
-    materialize_case_inputs, parse_keep, read_record, resolve_ultra_binary, status_name, walk_tree,
-    warning_diagnostics_with_roots, write_logical_file, CaseRecord, CaseResult, CaseStatus,
-    IndexDocument, InventoryRecord, Keep, Policy, ReportInputs,
+    materialize_case_inputs, parse_inventory, parse_keep, read_record, resolve_ultra_binary,
+    status_name, walk_tree, warning_diagnostics_with_roots, write_logical_file, AuxComponent,
+    CaseRecord, CaseResult, CaseStatus, Diagnostic, IndexDocument, InventoryRecord, Keep, Policy,
+    ReportInputs,
 };
+use support::text_diff::first_differing_line;
 
 fn minimal_case() -> serde_json::Value {
     json!({
@@ -519,6 +524,161 @@ fn comparator_canonicalizes_inventory_records_and_keeps_opaque_bytes_exact() {
 }
 
 #[test]
+fn parse_inventory_accepts_every_sphinx_v2_record_shape() {
+    // The regex rejects this line, which the docutils-0407 and sphinx_read-0172 references hold;
+    // Sphinx's loader skips it.
+    let empty_name = " std:label -1 index.html#id1$ -";
+    let bytes = inventory_bytes(&format!(
+        "my label std:label -1 index.html#my-label My label\n\
+         index std:doc -1  Welcome\n\
+         f py:function 1 api.html#$ -\n\
+         {empty_name}\n",
+    ));
+    let (_, records) = parse_inventory(&bytes).expect("no record line makes an inventory invalid");
+    let got: Vec<_> = records
+        .iter()
+        .map(|r| {
+            (
+                r.name.as_str(),
+                r.domain_role.as_str(),
+                r.priority,
+                r.uri.as_str(),
+                r.display_name.as_str(),
+                r.raw.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            ("", "", 0, "", "", Some(empty_name)), // opaque raw record
+            ("f", "py:function", 1, "api.html#$", "-", None),
+            ("index", "std:doc", -1, "", "Welcome", None),
+            (
+                "my label",
+                "std:label",
+                -1,
+                "index.html#my-label",
+                "My label",
+                None
+            ),
+        ]
+    ); // parse_inventory sorts records
+    let with = |line: &str| inventory_bytes(&format!("f py:function 1 api.html#$ -\n{line}\n"));
+    assert!(compare_file("objects.inv", &with(empty_name), &with(empty_name), None).is_empty());
+    let changed = compare_file(
+        "objects.inv",
+        &with(empty_name),
+        &with(" std:label -1 index.html#id2$ -"),
+        None,
+    );
+    assert_eq!(changed.len(), 1);
+    assert_eq!(changed[0].category, "objects-inventory-value");
+}
+
+#[test]
+fn inventory_lines_that_do_not_rejoin_compare_byte_for_byte() {
+    // The sphinx_read-0351 reference holds `nbsp`. Sphinx's regex reads the name `term` from it,
+    // but its fields do not re-join to the line, so it stays a raw record and a writer that
+    // drops the no-break space is caught.
+    let nbsp = "term\u{a0} std:term -1 index.html#term-term -";
+    let canonical = "term std:term -1 index.html#term-term -";
+    let with = |line: &str| inventory_bytes(&format!("{line}\n"));
+    let diagnostics = compare_file("objects.inv", &with(nbsp), &with(canonical), None);
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].category, "objects-inventory-value");
+    let (_, records) =
+        parse_inventory(&with(nbsp)).expect("no record line makes an inventory invalid");
+    assert_eq!(records[0].raw.as_deref(), Some(nbsp));
+    // The exhaustive report localizes it: the raw line is missing, the parsed record extra.
+    let tree = |line: &str| BTreeMap::from([(String::from("objects.inv"), with(line))]);
+    let mut localized = compare_trees(&tree(nbsp), &tree(canonical), None, None, None)
+        .into_iter()
+        .map(|diagnostic| diagnostic.category)
+        .collect::<Vec<_>>();
+    localized.sort();
+    assert_eq!(
+        localized,
+        ["inventory-extra-record", "inventory-missing-record"]
+    );
+    // The other field-boundary and priority spellings the regex alone absorbs.
+    let index = "index std:doc -1 index.html T";
+    let function = "f py:function 1 api.html#$ -";
+    for (expected, actual) in [
+        ("term\u{1f} std:term -1 index.html#term-term -", canonical), // sphinx_read-0352
+        ("index std:doc -1 index.html \u{a0}T", index),               // docutils-0731
+        ("f\tpy:function 1 api.html#$ -", function),
+        ("f py:function 001 api.html#$ -", function),
+        ("f py:function 1 api.html#$ - ", function),
+    ] {
+        let diagnostics = compare_file("objects.inv", &with(expected), &with(actual), None);
+        assert_eq!(diagnostics.len(), 1, "{expected:?} vs {actual:?}");
+        assert_eq!(diagnostics[0].category, "objects-inventory-value");
+    }
+}
+
+/// The payload lines `parse_inventory` reads, and which of them stay raw,
+/// for the shapes no reference holds (`SP/sphinx/util/inventory.py:113-128`):
+/// `str.splitlines()` breaks at every Unicode line boundary and at a CRLF
+/// pair once, a final break opens no line and a blank line inside is one
+/// (raw `""`); the loader's `\s` and `rstrip()` take U+001F for whitespace,
+/// so the fields it reads from a line holding one do not re-join to the
+/// line; a role without a `:` and a priority past an `i32` stay raw.
+#[test]
+fn parse_inventory_splits_and_strips_lines_as_the_loader_does() {
+    let records = |payload: &str| -> Vec<(String, Option<String>)> {
+        let (_, records) = parse_inventory(&inventory_bytes(payload))
+            .expect("no record line makes an inventory invalid");
+        records
+            .into_iter()
+            .map(|record| (record.name, record.raw))
+            .collect()
+    };
+    let parsed = |names: &str| -> Vec<(String, Option<String>)> {
+        names.chars().map(|name| (name.to_string(), None)).collect()
+    };
+    let raw = |line: &str| (String::new(), Some(line.to_string()));
+
+    let separators = [
+        "\r", "\x0b", "\x0c", "\x1c", "\x1d", "\x1e", "\u{85}", "\u{2028}", "\u{2029}", "\r\n",
+        "\n",
+    ];
+    let payload = ('a'..='k')
+        .zip(separators)
+        .map(|(name, separator)| format!("{name} py:function 1 {name}.html -{separator}"))
+        .collect::<String>();
+    assert_eq!(records(&payload), parsed("abcdefghijk"));
+
+    let line = |name: &str| format!("{name} py:function 1 api.html -\n");
+    assert_eq!(
+        records(&format!("{}\n{}", line("a"), line("b"))),
+        [vec![raw("")], parsed("ab")].concat()
+    );
+
+    for (shape, payload) in [
+        ("U+001F the strip drops", "f py:function 1 api.html -\u{1f}"),
+        ("U+001F between fields", "f\u{1f}py:function 1 api.html -"),
+        (
+            "U+001F ending the name",
+            "term\u{1f} std:term -1 index.html#term-term -",
+        ),
+        ("a role without a colon", "f function 1 api.html -"),
+        ("a priority past i32", "f py:function 2147483648 api.html -"),
+        (
+            "a priority below i32",
+            "f py:function -2147483649 api.html -",
+        ),
+    ] {
+        assert_eq!(records(payload), [raw(payload)], "{shape}");
+    }
+    assert_eq!(
+        records("f py:function -2147483648 api.html -\ng py:function 2147483647 api.html -"),
+        parsed("fg"),
+        "the priorities an i32 holds"
+    );
+}
+
+#[test]
 fn comparator_reports_missing_and_unexpected_files() {
     let expected = BTreeMap::from([(String::from("index.html"), b"same".to_vec())]);
     let actual = BTreeMap::from([
@@ -678,6 +838,35 @@ fn comparator_folds_lone_carriage_returns_like_the_generator() {
     assert!(compare_warnings(b"w\r", b"w\n", None, None).is_empty());
 }
 
+/// Two warning streams that differ only in a final line break have no
+/// line that differs, so the line diagnostics alone would pass them: the
+/// helper every harness shares reports the whole stream instead.
+#[test]
+fn warning_diagnostics_see_a_final_line_break_difference() {
+    for (expected, actual) in [
+        (&b"w\n"[..], &b"w"[..]),
+        (b"w", b"w\n"),
+        (b"a\nb\n", b"a\nb"),
+    ] {
+        let diagnostics = warning_diagnostics_with_roots(expected, actual, None, None);
+        let categories: Vec<&str> = diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.category.as_str())
+            .collect();
+        assert_eq!(
+            categories,
+            ["warning"],
+            "{:?} vs {:?}",
+            String::from_utf8_lossy(expected),
+            String::from_utf8_lossy(actual)
+        );
+    }
+    assert!(warning_diagnostics_with_roots(b"w\r\n", b"w\n", None, None).is_empty());
+    let lines = warning_diagnostics_with_roots(b"a\nb\n", b"a\nc", None, None);
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0].category, "warning-changed-line");
+}
+
 #[test]
 fn committed_ledgers_load_and_validate() {
     let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/html_oracle");
@@ -825,6 +1014,7 @@ fn diagnostic_synthetic_structured_files_report_key_and_record_differences() {
         priority: 1,
         uri: uri.to_string(),
         display_name: display_name.to_string(),
+        raw: None,
     };
     let inventory = diagnose_inventory(
         &[
@@ -857,7 +1047,7 @@ fn diagnostic_synthetic_warnings_and_first_divergence_are_grouped() {
         .iter()
         .any(|item| item.category == "warning-missing-line"));
     let diagnostics = (0..3)
-        .map(|index| support::html_oracle::Diagnostic {
+        .map(|index| Diagnostic {
             category: "html-body".to_string(),
             logical_path: format!("page-{index}.html"),
             first_expected_line: Some(7),
@@ -867,7 +1057,7 @@ fn diagnostic_synthetic_warnings_and_first_divergence_are_grouped() {
         })
         .collect::<Vec<_>>();
     let mut diagnostics = diagnostics;
-    diagnostics.push(support::html_oracle::Diagnostic {
+    diagnostics.push(Diagnostic {
         category: "html-body".to_string(),
         logical_path: "page-0.html".to_string(),
         first_expected_line: Some(7),
@@ -887,7 +1077,7 @@ fn diagnostic_synthetic_warnings_and_first_divergence_are_grouped() {
 #[test]
 fn diagnostic_first_divergence_groups_by_content_not_line_number() {
     let diagnostics = vec![
-        support::html_oracle::Diagnostic {
+        Diagnostic {
             category: "html-body".to_string(),
             logical_path: "one.html".to_string(),
             first_expected_line: Some(1),
@@ -895,7 +1085,7 @@ fn diagnostic_first_divergence_groups_by_content_not_line_number() {
             actual: "uno\nrest".to_string(),
             detail: String::new(),
         },
-        support::html_oracle::Diagnostic {
+        Diagnostic {
             category: "html-body".to_string(),
             logical_path: "two.html".to_string(),
             first_expected_line: Some(9),
@@ -903,7 +1093,7 @@ fn diagnostic_first_divergence_groups_by_content_not_line_number() {
             actual: "uno\nother".to_string(),
             detail: String::new(),
         },
-        support::html_oracle::Diagnostic {
+        Diagnostic {
             category: "html-body".to_string(),
             logical_path: "three.html".to_string(),
             first_expected_line: Some(9),
@@ -1016,7 +1206,7 @@ fn report_case(
         common_mismatch_count: 0,
         diagnostics: category
             .map(|category| {
-                vec![support::html_oracle::Diagnostic {
+                vec![Diagnostic {
                     category: category.to_string(),
                     logical_path: format!("{case_id}.html"),
                     first_expected_line: line,
@@ -1039,7 +1229,7 @@ fn report_case_with_diagnostic(
     actual: &str,
 ) -> CaseResult {
     let mut result = report_case(profile, source_set, case_id, false, None, None);
-    result.diagnostics = vec![support::html_oracle::Diagnostic {
+    result.diagnostics = vec![Diagnostic {
         category: category.to_string(),
         logical_path: logical_path.to_string(),
         first_expected_line: Some(1),
@@ -1444,6 +1634,30 @@ fn selected_ultra_binary() -> String {
         .unwrap_or(selected)
 }
 
+/// Ultra's html build of one case, as both harnesses run it: quiet, its
+/// warning stream written to `warnings_path`, and, like the reference
+/// build, from the source directory, so cwd-relative paths in its output
+/// are source-relative.
+fn html_build_command(
+    binary: &str,
+    input_dir: &Path,
+    output_dir: &Path,
+    cache_dir: &Path,
+    warnings_path: &Path,
+) -> Command {
+    let mut command = Command::new(binary);
+    command
+        .current_dir(input_dir)
+        .arg(input_dir)
+        .arg(output_dir)
+        .args(["-b", "html", "-d"])
+        .arg(cache_dir)
+        .arg("-q")
+        .arg("-w")
+        .arg(warnings_path);
+    command
+}
+
 fn run_html_case(
     case: &CaseRecord,
     profile_root: &Path,
@@ -1479,19 +1693,13 @@ fn run_html_case(
     fs::write(expected_dir.join("warnings.txt"), case.warnings.as_bytes())
         .map_err(|error| format!("write expected warnings: {error}"))?;
 
-    // Like the reference build, Ultra runs from the source directory so
-    // cwd-relative paths in its output are source-relative.
-    let mut command = Command::new(selected_ultra_binary());
-    command
-        .current_dir(&input_dir)
-        .arg(&input_dir)
-        .arg(&actual_dir)
-        .args(["-b", "html", "-d"])
-        .arg(&cache_dir)
-        .arg("-q")
-        .args(["-w"])
-        .arg(&warnings_path);
-    let process = run_bounded(command);
+    let process = run_bounded(html_build_command(
+        &selected_ultra_binary(),
+        &input_dir,
+        &actual_dir,
+        &cache_dir,
+        &warnings_path,
+    ));
     let actual_status = process_status(&process);
     let mut diagnostics = if actual_status.is_some() {
         compare_trees(
@@ -1569,7 +1777,7 @@ fn run_needs_case(
     expected_dir: &Path,
     actual_needs_dir: &Path,
     run_dir: &Path,
-) -> Result<(Option<CaseStatus>, Vec<support::html_oracle::Diagnostic>), String> {
+) -> Result<(Option<CaseStatus>, Vec<Diagnostic>), String> {
     let expected_status = case
         .needs_status
         .ok_or_else(|| format!("{} has no needs_status", case_key(case)))?;
@@ -1641,7 +1849,7 @@ fn process_status(process: &ProcessOutput) -> Option<CaseStatus> {
     }
 }
 
-fn process_diagnostic(process: &ProcessOutput) -> support::html_oracle::Diagnostic {
+fn process_diagnostic(process: &ProcessOutput) -> Diagnostic {
     let (category, detail) = match &process.status {
         ExitStatusKind::Timeout => ("timeout", "Ultra process exceeded the deadline".to_string()),
         ExitStatusKind::SpawnError(error) => ("spawn", error.clone()),
@@ -1650,7 +1858,7 @@ fn process_diagnostic(process: &ProcessOutput) -> support::html_oracle::Diagnost
             ("process", "unexpected process status".to_string())
         }
     };
-    support::html_oracle::Diagnostic {
+    Diagnostic {
         category: category.to_string(),
         logical_path: String::new(),
         first_expected_line: None,
@@ -1659,3 +1867,839 @@ fn process_diagnostic(process: &ProcessOutput) -> support::html_oracle::Diagnost
         detail,
     }
 }
+
+/// The output files `html_oracle_aux_gate` compares besides the warning
+/// stream; the pages and the rest of the output tree are the HTML writer's
+/// and builder's (5b, 5c).
+const AUX_OUTPUT_FILES: [&str; 2] = ["objects.inv", "searchindex.js"];
+
+/// Runs one case for the aux gate under `run_root` and returns every
+/// diagnostic of its warning stream, exit class, `objects.inv` and
+/// `searchindex.js`.
+///
+/// Leaner than `run_html_case`: only the case's inputs are materialized, the
+/// expected files are read straight from the ledger's storage, nothing else
+/// of either output tree is read, no `result.json` is written, and the case
+/// directory is deleted whatever the outcome. It always runs the binary
+/// Cargo built for this test, never `HTML_ORACLE_ULTRA_BIN`.
+fn run_aux_case(
+    case: &CaseRecord,
+    profile_root: &Path,
+    run_root: &Path,
+) -> Result<Vec<Diagnostic>, String> {
+    let run_dir = run_root
+        .join(&case.profile)
+        .join(&case.source_set)
+        .join(&case.case_id);
+    if run_dir.exists() {
+        fs::remove_dir_all(&run_dir)
+            .map_err(|error| format!("remove stale run {}: {error}", run_dir.display()))?;
+    }
+    let outcome = compare_aux_outputs(case, profile_root, &run_dir);
+    let removed = fs::remove_dir_all(&run_dir)
+        .map_err(|error| format!("remove {}: {error}", run_dir.display()));
+    let diagnostics = outcome?;
+    removed?;
+    Ok(diagnostics)
+}
+
+fn compare_aux_outputs(
+    case: &CaseRecord,
+    profile_root: &Path,
+    run_dir: &Path,
+) -> Result<Vec<Diagnostic>, String> {
+    let input_dir = run_dir.join("input");
+    let output_dir = run_dir.join("output");
+    let cache_dir = run_dir.join("cache");
+    let warnings_path = run_dir.join("warnings.txt");
+    fs::create_dir_all(&input_dir)
+        .map_err(|error| format!("create {}: {error}", input_dir.display()))?;
+    materialize_case_inputs(case, profile_root, &input_dir)?;
+
+    // The build `run_html_case` runs, so the two harnesses normalize the
+    // same output.
+    let process = run_bounded(html_build_command(
+        env!("CARGO_BIN_EXE_sphinx-ultra"),
+        &input_dir,
+        &output_dir,
+        &cache_dir,
+        &warnings_path,
+    ));
+    let mut diagnostics = match process_status(&process) {
+        Some(actual_status) => {
+            let expected = case
+                .files
+                .iter()
+                .filter(|record| AUX_OUTPUT_FILES.contains(&record.logical_path.as_str()))
+                .map(|record| {
+                    Ok((
+                        record.logical_path.clone(),
+                        read_record(record, profile_root)?,
+                    ))
+                })
+                .collect::<Result<BTreeMap<_, _>, String>>()?;
+            let mut actual = BTreeMap::new();
+            for logical_path in AUX_OUTPUT_FILES {
+                if let Some(bytes) = read_if_present(&output_dir.join(logical_path))? {
+                    actual.insert(logical_path.to_string(), bytes);
+                }
+            }
+            // A file on one side only is that component's missing-file or
+            // unexpected-file; the status class follows `compare_trees`' rule.
+            compare_trees(
+                &expected,
+                &actual,
+                Some(case.status),
+                Some(actual_status),
+                Some(&input_dir),
+            )
+        }
+        None => vec![process_diagnostic(&process)],
+    };
+    // An absent warning file is an empty stream, as in `run_html_case`.
+    let actual_warnings = read_if_present(&warnings_path)?.unwrap_or_default();
+    let roots = Some(support::html_oracle::WarningRoots {
+        source_root: Some(&input_dir),
+        output_root: Some(&output_dir),
+        doctree_root: Some(&cache_dir),
+        case_root: Some(run_dir),
+    });
+    diagnostics.extend(warning_diagnostics_with_roots(
+        case.warnings.as_bytes(),
+        &actual_warnings,
+        None,
+        roots,
+    ));
+    Ok(diagnostics)
+}
+
+fn read_if_present(path: &Path) -> Result<Option<Vec<u8>>, String> {
+    match fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(format!("read {}: {error}", path.display())),
+    }
+}
+
+/// Runs every runnable core case through `run_aux_case` on scoped worker
+/// threads and returns each case with its aux-component diagnostics, in
+/// ledger order. `run_dir_name` names the run root under
+/// `target/html-oracle`; the gate and the census each pass their own, so a
+/// test binary that runs both never has one delete the other's case
+/// directories.
+fn run_aux_cases(run_dir_name: &str) -> Vec<(CaseRecord, Vec<Diagnostic>)> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let profile_root = manifest_dir.join("tests/fixtures/html_oracle/core");
+    let ledger = IndexDocument::load(&profile_root.join("index.json"))
+        .unwrap_or_else(|error| panic!("cannot load the core HTML oracle ledger: {error}"));
+    let cases = ledger
+        .cases
+        .into_iter()
+        .filter(|case| case.status.is_runnable())
+        .collect::<Vec<_>>();
+    let run_root = manifest_dir.join("target/html-oracle").join(run_dir_name);
+    fs::create_dir_all(&run_root)
+        .unwrap_or_else(|error| panic!("create {}: {error}", run_root.display()));
+    // The binary prints its canonicalized source directory, so the roots the
+    // warnings and `searchindex.js` are normalized with must be canonical too.
+    let run_root = run_root
+        .canonicalize()
+        .unwrap_or_else(|error| panic!("canonicalize {}: {error}", run_root.display()));
+    let workers = std::thread::available_parallelism()
+        .map(std::num::NonZeroUsize::get)
+        .unwrap_or(1)
+        .min(cases.len().max(1));
+    let next_case = AtomicUsize::new(0);
+    let mut finished = std::thread::scope(|scope| {
+        let handles = (0..workers)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut finished = Vec::new();
+                    while let Some(case) = cases.get(next_case.fetch_add(1, Ordering::Relaxed)) {
+                        let diagnostics = run_aux_case(case, &profile_root, &run_root)
+                            .unwrap_or_else(|error| panic!("{}: {error}", case_key(case)));
+                        finished.push((
+                            case_key(case),
+                            diagnostics
+                                .into_iter()
+                                .filter(|diagnostic| aux_component_of(diagnostic).is_some())
+                                .collect::<Vec<_>>(),
+                        ));
+                    }
+                    finished
+                })
+            })
+            .collect::<Vec<_>>();
+        handles
+            .into_iter()
+            .flat_map(|handle| handle.join().expect("aux worker should not panic"))
+            .collect::<BTreeMap<_, _>>()
+    });
+    cases
+        .into_iter()
+        .map(|case| {
+            let diagnostics = finished
+                .remove(&case_key(&case))
+                .expect("every case was run");
+            (case, diagnostics)
+        })
+        .collect()
+}
+
+/// Holds the warning stream, exit class, `objects.inv` and `searchindex.js`
+/// of every runnable core case to the oracle, strictly: the set of
+/// mismatching `(case_key, component)` pairs must equal `KNOWN_AUX_GAPS`.
+/// A task that fixes a row deletes it; a new mismatch fails the gate.
+#[test]
+#[cfg_attr(
+    windows,
+    ignore = "oracle references are POSIX-spelled; Windows paths use backslashes"
+)]
+fn html_oracle_aux_gate() {
+    let mut observed = BTreeMap::new();
+    for (case, diagnostics) in run_aux_cases("aux-gate-runs") {
+        for diagnostic in diagnostics {
+            let component = aux_component_of(&diagnostic).expect("only aux diagnostics are kept");
+            observed
+                .entry((case_key(&case), component))
+                .or_insert(diagnostic);
+        }
+    }
+    let diff = aux_gate_diff(&observed.keys().cloned().collect(), KNOWN_AUX_GAPS);
+    assert!(
+        diff.is_clean(),
+        "{}",
+        aux_gate_failure(&diff, &observed, KNOWN_AUX_GAPS)
+    );
+}
+
+/// The gate's failure message: three bounded lists, each regression with its
+/// first diagnostic, each fixed or duplicate pair with its rows.
+fn aux_gate_failure(
+    diff: &AuxGateDiff,
+    first_diagnostics: &BTreeMap<(String, AuxComponent), Diagnostic>,
+    table: &[(&str, AuxComponent, &str)],
+) -> String {
+    let table_rows = |(case, component): &(String, AuxComponent)| {
+        table
+            .iter()
+            .filter(|(row_case, row_component, _)| row_case == case && row_component == component)
+            .map(|(case, component, reason)| {
+                format!("    ({case:?}, AuxComponent::{component:?}, {reason:?}),")
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let mut message = format!(
+        "the aux mismatch set differs from KNOWN_AUX_GAPS: {} regressions, {} fixed rows, \
+         {} duplicate rows",
+        diff.regressions.len(),
+        diff.fixed.len(),
+        diff.duplicate_rows.len()
+    );
+    push_bounded_list(
+        &mut message,
+        "duplicate rows (list each case and component once)",
+        diff.duplicate_rows.iter().map(table_rows),
+    );
+    push_bounded_list(
+        &mut message,
+        "regressions (not in KNOWN_AUX_GAPS)",
+        diff.regressions.iter().map(|key| {
+            let (case, component) = key;
+            let diagnostic = &first_diagnostics[key];
+            let head = format!(
+                "    {case} {component:?}: {} ({})",
+                diagnostic.category, diagnostic.detail
+            );
+            match first_differing_line(&diagnostic.expected, &diagnostic.actual) {
+                Some((line, expected, actual)) => format!(
+                    "{head}\n        expected line {line}: {}\n        actual line {line}:   {}",
+                    cap_line(expected),
+                    cap_line(actual)
+                ),
+                None => format!("{head}\n        only a final line break differs"),
+            }
+        }),
+    );
+    push_bounded_list(
+        &mut message,
+        "fixed (delete these rows)",
+        diff.fixed.iter().map(table_rows),
+    );
+    message
+}
+
+fn push_bounded_list(
+    message: &mut String,
+    title: &str,
+    items: impl ExactSizeIterator<Item = String>,
+) {
+    const MAX_ITEMS: usize = 60;
+    let count = items.len();
+    if count == 0 {
+        return;
+    }
+    message.push_str(&format!("\n{title}: {count}"));
+    for item in items.take(MAX_ITEMS) {
+        message.push('\n');
+        message.push_str(&item);
+    }
+    if count > MAX_ITEMS {
+        message.push_str(&format!("\n    ... and {} more", count - MAX_ITEMS));
+    }
+}
+
+fn cap_line(line: &str) -> String {
+    const MAX_CHARS: usize = 240;
+    if line.chars().count() <= MAX_CHARS {
+        format!("{line:?}")
+    } else {
+        format!("{:?}...", line.chars().take(MAX_CHARS).collect::<String>())
+    }
+}
+
+/// Prints the current aux mismatch set as `KNOWN_AUX_GAPS` rows, in table
+/// order. A row's reason lists the fix families its diagnostics show and the
+/// latest task that fixes one of them. A mismatch no family explains gets a
+/// `?` family and a comment above its row, and fails the census once every
+/// row is printed:
+///
+/// `cargo test --locked --test html_differential html_oracle_aux_census -- --ignored --nocapture`
+#[test]
+#[ignore]
+fn html_oracle_aux_census() {
+    let mut counts = BTreeMap::<AuxComponent, usize>::new();
+    let mut unexplained_rows = 0;
+    let mut table = String::new();
+    for (case, diagnostics) in run_aux_cases("aux-census-runs") {
+        let mut by_component = BTreeMap::<AuxComponent, Vec<Diagnostic>>::new();
+        for diagnostic in diagnostics {
+            let component = aux_component_of(&diagnostic).expect("only aux diagnostics are kept");
+            by_component.entry(component).or_default().push(diagnostic);
+        }
+        if by_component.is_empty() {
+            continue;
+        }
+        for (component, diagnostics) in by_component {
+            let census = match component {
+                AuxComponent::Warnings => warning_census(&case, &diagnostics),
+                AuxComponent::ExitClass => {
+                    GapCensus::unattributed(diagnostics.iter().map(|diagnostic| {
+                        format!("{}: {}", diagnostic.category, diagnostic.detail)
+                    }))
+                }
+                AuxComponent::ObjectsInv => inventory_census(&diagnostics),
+                AuxComponent::SearchIndex => searchindex_census(&diagnostics),
+            };
+            *counts.entry(component).or_default() += 1;
+            if !census.unexplained.is_empty() {
+                unexplained_rows += 1;
+            }
+            for note in &census.unexplained {
+                for line in note.lines() {
+                    table.push_str(&format!("    // ? {line}\n"));
+                }
+            }
+            table.push_str(&format!(
+                "    ({:?}, AuxComponent::{component:?}, {:?}),\n",
+                case_key(&case),
+                census.reason()
+            ));
+        }
+    }
+    println!("    // Rows per component: {counts:?}\n{table}");
+    assert_eq!(
+        unexplained_rows, 0,
+        "rows with a `?` family need a family the census does not know"
+    );
+}
+
+/// The owners of gap rows in the order their tasks land: a row is owned by
+/// the latest task that fixes one of its families.
+const GAP_OWNERS: &[&str] = &[
+    "5a-T3",
+    "5a-T4",
+    "5a-T5a",
+    "5a-T5b",
+    "5a-T5c",
+    "5a-T6",
+    "5a-T7",
+    "5a-T8",
+    "5a-T9a",
+    "5a-T9b",
+    "5a-T9c",
+    "5a-T10",
+    "5a-T11",
+    "5a-T12",
+    "5a-T13a",
+    "5a-T13b",
+    "5a-T14",
+    "5a-T15",
+    "5a-T16a",
+    "5a-T16b",
+    "5a-T17a",
+    "5a-T17b",
+    "5a-T17c",
+    "5a-T18a",
+    "5a-T18b",
+    "5a-T18c",
+    "5b (oracle regen)",
+    "5b",
+    "5c",
+];
+
+/// One fix family of a gap row and the task that fixes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct GapFix {
+    family: &'static str,
+    owner: &'static str,
+}
+
+const fn gap_fix(family: &'static str, owner: &'static str) -> GapFix {
+    GapFix { family, owner }
+}
+
+/// What the census learned about one `(case, component)` mismatch.
+#[derive(Debug, Default)]
+struct GapCensus {
+    fixes: BTreeSet<GapFix>,
+    /// Differences no family explains, printed above the row.
+    unexplained: Vec<String>,
+}
+
+impl GapCensus {
+    /// A census that attributes these differences to no family.
+    fn unattributed(notes: impl IntoIterator<Item = String>) -> Self {
+        Self {
+            fixes: BTreeSet::new(),
+            unexplained: notes.into_iter().collect(),
+        }
+    }
+
+    /// `"<families>: <owner>"`, the families in `F1`…`F12`, `INV:`, `SI:`
+    /// order, a `?` family for anything unexplained.
+    fn reason(&self) -> String {
+        let mut families = self.fixes.iter().map(|fix| fix.family).collect::<Vec<_>>();
+        if !self.unexplained.is_empty() {
+            families.push("?");
+        }
+        families.sort_by_key(|family| family_sort_key(family));
+        families.dedup();
+        let owner = self
+            .fixes
+            .iter()
+            .map(|fix| fix.owner)
+            .max_by_key(|owner| {
+                GAP_OWNERS
+                    .iter()
+                    .position(|known| known == owner)
+                    .unwrap_or_else(|| panic!("unknown gap owner {owner:?}"))
+            })
+            .unwrap_or("?");
+        format!("{}: {owner}", families.join("+"))
+    }
+}
+
+/// Sorts `F2` before `F10` and `F8` before `F8b`, and the `F` families
+/// before `INV:` and `SI:` causes.
+fn family_sort_key(family: &str) -> (bool, u32, &str) {
+    let numbered = family
+        .strip_prefix('F')
+        .map(|rest| {
+            rest.split_at(
+                rest.find(|c: char| !c.is_ascii_digit())
+                    .unwrap_or(rest.len()),
+            )
+        })
+        .and_then(|(number, suffix)| Some((number.parse().ok()?, suffix)));
+    match numbered {
+        Some((number, suffix)) => (false, number, suffix),
+        None => (true, 0, family),
+    }
+}
+
+/// `[docutils]` records that only a transform not ported yet, or the HTML
+/// writer, creates, by message, with that family. Every other `[docutils]`
+/// record is one the parser creates, which the reporter channel prints since
+/// T8 (F1) [TW §6.3, §7.4], or one a ported transform creates (`Transitions`'
+/// since T9c, F7; the hyperlink-target transforms' since T10, F4's
+/// `Unknown target name`, `Anonymous hyperlink mismatch` and `Indirect
+/// hyperlink target`; Substitutions' and Footnotes' since T11, F4's
+/// `Undefined substitution referenced` and `Too many … footnote
+/// references`): a record one side alone prints is unexplained.
+const REPORTER_MESSAGE_FIXES: &[(&str, GapFix)] = &[("Cannot scale image!", gap_fix("F8", "5b"))];
+
+/// Logger records Ultra does not print, by message [TW §6.3, §7.3]. The
+/// unreferenced-footnote warning (`[ref.footnote]`, F6) is printed since
+/// T11, the image collector's `image file not readable` (F3) since T13a,
+/// and the citation and math domains' `Citation [X] is not referenced.`
+/// and `citation not found` (F6) and `equation not found` (F10) since
+/// T13b.
+const MISSING_LOGGER_FIXES: &[(&str, GapFix)] = &[
+    ("Configuration error!", gap_fix("F9", "5a-T3")),
+    ("Could not obtain image size. ", gap_fix("F8", "5b")),
+];
+
+/// The messages of the M1 directive and role validators
+/// (`src/directives/validation/`), which Sphinx never prints (F2).
+const M1_VALIDATION_MESSAGES: &[&str] = &[
+    r"Unknown option '.*'( for \S+ directive)?",
+    r"\S+ option should not have a value",
+    r"\S+ is not a valid length: '.*'",
+    r"Invalid alignment: .*",
+    r"Unusual image extension: .*",
+    r"Scale must be a number",
+    r"(Image|Include file|Literalinclude file) path cannot be empty",
+    r"Unmatched braces in math (content|expression)",
+    r"\S+ directive (requires .*|has no content|is empty)",
+    r"\S+( \S+)? role (requires .*|should .*)",
+    r"Abbreviations typically contain uppercase letters",
+    r"Command contains potentially dangerous characters",
+    r"Document reference should not include file extension",
+    r"Download target has no file extension",
+    r"File path contains invalid characters",
+    r"Unusual file type for download: .*",
+    r"Use &amp; for literal ampersand in GUI labels",
+];
+
+/// The families of a `Warnings` mismatch, record by record: each record only
+/// one side prints is matched against the message families of [TW §6.3,
+/// §7.3]. A node-located record printed with its included file's relative
+/// path (`part.rst:6` for `<SRCDIR>/part.rst:6`, F8b) is fixed since T14, so
+/// one now is unexplained.
+fn warning_census(case: &CaseRecord, diagnostics: &[Diagnostic]) -> GapCensus {
+    static M1: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(&format!("^({})$", M1_VALIDATION_MESSAGES.join("|"))).expect("valid pattern")
+    });
+
+    let (expected_only, actual_only) = match warning_record_diff(case, diagnostics) {
+        Ok(records) => records,
+        Err(note) => return GapCensus::unattributed([note]),
+    };
+    let mut census = GapCensus::default();
+    for record in &expected_only {
+        let message = warning_record_message(record).unwrap_or(record);
+        let fixes = if let Some((_, fix)) = REPORTER_MESSAGE_FIXES
+            .iter()
+            .find(|(pattern, _)| record.ends_with(" [docutils]") && record.contains(pattern))
+        {
+            vec![*fix]
+        } else if let Some((_, fix)) = MISSING_LOGGER_FIXES
+            .iter()
+            .find(|(pattern, _)| record.contains(pattern))
+        {
+            vec![*fix]
+        } else {
+            census.unexplained.push(format!("expected only: {message}"));
+            continue;
+        };
+        census.fixes.extend(fixes);
+    }
+    for record in &actual_only {
+        let message = warning_record_message(record).unwrap_or(record);
+        if M1.is_match(message) {
+            census.fixes.insert(gap_fix("F2", "5a-T3"));
+        } else {
+            census.unexplained.push(format!("actual only: {record}"));
+        }
+    }
+    census
+}
+
+/// The warning records only one side prints, `(expected_only, actual_only)`.
+///
+/// The actual stream is rebuilt from the case's expected stream and its
+/// positional `warning-*-line` diagnostics; it splits into records at every
+/// line that opens one (`[<location>: ]WARNING|ERROR|CRITICAL: …`), and the
+/// lines before the first such line (a fatal report) form one record.
+fn warning_record_diff(
+    case: &CaseRecord,
+    diagnostics: &[Diagnostic],
+) -> Result<(Vec<String>, Vec<String>), String> {
+    let normalized = case.warnings.replace("\r\n", "\n").replace('\r', "\n");
+    let expected = normalized.lines().collect::<Vec<_>>();
+    let mut at_line = BTreeMap::new();
+    for diagnostic in diagnostics {
+        let line = diagnostic
+            .first_expected_line
+            .filter(|_| diagnostic.category.starts_with("warning-"))
+            .ok_or_else(|| format!("{} is not a line diagnostic", diagnostic.category))?;
+        if diagnostic.category != "warning-extra-line"
+            && expected.get(line - 1) != Some(&diagnostic.expected.as_str())
+        {
+            return Err(format!("expected line {line} is not the ledger's"));
+        }
+        at_line.insert(line, diagnostic);
+    }
+    let lines_of = |category: &str| {
+        diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.category == category)
+            .count()
+    };
+    let actual_len =
+        expected.len() + lines_of("warning-extra-line") - lines_of("warning-missing-line");
+    let actual = (1..=actual_len)
+        .map(|line| match at_line.get(&line) {
+            Some(diagnostic) => Ok(diagnostic.actual.as_str()),
+            None => expected
+                .get(line - 1)
+                .copied()
+                .ok_or_else(|| format!("actual line {line} cannot be rebuilt")),
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let mut balance = BTreeMap::<String, isize>::new();
+    for record in warning_records(&expected) {
+        *balance.entry(record).or_default() += 1;
+    }
+    for record in warning_records(&actual) {
+        *balance.entry(record).or_default() -= 1;
+    }
+    let mut expected_only = Vec::new();
+    let mut actual_only = Vec::new();
+    for (record, count) in balance {
+        let side = if count > 0 {
+            &mut expected_only
+        } else {
+            &mut actual_only
+        };
+        side.extend(std::iter::repeat_n(record, count.unsigned_abs()));
+    }
+    if expected_only.is_empty() && actual_only.is_empty() {
+        return Err("both streams hold the same records in another order".to_string());
+    }
+    Ok((expected_only, actual_only))
+}
+
+/// Splits a warning stream into records, each a line that opens one and its
+/// continuation lines; lines before the first record (a fatal report) form
+/// one record.
+fn warning_records(lines: &[&str]) -> Vec<String> {
+    let mut records = Vec::<Vec<&str>>::new();
+    for &line in lines {
+        match records.last_mut() {
+            Some(record) if warning_record_message(line).is_none() => record.push(line),
+            _ => records.push(vec![line]),
+        }
+    }
+    records
+        .into_iter()
+        .map(|record| record.join("\n"))
+        .collect()
+}
+
+/// The message of a line that opens a warning record,
+/// `[<location>: ]WARNING|ERROR|CRITICAL: <message>`.
+fn warning_record_message(line: &str) -> Option<&str> {
+    static RECORD: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"^(?:\S+?(?::\d*)?: )?(?:WARNING|ERROR|CRITICAL): (.*)").expect("valid pattern")
+    });
+    RECORD
+        .captures(line)
+        .and_then(|captures| captures.get(1))
+        .map(|message| message.as_str())
+}
+
+/// The causes of an `objects.inv` mismatch [BASE §2.8], told by each record
+/// only one side holds or holds differently. The two the census knew, a
+/// title's dangling reference kept as its raw source (`INV:word_`) and a
+/// label PropagateTargets or IndirectHyperlinks changes
+/// (`INV:target-transforms`), are fixed since T10: every mismatch is now
+/// unexplained.
+fn inventory_census(diagnostics: &[Diagnostic]) -> GapCensus {
+    let mut census = GapCensus::default();
+    census
+        .unexplained
+        .extend(diagnostics.iter().map(|diagnostic| {
+            format!(
+                "{}: expected {:?}, actual {:?}",
+                diagnostic.category, diagnostic.expected, diagnostic.actual
+            )
+        }));
+    census
+}
+
+/// The causes of a `searchindex.js` mismatch [TW A18, BASE §2.9]. The ones
+/// the census knew are fixed: a section anchor the label PropagateTargets
+/// moves onto it (`SI:propagate-targets`) and a reference the 440, 460 or
+/// 850 transforms keep as its raw source (`SI:word_`) since T10, a
+/// substitution reference indexed by its name (`SI:substitutions`) and a
+/// footnote reference kept as its raw source (`SI:footnote-refs`) since
+/// T11: every mismatch is now unexplained.
+fn searchindex_census(diagnostics: &[Diagnostic]) -> GapCensus {
+    GapCensus::unattributed(diagnostics.iter().map(|diagnostic| {
+        format!(
+            "{}: {}: expected {:?}, actual {:?}",
+            diagnostic.category, diagnostic.detail, diagnostic.expected, diagnostic.actual
+        )
+    }))
+}
+
+/// The verdict of `html_oracle_aux_gate`: the observed `(case_key, component)`
+/// mismatches against the rows of `KNOWN_AUX_GAPS`.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct AuxGateDiff {
+    /// Observed mismatches that no row lists.
+    regressions: Vec<(String, AuxComponent)>,
+    /// Rows whose mismatch is gone; the task that fixed them deletes them.
+    fixed: Vec<(String, AuxComponent)>,
+    /// `(case_key, component)` pairs that more than one row lists.
+    duplicate_rows: Vec<(String, AuxComponent)>,
+}
+
+impl AuxGateDiff {
+    fn is_clean(&self) -> bool {
+        self.regressions.is_empty() && self.fixed.is_empty() && self.duplicate_rows.is_empty()
+    }
+}
+
+/// Compares the observed mismatch set with a gap table, each list sorted.
+fn aux_gate_diff(
+    observed: &BTreeSet<(String, AuxComponent)>,
+    table: &[(&str, AuxComponent, &str)],
+) -> AuxGateDiff {
+    let mut listed = BTreeSet::new();
+    let mut duplicate_rows = BTreeSet::new();
+    for (case, component, _reason) in table {
+        let key = (case.to_string(), *component);
+        if !listed.insert(key.clone()) {
+            duplicate_rows.insert(key);
+        }
+    }
+    AuxGateDiff {
+        regressions: observed.difference(&listed).cloned().collect(),
+        fixed: listed.difference(observed).cloned().collect(),
+        duplicate_rows: duplicate_rows.into_iter().collect(),
+    }
+}
+
+fn aux_diagnostic(category: &str, logical_path: &str) -> Diagnostic {
+    Diagnostic {
+        category: category.to_string(),
+        logical_path: logical_path.to_string(),
+        first_expected_line: None,
+        expected: String::new(),
+        actual: String::new(),
+        detail: "synthetic".to_string(),
+    }
+}
+
+#[test]
+fn aux_component_of_maps_harness_categories() {
+    // A case that hangs, fails to spawn or loses its pipes has no exit class
+    // to compare, so it must never pass silently.
+    for category in ["timeout", "status", "spawn", "io", "process"] {
+        assert_eq!(
+            aux_component_of(&aux_diagnostic(category, "")),
+            Some(AuxComponent::ExitClass),
+            "{category}"
+        );
+    }
+    for (category, logical_path, component) in [
+        (
+            "warning-missing-line",
+            "warnings",
+            Some(AuxComponent::Warnings),
+        ),
+        (
+            "warning-changed-line",
+            "warnings",
+            Some(AuxComponent::Warnings),
+        ),
+        (
+            "objects-inventory-value",
+            "objects.inv",
+            Some(AuxComponent::ObjectsInv),
+        ),
+        (
+            "inventory-missing-record",
+            "objects.inv",
+            Some(AuxComponent::ObjectsInv),
+        ),
+        (
+            "missing-file",
+            "objects.inv",
+            Some(AuxComponent::ObjectsInv),
+        ),
+        (
+            "searchindex-changed-key",
+            "searchindex.js",
+            Some(AuxComponent::SearchIndex),
+        ),
+        (
+            "unexpected-file",
+            "searchindex.js",
+            Some(AuxComponent::SearchIndex),
+        ),
+        ("html-body", "index.html", None),
+        ("missing-file", "genindex.html", None),
+        ("missing-file", "search.html", None),
+        ("text-value", "_static/doctools.js", None),
+        ("missing-file", "_sources/index.rst.txt", None),
+    ] {
+        assert_eq!(
+            aux_component_of(&aux_diagnostic(category, logical_path)),
+            component,
+            "{category} {logical_path}"
+        );
+    }
+}
+
+#[test]
+fn aux_gate_diff_reports_regressions_and_fixed_rows() {
+    use AuxComponent::{ObjectsInv, SearchIndex, Warnings};
+    let key = |case: &str, component| (case.to_string(), component);
+    let table: &[(&str, AuxComponent, &str)] = &[
+        ("core/s/still-failing", Warnings, "F1: 5a-T8"),
+        ("core/s/fixed", SearchIndex, "SI:word_: 5a-T10"),
+        ("core/s/still-failing", SearchIndex, "SI:word_: 5a-T10"),
+    ];
+    let observed = BTreeSet::from([
+        key("core/s/still-failing", Warnings),
+        key("core/s/still-failing", SearchIndex),
+        key("core/s/new", ObjectsInv),
+    ]);
+    let diff = aux_gate_diff(&observed, table);
+    assert_eq!(diff.regressions, [key("core/s/new", ObjectsInv)]);
+    assert_eq!(diff.fixed, [key("core/s/fixed", SearchIndex)]);
+    assert!(diff.duplicate_rows.is_empty());
+    assert!(!diff.is_clean());
+
+    // A table listing exactly the observed set, each pair once, is clean.
+    let exact: &[(&str, AuxComponent, &str)] = &[
+        ("core/s/new", ObjectsInv, "INV:x: 5a-T10"),
+        ("core/s/still-failing", Warnings, "F1: 5a-T8"),
+        ("core/s/still-failing", SearchIndex, "SI:word_: 5a-T10"),
+    ];
+    assert!(aux_gate_diff(&observed, exact).is_clean());
+
+    // A case and component listed twice is an error, whatever the reasons say,
+    // even when the set comparison alone would pass.
+    let duplicated: &[(&str, AuxComponent, &str)] = &[
+        ("core/s/new", ObjectsInv, "INV:x: 5a-T10"),
+        ("core/s/still-failing", Warnings, "F1: 5a-T8"),
+        ("core/s/still-failing", SearchIndex, "SI:word_: 5a-T10"),
+        ("core/s/still-failing", Warnings, "F1+F3: 5a-T13a"),
+    ];
+    let diff = aux_gate_diff(&observed, duplicated);
+    assert!(diff.regressions.is_empty());
+    assert!(diff.fixed.is_empty());
+    assert_eq!(diff.duplicate_rows, [key("core/s/still-failing", Warnings)]);
+    assert!(!diff.is_clean());
+}
+
+/// Every `(case_key, component)` pair whose output differs from the oracle
+/// today, checked strictly by `html_oracle_aux_gate`; `html_oracle_aux_census`
+/// prints the current set as rows. A row's reason is `"<families>: <owner>"`:
+/// every fix family its mismatch holds (`F1`…`F12` for the warning stream,
+/// `SI:<cause>` for `searchindex.js`, `INV:<cause>` for `objects.inv`) and
+/// the latest task that fixes one of them. Rows stay one per line, as the
+/// census prints them, so a task deletes or re-attributes a row by editing
+/// one line and a grep for an owner shows whole rows.
+#[rustfmt::skip]
+const KNOWN_AUX_GAPS: &[(&str, AuxComponent, &str)] = &[
+    ("core/docutils_snippets/docutils-0447", AuxComponent::Warnings, "F8: 5b"),
+    ("core/docutils_snippets/docutils-0449", AuxComponent::Warnings, "F8: 5b"),
+    ("core/docutils_snippets/docutils-0450", AuxComponent::Warnings, "F8: 5b"),
+];

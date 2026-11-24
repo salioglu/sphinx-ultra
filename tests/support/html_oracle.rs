@@ -1,3 +1,4 @@
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -5,8 +6,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{Cursor, Read};
 use std::path::{Component, Path, PathBuf};
+use std::sync::LazyLock;
 
 use flate2::read::ZlibDecoder;
+
+use super::text_diff::first_differing_line;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Policy {
@@ -61,6 +65,16 @@ pub struct InventoryRecord {
     pub priority: i32,
     pub uri: String,
     pub display_name: String,
+    /// `None` for a parsed record: a payload line Sphinx's loader reads a
+    /// record from (with a priority that fits an `i32`) whose canonical
+    /// re-join, `{name} {domain_role} {priority} {uri} {display_name}`, equals
+    /// the line. `Some(line)`, verbatim, for every other line, a raw record
+    /// compared byte for byte; its other fields are then empty and its
+    /// priority 0. Each line is read on its own: the loader's skip of a
+    /// `py:module` line whose module an earlier line already recorded
+    /// (`SP/sphinx/util/inventory.py:129-134`) is not modelled, so that line
+    /// is parsed too.
+    pub raw: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -1013,6 +1027,20 @@ fn compare_inventory_file(logical_path: &str, expected: &[u8], actual: &[u8]) ->
     }
 }
 
+/// Parses a version-2 `objects.inv` as Sphinx 9.1.0's own loader reads its
+/// records (`SP/sphinx/util/inventory.py:113-128`), returning the four header
+/// lines and the records, sorted.
+///
+/// Only a bad header or an undecodable payload (zlib or UTF-8) makes an
+/// inventory invalid. Every payload line becomes a record. The parsed records
+/// are exactly the lines the loader reads a record from whose canonical
+/// re-join, `{name} {domain_role} {priority} {uri} {display_name}`, equals the
+/// line; every other line is kept verbatim as an opaque raw record compared
+/// byte for byte (`parse_inventory_record`). Either way two records are equal
+/// exactly when their lines are. Lines are read one at a time: the loader's
+/// skip of a `py:module` line whose module an earlier line already recorded
+/// (`:129-134`) is not modelled, and such a line is parsed here like any
+/// other.
 pub fn parse_inventory(bytes: &[u8]) -> Result<(Vec<u8>, Vec<InventoryRecord>), String> {
     const HEADER: &[u8] = b"# Sphinx inventory version 2\n# Project: ";
     if !bytes.starts_with(HEADER) {
@@ -1037,28 +1065,70 @@ pub fn parse_inventory(bytes: &[u8]) -> Result<(Vec<u8>, Vec<InventoryRecord>), 
     decoder
         .read_to_string(&mut records_text)
         .map_err(|error| format!("zlib decode failed: {error}"))?;
-    let mut records = Vec::new();
-    for (line_number, line) in records_text.lines().enumerate() {
-        if line.is_empty() {
-            continue;
-        }
-        let fields = line.splitn(5, ' ').collect::<Vec<_>>();
-        if fields.len() != 5 || fields.iter().any(|field| field.is_empty()) {
-            return Err(format!("invalid record on line {}", line_number + 1));
-        }
-        let priority = fields[2]
-            .parse::<i32>()
-            .map_err(|error| format!("invalid priority on line {}: {error}", line_number + 1))?;
-        records.push(InventoryRecord {
-            name: fields[0].to_string(),
-            domain_role: fields[1].to_string(),
-            priority,
-            uri: fields[3].to_string(),
-            display_name: fields[4].to_string(),
-        });
+    // The loader iterates `str.splitlines()`: a CRLF pair is one line break,
+    // and a final line break opens no empty line.
+    let records_text = records_text.replace("\r\n", "\n");
+    let mut lines = records_text
+        .split([
+            '\n', '\r', '\x0b', '\x0c', '\x1c', '\x1d', '\x1e', '\u{85}', '\u{2028}', '\u{2029}',
+        ])
+        .collect::<Vec<_>>();
+    if lines.last() == Some(&"") {
+        lines.pop();
     }
+    let mut records = lines
+        .into_iter()
+        .map(parse_inventory_record)
+        .collect::<Vec<_>>();
     records.sort();
     Ok((header, records))
+}
+
+/// Reads one payload line as the loader does (`SP/sphinx/util/inventory.py:115-128`):
+/// the right-stripped line must match the record pattern with a `domain:type`
+/// role, and the priority, which the loader keeps as text, must fit an `i32`.
+/// The record is kept only if its canonical re-join (`inventory_record_text`)
+/// is the unstripped line itself: the pattern absorbs whitespace at field
+/// boundaries and the strip drops trailing whitespace, so a record read from
+/// any other line would compare equal to lines with different bytes. Every
+/// other line, including every line the loader skips, stays raw.
+fn parse_inventory_record(line: &str) -> InventoryRecord {
+    // Python's `\s` (`str.isspace`) is Unicode `White_Space`, which is Rust's
+    // `\s`, plus U+001C..=U+001F.
+    const SPACE: &str = r"[\s\x1C-\x1F]";
+    const NON_SPACE: &str = r"[^\s\x1C-\x1F]";
+    // `(.+?)\s+(\S+)\s+(-?\d+)\s+?(\S*)\s+(.*)`, anchored at the start as
+    // `re.match` anchors it.
+    static RECORD: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(&format!(
+            r"^(.+?){SPACE}+({NON_SPACE}+){SPACE}+(-?\d+){SPACE}+?({NON_SPACE}*){SPACE}+(.*)"
+        ))
+        .expect("valid inventory record pattern")
+    });
+    let stripped =
+        line.trim_end_matches(|c: char| c.is_whitespace() || ('\x1c'..='\x1f').contains(&c));
+    RECORD
+        .captures(stripped)
+        .filter(|fields| fields[2].contains(':'))
+        .and_then(|fields| {
+            Some(InventoryRecord {
+                name: fields[1].to_string(),
+                domain_role: fields[2].to_string(),
+                priority: fields[3].parse().ok()?,
+                uri: fields[4].to_string(),
+                display_name: fields[5].to_string(),
+                raw: None,
+            })
+        })
+        .filter(|record| inventory_record_text(record) == line)
+        .unwrap_or_else(|| InventoryRecord {
+            name: String::new(),
+            domain_role: String::new(),
+            priority: 0,
+            uri: String::new(),
+            display_name: String::new(),
+            raw: Some(line.to_string()),
+        })
 }
 
 fn format_inventory(inventory: &(Vec<u8>, Vec<InventoryRecord>)) -> String {
@@ -1066,12 +1136,7 @@ fn format_inventory(inventory: &(Vec<u8>, Vec<InventoryRecord>)) -> String {
     let records = inventory
         .1
         .iter()
-        .map(|record| {
-            format!(
-                "{} {} {} {} {}",
-                record.name, record.domain_role, record.priority, record.uri, record.display_name
-            )
-        })
+        .map(inventory_record_text)
         .collect::<Vec<_>>()
         .join("\n");
     format!("{header}{records}")
@@ -1389,24 +1454,22 @@ fn replace_token(bytes: &[u8], token: &[u8], replacement: &[u8]) -> Vec<u8> {
 /// writes into `schema_violations.json`, exactly as `zero_schema_timings`
 /// in `tools/gen_html_oracle.py` does for the reference.
 pub fn zero_schema_timings(bytes: &[u8]) -> Vec<u8> {
-    use regex::bytes::Regex;
-    use std::sync::LazyLock;
-
-    static PATTERNS: LazyLock<[(Regex, &[u8]); 3]> = LazyLock::new(|| {
+    static PATTERNS: LazyLock<[(regex::bytes::Regex, &[u8]); 3]> = LazyLock::new(|| {
         [
             (
-                Regex::new(
+                regex::bytes::Regex::new(
                     r"(Schema validation completed with \d+ warning\(s\) in )\d+\.\d+( seconds\.)",
                 )
                 .expect("valid regex"),
                 b"${1}0.000${2}",
             ),
             (
-                Regex::new(r"(Validated )\d+(?:\.\d+)?( needs/s\.)").expect("valid regex"),
+                regex::bytes::Regex::new(r"(Validated )\d+(?:\.\d+)?( needs/s\.)")
+                    .expect("valid regex"),
                 b"${1}0${2}",
             ),
             (
-                Regex::new(r#"("validated_needs_per_second": )\d+(?:\.\d+)?"#)
+                regex::bytes::Regex::new(r#"("validated_needs_per_second": )\d+(?:\.\d+)?"#)
                     .expect("valid regex"),
                 b"${1}0",
             ),
@@ -1473,16 +1536,7 @@ fn display_bytes(bytes: &[u8]) -> String {
 }
 
 fn first_difference_line(expected: &str, actual: &str) -> Option<usize> {
-    let mut expected_lines = expected.lines();
-    let mut actual_lines = actual.lines();
-    let mut line_number = 1;
-    loop {
-        match (expected_lines.next(), actual_lines.next()) {
-            (None, None) => return None,
-            (left, right) if left == right => line_number += 1,
-            _ => return Some(line_number),
-        }
-    }
+    first_differing_line(expected, actual).map(|(line, _, _)| line)
 }
 
 pub fn status_name(status: CaseStatus) -> &'static str {
@@ -2067,6 +2121,41 @@ fn common_mismatches(results: &[CaseResult]) -> (Vec<CommonMismatch>, BTreeSet<M
     (common, common_keys)
 }
 
+/// The parts of a build `html_oracle_aux_gate` holds to the oracle, none of
+/// them written by the HTML writer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum AuxComponent {
+    /// The `-w` warning stream.
+    Warnings,
+    /// The build-status class (built or build error), and any failure to run
+    /// the build at all.
+    ExitClass,
+    /// `objects.inv`.
+    ObjectsInv,
+    /// `searchindex.js`.
+    SearchIndex,
+}
+
+/// The auxiliary component a harness diagnostic belongs to, or `None` for
+/// any other output (pages, `genindex.html`, `search.html`, `_static`,
+/// `_sources`, `_images`, `.buildinfo`).
+///
+/// A status-class difference and the process failures (`timeout`, `spawn`,
+/// `io`, `process`), which carry no logical path, are `ExitClass`, so a case
+/// that hangs or fails to spawn can never pass silently.
+pub fn aux_component_of(diagnostic: &Diagnostic) -> Option<AuxComponent> {
+    match (
+        diagnostic.category.as_str(),
+        diagnostic.logical_path.as_str(),
+    ) {
+        ("status" | "timeout" | "spawn" | "io" | "process", "") => Some(AuxComponent::ExitClass),
+        (_, "warnings") => Some(AuxComponent::Warnings),
+        (_, "objects.inv") => Some(AuxComponent::ObjectsInv),
+        (_, "searchindex.js") => Some(AuxComponent::SearchIndex),
+        _ => None,
+    }
+}
+
 fn file_kind(diagnostic: &Diagnostic) -> Option<&'static str> {
     let path = diagnostic.logical_path.as_str();
     if diagnostic.category.starts_with("warning") || path == "warnings" {
@@ -2627,15 +2716,8 @@ fn first_difference_text(expected: &str, actual: &str) -> Option<(usize, String,
     let actual = normalize_crlf(actual.as_bytes());
     let expected = String::from_utf8_lossy(&expected);
     let actual = String::from_utf8_lossy(&actual);
-    let expected_lines = expected.lines().collect::<Vec<_>>();
-    let actual_lines = actual.lines().collect::<Vec<_>>();
-    let first = (0..expected_lines.len().max(actual_lines.len()))
-        .find(|index| expected_lines.get(*index) != actual_lines.get(*index))?;
-    Some((
-        first + 1,
-        cap_text(expected_lines.get(first).copied().unwrap_or_default()),
-        cap_text(actual_lines.get(first).copied().unwrap_or_default()),
-    ))
+    first_differing_line(&expected, &actual)
+        .map(|(line, expected, actual)| (line, cap_text(expected), cap_text(actual)))
 }
 
 fn diagnose_object_keys(
@@ -2689,19 +2771,27 @@ fn json_compact(value: &Value) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "<unserializable>".to_string())
 }
 
+/// A parsed record's name, role and priority; a raw record is keyed by its
+/// line (no parsed record has an empty role).
 fn inventory_identity(record: &InventoryRecord) -> (String, String, i32) {
-    (
-        record.name.clone(),
-        record.domain_role.clone(),
-        record.priority,
-    )
+    match &record.raw {
+        Some(line) => (line.clone(), String::new(), 0),
+        None => (
+            record.name.clone(),
+            record.domain_role.clone(),
+            record.priority,
+        ),
+    }
 }
 
 fn inventory_record_text(record: &InventoryRecord) -> String {
-    format!(
-        "{} {} {} {} {}",
-        record.name, record.domain_role, record.priority, record.uri, record.display_name
-    )
+    match &record.raw {
+        Some(line) => line.clone(),
+        None => format!(
+            "{} {} {} {} {}",
+            record.name, record.domain_role, record.priority, record.uri, record.display_name
+        ),
+    }
 }
 
 fn unified_diff(expected: &str, actual: &str) -> String {
@@ -2897,19 +2987,28 @@ pub fn mismatch_diagnostics_with_source_root(
     diagnostics
 }
 
+/// The diagnostics of two warning streams: none when they compare equal
+/// ([`compare_warnings_with_roots`]), otherwise one per differing line
+/// ([`diagnose_warnings`]) — or, for streams that differ only in a final
+/// line break, which no line shows, the whole-stream diagnostic.
 pub fn warning_diagnostics_with_roots(
     expected: &[u8],
     actual: &[u8],
     expected_roots: Option<WarningRoots<'_>>,
     actual_roots: Option<WarningRoots<'_>>,
 ) -> Vec<Diagnostic> {
-    if compare_warnings_with_roots(expected, actual, expected_roots, actual_roots).is_empty() {
-        Vec::new()
+    let whole = compare_warnings_with_roots(expected, actual, expected_roots, actual_roots);
+    if whole.is_empty() {
+        return whole;
+    }
+    let lines = diagnose_warnings(
+        &normalize_warning_bytes_with_roots(expected, expected_roots),
+        &normalize_warning_bytes_with_roots(actual, actual_roots),
+    );
+    if lines.is_empty() {
+        whole
     } else {
-        diagnose_warnings(
-            &normalize_warning_bytes_with_roots(expected, expected_roots),
-            &normalize_warning_bytes_with_roots(actual, actual_roots),
-        )
+        lines
     }
 }
 

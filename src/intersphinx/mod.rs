@@ -310,7 +310,8 @@ pub fn load_mappings(
     // `_IntersphinxProject`'s invariants (`_shared.py:60-83`), checked before
     // any fetching starts, exactly as `load_mappings` builds every project up
     // front: a violation is a `ConfigError` that aborts the build
-    // (`_load.py:150-160`). Validation guarantees the name and target URI are
+    // (`_load.py:150-160`), typed as one so sphinx-build mode reports it as
+    // Sphinx does. Validation guarantees the name and target URI are
     // non-empty and every location is `None`-or-non-empty, so an empty
     // location *tuple* — `('https://x/', ())` — is the one invariant that can
     // still fail here.
@@ -319,7 +320,10 @@ pub fn load_mappings(
         .values()
         .any(|(_, locations)| locations.is_empty())
     {
-        anyhow::bail!("An invalid intersphinx_mapping entry was added after normalisation.");
+        return Err(crate::error::ConfigError(
+            "An invalid intersphinx_mapping entry was added after normalisation.".to_string(),
+        )
+        .into());
     }
 
     // uri -> (name, expiry, inventory) — Sphinx's `intersphinx_cache`.

@@ -33,6 +33,11 @@ pub struct ConfPyConfig {
     pub project: Option<String>,
     pub version: Option<String>,
     pub release: Option<String>,
+    /// `today` (`config.py:227`), `None` when conf.py said nothing.
+    pub today: Option<String>,
+    /// `today_fmt` (`config.py:229`), `None` when conf.py said nothing or
+    /// set it to `None`, both of which leave Sphinx's default.
+    pub today_fmt: Option<String>,
     pub copyright: Option<String>,
     pub author: Option<String>,
 
@@ -140,6 +145,25 @@ pub struct ConfPyConfig {
     pub tls_verify: Option<bool>,
     pub tls_cacerts: Option<crate::intersphinx::TlsCacerts>,
     pub user_agent: Option<String>,
+
+    // The warning stream (`config.py:262-263`).
+    /// `suppress_warnings` as written (a list or a tuple); empty when
+    /// conf.py said nothing, which is also Sphinx's default.
+    pub suppress_warnings: Vec<String>,
+    /// `show_warning_types`, `None` when conf.py said nothing.
+    pub show_warning_types: Option<bool>,
+    /// `keep_warnings` (`config.py:261`), `None` when conf.py said nothing.
+    pub keep_warnings: Option<bool>,
+    /// `trim_doctest_flags` (`config.py:267`), `None` when conf.py said
+    /// nothing.
+    pub trim_doctest_flags: Option<bool>,
+
+    // The read-side keys (`config.py:257`, `:268`).
+    /// `primary_domain`: `None` when conf.py said nothing, `Some(None)` for
+    /// an explicit `primary_domain = None`.
+    pub primary_domain: Option<Option<String>>,
+    /// `highlight_language`, `None` when conf.py said nothing.
+    pub highlight_language: Option<String>,
 
     // Object-signature / py-domain family. `None` means "conf.py did not
     // mention it", which is what keeps sphinx's own default in place —
@@ -327,6 +351,8 @@ impl PythonConfigParser {
         config.project = extract_string("project");
         config.version = extract_string("version");
         config.release = extract_string("release");
+        config.today = extract_string("today");
+        config.today_fmt = extract_string("today_fmt");
         config.copyright = extract_string("copyright");
         config.author = extract_string("author");
 
@@ -409,6 +435,16 @@ impl PythonConfigParser {
                 _ => None,
             });
         config.user_agent = extract_string("user_agent");
+        config.suppress_warnings = extract_string_list("suppress_warnings");
+        config.show_warning_types = extract_bool("show_warning_types");
+        config.keep_warnings = extract_bool("keep_warnings");
+        config.trim_doctest_flags = extract_bool("trim_doctest_flags");
+        config.primary_domain = match self.conf_namespace.get("primary_domain") {
+            Some(serde_json::Value::Null) => Some(None),
+            Some(value) => value.as_str().map(|name| Some(name.to_string())),
+            None => None,
+        };
+        config.highlight_language = extract_string("highlight_language");
 
         // Object-signature / py-domain family. The two line-length keys are
         // `int | None`, so they read through `as_i64` rather than
@@ -499,6 +535,8 @@ impl PythonConfigParser {
             "project"
                 | "version"
                 | "release"
+                | "today"
+                | "today_fmt"
                 | "copyright"
                 | "author"
                 | "extensions"
@@ -568,6 +606,12 @@ impl PythonConfigParser {
                 | "tls_verify"
                 | "tls_cacerts"
                 | "user_agent"
+                | "suppress_warnings"
+                | "show_warning_types"
+                | "keep_warnings"
+                | "trim_doctest_flags"
+                | "primary_domain"
+                | "highlight_language"
                 | "intersphinx_mapping"
                 | "intersphinx_disabled_reftypes"
                 | "intersphinx_resolve_self"
@@ -1046,6 +1090,8 @@ impl Default for ConfPyConfig {
             project: None,
             version: None,
             release: None,
+            today: None,
+            today_fmt: None,
             copyright: None,
             author: None,
             extensions: Vec::new(),
@@ -1141,6 +1187,12 @@ impl Default for ConfPyConfig {
             tls_verify: Some(true),
             tls_cacerts: None,
             user_agent: None,
+            suppress_warnings: Vec::new(),
+            show_warning_types: None,
+            keep_warnings: None,
+            trim_doctest_flags: None,
+            primary_domain: None,
+            highlight_language: None,
             // `None` = "conf.py said nothing", which leaves
             // `BuildConfig::default()`'s sphinx defaults untouched.
             maximum_signature_line_length: None,
@@ -1174,10 +1226,11 @@ impl Default for ConfPyConfig {
 impl ConfPyConfig {
     /// Convert conf.py configuration to BuildConfig.
     ///
-    /// Fails only where Sphinx itself raises `ConfigError` at
-    /// `config-inited` — today that is `intersphinx_mapping` validation
-    /// (`ext/intersphinx/_load.py:131-136`), which aborts the build before
-    /// it reads a single document.
+    /// Nothing fails here today: the one `ConfigError` Sphinx raises at
+    /// `config-inited`, `intersphinx_mapping` validation
+    /// (`ext/intersphinx/_load.py:131-136`), runs once the `-D` overrides
+    /// are in ([`BuildConfig::init_intersphinx_mapping`]), and only with
+    /// the extension loaded.
     pub fn to_build_config(&self) -> Result<BuildConfig> {
         let mut config = BuildConfig::default();
 
@@ -1191,6 +1244,10 @@ impl ConfPyConfig {
         if let Some(release) = &self.release {
             config.release = Some(release.clone());
         }
+        if let Some(today) = &self.today {
+            config.today = today.clone();
+        }
+        config.today_fmt = self.today_fmt.clone();
         if let Some(copyright) = &self.copyright {
             config.copyright = Some(copyright.clone());
         }
@@ -1328,18 +1385,10 @@ impl ConfPyConfig {
         }
         config.modindex_common_prefix = self.modindex_common_prefix.clone();
 
-        // intersphinx + the shared HTTP configuration group.
-        let (mapping, errors) = crate::intersphinx::validate_mapping(&self.intersphinx_mapping);
-        for error in &errors {
-            // Sphinx logs each one with `LOGGER.error` before raising.
-            log::error!("{error}");
-        }
-        if !errors.is_empty() {
-            return Err(anyhow!(crate::intersphinx::mapping_config_error(
-                errors.len()
-            )));
-        }
-        config.intersphinx_mapping = mapping;
+        // The intersphinx family + the shared HTTP configuration group.
+        // `intersphinx_mapping` itself is the extension's to validate, at
+        // `config-inited` ([`BuildConfig::init_intersphinx_mapping`]), from
+        // the value `conf_values` keeps.
         if let Some(disabled) = &self.intersphinx_disabled_reftypes {
             config.intersphinx_disabled_reftypes = disabled.clone();
         }
@@ -1355,6 +1404,23 @@ impl ConfPyConfig {
         }
         config.tls_cacerts = self.tls_cacerts.clone();
         config.user_agent = self.user_agent.clone();
+
+        config.suppress_warnings = self.suppress_warnings.clone();
+        if let Some(show_warning_types) = self.show_warning_types {
+            config.show_warning_types = show_warning_types;
+        }
+        if let Some(primary_domain) = &self.primary_domain {
+            config.primary_domain = primary_domain.clone();
+        }
+        if let Some(highlight_language) = &self.highlight_language {
+            config.highlight_language = highlight_language.clone();
+        }
+        if let Some(keep_warnings) = self.keep_warnings {
+            config.keep_warnings = keep_warnings;
+        }
+        if let Some(trim_doctest_flags) = self.trim_doctest_flags {
+            config.trim_doctest_flags = trim_doctest_flags;
+        }
 
         config.conf_values = self.raw_values.clone();
 
@@ -1490,6 +1556,34 @@ mod tests {
         assert_eq!(config.numfig_format["table"], "Table {number}");
         assert_eq!(config.numfig_format["section"], "Section %s");
         assert_eq!(config.numfig_format["code-block"], "Listing %s");
+    }
+
+    /// `suppress_warnings` is a list or a tuple of patterns and
+    /// `show_warning_types` a bool (`config.py:262-263`); a conf.py that
+    /// names neither keeps Sphinx's defaults, `[]` and `True`.
+    #[test]
+    fn warning_stream_keys_reach_the_build_config() {
+        let config_of = |source: &str| {
+            parse(source)
+                .extract_configuration()
+                .unwrap()
+                .to_build_config()
+                .unwrap()
+        };
+
+        let listed = config_of(
+            "suppress_warnings = ['toc.not_included', 'ref.*']\nshow_warning_types = False\n",
+        );
+        assert_eq!(listed.suppress_warnings, ["toc.not_included", "ref.*"]);
+        assert!(!listed.show_warning_types);
+
+        let tupled = config_of("suppress_warnings = ('docutils',)\n");
+        assert_eq!(tupled.suppress_warnings, ["docutils"]);
+        assert!(tupled.show_warning_types);
+
+        let unset = config_of("project = 'p'\n");
+        assert!(unset.suppress_warnings.is_empty());
+        assert!(unset.show_warning_types);
     }
 
     #[test]
@@ -1632,7 +1726,8 @@ e = 'esc\n'
     #[test]
     fn the_intersphinx_family_reaches_the_build_config() {
         let p = parse(
-            "intersphinx_mapping = {\n\
+            "extensions = ['sphinx.ext.intersphinx']\n\
+             intersphinx_mapping = {\n\
              'python': ('https://docs.python.org/3', None),\n\
              'other': ('https://example.org/', 'local.inv'),\n\
              }\n\
@@ -1644,10 +1739,13 @@ e = 'esc\n'
              tls_cacerts = '/etc/ca.pem'\n\
              user_agent = 'mine/1'\n",
         );
-        let config = p
+        let mut config = p
             .extract_configuration()
             .unwrap()
             .to_build_config()
+            .unwrap();
+        config
+            .init_intersphinx_mapping()
             .expect("a valid mapping must not fail configuration");
 
         assert_eq!(
@@ -1697,18 +1795,77 @@ e = 'esc\n'
         );
     }
 
+    /// `validate_intersphinx_mapping` is a `config-inited` handler of the
+    /// extension (`ext/intersphinx/_load.py:38-136`): a malformed entry
+    /// aborts the configuration only with `sphinx.ext.intersphinx` loaded,
+    /// after the per-entry errors Sphinx logs; without it the mapping is an
+    /// ordinary variable and nothing loads. Loading the `conf.py` never
+    /// fails on it, so the `-D` overrides apply first.
     #[test]
-    fn an_invalid_intersphinx_mapping_stops_the_configuration() {
-        let p = parse("intersphinx_mapping = {'p': 'https://x/'}\n");
-        let err = p
+    fn an_invalid_intersphinx_mapping_stops_the_configuration_with_the_extension() {
+        let p = parse(
+            "extensions = ['sphinx.ext.intersphinx']\nintersphinx_mapping = {'p': 'https://x/'}\n",
+        );
+        let mut config = p
             .extract_configuration()
             .unwrap()
             .to_build_config()
+            .expect("loading does not validate the mapping");
+        let err = config
+            .init_intersphinx_mapping()
             .expect_err("a malformed entry must abort");
         assert_eq!(
             err.to_string(),
             "Invalid `intersphinx_mapping` configuration (1 error)."
         );
+        assert_eq!(
+            err.errors,
+            ["Invalid value `'https://x/'` in intersphinx_mapping['p']. \
+              Expected a two-element tuple or list."]
+        );
+
+        let p = parse("intersphinx_mapping = {'p': 'https://x/'}\n");
+        let mut config = p
+            .extract_configuration()
+            .unwrap()
+            .to_build_config()
+            .unwrap();
+        config
+            .init_intersphinx_mapping()
+            .expect("without the extension the mapping is not validated");
+        assert!(config.intersphinx_mapping.is_empty());
+    }
+
+    /// `primary_domain` (`config.py:268`, `None` allowed) and
+    /// `highlight_language` (`config.py:257`) are standard keys read into
+    /// the build configuration: an explicit `None` unsets the primary
+    /// domain, and unset, each keeps Sphinx's default.
+    #[test]
+    fn read_side_keys_reach_the_build_config() {
+        let p = parse("primary_domain = None\nhighlight_language = 'python3'\n");
+        let config = p.extract_configuration().unwrap();
+        assert!(!config.custom_configs.contains_key("primary_domain"));
+        assert!(!config.custom_configs.contains_key("highlight_language"));
+        let config = config.to_build_config().unwrap();
+        assert_eq!(config.primary_domain, None);
+        assert_eq!(config.highlight_language, "python3");
+
+        let p = parse("primary_domain = 'js'\n");
+        let config = p
+            .extract_configuration()
+            .unwrap()
+            .to_build_config()
+            .unwrap();
+        assert_eq!(config.primary_domain.as_deref(), Some("js"));
+
+        let p = parse("project = 'x'\n");
+        let config = p
+            .extract_configuration()
+            .unwrap()
+            .to_build_config()
+            .unwrap();
+        assert_eq!(config.primary_domain.as_deref(), Some("py"));
+        assert_eq!(config.highlight_language, "default");
     }
 
     #[test]
@@ -1805,5 +1962,68 @@ e = 'esc\n'
             config.to_build_config().unwrap().source_encoding,
             "utf-8-sig"
         );
+    }
+
+    /// `keep_warnings` is a standard key (`config.py:261`): read from
+    /// conf.py into the build configuration, never into `custom_configs`;
+    /// unset, it keeps Sphinx's `False`.
+    #[test]
+    fn keep_warnings_is_read_from_conf_py() {
+        let p = parse("keep_warnings = True\n");
+        let config = p.extract_configuration().unwrap();
+        assert!(!config.custom_configs.contains_key("keep_warnings"));
+        assert!(config.to_build_config().unwrap().keep_warnings);
+
+        let p = parse("keep_warnings = False\n");
+        let config = p.extract_configuration().unwrap();
+        assert!(!config.to_build_config().unwrap().keep_warnings);
+
+        let p = parse("project = 'x'\n");
+        let config = p.extract_configuration().unwrap();
+        assert!(!config.to_build_config().unwrap().keep_warnings);
+    }
+
+    /// `trim_doctest_flags` is a standard key (`config.py:267`): read from
+    /// conf.py into the build configuration, never into `custom_configs`;
+    /// unset, it keeps Sphinx's `True`.
+    #[test]
+    fn trim_doctest_flags_is_read_from_conf_py() {
+        let p = parse("trim_doctest_flags = False\n");
+        let config = p.extract_configuration().unwrap();
+        assert!(!config.custom_configs.contains_key("trim_doctest_flags"));
+        assert!(!config.to_build_config().unwrap().trim_doctest_flags);
+
+        let p = parse("trim_doctest_flags = True\n");
+        let config = p.extract_configuration().unwrap();
+        assert!(config.to_build_config().unwrap().trim_doctest_flags);
+
+        let p = parse("project = 'x'\n");
+        let config = p.extract_configuration().unwrap();
+        assert!(config.to_build_config().unwrap().trim_doctest_flags);
+    }
+
+    /// `today` and `today_fmt` are standard keys (`config.py:227-229`):
+    /// read from conf.py into the build configuration, never into
+    /// `custom_configs`; unset, or `today_fmt = None`, they keep Sphinx's
+    /// `''` and `None`.
+    #[test]
+    fn today_and_today_fmt_are_read_from_conf_py() {
+        let p = parse("today = 'April 1'\ntoday_fmt = '%Y-%m-%d'\n");
+        let config = p.extract_configuration().unwrap();
+        assert!(!config.custom_configs.contains_key("today"));
+        assert!(!config.custom_configs.contains_key("today_fmt"));
+        let build = config.to_build_config().unwrap();
+        assert_eq!(build.today, "April 1");
+        assert_eq!(build.today_fmt.as_deref(), Some("%Y-%m-%d"));
+
+        for source in ["project = 'x'\n", "today_fmt = None\n"] {
+            let build = parse(source)
+                .extract_configuration()
+                .unwrap()
+                .to_build_config()
+                .unwrap();
+            assert_eq!(build.today, "", "{source:?}");
+            assert_eq!(build.today_fmt, None, "{source:?}");
+        }
     }
 }

@@ -5,6 +5,7 @@ import os
 import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,7 @@ import docutils
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 from tools.gen_html_oracle import (
+    BASE_CONF_PY,
     WORK_ROOT_SENTINEL,
     DiscoveryError,
     DiscoveredCase,
@@ -289,6 +291,114 @@ def test_snippet_projects_disable_rendered_system_messages():
     assert snippet_cases
     assert all(b"keep_warnings = False" in case.files["conf.py"] for case in snippet_cases)
     assert all(b"keep_warnings = True" not in case.files["conf.py"] for case in snippet_cases)
+
+
+def test_snippet_cases_carry_their_fixture_conf(tmp_path):
+    source = "tests/fixtures/sphinx_doctree_differential.json"
+    fixture_cases = json.loads((REPO_ROOT / source).read_text(encoding="utf-8"))["cases"]
+    config = tmp_path / "cases.toml"
+    config.write_text(
+        f"""[[source_sets]]
+name = "sphinx_read_snippets"
+profile = "core"
+kind = "sphinx_read_snippets"
+source = "{source}"
+count = {len(fixture_cases)}
+""",
+        encoding="utf-8",
+    )
+    cases = {case.origin_path: case for case in discover_cases(REPO_ROOT, config, profile="core")}
+    # The fixture only grows by appending, so index 459 stays this case.
+    variant = cases[f"{source}[459]"]
+    assert fixture_cases[459]["name"] == "pyconf.wrap_retann_equal_no_flip"
+    assert variant.case_id == "sphinx_read-0460"
+    assert variant.files["conf.py"] == (BASE_CONF_PY + "maximum_signature_line_length = 13\n").encode("utf-8")
+    assert not variant.variants_not_captured
+    plain = next(index for index, item in enumerate(fixture_cases) if not item.get("conf"))
+    assert cases[f"{source}[{plain}]"].files["conf.py"] == BASE_CONF_PY.encode("utf-8")
+
+
+def test_snippet_conf_values_repr_cannot_express_are_not_captured(tmp_path):
+    (tmp_path / "fixture.json").write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {"name": "literal", "rst": "x\n", "conf": {"b": {"k": [1, "v", None, True, 1.5]}, "a": "s"}},
+                    {"name": "not_finite", "rst": "x\n", "conf": {"z": float("nan"), "maximum_signature_line_length": 13}},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    config = tmp_path / "cases.toml"
+    config.write_text(
+        """[[source_sets]]
+name = "sphinx_read_snippets"
+profile = "core"
+kind = "sphinx_read_snippets"
+source = "fixture.json"
+count = 2
+""",
+        encoding="utf-8",
+    )
+    literal, not_finite = discover_cases(tmp_path, config, profile="core")
+    assert literal.files["conf.py"] == (BASE_CONF_PY + "a = 's'\nb = {'k': [1, 'v', None, True, 1.5]}\n").encode("utf-8")
+    assert not literal.variants_not_captured
+    # `nan` is no Python literal, so the override is left out of conf.py.
+    assert not_finite.files["conf.py"] == (BASE_CONF_PY + "maximum_signature_line_length = 13\n").encode("utf-8")
+    assert not_finite.variants_not_captured
+
+
+def test_discovery_ignores_appended_cases(tmp_path):
+    # The pins come from the committed config, so the test holds while the
+    # corpora grow past them.
+    with (REPO_ROOT / "tools" / "html_oracle_cases.toml").open("rb") as stream:
+        entries = [
+            entry
+            for entry in tomllib.load(stream)["source_sets"]
+            if entry["kind"] in {"docutils_snippets", "sphinx_read_snippets", "environment_projects"}
+        ]
+    config = tmp_path / "cases.toml"
+    config.write_text(
+        "\n".join(
+            "[[source_sets]]\n" + "".join(f"{key} = {json.dumps(value)}\n" for key, value in entry.items())
+            for entry in entries
+        ),
+        encoding="utf-8",
+    )
+
+    def discovered(repo_root):
+        return {case.key: discovered_input_hash(case) for case in discover_cases(repo_root, config, profile="core")}
+
+    def copied_sources(name, edit):
+        root = tmp_path / name
+        for entry in entries:
+            fixture = json.loads((REPO_ROOT / entry["source"]).read_text(encoding="utf-8"))
+            items = "projects" if entry["kind"] == "environment_projects" else "cases"
+            fixture[items] = edit(entry, fixture[items])
+            target = root / entry["source"]
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(json.dumps(fixture), encoding="utf-8")
+        return root
+
+    def append_one(entry, items):
+        return [*items, {**copy.deepcopy(items[-1]), "name": f"{items[-1]['name']}_appended"}]
+
+    originals = discovered(REPO_ROOT)
+    assert discovered(copied_sources("appended", append_one)) == originals
+    for short in entries:
+        pin = short.get("count", short.get("project_count"))
+
+        def one_fewer(entry, items, short=short, pin=pin):
+            return items[: pin - 1] if entry is short else items
+
+        # `_pinned`'s own message: the env set's short copy also trips its
+        # document floor, whose message names the set too.
+        with pytest.raises(
+            DiscoveryError,
+            match=rf"^{re.escape(short['name'])}: expected at least {pin} (?:cases|projects), found {pin - 1}$",
+        ):
+            discovered(copied_sources(f"short-{short['name']}", one_fewer))
 
 
 def test_discovers_all_local_needs_projects():
