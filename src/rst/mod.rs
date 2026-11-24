@@ -3248,15 +3248,14 @@ pub(crate) mod tests {
     /// Only the docutils and read-state corpora register nodes: the other
     /// two hold no reference, footnote, citation or substitution definition
     /// (their targets are labels and `refuri` targets, which no registry
-    /// keeps). The docutils corpus registers 186 nodes over the two modes
-    /// and keeps one detached subtree per mode
-    /// (`substitutions.replace_auto_footnote_error`); its parses mint 190
-    /// identities, the four more being the image `:target:` references
-    /// that hold only a location override. The read-state corpus registers
-    /// 95 nodes and keeps five detached subtrees: the definitions of
-    /// `state.rejected_subst_autofootnote` and
-    /// `state.rejected_subst_indirect_target`, the title and the content
-    /// of `state.rejected_table_refs` and the content of
+    /// keeps), and the one node the sphinx corpus holds is the pending
+    /// `rst-class` of `sx_directives.rst_class`. The docutils corpus
+    /// registers 186 nodes over the two modes and keeps one detached
+    /// subtree per mode (`substitutions.replace_auto_footnote_error`). The
+    /// read-state corpus registers 107 nodes and keeps five detached
+    /// subtrees: the definitions of `state.rejected_subst_autofootnote` and
+    /// `state.rejected_subst_indirect_target`, the title and the content of
+    /// `state.rejected_table_refs` and the content of
     /// `state.rejected_list_table_refs`. Those counts are the floors below.
     #[test]
     fn every_registered_uid_is_reachable_once() {
@@ -3284,14 +3283,14 @@ pub(crate) mod tests {
             tally.overrides += state.loc_overrides.len();
         });
 
-        // 735 docutils cases twice, 489 sphinx cases, 84 env documents, 89
+        // 735 docutils cases twice, 493 sphinx cases, 89 env documents, 99
         // read-state cases; the check is not vacuous.
         let [docutils, sphinx, env, read_state] = &tallies;
         assert!(
             docutils.parses >= 2 * 735
-                && sphinx.parses >= 489
-                && env.parses >= 84
-                && read_state.parses >= 89,
+                && sphinx.parses >= 493
+                && env.parses >= 89
+                && read_state.parses >= 99,
             "too few parses checked: {tallies:?}"
         );
         assert!(
@@ -3299,7 +3298,7 @@ pub(crate) mod tests {
             "the docutils corpus stopped exercising the check: {tallies:?}"
         );
         assert!(
-            read_state.registered >= 95 && read_state.detached >= 5,
+            read_state.registered >= 107 && read_state.detached >= 5,
             "the read-state corpus stopped exercising the check: {tallies:?}"
         );
         assert!(

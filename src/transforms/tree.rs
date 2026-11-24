@@ -886,7 +886,7 @@ mod tests {
             parses[corpus as usize] += 1;
         });
         assert!(
-            parses[0] >= 2 * 735 && parses[1] >= 489 && parses[2] >= 84 && parses[3] >= 89,
+            parses[0] >= 2 * 735 && parses[1] >= 493 && parses[2] >= 89 && parses[3] >= 99,
             "too few parses: {parses:?}"
         );
         // The docutils corpus's rejected substitution definition (both
