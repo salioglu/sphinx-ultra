@@ -747,9 +747,9 @@ pub(crate) struct AbsoluteLine {
     /// What the machine's count adds there (`BlockParser::line_bias`).
     pub(crate) bias: u32,
     /// Whether the machine counts the line by its line in its own file, as
-    /// a glossary definition's does (`BlockParser::own_line_count`), not by
-    /// its place in the top-level input; `bias` is then what accrued inside
-    /// the definition.
+    /// a glossary definition's does (`BlockParser::definition_bias_base`),
+    /// not by its place in the top-level input; `bias` is then what accrued
+    /// inside the definition.
     pub(crate) own_line: bool,
     /// Whether the node's container has `document` set.
     pub(crate) attached: bool,

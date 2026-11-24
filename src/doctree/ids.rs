@@ -270,7 +270,9 @@ impl DocumentState {
     /// dropped held it by ([`crate::rst::ParseOnlyState::dropped_id_holders`]).
     /// A record no node completes leaves the log rather than print half a
     /// sentence: every node docutils' `document.ids` can name is in one of
-    /// those places, so the parse found no node holding the id.
+    /// those places, so the parse found no node holding the id. Its removal
+    /// is logged at debug level, so that a holder a parse path loses
+    /// without [`Self::detach`] leaves a trace.
     pub(crate) fn spell_duplicate_ids(&mut self, root: &Node) {
         let mut unspelled = Vec::new();
         for duplicate in std::mem::take(&mut self.parse.duplicate_ids) {
@@ -280,6 +282,11 @@ impl DocumentState {
                 .map(super::pformat::starttag)
                 .or_else(|| self.parse.dropped_id_holders.get(&duplicate.id).cloned());
             let Some(holder) = holder else {
+                log::debug!(
+                    "dropping the Duplicate ID record for \"{}\": no node in the tree, \
+                     a detached subtree or dropped content holds the id",
+                    duplicate.id
+                );
                 unspelled.push(duplicate.record);
                 continue;
             };
@@ -730,18 +737,53 @@ mod tests {
     /// A `Duplicate ID` record no node completes, its holder in no tree, no
     /// detached subtree and no subtree the parse dropped, leaves the log
     /// rather than print the text it was logged with, which lacks the
-    /// holder's start tag ([`DocumentState::spell_duplicate_ids`]).
+    /// holder's start tag ([`DocumentState::spell_duplicate_ids`]). With
+    /// two such records among spelled ones, the spelled records before,
+    /// between and after them stay, in order, each with its own text.
     #[test]
     fn an_unspelled_duplicate_id_leaves_the_log() {
         let mut state = DocumentState::default();
-        // Another node registered the id, and the parse kept it nowhere.
-        assert!(state.ids.register("index-0", None));
-        let mut target = Node::elem(kinds::TARGET, Span::ZERO);
-        target.attrs.ids.push("index-0".into());
-        state.set_id_at(&mut target, DocLoc::at(0, 5));
-        assert_eq!(state.log.len(), 1);
-        state.spell_duplicate_ids(&Node::elem(kinds::DOCUMENT, Span::ZERO));
-        assert!(state.log.is_empty());
+        let mut root = Node::elem(kinds::DOCUMENT, Span::ZERO);
+        // `a`, `c` and `e` are held by targets the tree keeps; `index-0`
+        // and `index-1` by nodes the parse kept nowhere.
+        for (line, id, kept) in [
+            (3, "a", true),
+            (5, "index-0", false),
+            (7, "c", true),
+            (9, "index-1", false),
+            (11, "e", true),
+        ] {
+            if kept {
+                let mut holder = Node::elem(kinds::TARGET, Span::ZERO);
+                holder.attrs.ids.push(id.into());
+                holder.attrs.names.push(id.into());
+                state.set_id(&mut holder);
+                root.children.push(holder);
+            } else {
+                assert!(state.ids.register(id, None));
+            }
+            let mut target = Node::elem(kinds::TARGET, Span::ZERO);
+            target.attrs.ids.push(id.into());
+            state.set_id_at(&mut target, DocLoc::at(0, line));
+        }
+        assert_eq!(state.log.len(), 5);
+        state.spell_duplicate_ids(&root);
+        let texts: Vec<&str> = state
+            .log
+            .iter()
+            .map(|record| match record {
+                LogRecord::Reporter { text, .. } => text.as_str(),
+                LogRecord::Logger { .. } => panic!("a logger record in the parse log"),
+            })
+            .collect();
+        assert_eq!(
+            texts,
+            [
+                r#"Duplicate ID: "a" used by <target ids="a" names="a"> and <target ids="a">"#,
+                r#"Duplicate ID: "c" used by <target ids="c" names="c"> and <target ids="c">"#,
+                r#"Duplicate ID: "e" used by <target ids="e" names="e"> and <target ids="e">"#,
+            ]
+        );
     }
 
     #[test]
