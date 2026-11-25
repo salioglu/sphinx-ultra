@@ -886,6 +886,25 @@ fn split_assignment(stmt: &str) -> Option<(&str, &str)> {
     None
 }
 
+/// Python 3.12's decimal number literals, unsigned: `Decnumber` and
+/// `Floatnumber` of `Lib/tokenize.py:74-80` (the language reference's
+/// `decinteger`, `pointfloat` and `exponentfloat`). Digits that single
+/// underscores may separate; an integer that starts with `0` is all zeros;
+/// a float has a `.` with digits on at least one side, an exponent (`e` or
+/// `E`, a sign or none, digits), or both. Any other run of these
+/// characters is no number to Python: a `SyntaxError`, or an attribute of
+/// a float (`5..e5`), which this reader does not model either.
+static DECIMAL_LITERAL: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    let digits = "[0-9](?:_?[0-9])*";
+    let exponent = format!("[eE][-+]?{digits}");
+    regex::Regex::new(&format!(
+        "^(?:0(?:_?0)*|[1-9](?:_?[0-9])*\
+         |(?:{digits}\\.(?:{digits})?|\\.{digits})(?:{exponent})?\
+         |{digits}{exponent})$"
+    ))
+    .expect("the decimal literal pattern compiles")
+});
+
 /// Recursive-descent parser for Python literals → JSON values.
 /// Supports: strings (escapes, implicit adjacent concatenation, triple
 /// quotes), ints/floats, True/False/None, lists, tuples (as arrays), dicts
@@ -1076,14 +1095,32 @@ impl PyLiteralParser {
         }
     }
 
+    /// A number: an optional sign, then the run of characters a decimal
+    /// literal is made of (a sign among them only right after the
+    /// exponent's `e` or `E`), which must be one Python 3.12 compiles
+    /// ([`DECIMAL_LITERAL`]). The other bases and the imaginary literals end
+    /// the run at their letter, and a sign spelled apart from the literal or
+    /// twice ends it before the digits, so each of those stays an
+    /// unsupported value.
     fn parse_number(&mut self) -> std::result::Result<serde_json::Value, String> {
         let start = self.pos;
         if matches!(self.peek(), Some('-') | Some('+')) {
             self.pos += 1;
         }
-        while matches!(self.peek(), Some(c) if c.is_ascii_digit() || c == '.' || c == '_' || c == 'e' || c == 'E')
-        {
+        let literal = self.pos;
+        while let Some(c) = self.peek() {
+            let exponent_sign = matches!(c, '-' | '+')
+                && self.pos > literal
+                && matches!(self.chars[self.pos - 1], 'e' | 'E');
+            if !(c.is_ascii_digit() || matches!(c, '.' | '_' | 'e' | 'E') || exponent_sign) {
+                break;
+            }
             self.pos += 1;
+        }
+        let run: String = self.chars[literal..self.pos].iter().collect();
+        if !DECIMAL_LITERAL.is_match(&run) {
+            let written: String = self.chars[start..self.pos].iter().collect();
+            return Err(format!("invalid number '{written}'"));
         }
         let text: String = self.chars[start..self.pos]
             .iter()
@@ -1645,6 +1682,130 @@ mod tests {
             .unwrap();
         assert_eq!(python[0].as_str(), Some("https://docs.python.org/3"));
         assert!(python[1].is_null());
+    }
+
+    /// A number literal read as Python 3.12.2 compiles `x = <text>`: the
+    /// type and `str()` of the value, with no warning, or `None` where
+    /// Python raises `SyntaxError` (`invalid decimal literal`, `invalid
+    /// syntax`, or `leading zeros in decimal integer literals are not
+    /// permitted`) and this reader drops the value with a warning. Probed.
+    #[test]
+    fn number_literals_read_as_python_compiles_them() {
+        let read = |text: &str| {
+            let p = parse(&format!("x = {text}\n"));
+            let value = p.conf_namespace.get("x").map(|value| match value {
+                serde_json::Value::Number(number) => (
+                    if number.is_f64() { "float" } else { "int" },
+                    crate::pyformat::number_str(number),
+                ),
+                other => panic!("{text}: {other}"),
+            });
+            (value, p.warnings().len())
+        };
+        let python: &[(&str, Option<(&str, &str)>)] = &[
+            // An exponent: `e` or `E`, a sign or none, then digits that
+            // single underscores may separate.
+            ("1e-05", Some(("float", "1e-05"))),
+            ("-1e-07", Some(("float", "-1e-07"))),
+            ("1e+16", Some(("float", "1e+16"))),
+            ("+1e+16", Some(("float", "1e+16"))),
+            ("1E-5", Some(("float", "1e-05"))),
+            ("1e5", Some(("float", "100000.0"))),
+            ("1E+5", Some(("float", "100000.0"))),
+            ("1e-5_0", Some(("float", "1e-50"))),
+            ("1e1_0", Some(("float", "10000000000.0"))),
+            ("1e", None),
+            ("1e+", None),
+            ("1e-", None),
+            ("1e_5", None),
+            ("1e+_5", None),
+            ("1e5_", None),
+            ("1e5__0", None),
+            ("1_e5", None),
+            ("1e5e5", None),
+            ("1e--5", None),
+            ("1.5e", None),
+            ("1e5x", None),
+            // A leading or a trailing `.`.
+            (".5", Some(("float", "0.5"))),
+            ("-.5", Some(("float", "-0.5"))),
+            ("+.5", Some(("float", "0.5"))),
+            ("5.", Some(("float", "5.0"))),
+            ("-5.", Some(("float", "-5.0"))),
+            ("5.e3", Some(("float", "5000.0"))),
+            (".5e-3", Some(("float", "0.0005"))),
+            ("1.e-5", Some(("float", "1e-05"))),
+            (".e5", None),
+            (".", None),
+            ("-.", None),
+            ("-", None),
+            ("5.5.5", None),
+            ("1.2.3", None),
+            ("1..5", None),
+            // Underscores only between digits.
+            ("1_000", Some(("int", "1000"))),
+            ("1_000.5", Some(("float", "1000.5"))),
+            ("1_000.000_1", Some(("float", "1000.0001"))),
+            ("0_0", Some(("int", "0"))),
+            ("1_0_0", Some(("int", "100"))),
+            ("1__000", None),
+            ("1_", None),
+            ("1_.5", None),
+            ("1._5", None),
+            ("1.5_", None),
+            ("5._", None),
+            ("0__0", None),
+            ("0_", None),
+            ("1_e", None),
+            // Leading zeros: only an integer of zeros, or a float.
+            ("0", Some(("int", "0"))),
+            ("00", Some(("int", "0"))),
+            ("000", Some(("int", "0"))),
+            ("007.5", Some(("float", "7.5"))),
+            ("007e1", Some(("float", "70.0"))),
+            ("00.5", Some(("float", "0.5"))),
+            ("0e0", Some(("float", "0.0"))),
+            ("09.5", Some(("float", "9.5"))),
+            ("-0", Some(("int", "0"))),
+            ("-0.0", Some(("float", "-0.0"))),
+            ("+0", Some(("int", "0"))),
+            ("007", None),
+            ("0_7", None),
+            ("-007", None),
+            // The ends of an `i64` and of the float range.
+            ("9223372036854775807", Some(("int", "9223372036854775807"))),
+            (
+                "-9223372036854775808",
+                Some(("int", "-9223372036854775808")),
+            ),
+            ("1e308", Some(("float", "1e+308"))),
+            ("2.5e-324", Some(("float", "5e-324"))),
+            ("1e-400", Some(("float", "0.0"))),
+        ];
+        let mismatches: Vec<String> = python
+            .iter()
+            .filter_map(|&(text, expected)| {
+                let (value, warnings) = read(text);
+                let got = value
+                    .as_ref()
+                    .map(|(kind, number)| (*kind, number.as_str()));
+                (got != expected || warnings != usize::from(expected.is_none())).then(|| {
+                    format!("{text}: read {got:?} with {warnings} warnings, Python {expected:?}")
+                })
+            })
+            .collect();
+        assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+
+        // Numbers Python reads that this reader does not model: the other
+        // bases, imaginary literals, and a sign as a unary operator, spelled
+        // apart from the literal or twice. Each is dropped with a warning,
+        // never misread.
+        for text in [
+            "0x1F", "0X1f", "0o17", "0O17", "0b101", "0B101", "0x_1F", "1j", "1.5J", "1e5j", "- 5",
+            "--5", "-+5", "+-5", "- 1e-5",
+        ] {
+            assert_eq!(read(text), (None, 1), "{text}");
+        }
     }
 
     #[test]

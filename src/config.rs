@@ -1049,8 +1049,10 @@ impl BuildConfig {
     /// Apply a `-D key=value` override (sphinx-build semantics): the value is
     /// coerced to the type the field already has, dotted keys reach the nested
     /// sections (`output.*`, `theme.*`) and map-typed settings
-    /// (`html_context.name`), and an unknown key warns and is ignored rather
-    /// than failing the build.
+    /// (`numfig_format.figure`), and an unknown key warns and is ignored
+    /// rather than failing the build. A dotted `html_context.<entry>` or
+    /// `smartquotes_excludes.<entry>` sets that entry to the string as
+    /// given, as Sphinx's `Config.__init__` does.
     ///
     /// Returns the sphinx-style warning message when the override was ignored
     /// — the caller decides how to report it (it must count toward `-W`).
@@ -1107,11 +1109,24 @@ impl BuildConfig {
             self.override_smartquotes_excludes(entry, value);
             return Ok(None);
         }
+        // `Config.__init__` (`config.py:309-312`):
+        // `raw_config.setdefault('html_context', {})[entry] = value`, the
+        // entry being everything after the first dot and the value the
+        // string as given, which `convert_overrides` never sees: no number
+        // is read from it, and it replaces whatever `conf.py` put under that
+        // entry, a dict included, without a warning.
+        if let Some(entry) = key.strip_prefix("html_context.") {
+            self.html_context.insert(
+                entry.to_string(),
+                serde_json::Value::String(value.to_string()),
+            );
+            return Ok(None);
+        }
 
         let mut tree = serde_json::to_value(&*self)?;
 
         // Resolve the dotted path. A key missing from its parent object is
-        // inserted as Null (map-typed settings like html_context accept new
+        // inserted as Null (map-typed settings like numfig_format accept new
         // keys); whether it truly landed is checked after the round-trip —
         // structs silently drop unknown fields, which we report as unknown.
         let mut slot = &mut tree;
@@ -1477,6 +1492,52 @@ output:
         assert!(warning
             .unwrap()
             .contains("cannot override dictionary config setting"));
+    }
+
+    /// Sphinx's `Config.__init__` puts a dotted `-D name.key=value` into
+    /// the raw configuration as given (`config.py:309-312`): the key is
+    /// everything after the first dot, and the value is the `str` typed,
+    /// never a number, over whatever `conf.py` put under that key, with no
+    /// warning. The values are `app.config.html_context` as Sphinx 9.1.0
+    /// holds it after these overrides (probed).
+    #[test]
+    fn a_dotted_html_context_override_keeps_the_text_given() {
+        for text in ["0.00001", "1e-7", "1e16", "inf", "007"] {
+            let mut config = BuildConfig::default();
+            assert_eq!(
+                config.apply_override("html_context.x", text).unwrap(),
+                None,
+                "{text}"
+            );
+            assert_eq!(
+                serde_json::to_value(&config.html_context).unwrap(),
+                serde_json::json!({ "x": text }),
+                "{text}"
+            );
+        }
+
+        // `conf.py`'s `html_context = {'x': 1, 'y': True, 'z': [1, 2],
+        // 'w': {'v': 1}}`.
+        let mut config = BuildConfig {
+            html_context: serde_json::from_value(serde_json::json!({
+                "x": 1, "y": true, "z": [1, 2], "w": { "v": 1 }
+            }))
+            .unwrap(),
+            ..BuildConfig::default()
+        };
+        for (key, value) in [
+            ("html_context.x", "2"),
+            ("html_context.y", "yes"),
+            ("html_context.z", "a,b"),
+            ("html_context.w", "u"),
+            ("html_context.a.b", "c"),
+        ] {
+            assert_eq!(config.apply_override(key, value).unwrap(), None, "{key}");
+        }
+        assert_eq!(
+            serde_json::to_value(&config.html_context).unwrap(),
+            serde_json::json!({ "x": "2", "y": "yes", "z": "a,b", "w": "u", "a.b": "c" })
+        );
     }
 
     #[test]

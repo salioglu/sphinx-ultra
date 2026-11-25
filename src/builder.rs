@@ -3298,7 +3298,8 @@ mod tests {
     /// `BuildInfo(app.config, app.tags, {'html'})` over the same config,
     /// because Sphinx cannot load that theme in the oracle environment.
     /// `stable_hash` hashes `str()` of a float, its `repr()`: `1e+16`,
-    /// `1e-05`, `1.5e+17`, `1e-07`, `1.0`.
+    /// `1e-05`, `1.5e+17`, `1e-07`, `1.0`, whether the literal spells its
+    /// exponent with a sign or not.
     #[test]
     fn buildinfo_config_hash_matches_sphinx_for_configured_values() {
         let cases = [
@@ -3346,6 +3347,14 @@ mod tests {
             (
                 "project = 'Fixture'\nhtml_theme_options = {'w': 1.5e17, 'x': 0.0000001, 'y': 1.0}\n",
                 "720f1792bff65e847089cadb967c5a1d",
+            ),
+            (
+                "project = 'Fixture'\nhtml_context = {'a': 1e-05, 'b': -1e-07, 'c': 1e+16}\n",
+                "f61e44fa098222f240ecbdf89dc96a4d",
+            ),
+            (
+                "project = 'Fixture'\nhtml_theme_options = {'w': 1.5e17, 'x': -1e-07, 'y': 1.0}\n",
+                "44dc13739b758fbdb1b29f3ea837b267",
             ),
             (
                 "project = 'Fixture'\nhtml_last_updated_fmt = '%Y'\n",

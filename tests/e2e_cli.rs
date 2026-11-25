@@ -5597,3 +5597,96 @@ fn int_errors_read_as_python_words_them() {
         assert_eq!(written, expected, "{test}");
     }
 }
+
+/// The `config:` hash of the `.buildinfo` the build into `out` wrote.
+fn buildinfo_config_hash(out: &Path) -> String {
+    std::fs::read_to_string(out.join(".buildinfo"))
+        .unwrap()
+        .lines()
+        .find_map(|line| line.strip_prefix("config: "))
+        .unwrap()
+        .to_string()
+}
+
+/// A one-page project of `conf`, built in sphinx-build mode with `-q` and
+/// `extra`: the output directory, after the build exited 0 and printed
+/// nothing.
+fn quiet_build(test: &str, conf: &str, extra: &[&str]) -> PathBuf {
+    let src = temp_source(test, &[("conf.py", conf), ("index.rst", "Title\n=====\n")]);
+    let out = out_dir(test);
+    let mut args = vec![
+        src.to_str().unwrap(),
+        out.to_str().unwrap(),
+        "-b",
+        "html",
+        "-q",
+    ];
+    args.extend_from_slice(extra);
+    let result = sphinx_build(&args);
+    assert!(result.status.success(), "{test}: {}", stderr_of(&result));
+    assert_eq!(stderr_of(&result), "", "{test}");
+    out
+}
+
+/// Sphinx's `Config.__init__` keeps a dotted `-D html_context.<key>=<text>`
+/// as the `str` given (`config.py:309-312`), so `.buildinfo` hashes the text
+/// as typed, whatever number it spells, and the `str` replaces an entry
+/// `conf.py` gave another type, with no warning. The hashes are the ones
+/// Sphinx 9.1.0 writes for the same `conf.py` and command line. Probed.
+#[test]
+fn a_dotted_html_context_override_hashes_the_text_given() {
+    let typed =
+        "project = 'Fixture'\nhtml_context = {'x': 1, 'y': True, 'z': [1, 2], 'w': {'v': 1}}\n";
+    for (test, conf, defines, hash) in [
+        (
+            "t17a3-d-html-context-fixed",
+            "project = 'Fixture'\n",
+            &["html_context.x=0.00001"][..],
+            "69e66bb85cad83a51b8604826fe329af",
+        ),
+        (
+            "t17a3-d-html-context-short-exponent",
+            "project = 'Fixture'\n",
+            &["html_context.x=1e-7"][..],
+            "8632daeb5d418bb25b3332372ab8d54f",
+        ),
+        (
+            "t17a3-d-html-context-unsigned-exponent",
+            "project = 'Fixture'\n",
+            &["html_context.x=1e16"][..],
+            "aba83ce55c1a8736a05ebc77b0c899e6",
+        ),
+        (
+            "t17a3-d-html-context-typed",
+            typed,
+            &[
+                "html_context.x=2",
+                "html_context.y=yes",
+                "html_context.z=a,b",
+                "html_context.w=u",
+                "html_context.a.b=c",
+            ][..],
+            "da25bc31eb8d89cf120ce1efdb743ef2",
+        ),
+    ] {
+        let extra: Vec<&str> = defines.iter().flat_map(|define| ["-D", define]).collect();
+        let out = quiet_build(test, conf, &extra);
+        assert_eq!(buildinfo_config_hash(&out), hash, "{test}");
+    }
+}
+
+/// A `conf.py` float literal whose exponent has a sign is Python's float:
+/// Sphinx 9.1.0 prints nothing, and `.buildinfo` hashes the floats'
+/// `repr()`. Probed.
+#[test]
+fn conf_py_floats_with_a_signed_exponent_are_read() {
+    let out = quiet_build(
+        "t17a3-conf-py-signed-exponent",
+        "project = 'Fixture'\nhtml_context = {'a': 1e-05, 'b': -1e-07, 'c': 1e+16}\n",
+        &[],
+    );
+    assert_eq!(
+        buildinfo_config_hash(&out),
+        "f61e44fa098222f240ecbdf89dc96a4d"
+    );
+}
