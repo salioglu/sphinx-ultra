@@ -6,16 +6,16 @@ Regenerate with the locked core oracle profile:
     PYTHONNOUSERSITE=1 uv run --locked --python 3.12 \
         --project tools/oracle_profiles/core python tools/gen_doctree_fixture.py
 
-PYTHONNOUSERSITE=1 is NOT optional: `uv run` keeps the user's site-packages
-on sys.path, and a user-site Pygments there silently re-records every
-`code:: python` case as tokenized output. Regenerating without the flag
-produces spurious fixture churn.
-
 The corpus is docutils' parse layer without Pygments: a `code` directive
 reports `Cannot analyze code. Pygments package not found.`
 (`dir_media.code_language_warning`). The core profile ships Pygments, which
-Sphinx needs, so the generator hides it from docutils before docutils
-loads (wave 5a T18a, the first regeneration under the locked profile).
+Sphinx needs, so the generator hides Pygments from docutils before docutils
+loads (wave 5a T18a, the first regeneration under the locked profile). The
+hiding holds for any installed Pygments, the profile's or a user-site one,
+so no case is recorded as Pygments tokens. PYTHONNOUSERSITE=1 is in the
+command as in the other generators' commands, but it is not what keeps
+Pygments out: the profile's venv (`include-system-site-packages = false`)
+leaves the user's site-packages off sys.path anyway.
 
 The fixture records docutils 0.22.4 PARSE-LAYER pseudo-XML (no transforms:
 no doctitle promotion, no target propagation, no transition hoisting, no
