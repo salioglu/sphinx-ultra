@@ -79,10 +79,9 @@ pub const fn gap_fix(family: &'static str, owner: &'static str) -> GapFix {
 // The families, each with the task that ports what it lacks.
 pub const DANGLING_REFS: GapFix = gap_fix("dangling refs", "5a-T10");
 pub const INDIRECT_TARGETS: GapFix = gap_fix("indirect targets", "5a-T10");
-/// The structure directives' parse halves (`contents`, `sectnum`,
-/// `target-notes`).
-pub const PENDING_DIRECTIVES: GapFix = gap_fix("pending", "5a-T18a");
-/// Their transforms (SectNum 710, Contents 720, TargetNotes 540).
+/// The structure directives' transforms (SectNum 710, Contents 720,
+/// TargetNotes 540), which replace the `pending` nodes their directives
+/// leave (T18a).
 pub const PENDING_TRANSFORMS: GapFix = gap_fix("pending", "5a-T18b");
 
 /// What a census learned about one divergence.
@@ -261,9 +260,6 @@ fn message_lines(lines: &[&str]) -> Vec<Option<String>> {
     messages
 }
 
-/// The structure directives whose parse halves T18a ports.
-const PENDING_DIRECTIVE_NAMES: [&str; 3] = ["contents", "sectnum", "target-notes"];
-
 /// The families a doctree divergence shows: one diff hunk at a time, the
 /// rules below over the lines only Sphinx's tree has (`removed`) and those
 /// only ours has (`added`). Anything they do not explain is reported.
@@ -355,16 +351,9 @@ fn hunk_census(hunk: &Hunk<'_>, messages: &[Option<String>], notes: &BTreeSet<St
         }
     }
     for message in our_messages {
-        let pending = PENDING_DIRECTIVE_NAMES
-            .iter()
-            .any(|name| message.contains(&format!("\"{name}\"")));
-        if pending {
-            census.add(PENDING_DIRECTIVES);
-        } else {
-            census
-                .unexplained
-                .push(format!("a message only our tree has: {message:?}"));
-        }
+        census
+            .unexplained
+            .push(format!("a message only our tree has: {message:?}"));
     }
 
     if census.fixes.is_empty() && census.unexplained.is_empty() {

@@ -1,15 +1,21 @@
 #!/usr/bin/env python3
 """Generate tests/fixtures/doctree_differential.json from docutils.
 
-Regenerate with:
+Regenerate with the locked core oracle profile:
 
-    PYTHONNOUSERSITE=1 uv run --python 3.12 --with docutils==0.22.4 \
-        python tools/gen_doctree_fixture.py
+    PYTHONNOUSERSITE=1 uv run --locked --python 3.12 \
+        --project tools/oracle_profiles/core python tools/gen_doctree_fixture.py
 
 PYTHONNOUSERSITE=1 is NOT optional: `uv run` keeps the user's site-packages
 on sys.path, and a user-site Pygments there silently re-records every
 `code:: python` case as tokenized output. Regenerating without the flag
 produces spurious fixture churn.
+
+The corpus is docutils' parse layer without Pygments: a `code` directive
+reports `Cannot analyze code. Pygments package not found.`
+(`dir_media.code_language_warning`). The core profile ships Pygments, which
+Sphinx needs, so the generator hides it from docutils before docutils
+loads (wave 5a T18a, the first regeneration under the locked profile).
 
 The fixture records docutils 0.22.4 PARSE-LAYER pseudo-XML (no transforms:
 no doctitle promotion, no target propagation, no transition hoisting, no
@@ -28,6 +34,10 @@ import json
 import re
 import sys
 from pathlib import Path
+
+# docutils' `code_analyzer` imports Pygments when its module loads; `None`
+# in `sys.modules` makes that import fail as if Pygments were absent.
+sys.modules["pygments"] = None
 
 import docutils
 from docutils.frontend import get_default_settings
@@ -125,12 +135,17 @@ SUPPORTED_KINDS = {
     "pending",
     "inline",
     "substitution_definition",
+    # wave 5a T18a: the structure directives' document-level nodes
+    "meta",
+    "decoration",
+    "header",
+    "footer",
 }
 
 # Families whose snippets intentionally exercise the directive machinery.
 DIRECTIVE_FAMILIES = (
     "dir_core", "dir_admonitions", "dir_options", "dir_image", "dir_body", "dir_media",
-    "dir_tables", "substitutions",
+    "dir_tables", "substitutions", "dir_parts",
 )
 
 # (family, name, rst) — names unique, families floor-checked below.
@@ -992,6 +1007,105 @@ CASES = [
     # Python's set, so a lone \x1f is blank in both places.
     ("round_f", "simple_table_margin_us_is_blank", "=== ===\na  \x1fb\n=== ===\n"),
     ("round_f", "simple_table_first_column_us_is_continuation", "=== ===\na   b\n\x1f   c\n=== ===\n"),
+    # ----- wave 5a T18a: the structure directives' parse halves -----
+    # (research report "structure directives" §6.1; the probes are in
+    # scratchpad/t18a/probes). `contents` builds its topic, names it and
+    # leaves a `pending` (Contents, 720) whose internals print the options;
+    # `sectnum`/`section-numbering` and `target-notes` leave a bare
+    # `pending` (SectNum, 710; TargetNotes, 540); `meta` inserts at the head
+    # of the document, its line-less messages at the top-level machine's
+    # line; `title` sets the document's attribute; `header`/`footer` fill
+    # the document's decoration; the test directive is one INFO message.
+    ("dir_parts", "contents_plain", "Title\n=====\n\n.. contents::\n\nSec\n---\n"),
+    ("dir_parts", "contents_all_options", "Title\n=====\n\n.. contents:: Table of *Contents*\n   :depth: 2\n   :local:\n   :backlinks: none\n   :class: a B\n\nSec\n---\n"),
+    ("dir_parts", "contents_backlinks_top", ".. contents::\n   :backlinks: top\n"),
+    ("dir_parts", "contents_bad_depth", ".. contents::\n   :depth: -1\n"),
+    ("dir_parts", "contents_bad_backlinks", ".. contents::\n   :backlinks: bogus\n"),
+    ("dir_parts", "contents_in_note", ".. note::\n\n   .. contents::\n"),
+    ("dir_parts", "contents_in_list_item", "* item\n\n  .. contents::\n"),
+    ("dir_parts", "contents_in_sidebar", ".. sidebar:: S\n\n   .. contents::\n"),
+    ("dir_parts", "contents_name_taken", "Contents\n========\n\n.. contents::\n"),
+    ("dir_parts", "contents_title_problem", ".. contents:: *unclosed\n"),
+    ("dir_parts", "sectnum_options", ".. sectnum::\n   :depth: 2\n   :start: 3\n   :prefix: A.\n   :suffix: )\n"),
+    ("dir_parts", "sectnum_alias", ".. section-numbering::\n"),
+    ("dir_parts", "sectnum_bad", ".. sectnum::\n   :depth: x\n\n.. sectnum::\n   :prefix:\n\n.. sectnum:: arg\n"),
+    ("dir_parts", "target_notes_class", ".. target-notes::\n   :class: x y\n"),
+    ("dir_parts", "target_notes_errors", ".. target-notes:: arg\n\n.. target-notes::\n   :name: x\n"),
+    ("dir_parts", "meta_basic", "Para.\n\n.. meta::\n   :keywords: a, b\n   :description lang=en: d\n"),
+    ("dir_parts", "meta_errors", "Title\n=====\n\n.. meta::\n\n.. meta::\n   :empty:\n\n.. meta::\n   :description bad: x\n\n.. meta::\n   not a field\n\n.. meta::\n   :ok: fine\n   trailing paragraph\n"),
+    # The report's §3.4 line table, one case per row: the line of a
+    # `MetaBody` message is docutils' top-level state machine's.
+    ("dir_parts", "meta_line_runs_eof", ".. meta::\n   :description bad: x\n"),
+    ("dir_parts", "meta_line_runs_one_blank", "Para.\n\n.. meta::\n   :d bad: x\n\nPara.\n"),
+    ("dir_parts", "meta_line_runs_two_blanks", "Para.\n\n.. meta::\n   :d bad: x\n\n\nPara.\n"),
+    ("dir_parts", "meta_line_runs_three_blanks", "Para.\n\n.. meta::\n   :d bad: x\n\n\n\nPara.\n"),
+    ("dir_parts", "meta_line_runs_in_section", "T\n=\n\nPara.\n\n.. meta::\n   :d bad: x\n\nPara.\n"),
+    ("dir_parts", "meta_line_runs_in_note", "Title\n=====\n\n.. note::\n\n   .. meta::\n      :description bad: x\n\n   more\n\nmore2\n"),
+    ("dir_parts", "meta_line_runs_second_meta", "Para.\n\n.. meta::\n   :a: b\n\n.. meta::\n   :d bad: x\n\nPara.\n"),
+    ("dir_parts", "meta_line_runs_after_note", "Para.\n\n.. note:: n\n\n.. meta::\n   :d bad: x\n\nPara.\n"),
+    ("dir_parts", "meta_line_runs_after_target", "Para.\n\n.. _t:\n\n.. meta::\n   :d bad: x\n\nPara.\n"),
+    ("dir_parts", "meta_line_runs_empty_info", "Para.\n\n.. meta::\n   :empty:\n\nPara.\n"),
+    ("dir_parts", "meta_after_rubric", ".. rubric:: R\n\n.. meta::\n   :k: v\n\nPara.\n"),
+    ("dir_parts", "title", ".. title:: The Title\n\nPara.\n"),
+    ("dir_parts", "title_missing", ".. title::\n"),
+    ("dir_parts", "header_footer", ".. header:: H *e*\n\n.. footer:: F\n\nPara.\n"),
+    ("dir_parts", "header_empty", ".. header::\n\n.. footer::\n"),
+    # The first docutils-mode pins of wave 5a T17a's `role` and
+    # `default-role` directives.
+    ("dir_parts", "role_custom", ".. role:: custom\n\n:custom:`x`\n"),
+    ("dir_parts", "role_errors", "Title\n=====\n\n.. role::\n\n.. role:: bad name\n\n.. role:: x(nonexistent)\n\n.. role:: y(raw)\n\n.. default-role:: nonexistent\n\n:y:`q`\n"),
+    ("dir_parts", "default_role", ".. default-role:: literal\n\n`x`\n"),
+    ("dir_parts", "test_directive", ".. restructuredtext-test-directive:: arg\n   :option: v\n\n   content\n"),
+    # Beyond the report's list: the head insertion's edges (a document of
+    # metas alone takes each new one first; metas precede the decoration;
+    # nested and cell metas reach the head), `MetaBody`'s field bodies and
+    # attribute tokens, the decoration's parts, the pseudo-section parents
+    # (the anonymous container a figure parses its content into holds a
+    # topic, a sidebar or a contents; a header or a topic holds none), and
+    # the other directives' edges.
+    ("dir_parts", "meta_only_metas", ".. meta::\n   :a: 1\n\n.. meta::\n   :b: 2\n"),
+    ("dir_parts", "meta_continuation", ".. meta::\n   :description: one\n      two\n\n   :k: v\n"),
+    ("dir_parts", "meta_bad_tokens", ".. meta::\n   :name=: x\n\n.. meta::\n   :description lang=\"unterminated: x\n\n.. meta::\n   :description =x: y\n\n.. meta::\n   :a b=\"c\"d: e\n\n.. meta::\n   :a b=: e\n"),
+    ("dir_parts", "meta_attribute_tokens", ".. meta::\n   :NAME=Key LANG=EN: v\n   :content=foo: bar\n   :a=1=2: v\n   :name=a name=b: v\n   :name='a b' x=\"q\": v\n"),
+    ("dir_parts", "meta_escapes", ".. meta::\n   :a\\:b: x\n   :c\\ d: y\n   :k: a\\*b\\ c\n"),
+    ("dir_parts", "meta_empty_then_field", ".. meta::\n   :empty:\n\n   :b: c\n"),
+    ("dir_parts", "meta_in_section_nested", "Title\n=====\n\nSub\n---\n\n.. note::\n\n   .. meta::\n      :keywords: nested\n"),
+    ("dir_parts", "meta_in_table", "+--------------+\n| .. meta::    |\n|    :k: v     |\n+--------------+\n"),
+    ("dir_parts", "meta_in_substitution", ".. |s| meta::\n   :k: v\n"),
+    ("dir_parts", "meta_in_header", ".. header::\n\n   A\n\n   .. meta::\n      :k: v\n"),
+    ("dir_parts", "header_in_section", "Title\n=====\n\nBody.\n\nSub\n---\n\n.. footer:: Deep footer\n\n.. meta::\n   :keywords: k\n"),
+    ("dir_parts", "header_footer_twice", ".. header:: Top *header* text\n\n.. footer:: Bottom footer |date|\n\n.. |date| replace:: today-ish\n\nTitle\n=====\n\nBody.\n\n.. header:: Second header para\n"),
+    ("dir_parts", "header_in_header", ".. header::\n\n   A\n\n   .. header:: B\n\n   C\n"),
+    ("dir_parts", "header_in_substitution", ".. |s| header:: x\n"),
+    ("dir_parts", "contents_in_header", ".. header::\n\n   .. contents::\n"),
+    ("dir_parts", "contents_in_topic", ".. topic:: T\n\n   .. contents::\n"),
+    ("dir_parts", "contents_in_figure", ".. figure:: a.png\n\n   Caption.\n\n   .. contents::\n"),
+    ("dir_parts", "topic_in_figure", ".. figure:: a.png\n\n   Caption.\n\n   .. topic:: T\n\n      Body.\n"),
+    ("dir_parts", "sidebar_in_figure", ".. figure:: a.png\n\n   Caption.\n\n   .. sidebar:: S\n\n      Body.\n"),
+    ("dir_parts", "contents_class_local", ".. contents:: On this page\n   :local:\n   :class: this-page Fancy\n"),
+    ("dir_parts", "contents_local_untitled", ".. contents::\n   :local:\n"),
+    ("dir_parts", "contents_twice", ".. contents::\n\n.. contents::\n"),
+    ("dir_parts", "contents_after_label", ".. _contents:\n\nPara.\n\n.. contents::\n"),
+    ("dir_parts", "sectnum_start_bad", ".. sectnum::\n   :start: 1.5\n"),
+    ("dir_parts", "sectnum_negative", ".. sectnum::\n   :depth: -2\n   :start: -1\n"),
+    ("dir_parts", "title_field_line", ".. title:: one\n   :x: y\n"),
+    ("dir_parts", "title_twice", ".. title:: first\n.. title:: second\n\nT\n=\n\nb\n"),
+    ("dir_parts", "title_in_substitution", ".. |s| title:: x\n"),
+    ("dir_parts", "test_directive_no_content", ".. restructuredtext-test-directive::\n"),
+    # In a substitution definition: the definition's `alt` joins the
+    # pending's details, and the directives that return nothing (or no
+    # inline node) leave the definition empty.
+    ("dir_parts", "sectnum_in_substitution", ".. |x| sectnum::\n"),
+    ("dir_parts", "target_notes_in_substitution", ".. |x| target-notes::\n"),
+    ("dir_parts", "contents_in_substitution", ".. |x| contents::\n"),
+    ("dir_parts", "test_directive_in_substitution", ".. |x| restructuredtext-test-directive:: a\n"),
+    ("dir_parts", "meta_in_csv_cell", ".. csv-table::\n\n   \".. meta::\n      :k: v\", b\n"),
+    ("dir_parts", "header_in_csv_cell", ".. csv-table::\n\n   \".. header:: H\", b\n\nPara.\n"),
+    ("dir_parts", "contents_capitalized", ".. Contents::\n"),
+    # docutils' delimiter class holds ranges (U+2010-U+2017, U+2020-U+2027,
+    # ...): the dashes and the ellipsis delimit inline markup on both sides.
+    ("inline_basics", "dash_and_ellipsis_after_end_string", "Types of *b*\u2014but, **b**\u2013x, ``b``\u2026 and *b*\u2015y.\n"),
+    ("inline_basics", "dash_and_ellipsis_before_start_string", "x \u2014*b* y, x\u2014*b*\u2014y and x\u2026``b``\u2026y.\n"),
 ]
 
 
@@ -1036,6 +1150,7 @@ def main() -> int:
         "lists_enum": 8, "deflist": 8, "quote": 8, "literal": 8,
         "comment_target": 8, "lineblock": 4, "doctest": 4, "errors": 12,
         "hardening": 20, "mixtures": 8, "review": 45, "inline_basics": 25, "inline_carriers": 10, "inline_refs": 40, "inline_roles": 20, "footnotes": 14, "fields": 15, "options": 10, "tables_grid": 18, "tables_simple": 12, "w2_hardening": 15, "review2": 12, "dir_core": 10, "dir_admonitions": 14, "dir_options": 20, "dir_image": 18, "dir_body": 30, "dir_media": 38, "dir_tables": 30, "substitutions": 30,
+        "dir_parts": 64,
     }
     counts: dict = {}
     for family, _, _ in CASES:

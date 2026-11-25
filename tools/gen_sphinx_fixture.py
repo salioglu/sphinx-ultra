@@ -337,6 +337,14 @@ SUPPORTED_KINDS = {
     # wave 5a T17a: Sphinx's manpage and download roles
     "manpage",
     "download_reference",
+    # wave 5a T18a: the structure directives' nodes (`generated` is
+    # SectNum's, T18b; `raw` a custom `raw` role's)
+    "generated",
+    "meta",
+    "decoration",
+    "header",
+    "footer",
+    "raw",
 }
 
 CASES = [
@@ -1216,6 +1224,31 @@ Term : "classifier" : 'c2'
     # once the DownloadFileCollector (880) runs, which gives a URL target
     # its `refuri`; no file exists in this harness, so no `filename` =====
     ('sx_sphinx_roles', 'download_unreadable_and_url', ':download:`missing.txt`\n\n:download:`https://example.com/x.zip`\n\n:download:`!f.txt`\n\n:download:`the file <f.txt>`\n\n:download:`f  .txt`\n'),
+    # ===== sx_parts (wave 5a T18a): the structure directives' document-
+    # level effects (research report "structure directives" §6.2): `meta`
+    # inserts at the head of the document, `title` sets the document's
+    # `title` attribute, `header` and `footer` fill the decoration, and the
+    # test directive's INFO message is filtered away. T18b appends the
+    # contents, sectnum and target-notes cases =====
+    ('sx_parts', 'meta_basic', 'Title\n=====\n\n.. meta::\n   :description: The reStructuredText plaintext markup language\n   :keywords: plaintext, markup language\n\nBody.\n'),
+    ('sx_parts', 'meta_attrs', 'Title\n=====\n\nBody.\n\n.. meta::\n   :description lang=en: An amusing story\n   :description lang=fr: Une histoire amusante\n   :http-equiv=Content-Type: text/html; charset=ISO-8859-1\n   :name=keywords scheme=X: a, b\n   :property=og:title: OG <&> "q"\n'),
+    ('sx_parts', 'meta_before_title', '.. meta::\n   :keywords: first\n\nTitle\n=====\n\nBody.\n'),
+    ('sx_parts', 'meta_in_section_nested', 'Title\n=====\n\nSub\n---\n\n.. note::\n\n   .. meta::\n      :keywords: nested\n'),
+    ('sx_parts', 'meta_errors', 'Title\n=====\n\n.. meta::\n\n.. meta::\n   :empty:\n\n.. meta::\n   :description bad: x\n\n.. meta::\n   not a field\n\n.. meta::\n   :ok: fine\n   trailing paragraph\n'),
+    ('sx_parts', 'title_errors', '.. title::\n\n.. title:: one\n   :x: y\n\n.. title:: first\n.. title:: second\n\nT\n=\n\nb\n'),
+    ('sx_parts', 'header_footer', '.. header:: Top *header* text\n\n.. footer:: Bottom footer |date|\n\n.. |date| replace:: today-ish\n\nTitle\n=====\n\nBody.\n\n.. header:: Second header para\n'),
+    ('sx_parts', 'header_footer_errors', '.. header::\n\n.. footer::\n\nTitle\n=====\n\nBody.\n'),
+    ('sx_parts', 'header_in_section', 'Title\n=====\n\nBody.\n\nSub\n---\n\n.. footer:: Deep footer\n\n.. meta::\n   :keywords: k\n'),
+    ('sx_parts', 'meta_only_metas', '.. meta::\n   :a: 1\n\n.. meta::\n   :b: 2\n'),
+    ('sx_parts', 'meta_bad_tokens', '.. meta::\n   :name=: x\n\n.. meta::\n   :description lang="unterminated: x\n\n.. meta::\n   :description =x: y\n\n.. meta::\n   :a b="c"d: e\n\n.. meta::\n   :a b=: e\n'),
+    ('sx_parts', 'meta_line_after_blank_lines', 'Para.\n\n.. meta::\n   :d bad: x\n\n\nPara.\n'),
+    ('sx_parts', 'title_no_section', '.. title:: Only Title\n\nJust a paragraph.\n'),
+    ('sx_parts', 'test_directive', '.. restructuredtext-test-directive:: arg\n   :option: v\n\n   content\n\nAfter.\n'),
+    ('sx_parts', 'header_with_targets', '.. header:: See `x <https://x.example/>`_ and y_.\n\n.. _y: https://y.example/\n\nTitle\n=====\n\nBody.\n'),
+    # ===== sx_plain, appended (wave 5a T18a): docutils' delimiter class
+    # holds ranges, the dashes and the ellipsis among them =====
+    ('sx_plain', 'inline_dash_and_ellipsis_after_end_string', 'Types of *b*—but, **b**–x, ``b``… and *b*―y.\n'),
+    ('sx_plain', 'inline_dash_and_ellipsis_before_start_string', 'x —*b* y, x—*b*—y and x…``b``…y.\n'),
 ]
 
 
@@ -1450,6 +1483,7 @@ def generate_sphinx_snippets() -> int:
         "sx_smartquotes": 26,
         "sx_sphinx_roles": 28,
         "sx_config": 16,
+        "sx_parts": 13,
     }
     counts: dict = {}
     for case in CASES:
@@ -1494,7 +1528,16 @@ def generate_sphinx_snippets() -> int:
                         bad.append(f"{family}.{name}: unsupported kinds {sorted(stray)}")
                         continue
                     pseudo = normalize(doctree.pformat(), base)
-                    assert pseudo.startswith(f"{DOCUMENT_START_TAG}\n"), (
+                    # A `title` directive's attribute sorts between `source`
+                    # and `translation_progress` (wave 5a T18a).
+                    title = doctree.get("title")
+                    start_tag = (
+                        DOCUMENT_START_TAG
+                        if title is None
+                        else f'<document source="{SOURCE_TOKEN}" title="{title}" '
+                        f"{TRANSLATION_PROGRESS}>"
+                    )
+                    assert pseudo.startswith(f"{start_tag}\n"), (
                         f"{family}.{name}: unexpected document start tag:\n{pseudo}"
                     )
                     record_case = {

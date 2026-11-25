@@ -964,12 +964,12 @@ pub fn check_consistency(env: &BuildEnvironment) -> Vec<ConsistencyMessage> {
 // ---------------------------------------------------------------------------
 
 /// `env.titles[docname]`: a fresh `title` node holding the first section
-/// title's contents, filtered exactly like a toc entry's.
+/// title's contents, filtered exactly like a toc entry's, or, in a
+/// document without a section, the document's `title` attribute (the
+/// `title` directive's) or `<no title>`.
 ///
-/// Port of `TitleCollector.process_doc` (`collectors/title.py:27`). Its
-/// `longtitles` differ only when the document carries a `title` attribute
-/// (set by the `title` directive / `<meta>`), which nothing produces yet —
-/// so the caller stores this same node under both keys.
+/// Port of `TitleCollector.process_doc` (`collectors/title.py:38-59`);
+/// [`document_longtitle`] is its other half.
 pub fn document_title(doctree: &Doctree) -> Node {
     let mut title = Node::elem(kinds::TITLE, Span::ZERO);
     match first_section(&doctree.root) {
@@ -979,11 +979,31 @@ pub fn document_title(doctree: &Doctree) -> Node {
             }
         }
         // sphinx: `doctree.get('title', '<no title>')`.
-        None => title
-            .children
-            .push(Node::text_node("<no title>", Span::ZERO)),
+        None => {
+            let text = title_attribute(doctree).unwrap_or("<no title>");
+            title.children.push(Node::text_node(text, Span::ZERO));
+        }
     }
     title
+}
+
+/// `env.longtitles[docname]` when it is not the document's title
+/// ([`document_title`]): a fresh `title` node holding the document's
+/// `title` attribute as text, which the `title` directive sets
+/// (`collectors/title.py:45-47`). `None` without the attribute.
+pub fn document_longtitle(doctree: &Doctree) -> Option<Node> {
+    let text = title_attribute(doctree)?;
+    let mut title = Node::elem(kinds::TITLE, Span::ZERO);
+    title.children.push(Node::text_node(text, Span::ZERO));
+    Some(title)
+}
+
+/// The document's `title` attribute (`'title' in doctree`).
+fn title_attribute(doctree: &Doctree) -> Option<&str> {
+    match doctree.root.get("title") {
+        Some(AttrValue::Str(text)) => Some(text),
+        _ => None,
+    }
 }
 
 /// First `section` in document order (docutils `findall(nodes.section)`).
@@ -2693,6 +2713,108 @@ mod tests {
         assert_eq!(
             document_title(&doctree).pformat(),
             "<title>\n    <no title>\n"
+        );
+    }
+
+    /// `.. title::` sets the document's `title` attribute, the last one
+    /// winning, and Sphinx's TitleCollector (`collectors/title.py:38-59`)
+    /// makes it the document's longtitle, which only the HTML `<title>` and
+    /// the search index's titles show. `env.titles`, which toctrees and the
+    /// `:doc:` role show, keeps the first section title, and takes the
+    /// attribute only in a document without a section, whose toc stays
+    /// empty, so that a toctree naming it still warns that it has no title.
+    //
+    // oracle: Sphinx 9.1.0, a dummy build of these four documents
+    //   (scratchpad/t18a/probes/sbuild.py, project `title_toctree`): the
+    //   post-read document lines, `env.titles`, `env.longtitles`,
+    //   `env.tocs['nosec']`, the resolved `index` and its warning.
+    #[test]
+    fn title_sets_longtitle_only() {
+        let project = project(&[
+            (
+                "index",
+                "Index\n=====\n\n.. toctree::\n\n   page\n   sub\n   nosec\n",
+            ),
+            ("nosec", ".. title:: Only Title\n\nJust a paragraph.\n"),
+            (
+                "page",
+                ".. title:: Custom <Page> & Title\n\nReal Title\n==========\n\nBody.\n",
+            ),
+            (
+                "sub",
+                ".. title:: Sub Long Title\n\nSub\n===\n\n.. title:: Last One Wins\n\nBody.\n",
+            ),
+        ]);
+        let env = &project.env;
+        let titles = |docname: &str| {
+            (
+                env.titles[docname].pformat(),
+                env.longtitles[docname].pformat(),
+            )
+        };
+        let title = |text: &str| format!("<title>\n    {text}\n");
+        assert_eq!(titles("index"), (title("Index"), title("Index")));
+        assert_eq!(
+            titles("page"),
+            (title("Real Title"), title("Custom <Page> & Title"))
+        );
+        assert_eq!(titles("sub"), (title("Sub"), title("Last One Wins")));
+        assert_eq!(titles("nosec"), (title("Only Title"), title("Only Title")));
+        assert_eq!(env.tocs["nosec"].pformat(), "<bullet_list>\n");
+
+        let document_line = |docname: &str| {
+            let (_, doctree) = project
+                .doctrees
+                .iter()
+                .find(|(name, _)| name == docname)
+                .expect("a document of the project");
+            doctree
+                .root
+                .pformat()
+                .lines()
+                .next()
+                .unwrap_or_default()
+                .to_string()
+        };
+        let document = |docname: &str, title: &str| {
+            format!(
+                "<document source=\"<SRCDIR>/{docname}.rst\" title=\"{title}\" \
+                 translation_progress=\"{{'total': 0, 'translated': 0}}\">"
+            )
+        };
+        assert_eq!(
+            document_line("page"),
+            document("page", "Custom <Page> & Title")
+        );
+        assert_eq!(document_line("sub"), document("sub", "Last One Wins"));
+        assert_eq!(document_line("nosec"), document("nosec", "Only Title"));
+
+        let (index, warnings) = resolve_body(&project, "index");
+        assert_eq!(
+            warnings,
+            [
+                "<SRCDIR>/index.rst:4: WARNING: toctree contains reference to document 'nosec' \
+                 that doesn't have a title: no link will be generated [toc.no_title]"
+            ]
+        );
+        assert_eq!(
+            index,
+            concat!(
+                "    <section ids=\"index\" names=\"index\">\n",
+                "        <title>\n",
+                "            Index\n",
+                "        <compound classes=\"toctree-wrapper\">\n",
+                "            <compact_paragraph toctree=\"1\">\n",
+                "                <bullet_list>\n",
+                "                    <list_item classes=\"toctree-l1\">\n",
+                "                        <compact_paragraph classes=\"toctree-l1\">\n",
+                "                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n",
+                "                                Real Title\n",
+                "                    <list_item classes=\"toctree-l1\">\n",
+                "                        <compact_paragraph classes=\"toctree-l1\">\n",
+                "                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n",
+                "                                Sub\n",
+            )
         );
     }
 

@@ -8309,6 +8309,129 @@
         "index": "Index\n=====\n\n.. toctree::\n\n   a\n"
       },
       "name": "roles_download"
+    },
+    {
+      "conf": {
+        "smartquotes": false
+      },
+      "expect": {
+        "dependencies": {},
+        "files_to_rebuild": {
+          "nosec": [
+            "index"
+          ],
+          "sub": [
+            "index"
+          ]
+        },
+        "genindex": [],
+        "included": {},
+        "index_entries": {
+          "index": [],
+          "nosec": [],
+          "sub": []
+        },
+        "py_modindex": {
+          "collapse": false,
+          "groups": []
+        },
+        "py_modules": [],
+        "py_objects": [],
+        "relations": {
+          "index": [
+            null,
+            null,
+            "sub"
+          ],
+          "nosec": [
+            "index",
+            "sub",
+            null
+          ],
+          "sub": [
+            "index",
+            "index",
+            "nosec"
+          ]
+        },
+        "resolved_pformat": {
+          "index": "<document source=\"<project>/index.rst\" title=\"Custom <Page> & Title\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"real-title\" names=\"real\\ title\">\n        <title>\n            Real Title\n        <paragraph>\n            Body.\n        <compound classes=\"toctree-wrapper\">\n            <compact_paragraph toctree=\"1\">\n                <bullet_list>\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                Sub\n",
+          "nosec": "<document source=\"<project>/nosec.rst\" title=\"Only Title\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Just a paragraph.\n",
+          "sub": "<document source=\"<project>/sub.rst\" title=\"Sub Long Title\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"sub\" names=\"sub\">\n        <title>\n            Sub\n        <paragraph>\n            Body.\n"
+        },
+        "std": {
+          "anonlabels": {
+            "genindex": [
+              "genindex",
+              ""
+            ],
+            "modindex": [
+              "py-modindex",
+              ""
+            ],
+            "py-modindex": [
+              "py-modindex",
+              ""
+            ],
+            "search": [
+              "search",
+              ""
+            ]
+          },
+          "labels": {
+            "genindex": [
+              "genindex",
+              "",
+              "Index"
+            ],
+            "modindex": [
+              "py-modindex",
+              "",
+              "Module Index"
+            ],
+            "py-modindex": [
+              "py-modindex",
+              "",
+              "Python Module Index"
+            ],
+            "search": [
+              "search",
+              "",
+              "Search Page"
+            ]
+          },
+          "objects": [],
+          "progoptions": [],
+          "terms": {}
+        },
+        "toc_fignumbers": {},
+        "toc_num_entries": {
+          "index": 1,
+          "nosec": 0,
+          "sub": 1
+        },
+        "toc_secnumbers": {},
+        "tocs_pformat": {
+          "index": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"index\">\n                Real Title\n        <bullet_list>\n            <toctree caption=\"True\" entries=\"(None,\\ 'sub') (None,\\ 'nosec')\" glob=\"0\" hidden=\"0\" includefiles=\"sub nosec\" includehidden=\"0\" maxdepth=\"-1\" numbered=\"0\" parent=\"index\" rawentries=\"\" titlesonly=\"0\">\n",
+          "nosec": "<bullet_list>\n",
+          "sub": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"sub\">\n                Sub\n"
+        },
+        "toctree_includes": {
+          "index": [
+            "sub",
+            "nosec"
+          ]
+        },
+        "warnings": [
+          "<project>/index.rst:8: WARNING: toctree contains reference to document 'nosec' that doesn't have a title: no link will be generated [toc.no_title]"
+        ]
+      },
+      "files": {
+        "index": ".. title:: Custom <Page> & Title\n\nReal Title\n==========\n\nBody.\n\n.. toctree::\n\n   sub\n   nosec\n",
+        "nosec": ".. title:: Only Title\n\nJust a paragraph.\n",
+        "sub": ".. title:: Sub Long Title\n\nSub\n===\n\nBody.\n"
+      },
+      "name": "title_directive"
     }
   ],
   "sphinx_version": "9.1.0"

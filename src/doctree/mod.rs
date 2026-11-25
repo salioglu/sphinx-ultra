@@ -1157,11 +1157,11 @@ Escaped letter "\a" and \`backtick\` done.
         let bare = Node::elem("pending", Span::ZERO);
         let mut with_pending = bare.clone();
         with_pending.ext = Some(Box::new(NodeExt {
-            pending: Some(Box::new(pending::Pending {
-                transform: pending::PendingTransform::ClassAttribute,
-                order: 0,
-                details: Vec::new(),
-            })),
+            pending: Some(Box::new(pending::Pending::new(
+                pending::PendingTransform::ClassAttribute,
+                0,
+                Vec::new(),
+            ))),
             ..NodeExt::default()
         }));
         assert_ne!(with_pending, bare);

@@ -59,6 +59,12 @@ pub struct InlineResult {
     pub roles: Vec<super::RoleRecord>,
 }
 
+/// Whether `c` is in a generated class table (`super::punctuation`), which
+/// the generator emits sorted, one entry per character.
+fn in_class(table: &[char], c: char) -> bool {
+    table.binary_search(&c).is_ok()
+}
+
 fn is_start_prefix_ok(prev: Option<char>) -> bool {
     match prev {
         None => true,
@@ -66,8 +72,8 @@ fn is_start_prefix_ok(prev: Option<char>) -> bool {
             // `\s` in a Python `str` pattern is `str.isspace`, which admits
             // the C0 separators `\x1c`-`\x1f` (see `crate::utils::py_isspace`).
             crate::utils::py_isspace(c)
-                || punctuation::OPENERS.contains(&c)
-                || punctuation::DELIMITERS.contains(&c)
+                || in_class(punctuation::OPENERS, c)
+                || in_class(punctuation::DELIMITERS, c)
         }
     }
 }
@@ -78,9 +84,9 @@ fn is_end_suffix_ok(next: Option<char>) -> bool {
         Some(c) => {
             crate::utils::py_isspace(c)
                 || c == NULL
-                || punctuation::CLOSING_DELIMITERS.contains(&c)
-                || punctuation::DELIMITERS.contains(&c)
-                || punctuation::CLOSERS.contains(&c)
+                || in_class(punctuation::CLOSING_DELIMITERS, c)
+                || in_class(punctuation::DELIMITERS, c)
+                || in_class(punctuation::CLOSERS, c)
         }
     }
 }
@@ -1661,6 +1667,82 @@ mod tests {
         let mut state = DocumentState::default();
         let r = parse_inline(text, Span::ZERO, 1, &mut state, "<snippet>");
         (r.nodes, r.messages)
+    }
+
+    /// The class tables are searched by bisection ([`in_class`]): each is
+    /// sorted, one entry per character.
+    #[test]
+    fn class_tables_are_sorted_sets() {
+        for table in [
+            punctuation::OPENERS,
+            punctuation::CLOSERS,
+            punctuation::DELIMITERS,
+            punctuation::CLOSING_DELIMITERS,
+        ] {
+            assert!(table.windows(2).all(|pair| pair[0] < pair[1]));
+        }
+    }
+
+    /// docutils' delimiters (`punctuation_chars.delimiters`) are a regex
+    /// class, and its `a-b` ranges hold the dashes and the ellipsis:
+    /// U+2010-U+2017 (the en dash U+2013, the em dash U+2014, the
+    /// horizontal bar U+2015) and U+2020-U+2027 (the ellipsis U+2026). Each
+    /// may stand before a start-string and after an end-string.
+    //
+    // oracle: docutils 0.22.4, `re.fullmatch('[%s]' % delimiters, c)` for
+    //   each character; the parse rows are docutils' parse layer of
+    //   `Types of *b*—but, **b**–x, ``b``… and *b*―y.` and `x —*b* y,
+    //   x—*b*—y and x…``b``…y.` (no message either), and Sphinx 9.1.0's read
+    //   gives the same paragraphs (scratchpad/t18a/probes).
+    #[test]
+    fn dashes_and_the_ellipsis_delimit_inline_markup() {
+        for c in ['\u{2013}', '\u{2014}', '\u{2015}', '\u{2026}'] {
+            assert!(is_start_prefix_ok(Some(c)), "{c:?} before a start-string");
+            assert!(is_end_suffix_ok(Some(c)), "{c:?} after an end-string");
+        }
+        // An end-string followed by one: no `start-string without
+        // end-string` message.
+        let (nodes, msgs) =
+            pi("Types of *b*\u{2014}but, **b**\u{2013}x, ``b``\u{2026} and *b*\u{2015}y.");
+        assert!(msgs.is_empty(), "{msgs:?}");
+        let shape: Vec<(&str, String)> = nodes
+            .iter()
+            .map(|node| (node.kind, node.astext()))
+            .collect();
+        assert_eq!(
+            shape,
+            [
+                (kinds::TEXT, "Types of ".to_string()),
+                (kinds::EMPHASIS, "b".to_string()),
+                (kinds::TEXT, "\u{2014}but, ".to_string()),
+                (kinds::STRONG, "b".to_string()),
+                (kinds::TEXT, "\u{2013}x, ".to_string()),
+                (kinds::LITERAL, "b".to_string()),
+                (kinds::TEXT, "\u{2026} and ".to_string()),
+                (kinds::EMPHASIS, "b".to_string()),
+                (kinds::TEXT, "\u{2015}y.".to_string()),
+            ]
+        );
+        // A start-string preceded by one: markup, not plain text.
+        let (nodes, msgs) =
+            pi("x \u{2014}*b* y, x\u{2014}*b*\u{2014}y and x\u{2026}``b``\u{2026}y.");
+        assert!(msgs.is_empty(), "{msgs:?}");
+        let shape: Vec<(&str, String)> = nodes
+            .iter()
+            .map(|node| (node.kind, node.astext()))
+            .collect();
+        assert_eq!(
+            shape,
+            [
+                (kinds::TEXT, "x \u{2014}".to_string()),
+                (kinds::EMPHASIS, "b".to_string()),
+                (kinds::TEXT, " y, x\u{2014}".to_string()),
+                (kinds::EMPHASIS, "b".to_string()),
+                (kinds::TEXT, "\u{2014}y and x\u{2026}".to_string()),
+                (kinds::LITERAL, "b".to_string()),
+                (kinds::TEXT, "\u{2026}y.".to_string()),
+            ]
+        );
     }
 
     #[test]

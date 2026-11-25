@@ -5245,6 +5245,23 @@ fn guilabel_trailing_ampersand_exits_two() {
     );
 }
 
+/// Decision 13: a `meta` field whose name is Python whitespace alone
+/// leaves `MetaBody.parsemeta` no token, and `tokens[0]` raises
+/// `IndexError` out of the directive
+/// (`SP/docutils/parsers/rst/directives/misc.py:595`).
+//
+// oracle: Sphinx 9.1.0, `sphinx-build -b html` over this index.rst: exit 2,
+//   `IndexError: list index out of range` (scratchpad/t18a/probes/crash).
+#[test]
+fn meta_field_named_by_whitespace_exits_two() {
+    assert_crash_exits_two(
+        "t18a-crash-meta",
+        &[("index.rst", "Title\n=====\n\n.. meta::\n   :\u{1f}: x\n")],
+        "IndexError: list index out of range",
+        "<SRCDIR>/index.rst:5",
+    );
+}
+
 /// Decision 13: `MenuSelection` is `GUILabel` after its `-->`s: the same
 /// `IndexError`.
 #[test]

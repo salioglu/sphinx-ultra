@@ -2099,6 +2099,46 @@ Index
             "sub/g.txt": "g\n",
         },
     },
+    {
+        # Wave 5a T18a (structure-directives report §3.5, §6.3): the `title`
+        # directive sets the document's `title` attribute, which every
+        # resolved document line shows; `env.titles`, which toctree entries
+        # show, keeps the first section title, so `index` lists `Sub`; a
+        # document without a section takes the attribute as its title but
+        # keeps an empty toc, so the toctree naming it still warns that it
+        # has no title (`toc.no_title`). The longtitles are pinned by unit
+        # tests (`title_sets_longtitle_only`).
+        "name": "title_directive",
+        "conf": {},
+        "files": {
+            "index": """\
+.. title:: Custom <Page> & Title
+
+Real Title
+==========
+
+Body.
+
+.. toctree::
+
+   sub
+   nosec
+""",
+            "sub": """\
+.. title:: Sub Long Title
+
+Sub
+===
+
+Body.
+""",
+            "nosec": """\
+.. title:: Only Title
+
+Just a paragraph.
+""",
+        },
+    },
 ]
 
 

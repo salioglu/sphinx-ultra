@@ -1097,10 +1097,10 @@ fn doctree_read_event(
     let doctree = &output.doctree;
 
     let title = env_toctree::document_title(doctree);
-    // Sphinx's longtitle differs from the title only for documents carrying
-    // an explicit `title` attribute, which nothing produces yet
-    // (`collectors/title.py:27`).
-    env.longtitles.insert(docname.to_string(), title.clone());
+    // The longtitle is the title, unless the document carries the `title`
+    // directive's attribute (`collectors/title.py:43-47`).
+    let longtitle = env_toctree::document_longtitle(doctree).unwrap_or_else(|| title.clone());
+    env.longtitles.insert(docname.to_string(), longtitle);
     env.titles.insert(docname.to_string(), title);
 
     let (toc, num_entries) = env_toctree::build_toc(doctree, docname);

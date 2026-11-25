@@ -4409,6 +4409,450 @@
       "name": "round_f.simple_table_first_column_us_is_continuation",
       "pseudo_xml": "<document source=\"<snippet>\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"3\">\n            <colspec colwidth=\"3\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            a\n                    <entry>\n                        <paragraph>\n                            b\n                            c\n",
       "rst": "=== ===\na   b\n\u001f   c\n=== ===\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.contents_plain",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <topic classes=\"contents\" ids=\"contents\" names=\"contents\">\n            <title>\n                Contents\n            <pending>\n                .. internal attributes:\n                     .transform: docutils.transforms.parts.Contents\n                     .details:\n        <section ids=\"sec\" names=\"sec\">\n            <title>\n                Sec\n",
+      "rst": "Title\n=====\n\n.. contents::\n\nSec\n---\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.contents_all_options",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <topic classes=\"contents a b local\" ids=\"table-of-contents\" names=\"table\\ of\\ contents\">\n            <title>\n                Table of \n                <emphasis>\n                    Contents\n            <pending>\n                .. internal attributes:\n                     .transform: docutils.transforms.parts.Contents\n                     .details:\n                       backlinks: None\n                       class: ['a', 'b']\n                       depth: 2\n                       local: None\n        <section ids=\"sec\" names=\"sec\">\n            <title>\n                Sec\n",
+      "rst": "Title\n=====\n\n.. contents:: Table of *Contents*\n   :depth: 2\n   :local:\n   :backlinks: none\n   :class: a B\n\nSec\n---\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.contents_backlinks_top",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <topic classes=\"contents\" ids=\"contents\" names=\"contents\">\n        <title>\n            Contents\n        <pending>\n            .. internal attributes:\n                 .transform: docutils.transforms.parts.Contents\n                 .details:\n                   backlinks: 'top'\n",
+      "rst": ".. contents::\n   :backlinks: top\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.contents_bad_depth",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"contents\" directive:\n            invalid option value: (option: \"depth\"; value: '-1')\n            negative value; must be positive or zero.\n        <literal_block xml:space=\"preserve\">\n            .. contents::\n               :depth: -1\n",
+      "rst": ".. contents::\n   :depth: -1\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.contents_bad_backlinks",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"contents\" directive:\n            invalid option value: (option: \"backlinks\"; value: 'bogus')\n            \"bogus\" unknown; choose from \"top\", \"entry\", or \"none\".\n        <literal_block xml:space=\"preserve\">\n            .. contents::\n               :backlinks: bogus\n",
+      "rst": ".. contents::\n   :backlinks: bogus\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.contents_in_note",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <note>\n        <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                The \"contents\" directive may not be used within topics or body elements.\n            <literal_block xml:space=\"preserve\">\n                .. contents::\n",
+      "rst": ".. note::\n\n   .. contents::\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.contents_in_list_item",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <bullet_list bullet=\"*\">\n        <list_item>\n            <paragraph>\n                item\n            <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n                <paragraph>\n                    The \"contents\" directive may not be used within topics or body elements.\n                <literal_block xml:space=\"preserve\">\n                    .. contents::\n",
+      "rst": "* item\n\n  .. contents::\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.contents_in_sidebar",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <sidebar>\n        <title>\n            S\n        <topic classes=\"contents\" ids=\"contents\" names=\"contents\">\n            <title>\n                Contents\n            <pending>\n                .. internal attributes:\n                     .transform: docutils.transforms.parts.Contents\n                     .details:\n",
+      "rst": ".. sidebar:: S\n\n   .. contents::\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.contents_name_taken",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"contents\" names=\"contents\">\n        <title>\n            Contents\n        <topic classes=\"contents\" ids=\"id1\">\n            <title>\n                Contents\n            <pending>\n                .. internal attributes:\n                     .transform: docutils.transforms.parts.Contents\n                     .details:\n",
+      "rst": "Contents\n========\n\n.. contents::\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.contents_title_problem",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <topic classes=\"contents\" ids=\"unclosed\" names=\"*unclosed\">\n        <title>\n            <problematic ids=\"id2\" refid=\"id1\">\n                *\n            unclosed\n        <pending>\n            .. internal attributes:\n                 .transform: docutils.transforms.parts.Contents\n                 .details:\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Inline emphasis start-string without end-string.\n",
+      "rst": ".. contents:: *unclosed\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.sectnum_options",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <pending>\n        .. internal attributes:\n             .transform: docutils.transforms.parts.SectNum\n             .details:\n               depth: 2\n               prefix: 'A.'\n               start: 3\n               suffix: ')'\n",
+      "rst": ".. sectnum::\n   :depth: 2\n   :start: 3\n   :prefix: A.\n   :suffix: )\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.sectnum_alias",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <pending>\n        .. internal attributes:\n             .transform: docutils.transforms.parts.SectNum\n             .details:\n",
+      "rst": ".. section-numbering::\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.sectnum_bad",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"sectnum\" directive:\n            invalid option value: (option: \"depth\"; value: 'x')\n            invalid literal for int() with base 10: 'x'.\n        <literal_block xml:space=\"preserve\">\n            .. sectnum::\n               :depth: x\n    <system_message level=\"3\" line=\"4\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"sectnum\" directive:\n            invalid option value: (option: \"prefix\"; value: None)\n            argument required but none supplied.\n        <literal_block xml:space=\"preserve\">\n            .. sectnum::\n               :prefix:\n    <system_message level=\"3\" line=\"7\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"sectnum\" directive:\n            no content permitted.\n        <literal_block xml:space=\"preserve\">\n            .. sectnum:: arg\n",
+      "rst": ".. sectnum::\n   :depth: x\n\n.. sectnum::\n   :prefix:\n\n.. sectnum:: arg\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.target_notes_class",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <pending>\n        .. internal attributes:\n             .transform: docutils.transforms.references.TargetNotes\n             .details:\n               class: ['x', 'y']\n",
+      "rst": ".. target-notes::\n   :class: x y\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.target_notes_errors",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"target-notes\" directive:\n            no content permitted.\n        <literal_block xml:space=\"preserve\">\n            .. target-notes:: arg\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"target-notes\" directive:\n            unknown option: \"name\".\n        <literal_block xml:space=\"preserve\">\n            .. target-notes::\n               :name: x\n",
+      "rst": ".. target-notes:: arg\n\n.. target-notes::\n   :name: x\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.meta_basic",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <meta content=\"a, b\" name=\"keywords\">\n    <meta content=\"d\" lang=\"en\" name=\"description\">\n    <paragraph>\n        Para.\n",
+      "rst": "Para.\n\n.. meta::\n   :keywords: a, b\n   :description lang=en: d\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.meta_errors",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <meta content=\"fine\" name=\"ok\">\n    <system_message level=\"3\" line=\"15\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Invalid meta directive.\n        <literal_block xml:space=\"preserve\">\n            .. meta::\n               :ok: fine\n               trailing paragraph\n    <system_message level=\"3\" line=\"12\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Invalid meta directive.\n        <literal_block xml:space=\"preserve\">\n            .. meta::\n               not a field\n    <system_message level=\"3\" line=\"5\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"bad\": missing \"=\".\n        <literal_block xml:space=\"preserve\">\n            :description bad: x\n    <system_message level=\"1\" line=\"5\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            No content for meta tag \"empty\".\n        <literal_block xml:space=\"preserve\">\n            :empty:\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <system_message level=\"3\" line=\"4\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                Content block expected for the \"meta\" directive; none found.\n            <literal_block xml:space=\"preserve\">\n                .. meta::\n",
+      "rst": "Title\n=====\n\n.. meta::\n\n.. meta::\n   :empty:\n\n.. meta::\n   :description bad: x\n\n.. meta::\n   not a field\n\n.. meta::\n   :ok: fine\n   trailing paragraph\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.meta_line_runs_eof",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"2\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"bad\": missing \"=\".\n        <literal_block xml:space=\"preserve\">\n            :description bad: x\n",
+      "rst": ".. meta::\n   :description bad: x\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.meta_line_runs_one_blank",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"5\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"bad\": missing \"=\".\n        <literal_block xml:space=\"preserve\">\n            :d bad: x\n    <paragraph>\n        Para.\n    <paragraph>\n        Para.\n",
+      "rst": "Para.\n\n.. meta::\n   :d bad: x\n\nPara.\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.meta_line_runs_two_blanks",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"6\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"bad\": missing \"=\".\n        <literal_block xml:space=\"preserve\">\n            :d bad: x\n    <paragraph>\n        Para.\n    <paragraph>\n        Para.\n",
+      "rst": "Para.\n\n.. meta::\n   :d bad: x\n\n\nPara.\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.meta_line_runs_three_blanks",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"7\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"bad\": missing \"=\".\n        <literal_block xml:space=\"preserve\">\n            :d bad: x\n    <paragraph>\n        Para.\n    <paragraph>\n        Para.\n",
+      "rst": "Para.\n\n.. meta::\n   :d bad: x\n\n\n\nPara.\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.meta_line_runs_in_section",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"8\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"bad\": missing \"=\".\n        <literal_block xml:space=\"preserve\">\n            :d bad: x\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <paragraph>\n            Para.\n        <paragraph>\n            Para.\n",
+      "rst": "T\n=\n\nPara.\n\n.. meta::\n   :d bad: x\n\nPara.\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.meta_line_runs_in_note",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"10\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"bad\": missing \"=\".\n        <literal_block xml:space=\"preserve\">\n            :description bad: x\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <note>\n            <paragraph>\n                more\n        <paragraph>\n            more2\n",
+      "rst": "Title\n=====\n\n.. note::\n\n   .. meta::\n      :description bad: x\n\n   more\n\nmore2\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.meta_line_runs_second_meta",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <meta content=\"b\" name=\"a\">\n    <system_message level=\"3\" line=\"5\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"bad\": missing \"=\".\n        <literal_block xml:space=\"preserve\">\n            :d bad: x\n    <paragraph>\n        Para.\n    <paragraph>\n        Para.\n",
+      "rst": "Para.\n\n.. meta::\n   :a: b\n\n.. meta::\n   :d bad: x\n\nPara.\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.meta_line_runs_after_note",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"4\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"bad\": missing \"=\".\n        <literal_block xml:space=\"preserve\">\n            :d bad: x\n    <paragraph>\n        Para.\n    <note>\n        <paragraph>\n            n\n    <paragraph>\n        Para.\n",
+      "rst": "Para.\n\n.. note:: n\n\n.. meta::\n   :d bad: x\n\nPara.\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.meta_line_runs_after_target",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"7\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"bad\": missing \"=\".\n        <literal_block xml:space=\"preserve\">\n            :d bad: x\n    <paragraph>\n        Para.\n    <target ids=\"t\" names=\"t\">\n    <paragraph>\n        Para.\n",
+      "rst": "Para.\n\n.. _t:\n\n.. meta::\n   :d bad: x\n\nPara.\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.meta_line_runs_empty_info",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"1\" line=\"5\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            No content for meta tag \"empty\".\n        <literal_block xml:space=\"preserve\">\n            :empty:\n    <paragraph>\n        Para.\n    <paragraph>\n        Para.\n",
+      "rst": "Para.\n\n.. meta::\n   :empty:\n\nPara.\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.meta_after_rubric",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <meta content=\"v\" name=\"k\">\n    <rubric>\n        R\n    <paragraph>\n        Para.\n",
+      "rst": ".. rubric:: R\n\n.. meta::\n   :k: v\n\nPara.\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.title",
+      "pseudo_xml": "<document source=\"<snippet>\" title=\"The Title\">\n    <paragraph>\n        Para.\n",
+      "rst": ".. title:: The Title\n\nPara.\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.title_missing",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"title\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. title::\n",
+      "rst": ".. title::\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.header_footer",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <decoration>\n        <header>\n            <paragraph>\n                H \n                <emphasis>\n                    e\n        <footer>\n            <paragraph>\n                F\n    <paragraph>\n        Para.\n",
+      "rst": ".. header:: H *e*\n\n.. footer:: F\n\nPara.\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.header_empty",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"header\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. header::\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"footer\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. footer::\n",
+      "rst": ".. header::\n\n.. footer::\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.role_custom",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <inline classes=\"custom\">\n            x\n",
+      "rst": ".. role:: custom\n\n:custom:`x`\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.role_errors",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <system_message level=\"3\" line=\"4\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                \"role\" directive requires arguments on the first line.\n            <literal_block xml:space=\"preserve\">\n                .. role::\n        <system_message level=\"3\" line=\"6\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                \"role\" directive arguments not valid role names: \"bad name\".\n            <literal_block xml:space=\"preserve\">\n                .. role:: bad name\n        <system_message level=\"1\" line=\"8\" source=\"<snippet>\" type=\"INFO\">\n            <paragraph>\n                No role entry for \"nonexistent\" in module \"docutils.parsers.rst.languages.en\".\n                Trying \"nonexistent\" as canonical role name.\n        <system_message level=\"3\" line=\"8\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                Unknown interpreted text role \"nonexistent\".\n            <literal_block xml:space=\"preserve\">\n                .. role:: x(nonexistent)\n        <system_message level=\"1\" line=\"12\" source=\"<snippet>\" type=\"INFO\">\n            <paragraph>\n                No role entry for \"nonexistent\" in module \"docutils.parsers.rst.languages.en\".\n                Trying \"nonexistent\" as canonical role name.\n        <system_message level=\"3\" line=\"12\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                Unknown interpreted text role \"nonexistent\".\n            <literal_block xml:space=\"preserve\">\n                .. default-role:: nonexistent\n        <paragraph>\n            <problematic ids=\"id2\" refid=\"id1\">\n                :y:`q`\n        <system_message backrefs=\"id2\" ids=\"id1\" level=\"3\" line=\"14\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                No format (Writer name) is associated with this role: \"y\".\n                The \"raw\" role cannot be used directly.\n                Instead, use the \"role\" directive to create a new role with an associated format.\n",
+      "rst": "Title\n=====\n\n.. role::\n\n.. role:: bad name\n\n.. role:: x(nonexistent)\n\n.. role:: y(raw)\n\n.. default-role:: nonexistent\n\n:y:`q`\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.default_role",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        <literal>\n            x\n",
+      "rst": ".. default-role:: literal\n\n`x`\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.test_directive",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            Directive processed. Type=\"restructuredtext-test-directive\", arguments=['arg'], options={'option': 'v'}, content:\n        <literal_block xml:space=\"preserve\">\n            content\n",
+      "rst": ".. restructuredtext-test-directive:: arg\n   :option: v\n\n   content\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.meta_only_metas",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <meta content=\"2\" name=\"b\">\n    <meta content=\"1\" name=\"a\">\n",
+      "rst": ".. meta::\n   :a: 1\n\n.. meta::\n   :b: 2\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.meta_continuation",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <meta content=\"one two \" name=\"description\">\n    <meta content=\"v\" name=\"k\">\n",
+      "rst": ".. meta::\n   :description: one\n      two\n\n   :k: v\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.meta_bad_tokens",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"b=\": missing value after \"b=\".\n        <literal_block xml:space=\"preserve\">\n            :a b=: e\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"b=\"c\"d\": attribute \"b\" end quote (\") not followed by whitespace.\n        <literal_block xml:space=\"preserve\">\n            :a b=\"c\"d: e\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"=x\": missing attribute name before \"=\".\n        <literal_block xml:space=\"preserve\">\n            :description =x: y\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"lang=\"unterminated\": attribute \"lang\" missing end quote (\").\n        <literal_block xml:space=\"preserve\">\n            :description lang=\"unterminated: x\n    <meta content=\"x\" name=\"name=\">\n",
+      "rst": ".. meta::\n   :name=: x\n\n.. meta::\n   :description lang=\"unterminated: x\n\n.. meta::\n   :description =x: y\n\n.. meta::\n   :a b=\"c\"d: e\n\n.. meta::\n   :a b=: e\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.meta_attribute_tokens",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <meta content=\"v\" lang=\"EN\" name=\"Key\">\n    <meta content=\"foo\">\n    <meta a=\"1=2\" content=\"v\">\n    <meta content=\"v\" name=\"b\">\n    <system_message level=\"3\" line=\"6\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"b'\": missing \"=\".\n        <literal_block xml:space=\"preserve\">\n            :name='a b' x=\"q\": v\n",
+      "rst": ".. meta::\n   :NAME=Key LANG=EN: v\n   :content=foo: bar\n   :a=1=2: v\n   :name=a name=b: v\n   :name='a b' x=\"q\": v\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.meta_escapes",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <meta content=\"x\" name=\"a:b\">\n    <meta content=\"y\" name=\"cd\">\n    <meta content=\"a*bc\" name=\"k\">\n",
+      "rst": ".. meta::\n   :a\\:b: x\n   :c\\ d: y\n   :k: a\\*b\\ c\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.meta_empty_then_field",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"1\" line=\"4\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            No content for meta tag \"empty\".\n        <literal_block xml:space=\"preserve\">\n    <meta content=\"c\" name=\"b\">\n",
+      "rst": ".. meta::\n   :empty:\n\n   :b: c\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.meta_in_section_nested",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <meta content=\"nested\" name=\"keywords\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <section ids=\"sub\" names=\"sub\">\n            <title>\n                Sub\n            <note>\n",
+      "rst": "Title\n=====\n\nSub\n---\n\n.. note::\n\n   .. meta::\n      :keywords: nested\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.meta_in_table",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <meta content=\"v\" name=\"k\">\n    <table>\n        <tgroup cols=\"1\">\n            <colspec colwidth=\"14\">\n            <tbody>\n                <row>\n                    <entry>\n",
+      "rst": "+--------------+\n| .. meta::    |\n|    :k: v     |\n+--------------+\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.meta_in_substitution",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <meta content=\"v\" name=\"k\">\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"s\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |s| meta::\n               :k: v\n",
+      "rst": ".. |s| meta::\n   :k: v\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.meta_in_header",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <meta content=\"v\" name=\"k\">\n    <decoration>\n        <header>\n            <paragraph>\n                A\n",
+      "rst": ".. header::\n\n   A\n\n   .. meta::\n      :k: v\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.header_in_section",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <meta content=\"k\" name=\"keywords\">\n    <decoration>\n        <footer>\n            <paragraph>\n                Deep footer\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Body.\n        <section ids=\"sub\" names=\"sub\">\n            <title>\n                Sub\n",
+      "rst": "Title\n=====\n\nBody.\n\nSub\n---\n\n.. footer:: Deep footer\n\n.. meta::\n   :keywords: k\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.header_footer_twice",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <decoration>\n        <header>\n            <paragraph>\n                Top \n                <emphasis>\n                    header\n                 text\n            <paragraph>\n                Second header para\n        <footer>\n            <paragraph>\n                Bottom footer \n                <substitution_reference refname=\"date\">\n                    date\n    <substitution_definition names=\"date\">\n        today-ish\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Body.\n",
+      "rst": ".. header:: Top *header* text\n\n.. footer:: Bottom footer |date|\n\n.. |date| replace:: today-ish\n\nTitle\n=====\n\nBody.\n\n.. header:: Second header para\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.header_in_header",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <decoration>\n        <header>\n            <paragraph>\n                A\n            <paragraph>\n                B\n            <paragraph>\n                C\n",
+      "rst": ".. header::\n\n   A\n\n   .. header:: B\n\n   C\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.header_in_substitution",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <decoration>\n        <header>\n            <paragraph>\n                x\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"s\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |s| header:: x\n",
+      "rst": ".. |s| header:: x\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.contents_in_header",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <decoration>\n        <header>\n            <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n                <paragraph>\n                    The \"contents\" directive may not be used within topics or body elements.\n                <literal_block xml:space=\"preserve\">\n                    .. contents::\n",
+      "rst": ".. header::\n\n   .. contents::\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.contents_in_topic",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <topic>\n        <title>\n            T\n        <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                The \"contents\" directive may not be used within topics or body elements.\n            <literal_block xml:space=\"preserve\">\n                .. contents::\n",
+      "rst": ".. topic:: T\n\n   .. contents::\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.contents_in_figure",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <figure>\n        <image uri=\"a.png\">\n        <caption>\n            Caption.\n        <legend>\n            <topic classes=\"contents\" ids=\"contents\" names=\"contents\">\n                <title>\n                    Contents\n                <pending>\n                    .. internal attributes:\n                         .transform: docutils.transforms.parts.Contents\n                         .details:\n",
+      "rst": ".. figure:: a.png\n\n   Caption.\n\n   .. contents::\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.topic_in_figure",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <figure>\n        <image uri=\"a.png\">\n        <caption>\n            Caption.\n        <legend>\n            <topic>\n                <title>\n                    T\n                <paragraph>\n                    Body.\n",
+      "rst": ".. figure:: a.png\n\n   Caption.\n\n   .. topic:: T\n\n      Body.\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.sidebar_in_figure",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <figure>\n        <image uri=\"a.png\">\n        <caption>\n            Caption.\n        <legend>\n            <sidebar>\n                <title>\n                    S\n                <paragraph>\n                    Body.\n",
+      "rst": ".. figure:: a.png\n\n   Caption.\n\n   .. sidebar:: S\n\n      Body.\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.contents_class_local",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <topic classes=\"contents this-page fancy local\" ids=\"on-this-page\" names=\"on\\ this\\ page\">\n        <title>\n            On this page\n        <pending>\n            .. internal attributes:\n                 .transform: docutils.transforms.parts.Contents\n                 .details:\n                   class: ['this-page', 'fancy']\n                   local: None\n",
+      "rst": ".. contents:: On this page\n   :local:\n   :class: this-page Fancy\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.contents_local_untitled",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <topic classes=\"contents local\" ids=\"contents\" names=\"contents\">\n        <pending>\n            .. internal attributes:\n                 .transform: docutils.transforms.parts.Contents\n                 .details:\n                   local: None\n",
+      "rst": ".. contents::\n   :local:\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.contents_twice",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <topic classes=\"contents\" ids=\"contents\" names=\"contents\">\n        <title>\n            Contents\n        <pending>\n            .. internal attributes:\n                 .transform: docutils.transforms.parts.Contents\n                 .details:\n    <topic classes=\"contents\" ids=\"id1\">\n        <title>\n            Contents\n        <pending>\n            .. internal attributes:\n                 .transform: docutils.transforms.parts.Contents\n                 .details:\n",
+      "rst": ".. contents::\n\n.. contents::\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.contents_after_label",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <target ids=\"contents\" names=\"contents\">\n    <paragraph>\n        Para.\n    <topic classes=\"contents\" ids=\"id1\">\n        <title>\n            Contents\n        <pending>\n            .. internal attributes:\n                 .transform: docutils.transforms.parts.Contents\n                 .details:\n",
+      "rst": ".. _contents:\n\nPara.\n\n.. contents::\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.sectnum_start_bad",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"sectnum\" directive:\n            invalid option value: (option: \"start\"; value: '1.5')\n            invalid literal for int() with base 10: '1.5'.\n        <literal_block xml:space=\"preserve\">\n            .. sectnum::\n               :start: 1.5\n",
+      "rst": ".. sectnum::\n   :start: 1.5\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.sectnum_negative",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <pending>\n        .. internal attributes:\n             .transform: docutils.transforms.parts.SectNum\n             .details:\n               depth: -2\n               start: -1\n",
+      "rst": ".. sectnum::\n   :depth: -2\n   :start: -1\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.title_field_line",
+      "pseudo_xml": "<document source=\"<snippet>\" title=\"one\n:x: y\">\n",
+      "rst": ".. title:: one\n   :x: y\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.title_twice",
+      "pseudo_xml": "<document source=\"<snippet>\" title=\"second\">\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <paragraph>\n            b\n",
+      "rst": ".. title:: first\n.. title:: second\n\nT\n=\n\nb\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.title_in_substitution",
+      "pseudo_xml": "<document source=\"<snippet>\" title=\"x\">\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"s\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |s| title:: x\n",
+      "rst": ".. |s| title:: x\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.test_directive_no_content",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            Directive processed. Type=\"restructuredtext-test-directive\", arguments=[], options={}, content: None\n",
+      "rst": ".. restructuredtext-test-directive::\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.sectnum_in_substitution",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <pending>\n        .. internal attributes:\n             .transform: docutils.transforms.parts.SectNum\n             .details:\n               alt: 'x'\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"x\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |x| sectnum::\n",
+      "rst": ".. |x| sectnum::\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.target_notes_in_substitution",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <pending>\n        .. internal attributes:\n             .transform: docutils.transforms.references.TargetNotes\n             .details:\n               alt: 'x'\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"x\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |x| target-notes::\n",
+      "rst": ".. |x| target-notes::\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.contents_in_substitution",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            The \"contents\" directive may not be used within topics or body elements.\n        <literal_block xml:space=\"preserve\">\n            contents::\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"x\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |x| contents::\n",
+      "rst": ".. |x| contents::\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.test_directive_in_substitution",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            Directive processed. Type=\"restructuredtext-test-directive\", arguments=['a'], options={'alt': 'x'}, content: None\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"x\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |x| restructuredtext-test-directive:: a\n",
+      "rst": ".. |x| restructuredtext-test-directive:: a\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.meta_in_csv_cell",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <meta content=\"v\" name=\"k\">\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"50\">\n            <colspec colwidth=\"50\">\n            <tbody>\n                <row>\n                    <entry>\n                    <entry>\n                        <paragraph>\n                            b\n",
+      "rst": ".. csv-table::\n\n   \".. meta::\n      :k: v\", b\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.header_in_csv_cell",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <decoration>\n        <header>\n            <paragraph>\n                H\n    <table>\n        <tgroup cols=\"2\">\n            <colspec colwidth=\"50\">\n            <colspec colwidth=\"50\">\n            <tbody>\n                <row>\n                    <entry>\n                    <entry>\n                        <paragraph>\n                            b\n    <paragraph>\n        Para.\n",
+      "rst": ".. csv-table::\n\n   \".. header:: H\", b\n\nPara.\n"
+    },
+    {
+      "family": "dir_parts",
+      "name": "dir_parts.contents_capitalized",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <topic classes=\"contents\" ids=\"contents\" names=\"contents\">\n        <title>\n            Contents\n        <pending>\n            .. internal attributes:\n                 .transform: docutils.transforms.parts.Contents\n                 .details:\n",
+      "rst": ".. Contents::\n"
+    },
+    {
+      "family": "inline_basics",
+      "name": "inline_basics.dash_and_ellipsis_after_end_string",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        Types of \n        <emphasis>\n            b\n        —but, \n        <strong>\n            b\n        –x, \n        <literal>\n            b\n        … and \n        <emphasis>\n            b\n        ―y.\n",
+      "rst": "Types of *b*—but, **b**–x, ``b``… and *b*―y.\n"
+    },
+    {
+      "family": "inline_basics",
+      "name": "inline_basics.dash_and_ellipsis_before_start_string",
+      "pseudo_xml": "<document source=\"<snippet>\">\n    <paragraph>\n        x —\n        <emphasis>\n            b\n         y, x—\n        <emphasis>\n            b\n        —y and x…\n        <literal>\n            b\n        …y.\n",
+      "rst": "x —*b* y, x—*b*—y and x…``b``…y.\n"
     }
   ],
   "docutils_version": "0.22.4",

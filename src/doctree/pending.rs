@@ -91,6 +91,27 @@ pub struct Pending {
 }
 
 impl Pending {
+    /// `nodes.pending(transform, details)` noted `order`-th: the details
+    /// sorted by key, the order pformat prints them in
+    /// (`sorted(self.details.items())`, `nodes.py:2567-2589`), and in which
+    /// they are stored and compared. A Python dict holds each key once.
+    pub fn new(
+        transform: PendingTransform,
+        order: u32,
+        mut details: Vec<(String, PyValue)>,
+    ) -> Pending {
+        details.sort_by(|(a, _), (b, _)| a.cmp(b));
+        debug_assert!(
+            details.windows(2).all(|pair| pair[0].0 < pair[1].0),
+            "a pending node's details repeat a key"
+        );
+        Pending {
+            transform,
+            order,
+            details,
+        }
+    }
+
     /// The `.. internal attributes:` lines of docutils' `pending.pformat`
     /// (`nodes.py:2567-2589`), without their indent: pformat prefixes each
     /// with `'    ' + indent * level`, the indent of the node's children.
@@ -150,14 +171,14 @@ mod tests {
             pending.children.is_empty(),
             "the internals live in the side-car, not in a #text child"
         );
-        let expected = Pending {
-            transform: PendingTransform::ClassAttribute,
-            order: 0,
-            details: vec![
+        let expected = Pending::new(
+            PendingTransform::ClassAttribute,
+            0,
+            vec![
                 ("class".to_string(), PyValue::StrList(vec!["x".to_string()])),
                 ("directive".to_string(), PyValue::Str("class".to_string())),
             ],
-        };
+        );
         let ext = pending
             .ext
             .as_deref()
@@ -224,10 +245,10 @@ mod tests {
     fn pending_details_print_python_reprs() {
         let mut node = Node::elem("pending", Span::ZERO);
         node.ext = Some(Box::new(crate::doctree::NodeExt {
-            pending: Some(Box::new(Pending {
-                transform: PendingTransform::Contents,
-                order: 0,
-                details: vec![
+            pending: Some(Box::new(Pending::new(
+                PendingTransform::Contents,
+                0,
+                vec![
                     ("backlinks".to_string(), PyValue::Str("top".to_string())),
                     (
                         "class".to_string(),
@@ -237,7 +258,7 @@ mod tests {
                     ("empty".to_string(), PyValue::StrList(Vec::new())),
                     ("local".to_string(), PyValue::None),
                 ],
-            })),
+            ))),
             ..Default::default()
         }));
         assert_eq!(
@@ -270,6 +291,34 @@ mod tests {
                 "             .details:\n",
             )
         );
+    }
+
+    /// [`Pending::new`] keeps the details sorted by key, as pformat prints
+    /// them (`sorted(self.details.items())`), whatever order a directive
+    /// gives them in: they are printed and compared in stored order.
+    //
+    // oracle (docutils 0.22.4): `.. contents::` with `:local:`, `:depth: 2`
+    //   and `:backlinks: top` in that order prints `backlinks`, `depth`,
+    //   `local` (the parse-layer fixture's `dir_parts` rows).
+    #[test]
+    fn pending_new_sorts_its_details() {
+        let pending = Pending::new(
+            PendingTransform::Contents,
+            3,
+            vec![
+                ("local".to_string(), PyValue::None),
+                ("depth".to_string(), PyValue::Int(2)),
+                ("backlinks".to_string(), PyValue::Str("top".to_string())),
+            ],
+        );
+        assert_eq!(pending.transform, PendingTransform::Contents);
+        assert_eq!(pending.order, 3);
+        let keys: Vec<&str> = pending
+            .details
+            .iter()
+            .map(|(key, _)| key.as_str())
+            .collect();
+        assert_eq!(keys, ["backlinks", "depth", "local"]);
     }
 
     // oracle (docutils 0.22.4): misc.ClassAttribute 210,
