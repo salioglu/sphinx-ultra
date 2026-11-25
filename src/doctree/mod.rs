@@ -25,6 +25,8 @@ pub mod pending;
 pub mod pformat;
 
 pub(crate) use intern::intern;
+#[cfg(test)]
+pub(crate) use intern::MAX_INTERNED;
 
 use std::borrow::Cow;
 use std::num::NonZeroU32;
@@ -92,12 +94,16 @@ pub struct Attrs {
     pub dupnames: Vec<String>,
     pub classes: Vec<String>,
     pub backrefs: Vec<String>,
-    /// Kept sorted by key; use [`Node::set`] to maintain the invariant.
+    /// Kept sorted by key; use [`Node::set`] or [`Node::set_attr`] to
+    /// maintain the invariant. A key is borrowed when it is one of this
+    /// crate's own literals and owned when it is not: a `meta` node's
+    /// attribute names are the user's, and a decoded key is owned too
+    /// (`intern.rs`).
     #[serde(
         serialize_with = "intern::serialize_extra",
         deserialize_with = "intern::deserialize_extra"
     )]
-    pub extra: Vec<(&'static str, AttrValue)>,
+    pub extra: Vec<(Cow<'static, str>, AttrValue)>,
 }
 
 /// A node's identity within one document's read stage — what Python
@@ -349,7 +355,18 @@ impl Node {
     /// Set a scalar attribute, keeping `attrs.extra` sorted by key and
     /// overwriting any existing value for the same key.
     pub fn set(&mut self, key: &'static str, value: AttrValue) {
-        match self.attrs.extra.binary_search_by(|(k, _)| k.cmp(&key)) {
+        self.set_attr(Cow::Borrowed(key), value);
+    }
+
+    /// [`Node::set`] for a key that need not be one of this crate's own
+    /// literals: a `meta` node's attribute names, which the user chooses
+    /// (`MetaBody.parsemeta`'s `node[attname.lower()] = val`).
+    pub fn set_attr(&mut self, key: Cow<'static, str>, value: AttrValue) {
+        match self
+            .attrs
+            .extra
+            .binary_search_by(|(k, _)| k.as_ref().cmp(key.as_ref()))
+        {
             Ok(i) => self.attrs.extra[i].1 = value,
             Err(i) => self.attrs.extra.insert(i, (key, value)),
         }
@@ -358,7 +375,7 @@ impl Node {
     pub fn get(&self, key: &'static str) -> Option<&AttrValue> {
         self.attrs
             .extra
-            .binary_search_by(|(k, _)| k.cmp(&key))
+            .binary_search_by(|(k, _)| k.as_ref().cmp(key))
             .ok()
             .map(|i| &self.attrs.extra[i].1)
     }

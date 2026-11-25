@@ -450,10 +450,15 @@ pub(crate) struct BlockParser {
     /// put it.
     top_block_pending: bool,
     /// How many children docutils' `document` has while the top-level
-    /// construct being parsed runs: the top-level nodes before it, and the
+    /// construct being parsed runs: the top-level nodes before it, the
     /// top-level section it is in, which docutils attaches to the document
-    /// when it opens it. A `meta`, `header` or `footer` directive inserts
-    /// into the document as it stands then ([`HeadOp`]).
+    /// when it opens it, and a top-level list once docutils has attached
+    /// it, with what the construct appended before it
+    /// ([`Self::note_list_attached`]). A `meta`, `header` or `footer`
+    /// directive inserts into the document as it stands then ([`HeadOp`]).
+    /// The message docutils appends right after an enumerated list whose
+    /// start value is not 1, before its first item, is not counted: the
+    /// list before it already decides where an insertion goes.
     root_seen: usize,
     /// What the `meta`, `title`, `header` and `footer` directives do to
     /// the document itself, replayed onto the root when the parse ends
@@ -1376,6 +1381,21 @@ impl BlockParser {
         }
     }
 
+    /// docutils appends a bullet, enumerated or field list to its parent
+    /// before it parses the list's first item
+    /// (`SP/docutils/parsers/rst/states.py:1377`, `:1415`, `:1567`), and an
+    /// option or definition list once it has parsed the first (`:1626`,
+    /// `:2867`). A list the document loop parses outside any section is
+    /// then the document's child, after the nodes the construct appended
+    /// before it (`out`), so a `meta`, `header` or `footer` directive in a
+    /// later item sees it ([`Self::root_seen`]). A no-op in a nested parse
+    /// and in a section.
+    fn note_list_attached(&mut self, out: &[Node]) {
+        if self.depth == 0 && self.open_sections == 0 {
+            self.root_seen += out.len() + 1;
+        }
+    }
+
     /// docutils' `reporter.get_source_and_line(None)` during the parse:
     /// the top-level machine's position ([`Self::machine_position`]), or
     /// `fallback` in a parse that has none. The top-level construct being
@@ -1450,7 +1470,9 @@ impl BlockParser {
             let mut out = Vec::new();
             self.open_sections = stack.len();
             // docutils attaches a top-level section to the document when it
-            // opens it, this parser when it closes it.
+            // opens it, this parser when it closes it; a top-level list
+            // counts itself once docutils attaches it
+            // ([`Self::note_list_attached`]).
             self.root_seen = root.children.len() + usize::from(!stack.is_empty());
             let line = lines[pos];
             let explicit = line.indent() == 0
@@ -2244,6 +2266,7 @@ impl BlockParser {
         let mut list = Node::elem(kinds::BULLET_LIST, Span::ZERO);
         list.set("bullet", AttrValue::Str(bullet.to_string()));
         let mut warn_line: Option<(u16, u32)> = None;
+        self.note_list_attached(out);
         loop {
             let item = self.parse_list_item(lines, pos, 1);
             list.children.push(item);
@@ -2371,6 +2394,7 @@ impl BlockParser {
         // Fixture-verified: once an item is auto (#), explicit successors
         // invalidate; bare successors ("2." with no text) never continue.
         let mut auto_mode = first.auto;
+        self.note_list_attached(out);
         loop {
             let item = self.parse_list_item(lines, pos, current.marker_chars);
             items.push(item);
@@ -2574,6 +2598,9 @@ impl BlockParser {
                         .unwrap_or(false)
             };
             if continues {
+                if dl.children.len() == 1 {
+                    self.note_list_attached(out);
+                }
                 *pos = p;
                 continue;
             }
@@ -3220,6 +3247,7 @@ impl BlockParser {
         let start = *pos;
         let mut fl = Node::elem(kinds::FIELD_LIST, Span::ZERO);
         let mut warn_line: Option<(u16, u32)> = None;
+        self.note_list_attached(out);
         loop {
             let line = lines[*pos];
             let line_text = self.sources.line_text(line);
@@ -3366,6 +3394,9 @@ impl BlockParser {
                 && option_group_marker(self.sources.line_text(lines[p])).is_some()
                 && self.option_item_viable(lines, p);
             if continues {
+                if ol.children.len() == 1 {
+                    self.note_list_attached(out);
+                }
                 *pos = p;
                 continue;
             }
@@ -7722,9 +7753,13 @@ impl BlockParser {
         }
         // The nested parse runs OUTSIDE the SubstitutionDef state: an
         // embedded `.. date::` inside replace content must context-error
-        // exactly like at body level (review finding 22).
+        // exactly like at body level (review finding 22). Its container is
+        // the anonymous `nodes.Element(text)`, not the definition, so a
+        // topic, a sidebar or a contents directive runs there
+        // ([`pseudo_section_parent_invalid`]) before the content is
+        // rejected below.
         let saved_ctx = self.substitution_ctx.take();
-        let children = self.parse_nested(&input.content, "substitution_definition");
+        let children = self.parse_nested(&input.content, "element");
         self.substitution_ctx = saved_ctx;
         let paragraphs = children
             .iter()
@@ -8653,13 +8688,11 @@ impl BlockParser {
             });
         }
         let kind = part.kind();
-        let has_part = self.effects.decoration.as_ref().is_some_and(|decoration| {
-            let part_node = match part {
-                DecorationPart::Header => decoration.children.first(),
-                DecorationPart::Footer => decoration.children.last(),
-            };
-            part_node.is_some_and(|node| node.kind == kind)
-        });
+        let has_part = self
+            .effects
+            .decoration
+            .as_mut()
+            .is_some_and(|decoration| part.slot(decoration).is_some());
         if !has_part {
             let mut node = Node::elem(kind, Span::ZERO);
             self.note_location(&mut node, input.current);
@@ -8677,14 +8710,8 @@ impl BlockParser {
             out.extend(nodes);
             return;
         }
-        if let Some(decoration) = self.effects.decoration.as_mut() {
-            let part_node = match part {
-                DecorationPart::Header => decoration.children.first_mut(),
-                DecorationPart::Footer => decoration.children.last_mut(),
-            };
-            if let Some(part_node) = part_node {
-                part_node.children.extend(nodes);
-            }
+        if let Some(part_node) = self.effects.decoration.as_mut().and_then(|d| part.slot(d)) {
+            part_node.children.extend(nodes);
         }
     }
 
@@ -13220,13 +13247,14 @@ struct DirectiveInput<'r> {
 /// section (`None`) and a sidebar may hold one, and so may a container
 /// that is none of those: the anonymous `Element` docutils and Sphinx
 /// parse content into (`"element"`: version-change, `rst-class` (docutils'
-/// `class`), `hlist`, figure, glossary-definition and table-directive
-/// content), the one Sphinx parses object description and `py:module`
-/// content into (`"desc_content"`, `"py_module"`), and Sphinx's `only`, a
-/// plain `Element`. Every other kind this parser fills is one docutils
-/// rejects: a list item, a definition, a field body, a block quote, a
-/// footnote, an admonition, `seealso`, a topic, a header or footer, a
-/// table entry, a substitution definition.
+/// `class`), `hlist`, figure, glossary-definition, table-directive and
+/// `replace` content), the one Sphinx parses object description and
+/// `py:module` content into (`"desc_content"`, `"py_module"`), and
+/// Sphinx's `only`, a plain `Element`. Every other kind this parser fills
+/// is one docutils rejects: a list item, a definition, a field body, a
+/// block quote, a footnote, an admonition, `seealso`, a topic, a header or
+/// footer, a table entry, and a substitution definition, where the
+/// directive a definition embeds (`.. |x| topic::`) runs.
 fn pseudo_section_parent_invalid(parent: Option<&'static str>) -> bool {
     parent.is_some_and(|parent| {
         !matches!(
@@ -13391,6 +13419,18 @@ impl DecorationPart {
             DecorationPart::Footer => "footer",
         }
     }
+
+    /// The part's node in `decoration`, where docutils' `get_header` and
+    /// `get_footer` look for it (`nodes.py:1597-1605`): the first child
+    /// when it is a header, the last when it is a footer; `None` when the
+    /// decoration has no such child yet.
+    fn slot(self, decoration: &mut Node) -> Option<&mut Node> {
+        let node = match self {
+            DecorationPart::Header => decoration.children.first_mut(),
+            DecorationPart::Footer => decoration.children.last_mut(),
+        }?;
+        (node.kind == self.kind()).then_some(node)
+    }
 }
 
 /// docutils' English `contents` label (`SP/docutils/languages/en.py`),
@@ -13454,13 +13494,13 @@ fn extract_name_value(token: &str) -> Result<(String, String), String> {
 }
 
 /// `node[attname.lower()] = val` on a `meta` node. The name is the user's,
-/// so the attribute key is interned; past the interner's bound (thousands
-/// of distinct names, which no real document has) the attribute is
-/// dropped rather than mis-keyed.
+/// so the key is owned rather than interned (`src/doctree/intern.rs`):
+/// every attribute is kept, however many distinct names a document uses.
 fn set_meta_attribute(node: &mut Node, attname: &str, value: String) {
-    if let Ok(key) = crate::doctree::intern(&attname.to_lowercase()) {
-        node.set(key, AttrValue::Str(value));
-    }
+    node.set_attr(
+        std::borrow::Cow::Owned(attname.to_lowercase()),
+        AttrValue::Str(value),
+    );
 }
 
 /// A directive's options as the details of the `pending` node it makes
@@ -17727,13 +17767,17 @@ mod tests {
     }
 
     /// Our read of each `(rst, body, warnings)` row, the way the read-state
-    /// harness reads a snippet with `keep_warnings` off, against Sphinx
-    /// 9.1.0's: its post-read doctree, less the document line, and its
-    /// warning stream. One entry per row that differs.
-    fn sphinx_read_differences(rows: &[(&str, &str, &[&str])]) -> Vec<String> {
+    /// harness reads a snippet with `keep_warnings` on or off as given,
+    /// against Sphinx 9.1.0's: its post-read doctree, less the document
+    /// line, and its warning stream, one line per entry. One entry per row
+    /// that differs.
+    pub(super) fn sphinx_read_differences(
+        rows: &[(&str, &str, &[&str])],
+        keep_warnings: bool,
+    ) -> Vec<String> {
         rows.iter()
             .filter_map(|&(rst, body, warnings)| {
-                let read = crate::transforms::test_support::read_snippet(rst, false);
+                let read = crate::transforms::test_support::read_snippet(rst, keep_warnings);
                 (read.body != body || read.warnings != warnings).then(|| {
                     format!(
                         "{rst:?}\n--- sphinx 9.1.0 ---\n{body}{warnings:#?}\n--- ours ---\n{}{:#?}",
@@ -17863,7 +17907,7 @@ mod tests {
                 "    <table>\n        <tgroup cols=\"1\">\n            <colspec colwidth=\"30\">\n            <tbody>\n                <row>\n                    <entry>\n                        <versionmodified type=\"versionadded\" version=\"1.0\">\n                            <paragraph translatable=\"0\">\n                                <inline classes=\"versionmodified added\">\n                                    Added in version 1.0: \n                                Cell \n                                <problematic ids=\"id2\" refid=\"id1\">\n                                    bad_\n                                 text.\n",
                 &["<SRCDIR>/index.rst:4: ERROR: Unknown target name: \"bad\". [docutils]"],
             ),
-        ]);
+        ], false);
         assert!(differences.is_empty(), "{}", differences.join("\n"));
     }
 
@@ -17964,7 +18008,7 @@ mod tests {
                 "    <decoration>\n        <footer>\n",
                 &["<SRCDIR>/index.rst:3: ERROR: The \"topic\" directive may not be used within topics or body elements. [docutils]"],
             ),
-        ]);
+        ], false);
         assert!(differences.is_empty(), "{}", differences.join("\n"));
     }
 }
@@ -24368,7 +24412,6 @@ mod structure_directive_tests {
     use crate::rst::{parse_rst_full, ParseOptions};
     use crate::transforms::reporter::LogRecord;
     use crate::transforms::state::SourceRef;
-    use crate::transforms::test_support::read_snippet;
 
     /// docutils' reporter level names, by level.
     const LEVEL_NAMES: [&str; 5] = ["DEBUG", "INFO", "WARNING", "ERROR", "SEVERE"];
@@ -24420,28 +24463,6 @@ mod structure_directive_tests {
                 (ours != pformat || our_stream != stream).then(|| {
                     format!(
                         "{rst:?}\n--- docutils 0.22.4 ---\n{pformat}{stream}--- ours ---\n{ours}{our_stream}"
-                    )
-                })
-            })
-            .collect()
-    }
-
-    /// Each `(rst, body, warnings)` row's Sphinx 9.1.0 read (the read-state
-    /// harness, `keep_warnings = True`: the post-read pformat less its
-    /// document line, and the warning stream) against ours ([`read_snippet`]).
-    fn sphinx_read_differences(rows: &[(&str, &str, &str)]) -> Vec<String> {
-        rows.iter()
-            .filter_map(|&(rst, body, warnings)| {
-                let read = read_snippet(rst, true);
-                let ours: String = read
-                    .warnings
-                    .iter()
-                    .map(|line| format!("{line}\n"))
-                    .collect();
-                (read.body != body || ours != warnings).then(|| {
-                    format!(
-                        "{rst:?}\n--- sphinx 9.1.0 ---\n{body}{warnings}--- ours ---\n{}{ours}",
-                        read.body
                     )
                 })
             })
@@ -24629,18 +24650,23 @@ mod structure_directive_tests {
     /// rubric or meta as the document stands when the directive runs (the
     /// start of a document holding only such children), so a later
     /// directive's messages precede an earlier one's and every meta
-    /// precedes the decoration. The two `MetaBody` messages carry no line:
-    /// the reporter locates them at docutils' top-level state machine,
-    /// which stands at the end of the top-level construct the directive
-    /// sits in, its trailing blank lines included, or of the first
-    /// construct of a run of explicit-markup blocks.
+    /// precedes the decoration. The document holds a top-level bullet,
+    /// enumerated or field list from its first item on and a definition or
+    /// option list from its second (docutils appends them to it then), so
+    /// a meta in such an item goes before the list; a block quote, or a
+    /// list in a section, is appended only once parsed. The two `MetaBody`
+    /// messages carry no line: the reporter locates them at docutils'
+    /// top-level state machine, which stands at the end of the top-level
+    /// construct the directive sits in, its trailing blank lines included,
+    /// or of the first construct of a run of explicit-markup blocks.
     //
     // oracle: docutils 0.22.4 (parse layer, as above) for the pformat rows
     //   and the line table (the inputs of the structure-directives
     //   report's §3.4 table, scratchpad/wave5a-research/structure-
     //   directives/docutils_probes/meta_line_table.py); Sphinx 9.1.0's read
     //   through tools/gen_sphinx_fixture.py's harness with `keep_warnings =
-    //   True` for the read rows (scratchpad/t18a/probes/sread.py).
+    //   True` for the read rows (scratchpad/t18a/probes/sread.py). The list
+    //   rows: scratchpad/t18a-fix3/probes/{dparse.py, sread.py}, cases.json.
     #[test]
     fn meta_goes_to_document_head() {
         let mut differences = parse_layer_differences(&[
@@ -24692,6 +24718,90 @@ mod structure_directive_tests {
                 "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"b=\": missing value after \"b=\".\n        <literal_block xml:space=\"preserve\">\n            :a b=: e\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"b=\"c\"d\": attribute \"b\" end quote (\") not followed by whitespace.\n        <literal_block xml:space=\"preserve\">\n            :a b=\"c\"d: e\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"=x\": missing attribute name before \"=\".\n        <literal_block xml:space=\"preserve\">\n            :description =x: y\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"lang=\"unterminated\": attribute \"lang\" missing end quote (\").\n        <literal_block xml:space=\"preserve\">\n            :description lang=\"unterminated: x\n    <meta content=\"x\" name=\"name=\">\n",
                 "<snippet>:3: (ERROR/3) Error parsing meta tag attribute \"lang=\"unterminated\": attribute \"lang\" missing end quote (\").\n\n:description lang=\"unterminated: x\n<snippet>:3: (ERROR/3) Error parsing meta tag attribute \"=x\": missing attribute name before \"=\".\n\n:description =x: y\n<snippet>:3: (ERROR/3) Error parsing meta tag attribute \"b=\"c\"d\": attribute \"b\" end quote (\") not followed by whitespace.\n\n:a b=\"c\"d: e\n<snippet>:3: (ERROR/3) Error parsing meta tag attribute \"b=\": missing value after \"b=\".\n\n:a b=: e\n",
             ),
+            // meta_in_list_after_rubric
+            (
+                ".. rubric:: R\n\n* item\n\n  .. meta::\n     :k: v\n",
+                "<document source=\"<snippet>\">\n    <rubric>\n        R\n    <meta content=\"v\" name=\"k\">\n    <bullet_list bullet=\"*\">\n        <list_item>\n            <paragraph>\n                item\n",
+                "",
+            ),
+            // meta_in_bullet_list_after_meta
+            (
+                ".. meta::\n   :a: 1\n\n* item\n\n  .. meta::\n     :b: 2\n",
+                "<document source=\"<snippet>\">\n    <meta content=\"1\" name=\"a\">\n    <meta content=\"2\" name=\"b\">\n    <bullet_list bullet=\"*\">\n        <list_item>\n            <paragraph>\n                item\n",
+                "",
+            ),
+            // meta_in_bullet_list_second_item
+            (
+                ".. meta::\n   :a: 1\n\n* one\n* two\n\n  .. meta::\n     :b: 2\n",
+                "<document source=\"<snippet>\">\n    <meta content=\"1\" name=\"a\">\n    <meta content=\"2\" name=\"b\">\n    <bullet_list bullet=\"*\">\n        <list_item>\n            <paragraph>\n                one\n        <list_item>\n            <paragraph>\n                two\n",
+                "",
+            ),
+            // meta_in_enumerated_list_after_meta
+            (
+                ".. meta::\n   :a: 1\n\n1. item\n\n   .. meta::\n      :b: 2\n",
+                "<document source=\"<snippet>\">\n    <meta content=\"1\" name=\"a\">\n    <meta content=\"2\" name=\"b\">\n    <enumerated_list enumtype=\"arabic\" prefix=\"\" suffix=\".\">\n        <list_item>\n            <paragraph>\n                item\n",
+                "",
+            ),
+            // meta_in_enumerated_list_start_value
+            (
+                ".. meta::\n   :a: 1\n\n3. item\n\n   .. meta::\n      :b: 2\n",
+                "<document source=\"<snippet>\">\n    <meta content=\"1\" name=\"a\">\n    <meta content=\"2\" name=\"b\">\n    <enumerated_list enumtype=\"arabic\" prefix=\"\" start=\"3\" suffix=\".\">\n        <list_item>\n            <paragraph>\n                item\n    <system_message level=\"1\" line=\"4\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            Enumerated list start value not ordinal-1: \"3\" (ordinal 3)\n",
+                "<snippet>:4: (INFO/1) Enumerated list start value not ordinal-1: \"3\" (ordinal 3)\n",
+            ),
+            // meta_in_field_list_after_meta
+            (
+                ".. meta::\n   :a: 1\n\n:f: x\n\n    .. meta::\n       :b: 2\n",
+                "<document source=\"<snippet>\">\n    <meta content=\"1\" name=\"a\">\n    <meta content=\"2\" name=\"b\">\n    <field_list>\n        <field>\n            <field_name>\n                f\n            <field_body>\n                <paragraph>\n                    x\n",
+                "",
+            ),
+            // meta_in_definition_list_first_item
+            (
+                ".. meta::\n   :a: 1\n\nterm1\n   .. meta::\n      :b: 2\n",
+                "<document source=\"<snippet>\">\n    <meta content=\"2\" name=\"b\">\n    <meta content=\"1\" name=\"a\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                term1\n            <definition>\n",
+                "",
+            ),
+            // meta_in_definition_list_second_item
+            (
+                ".. meta::\n   :a: 1\n\nterm1\n   def1\n\nterm2\n   .. meta::\n      :b: 2\n",
+                "<document source=\"<snippet>\">\n    <meta content=\"1\" name=\"a\">\n    <meta content=\"2\" name=\"b\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                term1\n            <definition>\n                <paragraph>\n                    def1\n        <definition_list_item>\n            <term>\n                term2\n            <definition>\n",
+                "",
+            ),
+            // meta_in_option_list_first_item
+            (
+                ".. meta::\n   :a: 1\n\n-x  opt\n\n    .. meta::\n       :b: 2\n",
+                "<document source=\"<snippet>\">\n    <meta content=\"2\" name=\"b\">\n    <meta content=\"1\" name=\"a\">\n    <option_list>\n        <option_list_item>\n            <option_group>\n                <option>\n                    <option_string>\n                        -x\n            <description>\n                <paragraph>\n                    opt\n",
+                "",
+            ),
+            // meta_in_option_list_second_item
+            (
+                ".. meta::\n   :a: 1\n\n-x  opt\n-y  opt2\n\n    .. meta::\n       :b: 2\n",
+                "<document source=\"<snippet>\">\n    <meta content=\"1\" name=\"a\">\n    <meta content=\"2\" name=\"b\">\n    <option_list>\n        <option_list_item>\n            <option_group>\n                <option>\n                    <option_string>\n                        -x\n            <description>\n                <paragraph>\n                    opt\n        <option_list_item>\n            <option_group>\n                <option>\n                    <option_string>\n                        -y\n            <description>\n                <paragraph>\n                    opt2\n",
+                "",
+            ),
+            // meta_in_nested_list_after_meta
+            (
+                ".. meta::\n   :a: 1\n\n* outer\n\n  * inner\n\n    .. meta::\n       :b: 2\n",
+                "<document source=\"<snippet>\">\n    <meta content=\"1\" name=\"a\">\n    <meta content=\"2\" name=\"b\">\n    <bullet_list bullet=\"*\">\n        <list_item>\n            <paragraph>\n                outer\n            <bullet_list bullet=\"*\">\n                <list_item>\n                    <paragraph>\n                        inner\n",
+                "",
+            ),
+            // meta_in_list_in_section
+            (
+                "T\n=\n\n.. meta::\n   :a: 1\n\n* item\n\n  .. meta::\n     :b: 2\n",
+                "<document source=\"<snippet>\">\n    <meta content=\"1\" name=\"a\">\n    <meta content=\"2\" name=\"b\">\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <bullet_list bullet=\"*\">\n            <list_item>\n                <paragraph>\n                    item\n",
+                "",
+            ),
+            // meta_in_block_quote_after_meta
+            (
+                ".. meta::\n   :a: 1\n\n..\n\n   quoted\n\n   .. meta::\n      :b: 2\n",
+                "<document source=\"<snippet>\">\n    <meta content=\"1\" name=\"a\">\n    <meta content=\"2\" name=\"b\">\n    <comment xml:space=\"preserve\">\n    <block_quote>\n        <paragraph>\n            quoted\n",
+                "",
+            ),
+            // header_in_list_after_rubric
+            (
+                ".. rubric:: R\n\n* item\n\n  .. header:: H\n",
+                "<document source=\"<snippet>\">\n    <rubric>\n        R\n    <decoration>\n        <header>\n            <paragraph>\n                H\n    <bullet_list bullet=\"*\">\n        <list_item>\n            <paragraph>\n                item\n",
+                "",
+            ),
         ]);
 
         // The line-less messages' line: the top-level machine's.
@@ -24742,51 +24852,104 @@ mod structure_directive_tests {
             }
         }
 
-        differences.extend(sphinx_read_differences(&[
+        differences.extend(super::tests::sphinx_read_differences(&[
             // meta_basic
             (
                 "Title\n=====\n\n.. meta::\n   :description: The reStructuredText plaintext markup language\n   :keywords: plaintext, markup language\n\nBody.\n",
                 "    <meta content=\"The reStructuredText plaintext markup language\" name=\"description\">\n    <meta content=\"plaintext, markup language\" name=\"keywords\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Body.\n",
-                "",
+                &[],
             ),
             // meta_errors
             (
                 "Title\n=====\n\n.. meta::\n\n.. meta::\n   :empty:\n\n.. meta::\n   :description bad: x\n\n.. meta::\n   not a field\n\n.. meta::\n   :ok: fine\n   trailing paragraph\n",
                 "    <meta content=\"fine\" name=\"ok\">\n    <system_message level=\"3\" line=\"15\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Invalid meta directive.\n        <literal_block xml:space=\"preserve\">\n            .. meta::\n               :ok: fine\n               trailing paragraph\n    <system_message level=\"3\" line=\"12\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Invalid meta directive.\n        <literal_block xml:space=\"preserve\">\n            .. meta::\n               not a field\n    <system_message level=\"3\" line=\"5\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"bad\": missing \"=\".\n        <literal_block xml:space=\"preserve\">\n            :description bad: x\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <system_message level=\"3\" line=\"4\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n            <paragraph>\n                Content block expected for the \"meta\" directive; none found.\n            <literal_block xml:space=\"preserve\">\n                .. meta::\n",
-                "<SRCDIR>/index.rst:4: ERROR: Content block expected for the \"meta\" directive; none found. [docutils]\n<SRCDIR>/index.rst:5: ERROR: Error parsing meta tag attribute \"bad\": missing \"=\".\n\n:description bad: x [docutils]\n<SRCDIR>/index.rst:12: ERROR: Invalid meta directive.\n\n.. meta::\n   not a field [docutils]\n<SRCDIR>/index.rst:15: ERROR: Invalid meta directive.\n\n.. meta::\n   :ok: fine\n   trailing paragraph [docutils]\n",
+                &["<SRCDIR>/index.rst:4: ERROR: Content block expected for the \"meta\" directive; none found. [docutils]", "<SRCDIR>/index.rst:5: ERROR: Error parsing meta tag attribute \"bad\": missing \"=\".", "", ":description bad: x [docutils]", "<SRCDIR>/index.rst:12: ERROR: Invalid meta directive.", "", ".. meta::", "   not a field [docutils]", "<SRCDIR>/index.rst:15: ERROR: Invalid meta directive.", "", ".. meta::", "   :ok: fine", "   trailing paragraph [docutils]"],
             ),
             // meta_line_runs_one_blank
             (
                 "Para.\n\n.. meta::\n   :d bad: x\n\nPara.\n",
                 "    <system_message level=\"3\" line=\"5\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"bad\": missing \"=\".\n        <literal_block xml:space=\"preserve\">\n            :d bad: x\n    <paragraph>\n        Para.\n    <paragraph>\n        Para.\n",
-                "<SRCDIR>/index.rst:5: ERROR: Error parsing meta tag attribute \"bad\": missing \"=\".\n\n:d bad: x [docutils]\n",
+                &["<SRCDIR>/index.rst:5: ERROR: Error parsing meta tag attribute \"bad\": missing \"=\".", "", ":d bad: x [docutils]"],
             ),
             // meta_in_section_nested
             (
                 "Title\n=====\n\nSub\n---\n\n.. note::\n\n   .. meta::\n      :keywords: nested\n",
                 "    <meta content=\"nested\" name=\"keywords\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <section ids=\"sub\" names=\"sub\">\n            <title>\n                Sub\n            <note>\n",
-                "",
+                &[],
             ),
             // header_in_section
             (
                 "Title\n=====\n\nBody.\n\nSub\n---\n\n.. footer:: Deep footer\n\n.. meta::\n   :keywords: k\n",
                 "    <meta content=\"k\" name=\"keywords\">\n    <decoration>\n        <footer>\n            <paragraph>\n                Deep footer\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Body.\n        <section ids=\"sub\" names=\"sub\">\n            <title>\n                Sub\n",
-                "",
+                &[],
             ),
             // header_footer_errors
             (
                 ".. header::\n\n.. footer::\n\nTitle\n=====\n\nBody.\n",
                 "    <system_message level=\"3\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"header\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. header::\n    <system_message level=\"3\" line=\"3\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"footer\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. footer::\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Body.\n",
-                "<SRCDIR>/index.rst:1: ERROR: Content block expected for the \"header\" directive; none found. [docutils]\n<SRCDIR>/index.rst:3: ERROR: Content block expected for the \"footer\" directive; none found. [docutils]\n",
+                &["<SRCDIR>/index.rst:1: ERROR: Content block expected for the \"header\" directive; none found. [docutils]", "<SRCDIR>/index.rst:3: ERROR: Content block expected for the \"footer\" directive; none found. [docutils]"],
             ),
             // meta_bad_tokens
             (
                 ".. meta::\n   :name=: x\n\n.. meta::\n   :description lang=\"unterminated: x\n\n.. meta::\n   :description =x: y\n\n.. meta::\n   :a b=\"c\"d: e\n\n.. meta::\n   :a b=: e\n",
                 "    <system_message level=\"3\" line=\"3\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"b=\": missing value after \"b=\".\n        <literal_block xml:space=\"preserve\">\n            :a b=: e\n    <system_message level=\"3\" line=\"3\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"b=\"c\"d\": attribute \"b\" end quote (\") not followed by whitespace.\n        <literal_block xml:space=\"preserve\">\n            :a b=\"c\"d: e\n    <system_message level=\"3\" line=\"3\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"=x\": missing attribute name before \"=\".\n        <literal_block xml:space=\"preserve\">\n            :description =x: y\n    <system_message level=\"3\" line=\"3\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error parsing meta tag attribute \"lang=\"unterminated\": attribute \"lang\" missing end quote (\").\n        <literal_block xml:space=\"preserve\">\n            :description lang=\"unterminated: x\n    <meta content=\"x\" name=\"name=\">\n",
-                "<SRCDIR>/index.rst:3: ERROR: Error parsing meta tag attribute \"lang=\"unterminated\": attribute \"lang\" missing end quote (\").\n\n:description lang=\"unterminated: x [docutils]\n<SRCDIR>/index.rst:3: ERROR: Error parsing meta tag attribute \"=x\": missing attribute name before \"=\".\n\n:description =x: y [docutils]\n<SRCDIR>/index.rst:3: ERROR: Error parsing meta tag attribute \"b=\"c\"d\": attribute \"b\" end quote (\") not followed by whitespace.\n\n:a b=\"c\"d: e [docutils]\n<SRCDIR>/index.rst:3: ERROR: Error parsing meta tag attribute \"b=\": missing value after \"b=\".\n\n:a b=: e [docutils]\n",
+                &["<SRCDIR>/index.rst:3: ERROR: Error parsing meta tag attribute \"lang=\"unterminated\": attribute \"lang\" missing end quote (\").", "", ":description lang=\"unterminated: x [docutils]", "<SRCDIR>/index.rst:3: ERROR: Error parsing meta tag attribute \"=x\": missing attribute name before \"=\".", "", ":description =x: y [docutils]", "<SRCDIR>/index.rst:3: ERROR: Error parsing meta tag attribute \"b=\"c\"d\": attribute \"b\" end quote (\") not followed by whitespace.", "", ":a b=\"c\"d: e [docutils]", "<SRCDIR>/index.rst:3: ERROR: Error parsing meta tag attribute \"b=\": missing value after \"b=\".", "", ":a b=: e [docutils]"],
             ),
-        ]));
+            // meta_in_list_after_meta
+            (
+                ".. meta::\n   :a: AAAAFIRST\n\n- item\n\n  .. meta::\n     :b: BBBBSECOND\n",
+                "    <meta content=\"AAAAFIRST\" name=\"a\">\n    <meta content=\"BBBBSECOND\" name=\"b\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                item\n",
+                &[],
+            ),
+        ], true));
         assert!(differences.is_empty(), "{}", differences.join("\n\n"));
+    }
+
+    /// A `meta` node's attribute names are the user's (`MetaBody.parsemeta`:
+    /// `node[attname.lower()] = val`), and Sphinx keeps every one of them.
+    /// More distinct names than the doctree interner holds
+    /// ([`crate::doctree::MAX_INTERNED`]) are all kept, through the parse
+    /// and through the doctree's encoding, and the interner keeps room for
+    /// the fixed vocabulary: a doctree that needs node kinds and attribute
+    /// keys of this crate's own still decodes, and a string never interned
+    /// before still interns.
+    #[test]
+    fn meta_attribute_names_leave_the_interner_room() {
+        let count = crate::doctree::MAX_INTERNED + 1;
+        let rst: String = std::iter::once(".. meta::\n".to_string())
+            .chain((0..count).map(|n| format!("   :n{n} key{n}=v{n}: c\n")))
+            .collect();
+        let options = ParseOptions {
+            source_path: "<snippet>".into(),
+            sphinx: false,
+            ..Default::default()
+        };
+        let output = parse_rst_full(&rst, &options);
+        let metas = &output.doctree.root.children;
+        assert_eq!(metas.len(), count);
+        for (meta, n) in metas.iter().zip(0..count) {
+            let key = format!("key{n}");
+            let value = crate::doctree::AttrValue::Str(format!("v{n}"));
+            assert!(
+                meta.attrs
+                    .extra
+                    .iter()
+                    .any(|(name, found)| *name == key.as_str() && *found == value),
+                "{key} was dropped"
+            );
+        }
+        let encoded = crate::doctree::to_bincode(&output.doctree);
+        let decoded = crate::doctree::from_bincode(&encoded).expect("the metas decode");
+        assert_eq!(decoded.root, output.doctree.root);
+
+        let fixed = parse_rst_full(
+            "A reference_ and *emphasis*.\n\n.. _reference: https://example.org/\n\n- item\n",
+            &options,
+        );
+        let encoded = crate::doctree::to_bincode(&fixed.doctree);
+        let decoded = crate::doctree::from_bincode(&encoded).expect("the vocabulary decodes");
+        assert_eq!(decoded.root, fixed.doctree.root);
+        assert!(crate::doctree::intern("a string the vocabulary has not met (T18a fix 3)").is_ok());
     }
 
     /// A topic, a sidebar or a contents directive may stand in the
@@ -24823,6 +24986,132 @@ mod structure_directive_tests {
                 "",
             ),
         ]);
+        assert!(differences.is_empty(), "{}", differences.join("\n\n"));
+    }
+
+    /// The `replace` directive parses its content into an anonymous
+    /// `Element` (`SP/docutils/parsers/rst/directives/misc.py:357-387`),
+    /// which may hold a topic, a sidebar or a contents directive: each runs
+    /// as it would in the document, registering its names and noting its
+    /// pending, and only then does `replace` reject the content as more
+    /// than a single paragraph. A sidebar in that sidebar is still
+    /// rejected, its message reported where the parse creates it.
+    //
+    // oracle: docutils 0.22.4 (parse layer, as above) and Sphinx 9.1.0's
+    //   read with `keep_warnings = True` (scratchpad/t18a-fix3/probes/
+    //   {dparse.py, sread.py}, cases.json and cases2.json). The contents
+    //   row whose Sphinx read the Contents transform (720, wave 5a T18b)
+    //   changes is pinned in docutils mode only. In the docutils rows the
+    //   construct that meets a registered name follows the definition
+    //   without a blank line: docutils' "empty or invalid" message keeps a
+    //   definition's trailing blank lines in its text, which this parser
+    //   does not (an edge of the substitution definition, not of the
+    //   container its content is parsed into).
+    #[test]
+    fn pseudo_sections_stand_in_replace_content() {
+        let mut differences = parse_layer_differences(&[
+            // topic_in_replace
+            (
+                ".. |x| replace::\n\n   .. topic:: T\n\n      Body.\n",
+                "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"replace\" directive: may contain a single paragraph only.\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"x\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |x| replace::\n            \n               .. topic:: T\n            \n                  Body.\n",
+                "<snippet>:1: (ERROR/3) Error in \"replace\" directive: may contain a single paragraph only.\n<snippet>:1: (WARNING/2) Substitution definition \"x\" empty or invalid.\n\n.. |x| replace::\n\n   .. topic:: T\n\n      Body.\n",
+            ),
+            // sidebar_in_replace
+            (
+                ".. |x| replace::\n\n   .. sidebar:: S\n\n      Body.\n",
+                "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"replace\" directive: may contain a single paragraph only.\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"x\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |x| replace::\n            \n               .. sidebar:: S\n            \n                  Body.\n",
+                "<snippet>:1: (ERROR/3) Error in \"replace\" directive: may contain a single paragraph only.\n<snippet>:1: (WARNING/2) Substitution definition \"x\" empty or invalid.\n\n.. |x| replace::\n\n   .. sidebar:: S\n\n      Body.\n",
+            ),
+            // contents_in_replace
+            (
+                ".. |x| replace::\n\n   .. contents::\n",
+                "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"replace\" directive: may contain a single paragraph only.\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"x\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |x| replace::\n            \n               .. contents::\n",
+                "<snippet>:1: (ERROR/3) Error in \"replace\" directive: may contain a single paragraph only.\n<snippet>:1: (WARNING/2) Substitution definition \"x\" empty or invalid.\n\n.. |x| replace::\n\n   .. contents::\n",
+            ),
+            // topic_in_replace_paragraph_first
+            (
+                ".. |x| replace:: Para\n\n   .. topic:: T\n\n      Body.\n",
+                "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"replace\" directive: may contain a single paragraph only.\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"x\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |x| replace:: Para\n            \n               .. topic:: T\n            \n                  Body.\n",
+                "<snippet>:1: (ERROR/3) Error in \"replace\" directive: may contain a single paragraph only.\n<snippet>:1: (WARNING/2) Substitution definition \"x\" empty or invalid.\n\n.. |x| replace:: Para\n\n   .. topic:: T\n\n      Body.\n",
+            ),
+            // topic_in_replace_in_section
+            (
+                "Title\n=====\n\n.. |x| replace::\n\n   .. topic:: T\n\n      Body.\n",
+                "<document source=\"<snippet>\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <system_message level=\"3\" line=\"4\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                Error in \"replace\" directive: may contain a single paragraph only.\n        <system_message level=\"2\" line=\"4\" source=\"<snippet>\" type=\"WARNING\">\n            <paragraph>\n                Substitution definition \"x\" empty or invalid.\n            <literal_block xml:space=\"preserve\">\n                .. |x| replace::\n                \n                   .. topic:: T\n                \n                      Body.\n",
+                "<snippet>:4: (ERROR/3) Error in \"replace\" directive: may contain a single paragraph only.\n<snippet>:4: (WARNING/2) Substitution definition \"x\" empty or invalid.\n\n.. |x| replace::\n\n   .. topic:: T\n\n      Body.\n",
+            ),
+            // sidebar_in_sidebar_in_replace
+            (
+                ".. |x| replace::\n\n   .. sidebar:: S\n\n      .. sidebar:: S2\n\n         Body.\n",
+                "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"replace\" directive: may contain a single paragraph only.\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"x\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |x| replace::\n            \n               .. sidebar:: S\n            \n                  .. sidebar:: S2\n            \n                     Body.\n",
+                "<snippet>:5: (ERROR/3) The \"sidebar\" directive may not be used within a sidebar element.\n<snippet>:1: (ERROR/3) Error in \"replace\" directive: may contain a single paragraph only.\n<snippet>:1: (WARNING/2) Substitution definition \"x\" empty or invalid.\n\n.. |x| replace::\n\n   .. sidebar:: S\n\n      .. sidebar:: S2\n\n         Body.\n",
+            ),
+            // topic_named_in_replace_then_target
+            (
+                ".. |x| replace::\n\n   .. topic:: T\n      :name: tn\n\n      Body.\n.. _tn:\n\nPara.\n",
+                "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"replace\" directive: may contain a single paragraph only.\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"x\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |x| replace::\n            \n               .. topic:: T\n                  :name: tn\n            \n                  Body.\n    <system_message backrefs=\"id1\" level=\"2\" line=\"7\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Duplicate explicit target name: \"tn\".\n    <target dupnames=\"tn\" ids=\"id1\">\n    <paragraph>\n        Para.\n",
+                "<snippet>:1: (ERROR/3) Error in \"replace\" directive: may contain a single paragraph only.\n<snippet>:1: (WARNING/2) Substitution definition \"x\" empty or invalid.\n\n.. |x| replace::\n\n   .. topic:: T\n      :name: tn\n\n      Body.\n<snippet>:7: (WARNING/2) Duplicate explicit target name: \"tn\".\n",
+            ),
+            // sidebar_named_in_replace_then_target
+            (
+                ".. |x| replace::\n\n   .. sidebar:: S\n      :name: sn\n\n      Body.\n.. _sn:\n\nPara.\n",
+                "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"replace\" directive: may contain a single paragraph only.\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"x\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |x| replace::\n            \n               .. sidebar:: S\n                  :name: sn\n            \n                  Body.\n    <system_message backrefs=\"id1\" level=\"2\" line=\"7\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Duplicate explicit target name: \"sn\".\n    <target dupnames=\"sn\" ids=\"id1\">\n    <paragraph>\n        Para.\n",
+                "<snippet>:1: (ERROR/3) Error in \"replace\" directive: may contain a single paragraph only.\n<snippet>:1: (WARNING/2) Substitution definition \"x\" empty or invalid.\n\n.. |x| replace::\n\n   .. sidebar:: S\n      :name: sn\n\n      Body.\n<snippet>:7: (WARNING/2) Duplicate explicit target name: \"sn\".\n",
+            ),
+            // contents_in_replace_then_contents_adjacent
+            (
+                ".. |x| replace::\n\n   .. contents::\n.. contents::\n\nContents\n========\n",
+                "<document source=\"<snippet>\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"replace\" directive: may contain a single paragraph only.\n    <system_message level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"x\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |x| replace::\n            \n               .. contents::\n    <topic classes=\"contents\" ids=\"id1\">\n        <title>\n            Contents\n        <pending>\n            .. internal attributes:\n                 .transform: docutils.transforms.parts.Contents\n                 .details:\n    <section dupnames=\"contents\" ids=\"id2\">\n        <title>\n            Contents\n        <system_message backrefs=\"id2\" level=\"1\" line=\"7\" source=\"<snippet>\" type=\"INFO\">\n            <paragraph>\n                Duplicate implicit target name: \"contents\".\n",
+                "<snippet>:1: (ERROR/3) Error in \"replace\" directive: may contain a single paragraph only.\n<snippet>:1: (WARNING/2) Substitution definition \"x\" empty or invalid.\n\n.. |x| replace::\n\n   .. contents::\n<snippet>:7: (INFO/1) Duplicate implicit target name: \"contents\".\n",
+            ),
+        ]);
+        differences.extend(super::tests::sphinx_read_differences(
+            &[
+                // topic_in_replace
+                (
+                    ".. |x| replace::\n\n   .. topic:: T\n\n      Body.\n",
+                    "    <system_message level=\"3\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error in \"replace\" directive: may contain a single paragraph only.\n    <system_message level=\"2\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"x\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |x| replace::\n            \n               .. topic:: T\n            \n                  Body.\n",
+                    &["<SRCDIR>/index.rst:1: ERROR: Error in \"replace\" directive: may contain a single paragraph only. [docutils]", "<SRCDIR>/index.rst:1: WARNING: Substitution definition \"x\" empty or invalid.", "", ".. |x| replace::", "", "   .. topic:: T", "", "      Body. [docutils]"],
+                ),
+                // sidebar_in_replace
+                (
+                    ".. |x| replace::\n\n   .. sidebar:: S\n\n      Body.\n",
+                    "    <system_message level=\"3\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error in \"replace\" directive: may contain a single paragraph only.\n    <system_message level=\"2\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"x\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |x| replace::\n            \n               .. sidebar:: S\n            \n                  Body.\n",
+                    &["<SRCDIR>/index.rst:1: ERROR: Error in \"replace\" directive: may contain a single paragraph only. [docutils]", "<SRCDIR>/index.rst:1: WARNING: Substitution definition \"x\" empty or invalid.", "", ".. |x| replace::", "", "   .. sidebar:: S", "", "      Body. [docutils]"],
+                ),
+                // contents_in_replace
+                (
+                    ".. |x| replace::\n\n   .. contents::\n",
+                    "    <system_message level=\"3\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error in \"replace\" directive: may contain a single paragraph only.\n    <system_message level=\"2\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"x\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |x| replace::\n            \n               .. contents::\n",
+                    &["<SRCDIR>/index.rst:1: ERROR: Error in \"replace\" directive: may contain a single paragraph only. [docutils]", "<SRCDIR>/index.rst:1: WARNING: Substitution definition \"x\" empty or invalid.", "", ".. |x| replace::", "", "   .. contents:: [docutils]"],
+                ),
+                // topic_in_replace_in_section
+                (
+                    "Title\n=====\n\n.. |x| replace::\n\n   .. topic:: T\n\n      Body.\n",
+                    "    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <system_message level=\"3\" line=\"4\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n            <paragraph>\n                Error in \"replace\" directive: may contain a single paragraph only.\n        <system_message level=\"2\" line=\"4\" source=\"<SRCDIR>/index.rst\" type=\"WARNING\">\n            <paragraph>\n                Substitution definition \"x\" empty or invalid.\n            <literal_block xml:space=\"preserve\">\n                .. |x| replace::\n                \n                   .. topic:: T\n                \n                      Body.\n",
+                    &["<SRCDIR>/index.rst:4: ERROR: Error in \"replace\" directive: may contain a single paragraph only. [docutils]", "<SRCDIR>/index.rst:4: WARNING: Substitution definition \"x\" empty or invalid.", "", ".. |x| replace::", "", "   .. topic:: T", "", "      Body. [docutils]"],
+                ),
+                // sidebar_in_sidebar_in_replace
+                (
+                    ".. |x| replace::\n\n   .. sidebar:: S\n\n      .. sidebar:: S2\n\n         Body.\n",
+                    "    <system_message level=\"3\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error in \"replace\" directive: may contain a single paragraph only.\n    <system_message level=\"2\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"x\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |x| replace::\n            \n               .. sidebar:: S\n            \n                  .. sidebar:: S2\n            \n                     Body.\n",
+                    &["<SRCDIR>/index.rst:5: ERROR: The \"sidebar\" directive may not be used within a sidebar element. [docutils]", "<SRCDIR>/index.rst:1: ERROR: Error in \"replace\" directive: may contain a single paragraph only. [docutils]", "<SRCDIR>/index.rst:1: WARNING: Substitution definition \"x\" empty or invalid.", "", ".. |x| replace::", "", "   .. sidebar:: S", "", "      .. sidebar:: S2", "", "         Body. [docutils]"],
+                ),
+                // topic_named_in_replace
+                (
+                    ".. |x| replace::\n\n   .. topic:: T\n      :name: tn\n\n      Body.\n\n.. _tn:\n\nPara.\n",
+                    "    <system_message level=\"3\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error in \"replace\" directive: may contain a single paragraph only.\n    <system_message level=\"2\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"x\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |x| replace::\n            \n               .. topic:: T\n                  :name: tn\n            \n                  Body.\n    <system_message backrefs=\"id1\" level=\"2\" line=\"8\" source=\"<SRCDIR>/index.rst\" type=\"WARNING\">\n        <paragraph>\n            Duplicate explicit target name: \"tn\".\n    <target dupnames=\"tn\" refid=\"id1\">\n    <paragraph ids=\"id1\">\n        Para.\n",
+                    &["<SRCDIR>/index.rst:1: ERROR: Error in \"replace\" directive: may contain a single paragraph only. [docutils]", "<SRCDIR>/index.rst:1: WARNING: Substitution definition \"x\" empty or invalid.", "", ".. |x| replace::", "", "   .. topic:: T", "      :name: tn", "", "      Body. [docutils]", "<SRCDIR>/index.rst:8: WARNING: Duplicate explicit target name: \"tn\". [docutils]"],
+                ),
+                // sidebar_named_in_replace_then_target
+                (
+                    ".. |x| replace::\n\n   .. sidebar:: S\n      :name: sn\n\n      Body.\n.. _sn:\n\nPara.\n",
+                    "    <system_message level=\"3\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error in \"replace\" directive: may contain a single paragraph only.\n    <system_message level=\"2\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"x\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |x| replace::\n            \n               .. sidebar:: S\n                  :name: sn\n            \n                  Body.\n    <system_message backrefs=\"id1\" level=\"2\" line=\"7\" source=\"<SRCDIR>/index.rst\" type=\"WARNING\">\n        <paragraph>\n            Duplicate explicit target name: \"sn\".\n    <target dupnames=\"sn\" refid=\"id1\">\n    <paragraph ids=\"id1\">\n        Para.\n",
+                    &["<SRCDIR>/index.rst:1: ERROR: Error in \"replace\" directive: may contain a single paragraph only. [docutils]", "<SRCDIR>/index.rst:1: WARNING: Substitution definition \"x\" empty or invalid.", "", ".. |x| replace::", "", "   .. sidebar:: S", "      :name: sn", "", "      Body. [docutils]", "<SRCDIR>/index.rst:7: WARNING: Duplicate explicit target name: \"sn\". [docutils]"],
+                ),
+            ],
+            true,
+        ));
         assert!(differences.is_empty(), "{}", differences.join("\n\n"));
     }
 }

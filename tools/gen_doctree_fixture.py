@@ -1106,6 +1106,35 @@ CASES = [
     # ...): the dashes and the ellipsis delimit inline markup on both sides.
     ("inline_basics", "dash_and_ellipsis_after_end_string", "Types of *b*\u2014but, **b**\u2013x, ``b``\u2026 and *b*\u2015y.\n"),
     ("inline_basics", "dash_and_ellipsis_before_start_string", "x \u2014*b* y, x\u2014*b*\u2014y and x\u2026``b``\u2026y.\n"),
+    # dir_parts, appended (wave 5a T18a, fix round 3). docutils appends a
+    # top-level bullet, enumerated or field list to the document before it
+    # parses the first item, a definition or option list once it has parsed
+    # the first: a meta in such an item goes before the list. A block
+    # quote, or a list in a section, is appended only once parsed.
+    ("dir_parts", "meta_in_list_after_rubric", ".. rubric:: R\n\n* item\n\n  .. meta::\n     :k: v\n"),
+    ("dir_parts", "meta_in_bullet_list_after_meta", ".. meta::\n   :a: 1\n\n* item\n\n  .. meta::\n     :b: 2\n"),
+    ("dir_parts", "meta_in_bullet_list_second_item", ".. meta::\n   :a: 1\n\n* one\n* two\n\n  .. meta::\n     :b: 2\n"),
+    ("dir_parts", "meta_in_enumerated_list_after_meta", ".. meta::\n   :a: 1\n\n1. item\n\n   .. meta::\n      :b: 2\n"),
+    ("dir_parts", "meta_in_enumerated_list_start_value", ".. meta::\n   :a: 1\n\n3. item\n\n   .. meta::\n      :b: 2\n"),
+    ("dir_parts", "meta_in_field_list_after_meta", ".. meta::\n   :a: 1\n\n:f: x\n\n    .. meta::\n       :b: 2\n"),
+    ("dir_parts", "meta_in_definition_list_first_item", ".. meta::\n   :a: 1\n\nterm1\n   .. meta::\n      :b: 2\n"),
+    ("dir_parts", "meta_in_definition_list_second_item", ".. meta::\n   :a: 1\n\nterm1\n   def1\n\nterm2\n   .. meta::\n      :b: 2\n"),
+    ("dir_parts", "meta_in_option_list_first_item", ".. meta::\n   :a: 1\n\n-x  opt\n\n    .. meta::\n       :b: 2\n"),
+    ("dir_parts", "meta_in_option_list_second_item", ".. meta::\n   :a: 1\n\n-x  opt\n-y  opt2\n\n    .. meta::\n       :b: 2\n"),
+    ("dir_parts", "meta_in_nested_list_after_meta", ".. meta::\n   :a: 1\n\n* outer\n\n  * inner\n\n    .. meta::\n       :b: 2\n"),
+    ("dir_parts", "meta_in_list_in_section", "T\n=\n\n.. meta::\n   :a: 1\n\n* item\n\n  .. meta::\n     :b: 2\n"),
+    ("dir_parts", "meta_in_block_quote_after_meta", ".. meta::\n   :a: 1\n\n..\n\n   quoted\n\n   .. meta::\n      :b: 2\n"),
+    ("dir_parts", "header_in_list_after_rubric", ".. rubric:: R\n\n* item\n\n  .. header:: H\n"),
+    # `replace` parses its content into an anonymous Element, where a
+    # topic, a sidebar or a contents directive runs (registering its names)
+    # before `replace` rejects the content.
+    ("dir_parts", "topic_in_replace", ".. |x| replace::\n\n   .. topic:: T\n\n      Body.\n"),
+    ("dir_parts", "sidebar_in_replace", ".. |x| replace::\n\n   .. sidebar:: S\n\n      Body.\n"),
+    ("dir_parts", "contents_in_replace", ".. |x| replace::\n\n   .. contents::\n"),
+    ("dir_parts", "sidebar_in_sidebar_in_replace", ".. |x| replace::\n\n   .. sidebar:: S\n\n      .. sidebar:: S2\n\n         Body.\n"),
+    ("dir_parts", "topic_named_in_replace", ".. |x| replace::\n\n   .. topic:: T\n      :name: tn\n\n      Body.\n\n.. _tn:\n\nPara.\n"),
+    ("dir_parts", "contents_in_replace_then_contents", ".. |x| replace::\n\n   .. contents::\n\n.. contents::\n\nContents\n========\n"),
+    ("dir_parts", "contents_in_replace_then_section", ".. |x| replace::\n\n   .. contents:: Sec\n\nSec\n===\n\n.. _sec:\n\nPara.\n"),
 ]
 
 

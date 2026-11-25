@@ -1256,6 +1256,11 @@ Term : "classifier" : 'c2'
     ('sx_parts', 'meta_before_docinfo', '.. meta::\n   :keywords: k\n\n:author: Me\n:date: 2020\n\nTitle\n=====\n\nBody.\n'),
     ('sx_parts', 'header_before_docinfo', '.. header:: H\n\n:author: Me\n\nTitle\n=====\n\nBody.\n'),
     ('sx_parts', 'docinfo_then_meta', ':author: Me\n\n.. meta::\n   :keywords: k\n\nTitle\n=====\n\nBody.\n'),
+    # ===== sx_parts, appended (wave 5a T18a, fix round 3): docutils
+    # appends a top-level bullet list to the document before it parses the
+    # first item, so a meta in the item goes after the metas before the
+    # list and before the list =====
+    ('sx_parts', 'meta_in_list_after_meta', '.. meta::\n   :a: AAAAFIRST\n\n- item\n\n  .. meta::\n     :b: BBBBSECOND\n'),
 ]
 
 

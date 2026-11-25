@@ -3861,6 +3861,12 @@
       "name": "sx_parts.docinfo_then_meta",
       "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <meta content=\"k\" name=\"keywords\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Body.\n",
       "rst": ":author: Me\n\n.. meta::\n   :keywords: k\n\nTitle\n=====\n\nBody.\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.meta_in_list_after_meta",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <meta content=\"AAAAFIRST\" name=\"a\">\n    <meta content=\"BBBBSECOND\" name=\"b\">\n    <bullet_list bullet=\"-\">\n        <list_item>\n            <paragraph>\n                item\n",
+      "rst": ".. meta::\n   :a: AAAAFIRST\n\n- item\n\n  .. meta::\n     :b: BBBBSECOND\n"
     }
   ],
   "conf_semantics": "a case's optional 'conf' dict is confoverrides applied on top of the base settings above; absent = defaults. The consumers map every key onto the parse options (ParseOptions.py or ParseOptions.read) and error on unmapped keys.",

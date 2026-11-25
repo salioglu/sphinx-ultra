@@ -82,7 +82,7 @@ impl TxNode {
     pub fn get(&self, key: &'static str) -> Option<&AttrValue> {
         self.attrs
             .extra
-            .binary_search_by(|(known, _)| known.cmp(&key))
+            .binary_search_by(|(known, _)| known.as_ref().cmp(key))
             .ok()
             .map(|at| &self.attrs.extra[at].1)
     }
@@ -93,10 +93,10 @@ impl TxNode {
         match self
             .attrs
             .extra
-            .binary_search_by(|(known, _)| known.cmp(&key))
+            .binary_search_by(|(known, _)| known.as_ref().cmp(key))
         {
             Ok(at) => self.attrs.extra[at].1 = value,
-            Err(at) => self.attrs.extra.insert(at, (key, value)),
+            Err(at) => self.attrs.extra.insert(at, (key.into(), value)),
         }
     }
 
@@ -106,7 +106,7 @@ impl TxNode {
         let at = self
             .attrs
             .extra
-            .binary_search_by(|(known, _)| known.cmp(&key))
+            .binary_search_by(|(known, _)| known.as_ref().cmp(key))
             .ok()?;
         Some(self.attrs.extra.remove(at).1)
     }
@@ -1110,10 +1110,10 @@ mod tests {
     /// `problematic(rawsource, rawsource, refid=msgid)`.
     fn problematic(tree: &mut TxTree, rawsource: &str, refid: &str) -> TxId {
         let prb = tree.new_node(kinds::PROBLEMATIC);
-        tree.node_mut(prb)
-            .attrs
-            .extra
-            .push(("refid", crate::doctree::AttrValue::Str(refid.to_string())));
+        tree.node_mut(prb).attrs.extra.push((
+            "refid".into(),
+            crate::doctree::AttrValue::Str(refid.to_string()),
+        ));
         tree.node_mut(prb).ext = Some(Box::new(NodeExt {
             rawsource: Some(rawsource.into()),
             ..NodeExt::default()
