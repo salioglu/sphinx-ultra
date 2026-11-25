@@ -1494,9 +1494,9 @@ enum Bound<'s> {
 /// an annotation or a lambda's parameter), `del`'s, a `for`'s, a `with`'s
 /// or an `except`'s target, an assignment expression, an import's names, a
 /// `def`'s or a `class`'s name, and a `setattr` call whose name is a string
-/// literal, not a method of that name. Each target
-/// that binds a key is a binding of its own: a statement can bind the
-/// module's name and an attribute of that name both. A star import,
+/// literal, not a method of that name. Each target that binds a key is a
+/// binding of its own: a statement can bind the module's name and an
+/// attribute of that name both. A star import,
 /// `exec(...)`, and a key that a subscript or a `setattr` call names
 /// otherwise than by a literal bind names it cannot see.
 fn bindings<'s>(
@@ -5106,9 +5106,13 @@ e = 'esc\n'
     /// and warns about the logo `html_logo: <annotation> = <literal>`
     /// names, however its annotation is spelled (`generic_ann.json`,
     /// `generic_ann_complex.json`), but not in a function
-    /// (`generic_ann_local.json`). The annotation is read, not bound, so
-    /// the statement binds the key alone and gets no notice of a dropped
-    /// binding (`ann_D.json`). A bare annotation binds nothing
+    /// (`generic_ann_local.json`). The annotation binds nothing, so the
+    /// statement binds the key alone and gets no notice of a dropped
+    /// binding (`ann_D.json`), and Sphinx never evaluates it: it compiles
+    /// `conf.py` under its own `from __future__ import annotations`
+    /// (`SP/sphinx/config.py:3`, `:595`), so a name the annotation reads
+    /// need not be bound (`ann_unbound_prolog.json`,
+    /// `ann_unbound_generic.json`). A bare annotation binds nothing
     /// (`generic_ann_bare.json`, `ann_bare_prolog.json`) and keeps its
     /// notice, as a one-line compound statement whose keyword reads like a
     /// name before a colon does: a keyword is no name Python binds.
@@ -5122,11 +5126,23 @@ e = 'esc\n'
             Option<&'static str>,
             &'static [(usize, &'static str)],
         );
-        let rows: [Row; 9] = [
+        let rows: [Row; 11] = [
             (
                 "extensions = []\nrst_prolog: str = '.. |a| replace:: A\\n'\n",
                 "rst_prolog",
                 Some(".. |a| replace:: A\n"),
+                &[],
+            ),
+            (
+                "extensions = []\nrst_prolog: Undefined = '.. |a| replace:: A\\n'\n",
+                "rst_prolog",
+                Some(".. |a| replace:: A\n"),
+                &[],
+            ),
+            (
+                "extensions = []\nhtml_logo: Undefined = 'missing.png'\n",
+                "html_logo",
+                Some("missing.png"),
                 &[],
             ),
             (
