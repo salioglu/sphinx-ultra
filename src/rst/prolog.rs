@@ -261,9 +261,9 @@ mod tests {
         );
     }
 
-    /// The lines `.. hlist content is not a list` is logged at, in a
-    /// Sphinx-mode read of `doc` with `opts`.
-    fn hlist_warning_lines(doc: &str, opts: ParseOptions) -> Vec<LogLocation> {
+    /// The lines `message` is logged at, in a Sphinx-mode read of `doc`
+    /// with `opts`.
+    fn logged_at(message: &str, doc: &str, opts: ParseOptions) -> Vec<LogLocation> {
         let output = parse_rst_full(
             doc,
             &ParseOptions {
@@ -275,9 +275,15 @@ mod tests {
             .registry
             .log_warnings
             .iter()
-            .filter(|warning| warning.message == ".. hlist content is not a list")
+            .filter(|warning| warning.message == message)
             .map(|warning| warning.location)
             .collect()
+    }
+
+    /// The lines `.. hlist content is not a list` is logged at, in a
+    /// Sphinx-mode read of `doc` with `opts`.
+    fn hlist_warning_lines(doc: &str, opts: ParseOptions) -> Vec<LogLocation> {
+        logged_at(".. hlist content is not a list", doc, opts)
     }
 
     fn prolog_opts(prolog: Option<&str>, epilog: Option<&str>) -> ParseOptions {
@@ -354,6 +360,41 @@ mod tests {
             ),
             [LogLocation::DocLine(15)],
             "after an inclusion"
+        );
+    }
+
+    /// Sphinx's `Acks` logs `.. acks content is not a list` as `HList` logs
+    /// its warning, at `location=(docname, self.lineno)`
+    /// (`SP/sphinx/directives/other.py:268-271`): the directive's line in
+    /// the decorated input, 4 lines down after a 3-line prologue and 5 when
+    /// the prologue follows `:orphan:` ([RC §4.1] P18).
+    //
+    // oracle: Sphinx 9.1.0 through tools/gen_sphinx_fixture.py's harness,
+    //   each row with its `rst_prolog` (scratchpad/t18c/probes/sreadc.py
+    //   over cases2.json): `index.rst:4`, `:8` and `:11`.
+    #[test]
+    fn acks_warning_shifts_with_the_prolog() {
+        const MESSAGE: &str = ".. acks content is not a list";
+        const DOC: &str = "T\n=\n\n.. acks::\n\n   not a list\n";
+        const PROLOG3: &str = ".. |a| replace:: A\n.. |b| replace:: B\n.. |c| replace:: C\n";
+        assert_eq!(
+            logged_at(MESSAGE, DOC, prolog_opts(None, None)),
+            [LogLocation::DocLine(4)],
+            "no prolog"
+        );
+        assert_eq!(
+            logged_at(MESSAGE, DOC, prolog_opts(Some(PROLOG3), None)),
+            [LogLocation::DocLine(8)],
+            "a 3-line prolog"
+        );
+        assert_eq!(
+            logged_at(
+                MESSAGE,
+                &format!(":orphan:\n\n{DOC}"),
+                prolog_opts(Some(PROLOG3), None)
+            ),
+            [LogLocation::DocLine(11)],
+            "a 3-line prolog after :orphan:"
         );
     }
 

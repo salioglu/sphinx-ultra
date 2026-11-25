@@ -664,6 +664,70 @@
       "pseudo_xml_off": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <system_message level=\"3\" line=\"4\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                Error in \"target-notes\" directive:\n                no content permitted.\n            <literal_block xml:space=\"preserve\">\n                .. target-notes:: arg\n        <system_message level=\"3\" line=\"6\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                Error in \"target-notes\" directive:\n                unknown option: \"name\".\n            <literal_block xml:space=\"preserve\">\n                .. target-notes::\n                   :name: x\n        <system_message level=\"3\" line=\"9\" source=\"<snippet>\" type=\"ERROR\">\n            <paragraph>\n                Error in \"target-notes\" directive:\n                no content permitted.\n            <literal_block xml:space=\"preserve\">\n                .. target-notes::\n                \n                   content\n",
       "rst": "Title\n=====\n\n.. target-notes:: arg\n\n.. target-notes::\n   :name: x\n\n.. target-notes::\n\n   content\n",
       "smartquotes_warnings": ""
+    },
+    {
+      "conf": {},
+      "name": "sx_directives.cssclass_invalid",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Invalid class attribute value for “cssclass” directive: “!!!”.\n        <literal_block xml:space=\"preserve\">\n            .. cssclass:: !!!\n",
+      "pseudo_xml_off": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Invalid class attribute value for \"cssclass\" directive: \"!!!\".\n        <literal_block xml:space=\"preserve\">\n            .. cssclass:: !!!\n",
+      "rst": ".. cssclass:: !!!\n",
+      "smartquotes_warnings": ""
+    },
+    {
+      "conf": {},
+      "name": "sx_directives.cssclass_last",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para.\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            No suitable element following “cssclass” directive\n        <literal_block xml:space=\"preserve\">\n            .. cssclass:: x\n",
+      "pseudo_xml_off": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para.\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            No suitable element following \"cssclass\" directive\n        <literal_block xml:space=\"preserve\">\n            .. cssclass:: x\n",
+      "rst": "Para.\n\n.. cssclass:: x\n",
+      "smartquotes_warnings": ""
+    },
+    {
+      "conf": {},
+      "name": "sx_directives.version_alias_no_argument",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in “version-added” directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. version-added::\n",
+      "pseudo_xml_off": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"version-added\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. version-added::\n",
+      "rst": ".. version-added::\n",
+      "smartquotes_warnings": ""
+    },
+    {
+      "conf": {},
+      "name": "sx_directives.authors_errors",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in “sectionauthor” directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. sectionauthor::\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in “codeauthor” directive:\n            no content permitted.\n        <literal_block xml:space=\"preserve\">\n            .. codeauthor:: X\n            \n               content\n",
+      "pseudo_xml_off": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"sectionauthor\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. sectionauthor::\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"codeauthor\" directive:\n            no content permitted.\n        <literal_block xml:space=\"preserve\">\n            .. codeauthor:: X\n            \n               content\n",
+      "rst": ".. sectionauthor::\n\n.. codeauthor:: X\n\n   content\n\n.. moduleauthor:: Y\n   :opt: z\n",
+      "smartquotes_warnings": ""
+    },
+    {
+      "conf": {},
+      "name": "sx_directives.tabularcolumns_errors",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in “tabularcolumns” directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. tabularcolumns::\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in “tabularcolumns” directive:\n            no content permitted.\n        <literal_block xml:space=\"preserve\">\n            .. tabularcolumns:: |l|\n            \n               content\n",
+      "pseudo_xml_off": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"tabularcolumns\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. tabularcolumns::\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"tabularcolumns\" directive:\n            no content permitted.\n        <literal_block xml:space=\"preserve\">\n            .. tabularcolumns:: |l|\n            \n               content\n",
+      "rst": ".. tabularcolumns::\n\n.. tabularcolumns:: |l|\n\n   content\n",
+      "smartquotes_warnings": ""
+    },
+    {
+      "conf": {},
+      "name": "sx_directives.centered_errors",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in “centered” directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. centered::\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in “centered” directive:\n            no content permitted.\n        <literal_block xml:space=\"preserve\">\n            .. centered:: x\n            \n               content\n",
+      "pseudo_xml_off": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"centered\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. centered::\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"centered\" directive:\n            no content permitted.\n        <literal_block xml:space=\"preserve\">\n            .. centered:: x\n            \n               content\n",
+      "rst": ".. centered::\n\n.. centered:: x\n\n   content\n",
+      "smartquotes_warnings": ""
+    },
+    {
+      "conf": {},
+      "name": "sx_directives.productionlist_errors",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in “productionlist” directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. productionlist::\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in “productionlist” directive:\n            no content permitted.\n        <literal_block xml:space=\"preserve\">\n            .. productionlist:: a: b\n            \n               content\n",
+      "pseudo_xml_off": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"productionlist\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. productionlist::\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"productionlist\" directive:\n            no content permitted.\n        <literal_block xml:space=\"preserve\">\n            .. productionlist:: a: b\n            \n               content\n",
+      "rst": ".. productionlist::\n\n.. productionlist:: a: b\n\n   content\n",
+      "smartquotes_warnings": ""
+    },
+    {
+      "conf": {},
+      "name": "sx_smartquotes.centered_hlist",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <centered>\n        “Centered” text\n    <hlist ncolumns=\"2\">\n        <hlistcol>\n            <bullet_list>\n                <list_item>\n                    <paragraph>\n                        “a”\n        <hlistcol>\n            <bullet_list>\n                <list_item>\n                    <paragraph>\n                        ‘b’\n",
+      "pseudo_xml_off": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <centered>\n        \"Centered\" text\n    <hlist ncolumns=\"2\">\n        <hlistcol>\n            <bullet_list>\n                <list_item>\n                    <paragraph>\n                        \"a\"\n        <hlistcol>\n            <bullet_list>\n                <list_item>\n                    <paragraph>\n                        'b'\n",
+      "rst": ".. centered:: \"Centered\" text\n\n.. hlist::\n\n   * \"a\"\n   * 'b'\n",
+      "smartquotes_warnings": ""
     }
   ],
   "docutils_version": "0.22.4",

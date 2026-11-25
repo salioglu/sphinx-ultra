@@ -4101,6 +4101,222 @@
       "name": "sx_parts.meta_title_together",
       "pseudo_xml": "<document source=\"<snippet>\" title=\"HTML Page Title\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <meta content=\"d\" name=\"description\">\n    <decoration>\n        <header>\n            <paragraph>\n                H\n        <footer>\n            <paragraph>\n                F\n    <section ids=\"title\" names=\"title\">\n        <title auto=\"1\">\n            <generated classes=\"sectnum\">\n                1   \n            Title\n        <topic classes=\"contents local\" ids=\"contents\" names=\"contents\">\n            <bullet_list classes=\"auto-toc\">\n                <list_item>\n                    <paragraph>\n                        <reference ids=\"id3\" refid=\"sub\">\n                            <generated classes=\"sectnum\">\n                                1.1   \n                            Sub\n        <section ids=\"sub\" names=\"sub\">\n            <title auto=\"1\" refid=\"id3\">\n                <generated classes=\"sectnum\">\n                    1.1   \n                Sub\n            <paragraph>\n                See \n                <reference name=\"Python\" refuri=\"https://www.python.org/\">\n                    Python\n                 \n                <footnote_reference auto=\"1\" docname=\"index\" ids=\"id2\" refid=\"id1\">\n                    1\n                .\n            <target ids=\"python\" names=\"python\" refuri=\"https://www.python.org/\">\n            <footnote auto=\"1\" backrefs=\"id2\" docname=\"index\" ids=\"id1\" names=\"TARGET_NOTE:\\ id1\">\n                <label>\n                    1\n                <paragraph>\n                    <reference refuri=\"https://www.python.org/\">\n                        https://www.python.org/\n",
       "rst": ".. title:: HTML Page Title\n.. meta::\n   :description: d\n\n.. header:: H\n\nTitle\n=====\n\n.. contents::\n   :local:\n\n.. sectnum::\n\nSub\n---\n\nSee Python_.\n\n.. _Python: https://www.python.org/\n\n.. target-notes::\n\n.. footer:: F\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.cssclass_pending",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph classes=\"myclass otherclass\">\n            Paragraph after.\n",
+      "rst": "Title\n=====\n\n.. cssclass:: myclass otherclass\n\nParagraph after.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.cssclass_content",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph classes=\"a b\">\n        Para one.\n    <paragraph classes=\"a b\">\n        Para two.\n",
+      "rst": ".. cssclass:: a B\n\n   Para one.\n\n   Para two.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.cssclass_invalid",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Invalid class attribute value for \"cssclass\" directive: \"!!!\".\n        <literal_block xml:space=\"preserve\">\n            .. cssclass:: !!!\n",
+      "rst": ".. cssclass:: !!!\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.cssclass_last",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para.\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            No suitable element following \"cssclass\" directive\n        <literal_block xml:space=\"preserve\">\n            .. cssclass:: x\n",
+      "rst": "Para.\n\n.. cssclass:: x\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.version_added_alias",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <versionmodified type=\"versionadded\" version=\"1.2\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified added\">\n                Added in version 1.2: \n            Some text.\n",
+      "rst": ".. version-added:: 1.2\n\n   Some text.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.version_changed_alias",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <versionmodified type=\"versionchanged\" version=\"2.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified changed\">\n                Changed in version 2.0: \n            Inline \n            <emphasis>\n                text\n            .\n",
+      "rst": ".. version-changed:: 2.0 Inline *text*.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.version_deprecated_alias",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <versionmodified type=\"deprecated\" version=\"3.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified deprecated\">\n                Deprecated since version 3.0.\n",
+      "rst": ".. version-deprecated:: 3.0\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.version_removed_alias",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <versionmodified type=\"versionremoved\" version=\"4.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified removed\">\n                Removed in version 4.0: \n        <bullet_list bullet=\"*\">\n            <list_item>\n                <paragraph>\n                    a list first\n",
+      "rst": ".. version-removed:: 4.0\n\n   * a list first\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.version_alias_no_argument",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"version-added\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. version-added::\n",
+      "rst": ".. version-added::\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.authors_hidden",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para.\n",
+      "rst": ".. sectionauthor:: Jane Doe <jane@example.org>\n\n.. moduleauthor:: Mod Author\n\n.. codeauthor:: Code *Author*\n\nPara.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.authors_errors",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"sectionauthor\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. sectionauthor::\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"codeauthor\" directive:\n            no content permitted.\n        <literal_block xml:space=\"preserve\">\n            .. codeauthor:: X\n            \n               content\n",
+      "rst": ".. sectionauthor::\n\n.. codeauthor:: X\n\n   content\n\n.. moduleauthor:: Y\n   :opt: z\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.tabularcolumns",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <tabular_col_spec spec=\"|l|L|\">\n    <table>\n        <tgroup cols=\"1\">\n            <colspec colwidth=\"3\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            a\n",
+      "rst": ".. tabularcolumns:: |l|L|\n\n+---+\n| a |\n+---+\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.tabularcolumns_multiline",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <tabular_col_spec spec=\"|l|\nL|\">\n",
+      "rst": ".. tabularcolumns:: |l|\n   L|   \n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.tabularcolumns_errors",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"tabularcolumns\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. tabularcolumns::\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"tabularcolumns\" directive:\n            no content permitted.\n        <literal_block xml:space=\"preserve\">\n            .. tabularcolumns:: |l|\n            \n               content\n",
+      "rst": ".. tabularcolumns::\n\n.. tabularcolumns:: |l|\n\n   content\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.centered",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <centered>\n        Centered \n        <emphasis>\n            text\n         here\n",
+      "rst": ".. centered:: Centered *text* here\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.centered_problem",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <centered>\n        <problematic ids=\"id2\" refid=\"id1\">\n            *\n        unclosed and \n        <problematic ids=\"id4\" refid=\"id3\">\n            `\n        bad\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Inline emphasis start-string without end-string.\n    <system_message backrefs=\"id4\" ids=\"id3\" level=\"2\" line=\"1\" source=\"<snippet>\" type=\"WARNING\">\n        <paragraph>\n            Inline interpreted text or phrase reference start-string without end-string.\n    <paragraph>\n        After.\n",
+      "rst": ".. centered:: *unclosed and `bad\n\nAfter.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.centered_errors",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"centered\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. centered::\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"centered\" directive:\n            no content permitted.\n        <literal_block xml:space=\"preserve\">\n            .. centered:: x\n            \n               content\n",
+      "rst": ".. centered::\n\n.. centered:: x\n\n   content\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.centered_multiline",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <centered>\n        line one\n        line two\n",
+      "rst": ".. centered:: line one\n   line two\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.acks",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <acks>\n        <bullet_list bullet=\"*\">\n            <list_item>\n                <paragraph>\n                    Alice\n            <list_item>\n                <paragraph>\n                    Bob \n                    <emphasis>\n                        the builder\n",
+      "rst": ".. acks::\n\n   * Alice\n   * Bob *the builder*\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.acks_not_a_list",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n",
+      "rst": "Title\n=====\n\n.. acks::\n\n   not a list\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.acks_two_lists",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n",
+      "rst": ".. acks::\n\n   * a\n\n   - b\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.acks_target_kept",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        See \n        <reference name=\"t\" refid=\"t\">\n            t\n        .\n",
+      "rst": ".. acks::\n\n   .. _t:\n\n   * a\n\nSee t_.\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.acks_problem_in_item",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <acks>\n        <bullet_list bullet=\"*\">\n            <list_item>\n                <paragraph>\n                    <problematic ids=\"id2\" refid=\"id1\">\n                        *\n                    unclosed\n                <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"3\" source=\"<snippet>\" type=\"WARNING\">\n                    <paragraph>\n                        Inline emphasis start-string without end-string.\n",
+      "rst": ".. acks::\n\n   * *unclosed\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.productionlist",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <productionlist>\n        <production tokenname=\"try_stmt\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-try_stmt\">\n                try_stmt\n              ::= \n            <pending_xref refdomain=\"std\" reftarget=\"try1_stmt\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    try1_stmt\n             | \n            <pending_xref refdomain=\"std\" reftarget=\"try2_stmt\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    try2_stmt\n            \n        <production tokenname=\"try1_stmt\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-try1_stmt\">\n                try1_stmt\n             ::= \n            \"try\" \":\" \n            <pending_xref refdomain=\"std\" reftarget=\"suite\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    suite\n            \n        <production tokenname=\"\" xml:space=\"preserve\">\n                          \n            (\"except\" [\n            <pending_xref refdomain=\"std\" reftarget=\"expression\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    expression\n             [\"as\" \n            <pending_xref refdomain=\"std\" reftarget=\"identifier\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    identifier\n            ]] \":\" \n            <pending_xref refdomain=\"std\" reftarget=\"suite\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    suite\n            )+\n            \n",
+      "rst": ".. productionlist::\n   try_stmt: `try1_stmt` | `try2_stmt`\n   try1_stmt: \"try\" \":\" `suite`\n            : (\"except\" [`expression` [\"as\" `identifier`]] \":\" `suite`)+\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.productionlist_group",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <productionlist>\n        <production tokenname=\"a\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-mygroup-a\">\n                a\n             ::= \n            <pending_xref refdomain=\"std\" reftarget=\"mygroup:b\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    b\n             | \n            <pending_xref refdomain=\"std\" reftarget=\"other:c\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    other:c\n             | \n            <pending_xref refdomain=\"std\" reftarget=\"grp:d\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    d\n             | \n            <pending_xref refdomain=\"std\" reftarget=\"e\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    e\n            \n        <production tokenname=\"b\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-mygroup-b\">\n                b\n             ::= \n            \"x\"\n            \n",
+      "rst": ".. productionlist:: mygroup\n   a: `b` | `other:c` | `~grp:d` | `:e`\n   b: \"x\"\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.productionlist_line_continuation",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <productionlist>\n        <production tokenname=\"a\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-a\">\n                a\n             ::= \n            b    c\n            \n        <production tokenname=\"d\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-d\">\n                d\n             ::= \n            e\n            \n",
+      "rst": ".. productionlist::\n   a: b \\\n      c\n   d: e\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.productionlist_stops_at_a_line_without_colon",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <productionlist>\n        <production tokenname=\"a\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-a\">\n                a\n             ::= \n            b\n            \n",
+      "rst": ".. productionlist::\n   a: b\n   no colon here\n   c: d\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.productionlist_duplicate_name",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <productionlist>\n        <production tokenname=\"a\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-a\">\n                a\n             ::= \n            b\n            \n        <production tokenname=\"a\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token--0\">\n                a\n             ::= \n            c\n            \n",
+      "rst": ".. productionlist::\n   a: b\n   a: c\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.productionlist_name_ids",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <productionlist>\n        <production tokenname=\"Foo Bar\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-Foo-Bar\">\n                Foo Bar\n             ::= \n            x\n            \n        <production tokenname=\"été\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-ete\">\n                été\n                 ::= \n            y\n            \n        <production tokenname=\"!!!\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token\">\n                !!!\n                 ::= \n            z\n            \n        <production tokenname=\"???\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token--0\">\n                ???\n                 ::= \n            w\n            \n",
+      "rst": ".. productionlist::\n   Foo Bar: x\n   été: y\n   !!!: z\n   ???: w\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.productionlist_std_prefix",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <productionlist>\n        <production tokenname=\"a\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-a\">\n                a\n             ::= \n            b\n            \n",
+      "rst": ".. std:productionlist::\n   a: b\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.productionlist_on_the_marker_line",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <productionlist>\n        <production tokenname=\"a\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-a\">\n                a\n             ::= \n            <pending_xref refdomain=\"std\" reftarget=\"b\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    b\n            \n        <production tokenname=\"b\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-b\">\n                b\n             ::= \n            c\n            \n",
+      "rst": ".. productionlist:: a: `b`\n   b: c\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.productionlist_errors",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"productionlist\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. productionlist::\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Error in \"productionlist\" directive:\n            no content permitted.\n        <literal_block xml:space=\"preserve\">\n            .. productionlist:: a: b\n            \n               content\n",
+      "rst": ".. productionlist::\n\n.. productionlist:: a: b\n\n   content\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.productionlist_tokens",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <productionlist>\n        <production tokenname=\"x\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-x\">\n                x\n             ::= \n            `a b` `-c` `a-b` \n            <pending_xref refdomain=\"std\" reftarget=\"_x\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    _x\n             \n            <pending_xref refdomain=\"std\" reftarget=\"1\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    1\n             `~y` \n            <pending_xref refdomain=\"std\" reftarget=\":z\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    z\n             `g:` `:` \n            <pending_xref refdomain=\"std\" reftarget=\"é\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    é\n            \n",
+      "rst": ".. productionlist::\n   x: `a b` `-c` `a-b` `_x` `1` `~y` `~:z` `g:` `:` `é`\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.productionlist_unnamed",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <productionlist>\n        <production tokenname=\"\" xml:space=\"preserve\">\n                 \n            a\n            \n        <production tokenname=\"\" xml:space=\"preserve\">\n                 \n            b\n            \n",
+      "rst": ".. productionlist::\n   : a\n   : b\n"
+    },
+    {
+      "family": "sx_directives",
+      "name": "sx_directives.productionlist_in_note",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <note>\n        <productionlist>\n            <production tokenname=\"a\" xml:space=\"preserve\">\n                <literal_strong ids=\"grammar-token-a\">\n                    a\n                 ::= \n                b\n                \n",
+      "rst": ".. note::\n\n   .. productionlist::\n      a: b\n"
+    },
+    {
+      "family": "sx_smartquotes",
+      "name": "sx_smartquotes.centered_hlist",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <centered>\n        \"Centered\" text\n    <hlist ncolumns=\"2\">\n        <hlistcol>\n            <bullet_list>\n                <list_item>\n                    <paragraph>\n                        \"a\"\n        <hlistcol>\n            <bullet_list>\n                <list_item>\n                    <paragraph>\n                        'b'\n",
+      "rst": ".. centered:: \"Centered\" text\n\n.. hlist::\n\n   * \"a\"\n   * 'b'\n"
     }
   ],
   "conf_semantics": "a case's optional 'conf' dict is confoverrides applied on top of the base settings above; absent = defaults. The consumers map every key onto the parse options (ParseOptions.py or ParseOptions.read) and error on unmapped keys.",

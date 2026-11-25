@@ -173,6 +173,20 @@ pub(crate) fn source_path_of(doc: &DocumentSource<'_>, source: u16) -> PathBuf {
         .unwrap_or_else(|| doc.path.to_path_buf())
 }
 
+/// The path a `source:line` location string names, which Sphinx prints as
+/// it is (`SphinxDirective.get_location()`): source-table entry `source`
+/// as the input spells its lines, which is how the reporter's records name
+/// it too ([`crate::transforms::reporter::render_records`]), so an
+/// included file stays `part.rst`; the document's own path for an id the
+/// table doesn't know.
+fn source_spelling_of(doc: &DocumentSource<'_>, source: u16) -> PathBuf {
+    doc.doctree
+        .sources
+        .get(source as usize)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| doc.path.to_path_buf())
+}
+
 /// What [`process_doc`] warns about, in the two places Sphinx warns.
 #[derive(Debug, Default)]
 pub struct DomainWarnings {
@@ -413,7 +427,8 @@ fn collect_glossary_terms(
 /// the finished doctree does not carry — see
 /// [`RegistryExport::program_options`] — so the parse layer records the
 /// calls and this replays them, each duplicate warning keyed by the
-/// record's seq.
+/// record's seq. So do a `productionlist`'s tokens
+/// (`ProductionList.make_name_target`, `:677-693`).
 ///
 /// `describe`/`object` produce no records at all: the base
 /// `add_target_and_index` is a no-op, so they contribute neither an object
@@ -436,10 +451,19 @@ fn collect_descriptions(
             env.std
                 .note_object(&record.objtype, &record.name, doc.docname, &record.node_id)
         {
+            // An object description is located at its signature node
+            // (`location=signode`); a `productionlist` token, the only
+            // `token` object, at its directive's `self.get_location()`
+            // string (`SP/sphinx/domains/std/__init__.py:616`, `:692`).
+            let path = if record.objtype == "token" {
+                source_spelling_of(doc, record.source)
+            } else {
+                source_path_of(doc, record.source)
+            };
             warnings.push((
                 record.seq,
                 duplicate_object_warning(
-                    source_path_of(doc, record.source),
+                    path,
                     record.line as usize,
                     &record.objtype,
                     &record.name,

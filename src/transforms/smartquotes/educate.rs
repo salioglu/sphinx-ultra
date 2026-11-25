@@ -545,7 +545,7 @@ fn is_sep(c: char) -> bool {
 }
 
 /// Python's `\w` on a `str` pattern: `str.isalnum()` or `_`.
-fn py_is_word(c: char) -> bool {
+pub(crate) fn py_is_word(c: char) -> bool {
     let cp = u32::from(c);
     PY_WORD_RUNS
         .binary_search_by(|&(first, last)| {

@@ -8757,6 +8757,154 @@
         "index": "Title\n=====\n\n.. contents::\n\nAbout :ref:`missing-label`\n--------------------------\n\nx\n"
       },
       "name": "contents_unresolved_xref"
+    },
+    {
+      "conf": {
+        "smartquotes": false
+      },
+      "expect": {
+        "dependencies": {},
+        "files_to_rebuild": {
+          "a": [
+            "index"
+          ],
+          "b": [
+            "index"
+          ]
+        },
+        "genindex": [],
+        "included": {},
+        "index_entries": {
+          "a": [],
+          "b": [],
+          "index": []
+        },
+        "py_modindex": {
+          "collapse": false,
+          "groups": []
+        },
+        "py_modules": [],
+        "py_objects": [],
+        "relations": {
+          "a": [
+            "index",
+            "index",
+            "b"
+          ],
+          "b": [
+            "index",
+            "a",
+            null
+          ],
+          "index": [
+            null,
+            null,
+            "a"
+          ]
+        },
+        "resolved_pformat": {
+          "a": "<document source=\"<project>/a.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"a\" names=\"a\">\n        <title>\n            A\n        <productionlist>\n            <production tokenname=\"stmt\" xml:space=\"preserve\">\n                <literal_strong ids=\"grammar-token-lang-stmt\">\n                    stmt\n                   ::= \n                <literal classes=\"xref\">\n                    expr\n                 \";\"\n                \n            <production tokenname=\"factor\" xml:space=\"preserve\">\n                <literal_strong ids=\"grammar-token-lang-factor\">\n                    factor\n                 ::= \n                \"x\"\n                \n            <production tokenname=\"\" xml:space=\"preserve\">\n                           \n                <reference internal=\"1\" refuri=\"#grammar-token-term\">\n                    <literal classes=\"xref\">\n                        term\n                \n        <paragraph>\n            See \n            <literal classes=\"xref std std-token\">\n                stmt\n             and \n            <reference internal=\"1\" refid=\"grammar-token-lang-factor\">\n                <literal classes=\"xref std std-token\">\n                    lang:factor\n            .\n",
+          "b": "<document source=\"<project>/b.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"b\" names=\"b\">\n        <title>\n            B\n        <productionlist>\n            <production tokenname=\"term\" xml:space=\"preserve\">\n                <literal_strong ids=\"grammar-token-term\">\n                    term\n                 ::= \n                \"dup\"\n                \n        <paragraph>\n            See \n            <reference internal=\"1\" refuri=\"#grammar-token-term\">\n                <literal classes=\"xref std std-token\">\n                    term\n            .\n",
+          "index": "<document source=\"<project>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"grammar\" names=\"grammar\">\n        <title>\n            Grammar\n        <compound classes=\"toctree-wrapper\">\n            <compact_paragraph toctree=\"1\">\n                <bullet_list>\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                A\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                B\n        <productionlist>\n            <production tokenname=\"expr\" xml:space=\"preserve\">\n                <literal_strong ids=\"grammar-token-expr\">\n                    expr\n                 ::= \n                <reference internal=\"1\" refid=\"grammar-token-term\">\n                    <literal classes=\"xref\">\n                        term\n                 (\"+\" \n                <reference internal=\"1\" refid=\"grammar-token-term\">\n                    <literal classes=\"xref\">\n                        term\n                )*\n                \n            <production tokenname=\"term\" xml:space=\"preserve\">\n                <literal_strong ids=\"grammar-token-term\">\n                    term\n                 ::= \n                <literal classes=\"xref\">\n                    factor\n                 | \n                <reference internal=\"1\" refuri=\"#grammar-token-lang-stmt\">\n                    <literal classes=\"xref\">\n                        lang:stmt\n                \n        <paragraph>\n            See \n            <reference internal=\"1\" refid=\"grammar-token-expr\">\n                <literal classes=\"xref std std-token\">\n                    expr\n            , \n            <reference internal=\"1\" refuri=\"#grammar-token-lang-stmt\">\n                <literal classes=\"xref std std-token\">\n                    lang:stmt\n            , \n            <literal classes=\"xref std std-token\">\n                missing\n             and \n            <reference internal=\"1\" refid=\"grammar-token-term\">\n                <literal classes=\"xref std std-token\">\n                    the term\n            .\n"
+        },
+        "std": {
+          "anonlabels": {
+            "genindex": [
+              "genindex",
+              ""
+            ],
+            "modindex": [
+              "py-modindex",
+              ""
+            ],
+            "py-modindex": [
+              "py-modindex",
+              ""
+            ],
+            "search": [
+              "search",
+              ""
+            ]
+          },
+          "labels": {
+            "genindex": [
+              "genindex",
+              "",
+              "Index"
+            ],
+            "modindex": [
+              "py-modindex",
+              "",
+              "Module Index"
+            ],
+            "py-modindex": [
+              "py-modindex",
+              "",
+              "Python Module Index"
+            ],
+            "search": [
+              "search",
+              "",
+              "Search Page"
+            ]
+          },
+          "objects": [
+            {
+              "docname": "index",
+              "labelid": "grammar-token-expr",
+              "name": "expr",
+              "objtype": "token"
+            },
+            {
+              "docname": "a",
+              "labelid": "grammar-token-lang-factor",
+              "name": "lang:factor",
+              "objtype": "token"
+            },
+            {
+              "docname": "a",
+              "labelid": "grammar-token-lang-stmt",
+              "name": "lang:stmt",
+              "objtype": "token"
+            },
+            {
+              "docname": "index",
+              "labelid": "grammar-token-term",
+              "name": "term",
+              "objtype": "token"
+            }
+          ],
+          "progoptions": [],
+          "terms": {}
+        },
+        "toc_fignumbers": {},
+        "toc_num_entries": {
+          "a": 1,
+          "b": 1,
+          "index": 1
+        },
+        "toc_secnumbers": {},
+        "tocs_pformat": {
+          "a": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"a\">\n                A\n",
+          "b": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"b\">\n                B\n",
+          "index": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"index\">\n                Grammar\n        <bullet_list>\n            <toctree caption=\"True\" entries=\"(None,\\ 'a') (None,\\ 'b')\" glob=\"0\" hidden=\"0\" includefiles=\"a b\" includehidden=\"0\" maxdepth=\"-1\" numbered=\"0\" parent=\"index\" rawentries=\"\" titlesonly=\"0\">\n"
+        },
+        "toctree_includes": {
+          "index": [
+            "a",
+            "b"
+          ]
+        },
+        "warnings": [
+          "<project>/index.rst:9: WARNING: duplicate token description of term, other instance in b"
+        ]
+      },
+      "files": {
+        "a": "A\n=\n\n.. productionlist:: lang\n   stmt: `expr` \";\"\n   factor: \"x\"\n       : `:term`\n\nSee :token:`stmt` and :token:`lang:factor`.\n",
+        "b": "B\n=\n\n.. productionlist::\n   term: \"dup\"\n\nSee :token:`term`.\n",
+        "index": "Grammar\n=======\n\n.. toctree::\n\n   a\n   b\n\n.. productionlist::\n   expr: `term` (\"+\" `term`)*\n   term: `factor` | `lang:stmt`\n\nSee :token:`expr`, :token:`lang:stmt`, :token:`missing` and :token:`the term <term>`.\n"
+      },
+      "name": "productionlist_tokens"
     }
   ],
   "sphinx_version": "9.1.0"

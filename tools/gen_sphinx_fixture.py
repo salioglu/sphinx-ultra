@@ -345,6 +345,12 @@ SUPPORTED_KINDS = {
     "header",
     "footer",
     "raw",
+    # wave 5a T18c: Sphinx's extra directives' nodes
+    "centered",
+    "acks",
+    "tabular_col_spec",
+    "productionlist",
+    "production",
 }
 
 CASES = [
@@ -1307,6 +1313,51 @@ Term : "classifier" : 'c2'
     ('sx_parts', 'target_notes_with_footnotes', 'Title\n=====\n\nManual [#a]_ and Python_.\n\n.. [#a] Auto footnote.\n\n.. _Python: https://www.python.org/\n\n.. target-notes::\n'),
     ('sx_parts', 'target_notes_bad', 'Title\n=====\n\n.. target-notes:: arg\n\n.. target-notes::\n   :name: x\n\n.. target-notes::\n\n   content\n'),
     ('sx_parts', 'meta_title_together', '.. title:: HTML Page Title\n.. meta::\n   :description: d\n\n.. header:: H\n\nTitle\n=====\n\n.. contents::\n   :local:\n\n.. sectnum::\n\nSub\n---\n\nSee Python_.\n\n.. _Python: https://www.python.org/\n\n.. target-notes::\n\n.. footer:: F\n'),
+    # ===== sx_directives, appended (wave 5a T18c; structure-directives
+    # report §3.9): Sphinx's extra directives under the default conf
+    # (`show_authors` off, so the author directives give nothing) —
+    # `cssclass`, the `version-*` spellings, the author directives,
+    # `tabularcolumns`, `centered`, `acks` (a non-list's warning is a
+    # logger record, not in the tree) and the std domain's `productionlist`,
+    # in both spellings =====
+    ('sx_directives', 'cssclass_pending', 'Title\n=====\n\n.. cssclass:: myclass otherclass\n\nParagraph after.\n'),
+    ('sx_directives', 'cssclass_content', '.. cssclass:: a B\n\n   Para one.\n\n   Para two.\n'),
+    ('sx_directives', 'cssclass_invalid', '.. cssclass:: !!!\n'),
+    ('sx_directives', 'cssclass_last', 'Para.\n\n.. cssclass:: x\n'),
+    ('sx_directives', 'version_added_alias', '.. version-added:: 1.2\n\n   Some text.\n'),
+    ('sx_directives', 'version_changed_alias', '.. version-changed:: 2.0 Inline *text*.\n'),
+    ('sx_directives', 'version_deprecated_alias', '.. version-deprecated:: 3.0\n'),
+    ('sx_directives', 'version_removed_alias', '.. version-removed:: 4.0\n\n   * a list first\n'),
+    ('sx_directives', 'version_alias_no_argument', '.. version-added::\n'),
+    ('sx_directives', 'authors_hidden', '.. sectionauthor:: Jane Doe <jane@example.org>\n\n.. moduleauthor:: Mod Author\n\n.. codeauthor:: Code *Author*\n\nPara.\n'),
+    ('sx_directives', 'authors_errors', '.. sectionauthor::\n\n.. codeauthor:: X\n\n   content\n\n.. moduleauthor:: Y\n   :opt: z\n'),
+    ('sx_directives', 'tabularcolumns', '.. tabularcolumns:: |l|L|\n\n+---+\n| a |\n+---+\n'),
+    ('sx_directives', 'tabularcolumns_multiline', '.. tabularcolumns:: |l|\n   L|   \n'),
+    ('sx_directives', 'tabularcolumns_errors', '.. tabularcolumns::\n\n.. tabularcolumns:: |l|\n\n   content\n'),
+    ('sx_directives', 'centered', '.. centered:: Centered *text* here\n'),
+    ('sx_directives', 'centered_problem', '.. centered:: *unclosed and `bad\n\nAfter.\n'),
+    ('sx_directives', 'centered_errors', '.. centered::\n\n.. centered:: x\n\n   content\n'),
+    ('sx_directives', 'centered_multiline', '.. centered:: line one\n   line two\n'),
+    ('sx_directives', 'acks', '.. acks::\n\n   * Alice\n   * Bob *the builder*\n'),
+    ('sx_directives', 'acks_not_a_list', 'Title\n=====\n\n.. acks::\n\n   not a list\n'),
+    ('sx_directives', 'acks_two_lists', '.. acks::\n\n   * a\n\n   - b\n'),
+    ('sx_directives', 'acks_target_kept', '.. acks::\n\n   .. _t:\n\n   * a\n\nSee t_.\n'),
+    ('sx_directives', 'acks_problem_in_item', '.. acks::\n\n   * *unclosed\n'),
+    ('sx_directives', 'productionlist', '.. productionlist::\n   try_stmt: `try1_stmt` | `try2_stmt`\n   try1_stmt: "try" ":" `suite`\n            : ("except" [`expression` ["as" `identifier`]] ":" `suite`)+\n'),
+    ('sx_directives', 'productionlist_group', '.. productionlist:: mygroup\n   a: `b` | `other:c` | `~grp:d` | `:e`\n   b: "x"\n'),
+    ('sx_directives', 'productionlist_line_continuation', '.. productionlist::\n   a: b \\\n      c\n   d: e\n'),
+    ('sx_directives', 'productionlist_stops_at_a_line_without_colon', '.. productionlist::\n   a: b\n   no colon here\n   c: d\n'),
+    ('sx_directives', 'productionlist_duplicate_name', '.. productionlist::\n   a: b\n   a: c\n'),
+    ('sx_directives', 'productionlist_name_ids', '.. productionlist::\n   Foo Bar: x\n   \u00e9t\u00e9: y\n   !!!: z\n   ???: w\n'),
+    ('sx_directives', 'productionlist_std_prefix', '.. std:productionlist::\n   a: b\n'),
+    ('sx_directives', 'productionlist_on_the_marker_line', '.. productionlist:: a: `b`\n   b: c\n'),
+    ('sx_directives', 'productionlist_errors', '.. productionlist::\n\n.. productionlist:: a: b\n\n   content\n'),
+    ('sx_directives', 'productionlist_tokens', '.. productionlist::\n   x: `a b` `-c` `a-b` `_x` `1` `~y` `~:z` `g:` `:` `\u00e9`\n'),
+    ('sx_directives', 'productionlist_unnamed', '.. productionlist::\n   : a\n   : b\n'),
+    ('sx_directives', 'productionlist_in_note', '.. note::\n\n   .. productionlist::\n      a: b\n'),
+    # ===== sx_smartquotes, appended (wave 5a T18c; smart-quotes report
+    # §6.4): `centered` is a text element smart quotes educate =====
+    ('sx_smartquotes', 'centered_hlist', '.. centered:: "Centered" text\n\n.. hlist::\n\n   * "a"\n   * \'b\'\n'),
 ]
 
 

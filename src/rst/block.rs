@@ -4454,7 +4454,7 @@ impl BlockParser {
             DirectiveKind::UnicodeDir => self.run_unicode(input, out),
             DirectiveKind::DateDir => self.run_date(input, out),
             DirectiveKind::Toctree => self.run_toctree(input, out),
-            DirectiveKind::VersionChange(info) => self.run_version_change(info, input, out),
+            DirectiveKind::VersionChange => self.run_version_change(input, out),
             DirectiveKind::SeeAlso => self.run_seealso(input, out),
             DirectiveKind::SphinxCodeBlock => self.run_sphinx_code_block(input, out),
             DirectiveKind::SphinxCode => self.run_sphinx_code(input, out),
@@ -4487,6 +4487,14 @@ impl BlockParser {
             DirectiveKind::TitleDir => self.run_title(input),
             DirectiveKind::TestDirective => self.run_test_directive(input, out),
             DirectiveKind::DefaultRoleDir => self.run_default_role(input, out),
+            // `Author.run` returns nothing unless `show_authors` is on
+            // (`SP/sphinx/directives/other.py:197-198`), which this crate
+            // does not map: it is off.
+            DirectiveKind::Author => {}
+            DirectiveKind::TabularColumns => self.run_tabularcolumns(input, out),
+            DirectiveKind::Centered => self.run_centered(input, out),
+            DirectiveKind::Acks => self.run_acks(input, out),
+            DirectiveKind::ProductionList => self.run_productionlist(input, out),
             // `DefaultDomain.run` (`SP/sphinx/directives/__init__.py:353-366`):
             // `current_document.default_domain =
             // env.domains.get(argument.lower())`, so a name no domain is
@@ -5878,31 +5886,45 @@ impl BlockParser {
         out.push(target);
     }
 
+    /// `children = self.parse_content_to_nodes()` for a Sphinx directive
+    /// whose content must be one bullet list, `hlist`'s or `acks`'s
+    /// (`SP/sphinx/directives/other.py:289-295`, `:266-272`): the list, and
+    /// the machine's position after the content. Anything else is
+    /// `logger.warning(__('.. <directive> content is not a list'),
+    /// location=(docname, self.lineno))`, which goes to the log stream, not
+    /// the tree, at the directive's raw line ([RC §4.1]); the directive
+    /// returns nothing, the parsed content dropped and its registrations
+    /// kept.
+    fn content_bullet_list(
+        &mut self,
+        directive: &str,
+        input: &DirectiveInput<'_>,
+    ) -> Option<(Node, DocLoc)> {
+        let mut children = self.parse_nested_attached(&input.content, "element");
+        let current = current_after(&input.content, self.ending);
+        if children.len() == 1 && children[0].kind == kinds::BULLET_LIST {
+            return children.pop().map(|list| (list, current));
+        }
+        let line = self.abs_line_number(input.span.source, input.lineno);
+        self.state.log_warning(
+            format!(".. {directive} content is not a list"),
+            super::LogLocation::DocLine(line),
+        );
+        self.state.detach(children);
+        None
+    }
+
     /// sphinx hlist (other.py HList): content must be exactly one bullet
-    /// list; distributed into ncolumns hlistcol children.
+    /// list ([`Self::content_bullet_list`]); distributed into ncolumns
+    /// hlistcol children.
     fn run_hlist(&mut self, input: DirectiveInput<'_>, out: &mut Vec<Node>) {
         let ncolumns = match opt_get(&input.options, "columns") {
             Some(OptVal::Int(n)) if *n > 0 => *n as usize,
             _ => 2,
         };
-        let children = self.parse_nested_attached(&input.content, "element");
-        let current = current_after(&input.content, self.ending);
-        let one_list = children.len() == 1 && children[0].kind == kinds::BULLET_LIST;
-        if !one_list {
-            // `logger.warning(__('.. hlist content is not a list'),
-            // location=(docname, self.lineno))` goes to the log stream, not
-            // the tree, at the directive's raw line
-            // (`SP/sphinx/directives/other.py:291-294`, [RC §4.1]); `return
-            // []` drops the parsed content, its registrations kept.
-            let line = self.abs_line_number(input.span.source, input.lineno);
-            self.state.log_warning(
-                ".. hlist content is not a list".to_string(),
-                super::LogLocation::DocLine(line),
-            );
-            self.state.detach(children);
+        let Some((list, current)) = self.content_bullet_list("hlist", &input) else {
             return;
-        }
-        let list = children.into_iter().next().expect("length checked");
+        };
         let items = list.children;
         let npercol = items.len() / ncolumns;
         let nmore = items.len() % ncolumns;
@@ -5925,6 +5947,164 @@ impl BlockParser {
         // The `hlist` has no location of its own ([`Self::note_appended_location`]).
         self.note_appended_location(&mut hlist, current);
         out.push(hlist);
+    }
+
+    /// Sphinx's `Acks` (`SP/sphinx/directives/other.py:256-273`): an `acks`
+    /// holding the content, which must be one bullet list
+    /// ([`Self::content_bullet_list`]).
+    fn run_acks(&mut self, input: DirectiveInput<'_>, out: &mut Vec<Node>) {
+        let Some((list, current)) = self.content_bullet_list("acks", &input) else {
+            return;
+        };
+        let mut acks = Node::elem("acks", input.span);
+        acks.children.push(list);
+        // `addnodes.acks('', *children)` has no location of its own
+        // ([`Self::note_appended_location`]).
+        self.note_appended_location(&mut acks, current);
+        out.push(acks);
+    }
+
+    /// Sphinx's `TabularColumns` (`SP/sphinx/directives/other.py:228-232`):
+    /// a `tabular_col_spec` whose `spec` is the argument, at the
+    /// directive's location (`set_source_info`).
+    fn run_tabularcolumns(&mut self, input: DirectiveInput<'_>, out: &mut Vec<Node>) {
+        let mut node = Node::elem("tabular_col_spec", input.span);
+        node.set("spec", AttrValue::Str(input.arguments[0].clone()));
+        out.push(node);
+    }
+
+    /// Sphinx's `Centered` (`SP/sphinx/directives/other.py:244-253`): a
+    /// `centered` holding the argument, inline-parsed at the directive's
+    /// line (`parse_inline`), and the messages that raises after it.
+    fn run_centered(&mut self, input: DirectiveInput<'_>, out: &mut Vec<Node>) {
+        let inline = self.inline(&input.arguments[0], input.span, input.lineno);
+        let mut centered = Node::elem("centered", input.span);
+        centered.children = inline.nodes;
+        // `addnodes.centered()` has no location of its own
+        // ([`Self::note_appended_location`]).
+        self.note_appended_location(&mut centered, input.current);
+        out.push(centered);
+        out.extend(inline.messages);
+    }
+
+    /// The std domain's `ProductionList.run`
+    /// (`SP/sphinx/domains/std/__init__.py:607-631`): the argument, its
+    /// backslash-newlines removed, split into lines; a first line without
+    /// a colon names the production group; each line after it up to the
+    /// first without a colon is a production, `name: tokens`. Each becomes
+    /// a `production`: a named one opens with its name as a target
+    /// ([`Self::production_name_target`]), then the name padded to the
+    /// longest name, `::=`, its tokens ([`token_xrefs`]) and a newline.
+    /// No production at all leaves `max()` an empty sequence: Sphinx 9.1.0
+    /// crashes (`ValueError`, decision 13).
+    fn run_productionlist(&mut self, input: DirectiveInput<'_>, out: &mut Vec<Node>) {
+        let text = input.arguments[0].replace("\\\n", "");
+        let mut lines = crate::utils::py_splitlines(&text);
+        let group = match lines.first() {
+            Some(first) if !first.contains(':') => {
+                let group = first.trim_matches(crate::utils::py_isspace).to_string();
+                lines.remove(0);
+                group
+            }
+            _ => String::new(),
+        };
+        let productions: Vec<(&str, &str, &str)> = lines
+            .iter()
+            .map_while(|&line| {
+                let (name, tokens) = line.split_once(':')?;
+                Some((
+                    line,
+                    name.trim_matches(crate::utils::py_isspace),
+                    tokens.trim_matches(crate::utils::py_isspace),
+                ))
+            })
+            .collect();
+        let Some(max_len) = productions
+            .iter()
+            .map(|(_, name, _)| name.chars().count())
+            .max()
+        else {
+            let location = super::LogLocation::Node {
+                source: input.span.source,
+                line: input.lineno,
+            };
+            let crash = super::SphinxCrash::python(
+                "ValueError",
+                "max() iterable argument is empty".to_string(),
+                location,
+            );
+            self.state.raise(crash, 0, 0);
+            return;
+        };
+        let span = input.span;
+        let mut list = Node::elem("productionlist", span);
+        for (rule, name, tokens) in productions {
+            let mut production = Node::elem("production", span);
+            production.set_rawsource(rule);
+            production.set("tokenname", AttrValue::Str(name.to_string()));
+            production.set("xml:space", AttrValue::Str("preserve".to_string()));
+            // `separator_node`: `' ::= '.rjust(max_len - len(name) + 5)`,
+            // or blanks as wide for a production without a name.
+            let separator = if name.is_empty() {
+                " ".repeat(max_len + 5)
+            } else {
+                let width = max_len - name.chars().count() + 5;
+                format!("{:>width$}", " ::= ")
+            };
+            if !name.is_empty() {
+                let target = self.production_name_target(name, &group, &input);
+                production.children.push(target);
+            }
+            production.children.push(Node::text_node(&separator, span));
+            production
+                .children
+                .extend(token_xrefs(tokens, &group, span));
+            production.children.push(Node::text_node("\n", span));
+            list.children.push(production);
+        }
+        out.push(list);
+    }
+
+    /// `ProductionList.make_name_target` (`SP/sphinx/domains/std/__init__.py:677-693`):
+    /// the production's name, a `literal_strong` whose id `make_id` makes
+    /// with the prefix `grammar-token-<group>` and which
+    /// `note_implicit_target` registers, and the name, `<group>:<name>`
+    /// in a group, noted as a std `token` object, which the environment
+    /// replays ([`super::ObjectRegistration`]). Its location is the
+    /// directive's (`self.get_location()`), the one every production of
+    /// the list shares.
+    fn production_name_target(
+        &mut self,
+        name: &str,
+        group: &str,
+        input: &DirectiveInput<'_>,
+    ) -> Node {
+        let mut node = Node::elem("literal_strong", input.span);
+        node.set_rawsource(name);
+        node.children.push(Node::text_node(name, input.span));
+        let node_id = self
+            .state
+            .sphinx_make_id(&format!("grammar-token-{group}"), name);
+        node.attrs.ids.push(node_id.clone());
+        self.state.ids.register(&node_id, None);
+        let name = if group.is_empty() {
+            name.to_string()
+        } else {
+            format!("{group}:{name}")
+        };
+        let seq = self.state.draw_seq();
+        self.state
+            .parse
+            .std_object_records
+            .push(super::ObjectRegistration {
+                source: input.span.source,
+                objtype: "token".to_string(),
+                name,
+                node_id,
+                line: input.lineno,
+                seq,
+            });
+        node
     }
 
     /// sphinx glossary (std domain): term lines + indented definitions;
@@ -7213,21 +7393,33 @@ impl BlockParser {
         }
     }
 
-    /// Sphinx's `VersionChange.run` (`SP/sphinx/domains/changeset.py:65-117`),
+    /// Sphinx's `VersionChange.run` (`SP/sphinx/domains/changeset.py:64-122`),
     /// behind `versionadded`, `versionchanged`, `deprecated` and
-    /// `versionremoved`: a `versionmodified` node holding a paragraph of
-    /// the text on the directive line, if any, and then the content,
-    /// nested-parsed whether or not that text is there. The first child,
-    /// if a paragraph, opens with the label (`'<label>: '`); if not, a
-    /// paragraph of the label goes in front, `'<label>.'` when there is
-    /// nothing at all.
-    fn run_version_change(
-        &mut self,
-        info: &'static (&'static str, &'static str, &'static str),
-        input: DirectiveInput<'_>,
-        out: &mut Vec<Node>,
-    ) {
-        let (type_name, label, lead_fmt) = *info;
+    /// `versionremoved` and their hyphenated spellings (`version-added`, …),
+    /// whose type is the unhyphenated name: a `versionmodified` node
+    /// holding a paragraph of the text on the directive line, if any, and
+    /// then the content, nested-parsed whether or not that text is there.
+    /// The first child, if a paragraph, opens with the label (`'<label>:
+    /// '`); if not, a paragraph of the label goes in front, `'<label>.'`
+    /// when there is nothing at all.
+    ///
+    /// The type comes from the name as written, which only the lowercase
+    /// spellings give a label: Sphinx 9.1.0 crashes on any other
+    /// (`KeyError`, decision 13), before the content is parsed.
+    fn run_version_change(&mut self, input: DirectiveInput<'_>, out: &mut Vec<Node>) {
+        let Some((type_name, label, lead_fmt)) = version_change_type(input.name) else {
+            let location = super::LogLocation::Node {
+                source: input.span.source,
+                line: input.lineno,
+            };
+            let crash = super::SphinxCrash::python(
+                "KeyError",
+                crate::utils::py_repr_str(input.name),
+                location,
+            );
+            self.state.raise(crash, 0, 0);
+            return;
+        };
         let version = &input.arguments[0];
         let mut node = Node::elem("versionmodified", input.span);
         node.set("type", AttrValue::Str(type_name.to_string()));
@@ -9206,8 +9398,8 @@ impl BlockParser {
     /// detached parse's or one an include in a glossary definition read,
     /// keeps its own line. A few Sphinx warnings print it as is, with
     /// `location=(docname, self.lineno)`, which no reporter maps back to a
-    /// line of its file: the raw-`lineno` sites of [RC §4.1] (`hlist`;
-    /// `acks` once it exists).
+    /// line of its file: the raw-`lineno` sites of [RC §4.1] (`hlist`,
+    /// `acks`).
     fn abs_line_number(&self, source: u16, lineno: u32) -> u32 {
         let offset = self
             .input
@@ -11019,9 +11211,11 @@ enum DirectiveKind {
     DateDir,
     /// sphinx toctree (sphinx/directives/other.py TocTree).
     Toctree,
-    /// versionadded/versionchanged/deprecated/versionremoved:
-    /// (type name, label class, lead-in format).
-    VersionChange(&'static (&'static str, &'static str, &'static str)),
+    /// Sphinx's `VersionChange` (`SP/sphinx/domains/changeset.py:55-122`),
+    /// behind versionadded/versionchanged/deprecated/versionremoved and
+    /// their hyphenated spellings, which take their type from the name as
+    /// written ([`version_change_type`]).
+    VersionChange,
     SeeAlso,
     /// sphinx code-block/sourcecode (sphinx/directives/code.py).
     SphinxCodeBlock,
@@ -11082,6 +11276,18 @@ enum DirectiveKind {
     /// `.. default-role::`: docutils' (`misc.py:534-555`), and in a Sphinx
     /// parse Sphinx's (`SP/sphinx/directives/__init__.py:317-350`).
     DefaultRoleDir,
+    /// Sphinx's `Author` (`SP/sphinx/directives/other.py:185-216`), behind
+    /// `sectionauthor`, `moduleauthor` and `codeauthor`.
+    Author,
+    /// Sphinx's `TabularColumns` (`other.py:219-232`).
+    TabularColumns,
+    /// Sphinx's `Centered` (`other.py:235-253`).
+    Centered,
+    /// Sphinx's `Acks` (`other.py:256-273`).
+    Acks,
+    /// The std domain's `ProductionList`
+    /// (`SP/sphinx/domains/std/__init__.py:592-700`).
+    ProductionList,
     /// Test-only exercise of the [`SpliceRequest`] channel: content lines
     /// become a spliced source named by the argument. Kept alongside the
     /// real producer ([`Self::Include`], wave-4.5 task 12) because it
@@ -11227,10 +11433,29 @@ const TOCTREE_OPTS: &[(&str, Conv)] = &[
     ("reversed", Conv::Flag),
 ];
 
-const VERSIONADDED: (&str, &str, &str) = ("versionadded", "added", "Added in version {}");
-const VERSIONCHANGED: (&str, &str, &str) = ("versionchanged", "changed", "Changed in version {}");
-const DEPRECATED: (&str, &str, &str) = ("deprecated", "deprecated", "Deprecated since version {}");
-const VERSIONREMOVED: (&str, &str, &str) = ("versionremoved", "removed", "Removed in version {}");
+/// `VersionChange.run`'s `name = name_aliases.get(self.name, self.name)`
+/// and its `versionlabels[name]` / `versionlabel_classes[name]`
+/// (`SP/sphinx/domains/changeset.py:24-43`, `:65-71`): for the directive's
+/// name as written, the node's type, its label class and the label, `{}`
+/// standing for the version. `None` for a name the label table does not
+/// hold, one in another case (`VersionAdded`, `Version-Added`), on which
+/// Sphinx's lookup raises `KeyError`.
+fn version_change_type(name: &str) -> Option<(&'static str, &'static str, &'static str)> {
+    let name = match name {
+        "version-added" => "versionadded",
+        "version-changed" => "versionchanged",
+        "version-deprecated" => "deprecated",
+        "version-removed" => "versionremoved",
+        name => name,
+    };
+    Some(match name {
+        "versionadded" => ("versionadded", "added", "Added in version {}"),
+        "versionchanged" => ("versionchanged", "changed", "Changed in version {}"),
+        "deprecated" => ("deprecated", "deprecated", "Deprecated since version {}"),
+        "versionremoved" => ("versionremoved", "removed", "Removed in version {}"),
+        _ => return None,
+    })
+}
 
 const CODE_BLOCK_OPTS: &[(&str, Conv)] = &[
     ("force", Conv::Flag),
@@ -11285,14 +11510,16 @@ const LITERALINCLUDE_OPTS: &[(&str, Conv)] = &[
 ];
 
 fn sphinx_directive_spec(lower: &str) -> Option<DirectiveSpec> {
-    let version_change = |info: &'static (&'static str, &'static str, &'static str)| {
+    // The shape of Sphinx's `Author`, `TabularColumns` and `Centered`: one
+    // argument, whitespace allowed, no content, no options.
+    let one_argument = |kind| {
         Some(DirectiveSpec {
             required_arguments: 1,
-            optional_arguments: 1,
+            optional_arguments: 0,
             final_argument_whitespace: true,
-            has_content: true,
+            has_content: false,
             option_spec: &[],
-            kind: DirectiveKind::VersionChange(info),
+            kind,
         })
     };
     match lower {
@@ -11304,10 +11531,29 @@ fn sphinx_directive_spec(lower: &str) -> Option<DirectiveSpec> {
             option_spec: TOCTREE_OPTS,
             kind: DirectiveKind::Toctree,
         }),
-        "versionadded" => version_change(&VERSIONADDED),
-        "versionchanged" => version_change(&VERSIONCHANGED),
-        "deprecated" => version_change(&DEPRECATED),
-        "versionremoved" => version_change(&VERSIONREMOVED),
+        "versionadded" | "versionchanged" | "deprecated" | "versionremoved" | "version-added"
+        | "version-changed" | "version-deprecated" | "version-removed" => Some(DirectiveSpec {
+            required_arguments: 1,
+            optional_arguments: 1,
+            final_argument_whitespace: true,
+            has_content: true,
+            option_spec: &[],
+            kind: DirectiveKind::VersionChange,
+        }),
+        // Sphinx registers docutils' `Class` under this name, as under
+        // `rst-class` (`SP/sphinx/directives/other.py:431-435`).
+        "cssclass" => directive_spec("class"),
+        "sectionauthor" | "moduleauthor" | "codeauthor" => one_argument(DirectiveKind::Author),
+        "tabularcolumns" => one_argument(DirectiveKind::TabularColumns),
+        "centered" => one_argument(DirectiveKind::Centered),
+        "acks" => Some(DirectiveSpec {
+            required_arguments: 0,
+            optional_arguments: 0,
+            final_argument_whitespace: false,
+            has_content: true,
+            option_spec: &[],
+            kind: DirectiveKind::Acks,
+        }),
         "seealso" => Some(DirectiveSpec {
             required_arguments: 0,
             optional_arguments: 0,
@@ -11411,8 +11657,8 @@ fn sphinx_directive_spec(lower: &str) -> Option<DirectiveSpec> {
 /// implements: `PythonDomain.directives` (`domains/python/__init__.py:739-754`),
 /// with the run()-time name aliasing resolved at spec-lookup time
 /// [PY §1.1], and `StandardDomain.directives`
-/// (`domains/std/__init__.py:739-747`) but `productionlist` (T18c). The c,
-/// cpp, js and rst domains' directives are not modelled (decision 16).
+/// (`domains/std/__init__.py:739-747`). The c, cpp, js and rst domains'
+/// directives are not modelled (decision 16).
 fn domain_directive_spec(domain: DomainId, name: &str) -> Option<DirectiveSpec> {
     match (domain, name) {
         (DomainId::Py, "function") => {
@@ -11483,6 +11729,14 @@ fn domain_directive_spec(domain: DomainId, name: &str) -> Option<DirectiveSpec> 
             has_content: true,
             option_spec: GLOSSARY_OPTS,
             kind: DirectiveKind::Glossary,
+        }),
+        (DomainId::Std, "productionlist") => Some(DirectiveSpec {
+            required_arguments: 1,
+            optional_arguments: 0,
+            final_argument_whitespace: true,
+            has_content: false,
+            option_spec: &[],
+            kind: DirectiveKind::ProductionList,
         }),
         _ => None,
     }
@@ -13268,6 +13522,98 @@ fn pseudo_section_parent_invalid(parent: Option<&'static str>) -> bool {
 /// anything reported against it stands (`get_source_and_line(self.lineno)`).
 fn directive_loc(input: &DirectiveInput<'_>) -> DocLoc {
     DocLoc::at(input.span.source, input.lineno)
+}
+
+/// The std domain's `token_xrefs` (`SP/sphinx/domains/std/__init__.py:558-589`):
+/// `text` as Text around a `pending_xref` for each backquoted token
+/// ([`token_spans`]), holding a `literal` of its title classed `xref`. A
+/// `~group:name` token is titled `name` and targets `group:name`, a
+/// `:name` one targets and is titled `name`, any other with a colon is
+/// both as written, and a bare `name` is titled `name` and targets
+/// `group:name`, or `name` outside a group.
+fn token_xrefs(text: &str, group: &str, span: Span) -> Vec<Node> {
+    let mut nodes = Vec::new();
+    let mut pos = 0;
+    for (start, end, token) in token_spans(text) {
+        if start > pos {
+            nodes.push(Node::text_node(&text[pos..start], span));
+        }
+        let (title, target) = if token.contains(':') {
+            if let Some(rest) = token.strip_prefix('~') {
+                // `_, title = token.split(':')`: the token has one colon.
+                let title = token.split_once(':').map_or(token, |(_, title)| title);
+                (title, rest.to_string())
+            } else if let Some(rest) = token.strip_prefix(':') {
+                (rest, rest.to_string())
+            } else {
+                (token, token.to_string())
+            }
+        } else if group.is_empty() {
+            (token, token.to_string())
+        } else {
+            (token, format!("{group}:{token}"))
+        };
+        let mut literal = Node::elem(kinds::LITERAL, span);
+        literal.set_rawsource(token);
+        literal.attrs.classes.push("xref".to_string());
+        literal.children.push(Node::text_node(title, span));
+        let mut xref = Node::elem(kinds::PENDING_XREF, span);
+        xref.set_rawsource(title);
+        xref.set("refdomain", AttrValue::Str("std".to_string()));
+        xref.set("reftarget", AttrValue::Str(target));
+        xref.set("reftype", AttrValue::Str("token".to_string()));
+        xref.children.push(literal);
+        nodes.push(xref);
+        pos = end;
+    }
+    if pos < text.len() {
+        nodes.push(Node::text_node(&text[pos..], span));
+    }
+    nodes
+}
+
+/// `token_re.finditer(text)` (`SP/sphinx/domains/std/__init__.py:45`,
+/// `` `((~?[\w-]*:)?\w+)` ``, Python's `\w` being `str.isalnum()` or `_`):
+/// each match's byte range and its group, the token. The optional group
+/// matches only where its `[\w-]` run ends at a colon, which the run
+/// cannot hold; failing that, or the `\w+` after it failing, the token is
+/// a bare `\w+`.
+fn token_spans(text: &str) -> Vec<(usize, usize, &str)> {
+    use crate::transforms::smartquotes::educate::py_is_word;
+    // The end of the run of characters `admits` from `from`.
+    let run = |from: usize, admits: &dyn Fn(char) -> bool| {
+        from + text[from..]
+            .chars()
+            .take_while(|&c| admits(c))
+            .map(char::len_utf8)
+            .sum::<usize>()
+    };
+    // `\w+` and the closing backquote from `from`: where the token ends.
+    let closes = |from: usize| {
+        let end = run(from, &py_is_word);
+        (end > from && text[end..].starts_with('`')).then_some(end)
+    };
+    let mut spans = Vec::new();
+    let mut pos = 0;
+    while let Some(found) = text[pos..].find('`') {
+        let start = pos + found;
+        let body = start + 1;
+        let tilde = usize::from(text[body..].starts_with('~'));
+        let group_end = run(body + tilde, &|c| py_is_word(c) || c == '-');
+        let end = if text[group_end..].starts_with(':') {
+            closes(group_end + 1).or_else(|| closes(body))
+        } else {
+            closes(body)
+        };
+        match end {
+            Some(end) => {
+                spans.push((start, end + 1, &text[body..end]));
+                pos = end + 1;
+            }
+            None => pos = body,
+        }
+    }
+    spans
 }
 
 /// Sphinx's admonitions pass their options to the node
@@ -24406,8 +24752,9 @@ mod structure_directive_tests {
     //! The document-structure directives' parse halves ([SD §3], wave 5a
     //! T18a): `contents`, `sectnum`/`section-numbering`, `target-notes`,
     //! `meta`, `title`, `header`, `footer` and
-    //! `restructuredtext-test-directive`, against docutils 0.22.4's parse
-    //! layer and Sphinx 9.1.0's read.
+    //! `restructuredtext-test-directive`, and Sphinx's extra directives
+    //! ([SD §3.9], T18c), against docutils 0.22.4's parse layer and Sphinx
+    //! 9.1.0's read.
 
     use crate::rst::{parse_rst_full, ParseOptions};
     use crate::transforms::reporter::LogRecord;
@@ -25108,6 +25455,292 @@ mod structure_directive_tests {
                     ".. |x| replace::\n\n   .. sidebar:: S\n      :name: sn\n\n      Body.\n.. _sn:\n\nPara.\n",
                     "    <system_message level=\"3\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error in \"replace\" directive: may contain a single paragraph only.\n    <system_message level=\"2\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"WARNING\">\n        <paragraph>\n            Substitution definition \"x\" empty or invalid.\n        <literal_block xml:space=\"preserve\">\n            .. |x| replace::\n            \n               .. sidebar:: S\n                  :name: sn\n            \n                  Body.\n    <system_message backrefs=\"id1\" level=\"2\" line=\"7\" source=\"<SRCDIR>/index.rst\" type=\"WARNING\">\n        <paragraph>\n            Duplicate explicit target name: \"sn\".\n    <target dupnames=\"sn\" refid=\"id1\">\n    <paragraph ids=\"id1\">\n        Para.\n",
                     &["<SRCDIR>/index.rst:1: ERROR: Error in \"replace\" directive: may contain a single paragraph only. [docutils]", "<SRCDIR>/index.rst:1: WARNING: Substitution definition \"x\" empty or invalid.", "", ".. |x| replace::", "", "   .. sidebar:: S", "      :name: sn", "", "      Body. [docutils]", "<SRCDIR>/index.rst:7: WARNING: Duplicate explicit target name: \"sn\". [docutils]"],
+                ),
+            ],
+            true,
+        ));
+        assert!(differences.is_empty(), "{}", differences.join("\n\n"));
+    }
+
+    /// Sphinx's extra directives ([SD §3.9], wave 5a T18c), read as Sphinx
+    /// 9.1.0 reads them: `cssclass` is docutils' `class`, as `rst-class`
+    /// is; the `version-*` spellings are `VersionChange` under their
+    /// unhyphenated type; `sectionauthor`, `moduleauthor` and `codeauthor`
+    /// give nothing, `show_authors` being off; `tabularcolumns` leaves a
+    /// `tabular_col_spec`; `centered` inline-parses its argument at its
+    /// line, its messages after it; `acks` holds its content when that is
+    /// one bullet list, and logs `.. acks content is not a list` at its
+    /// line otherwise, the content dropped and its registrations kept; and
+    /// the std domain's `productionlist`, in both spellings, makes one
+    /// `production` per line up to the first without a colon, each name
+    /// a `grammar-token-…` target noted as a std `token` object, which a
+    /// duplicate names, and each backquoted token a `pending_xref`. None
+    /// of them is known to a docutils parse. The `acks` warning is located
+    /// by docname, which the source directory and `index.rst` spell.
+    //
+    // oracle: Sphinx 9.1.0 through tools/gen_sphinx_fixture.py's harness
+    //   with `keep_warnings = True` (scratchpad/t18c/probes/sread.py over
+    //   cases1.json), and docutils 0.22.4's parse layer for the docutils
+    //   row (scratchpad/t18c/probes/dparse.py over dcases.json).
+    #[test]
+    fn sphinx_extra_directives_match_probe() {
+        let mut differences = parse_layer_differences(&[
+            // extras_unknown_in_docutils
+            (
+                ".. cssclass:: x\n\n.. centered:: c\n\n.. productionlist:: a: b\n",
+                "<document source=\"<snippet>\">\n    <system_message level=\"1\" line=\"1\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            No directive entry for \"cssclass\" in module \"docutils.parsers.rst.languages.en\".\n            Trying \"cssclass\" as canonical directive name.\n    <system_message level=\"3\" line=\"1\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown directive type \"cssclass\".\n        <literal_block xml:space=\"preserve\">\n            .. cssclass:: x\n    <system_message level=\"1\" line=\"3\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            No directive entry for \"centered\" in module \"docutils.parsers.rst.languages.en\".\n            Trying \"centered\" as canonical directive name.\n    <system_message level=\"3\" line=\"3\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown directive type \"centered\".\n        <literal_block xml:space=\"preserve\">\n            .. centered:: c\n    <system_message level=\"1\" line=\"5\" source=\"<snippet>\" type=\"INFO\">\n        <paragraph>\n            No directive entry for \"productionlist\" in module \"docutils.parsers.rst.languages.en\".\n            Trying \"productionlist\" as canonical directive name.\n    <system_message level=\"3\" line=\"5\" source=\"<snippet>\" type=\"ERROR\">\n        <paragraph>\n            Unknown directive type \"productionlist\".\n        <literal_block xml:space=\"preserve\">\n            .. productionlist:: a: b\n",
+                "<snippet>:1: (INFO/1) No directive entry for \"cssclass\" in module \"docutils.parsers.rst.languages.en\".\nTrying \"cssclass\" as canonical directive name.\n<snippet>:1: (ERROR/3) Unknown directive type \"cssclass\".\n\n.. cssclass:: x\n\n<snippet>:3: (INFO/1) No directive entry for \"centered\" in module \"docutils.parsers.rst.languages.en\".\nTrying \"centered\" as canonical directive name.\n<snippet>:3: (ERROR/3) Unknown directive type \"centered\".\n\n.. centered:: c\n\n<snippet>:5: (INFO/1) No directive entry for \"productionlist\" in module \"docutils.parsers.rst.languages.en\".\nTrying \"productionlist\" as canonical directive name.\n<snippet>:5: (ERROR/3) Unknown directive type \"productionlist\".\n\n.. productionlist:: a: b\n",
+            ),
+        ]);
+        let index = std::path::Path::new("<SRCDIR>").join("index.rst");
+        let not_a_list = |line: u32| {
+            format!(
+                "{}:{line}: WARNING: .. acks content is not a list",
+                index.display()
+            )
+        };
+        let (acks_at_1, acks_at_4) = (not_a_list(1), not_a_list(4));
+        differences.extend(super::tests::sphinx_read_differences(
+            &[
+                // cssclass_pending
+                (
+                    "Title\n=====\n\n.. cssclass:: myclass otherclass\n\nParagraph after.\n",
+                    "    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph classes=\"myclass otherclass\">\n            Paragraph after.\n",
+                    &[],
+                ),
+                // cssclass_content
+                (
+                    ".. cssclass:: a B\n\n   Para one.\n\n   Para two.\n",
+                    "    <paragraph classes=\"a b\">\n        Para one.\n    <paragraph classes=\"a b\">\n        Para two.\n",
+                    &[],
+                ),
+                // cssclass_invalid
+                (
+                    ".. cssclass:: !!!\n",
+                    "    <system_message level=\"3\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Invalid class attribute value for \"cssclass\" directive: \"!!!\".\n        <literal_block xml:space=\"preserve\">\n            .. cssclass:: !!!\n",
+                    &["<SRCDIR>/index.rst:1: ERROR: Invalid class attribute value for \"cssclass\" directive: \"!!!\". [docutils]"],
+                ),
+                // cssclass_last
+                (
+                    "Para.\n\n.. cssclass:: x\n",
+                    "    <paragraph>\n        Para.\n    <system_message level=\"3\" line=\"3\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            No suitable element following \"cssclass\" directive\n        <literal_block xml:space=\"preserve\">\n            .. cssclass:: x\n",
+                    &["<SRCDIR>/index.rst:3: ERROR: No suitable element following \"cssclass\" directive", "", ".. cssclass:: x [docutils]"],
+                ),
+                // cssclass_upper
+                (
+                    ".. CSSClass:: up\n\nPara.\n",
+                    "    <paragraph classes=\"up\">\n        Para.\n",
+                    &[],
+                ),
+                // version_added_alias
+                (
+                    ".. version-added:: 1.2\n\n   Some text.\n",
+                    "    <versionmodified type=\"versionadded\" version=\"1.2\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified added\">\n                Added in version 1.2: \n            Some text.\n",
+                    &[],
+                ),
+                // version_changed_alias
+                (
+                    ".. version-changed:: 2.0 Inline *text*.\n",
+                    "    <versionmodified type=\"versionchanged\" version=\"2.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified changed\">\n                Changed in version 2.0: \n            Inline \n            <emphasis>\n                text\n            .\n",
+                    &[],
+                ),
+                // version_deprecated_alias
+                (
+                    ".. version-deprecated:: 3.0\n",
+                    "    <versionmodified type=\"deprecated\" version=\"3.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified deprecated\">\n                Deprecated since version 3.0.\n",
+                    &[],
+                ),
+                // version_removed_alias
+                (
+                    ".. version-removed:: 4.0\n\n   * a list first\n",
+                    "    <versionmodified type=\"versionremoved\" version=\"4.0\">\n        <paragraph translatable=\"0\">\n            <inline classes=\"versionmodified removed\">\n                Removed in version 4.0: \n        <bullet_list bullet=\"*\">\n            <list_item>\n                <paragraph>\n                    a list first\n",
+                    &[],
+                ),
+                // version_alias_no_arg
+                (
+                    ".. version-added::\n",
+                    "    <system_message level=\"3\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error in \"version-added\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. version-added::\n",
+                    &["<SRCDIR>/index.rst:1: ERROR: Error in \"version-added\" directive:", "1 argument(s) required, 0 supplied.", "", ".. version-added:: [docutils]"],
+                ),
+                // authors
+                (
+                    ".. sectionauthor:: Jane Doe <jane@example.org>\n\n.. moduleauthor:: Mod Author\n\n.. codeauthor:: Code *Author*\n\nPara.\n",
+                    "    <paragraph>\n        Para.\n",
+                    &[],
+                ),
+                // authors_errors
+                (
+                    ".. sectionauthor::\n\n.. codeauthor:: X\n\n   content\n\n.. moduleauthor:: Y\n   :opt: z\n",
+                    "    <system_message level=\"3\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error in \"sectionauthor\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. sectionauthor::\n    <system_message level=\"3\" line=\"3\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error in \"codeauthor\" directive:\n            no content permitted.\n        <literal_block xml:space=\"preserve\">\n            .. codeauthor:: X\n            \n               content\n",
+                    &["<SRCDIR>/index.rst:1: ERROR: Error in \"sectionauthor\" directive:", "1 argument(s) required, 0 supplied.", "", ".. sectionauthor:: [docutils]", "<SRCDIR>/index.rst:3: ERROR: Error in \"codeauthor\" directive:", "no content permitted.", "", ".. codeauthor:: X", "", "   content [docutils]"],
+                ),
+                // tabularcolumns
+                (
+                    ".. tabularcolumns:: |l|L|\n\n+---+\n| a |\n+---+\n",
+                    "    <tabular_col_spec spec=\"|l|L|\">\n    <table>\n        <tgroup cols=\"1\">\n            <colspec colwidth=\"3\">\n            <tbody>\n                <row>\n                    <entry>\n                        <paragraph>\n                            a\n",
+                    &[],
+                ),
+                // tabularcolumns_multiline
+                (
+                    ".. tabularcolumns:: |l|\n   L|   \n",
+                    "    <tabular_col_spec spec=\"|l|\nL|\">\n",
+                    &[],
+                ),
+                // tabularcolumns_errors
+                (
+                    ".. tabularcolumns::\n\n.. tabularcolumns:: |l|\n\n   content\n",
+                    "    <system_message level=\"3\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error in \"tabularcolumns\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. tabularcolumns::\n    <system_message level=\"3\" line=\"3\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error in \"tabularcolumns\" directive:\n            no content permitted.\n        <literal_block xml:space=\"preserve\">\n            .. tabularcolumns:: |l|\n            \n               content\n",
+                    &["<SRCDIR>/index.rst:1: ERROR: Error in \"tabularcolumns\" directive:", "1 argument(s) required, 0 supplied.", "", ".. tabularcolumns:: [docutils]", "<SRCDIR>/index.rst:3: ERROR: Error in \"tabularcolumns\" directive:", "no content permitted.", "", ".. tabularcolumns:: |l|", "", "   content [docutils]"],
+                ),
+                // centered
+                (
+                    ".. centered:: Centered *text* here\n",
+                    "    <centered>\n        Centered \n        <emphasis>\n            text\n         here\n",
+                    &[],
+                ),
+                // centered_problem
+                (
+                    ".. centered:: *unclosed and `bad\n\nAfter.\n",
+                    "    <centered>\n        <problematic ids=\"id2\" refid=\"id1\">\n            *\n        unclosed and \n        <problematic ids=\"id4\" refid=\"id3\">\n            `\n        bad\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"WARNING\">\n        <paragraph>\n            Inline emphasis start-string without end-string.\n    <system_message backrefs=\"id4\" ids=\"id3\" level=\"2\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"WARNING\">\n        <paragraph>\n            Inline interpreted text or phrase reference start-string without end-string.\n    <paragraph>\n        After.\n",
+                    &["<SRCDIR>/index.rst:1: WARNING: Inline emphasis start-string without end-string. [docutils]", "<SRCDIR>/index.rst:1: WARNING: Inline interpreted text or phrase reference start-string without end-string. [docutils]"],
+                ),
+                // centered_errors
+                (
+                    ".. centered::\n\n.. centered:: x\n\n   content\n",
+                    "    <system_message level=\"3\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error in \"centered\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. centered::\n    <system_message level=\"3\" line=\"3\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error in \"centered\" directive:\n            no content permitted.\n        <literal_block xml:space=\"preserve\">\n            .. centered:: x\n            \n               content\n",
+                    &["<SRCDIR>/index.rst:1: ERROR: Error in \"centered\" directive:", "1 argument(s) required, 0 supplied.", "", ".. centered:: [docutils]", "<SRCDIR>/index.rst:3: ERROR: Error in \"centered\" directive:", "no content permitted.", "", ".. centered:: x", "", "   content [docutils]"],
+                ),
+                // centered_multiline
+                (
+                    ".. centered:: line one\n   line two\n",
+                    "    <centered>\n        line one\n        line two\n",
+                    &[],
+                ),
+                // acks
+                (
+                    ".. acks::\n\n   * Alice\n   * Bob *the builder*\n",
+                    "    <acks>\n        <bullet_list bullet=\"*\">\n            <list_item>\n                <paragraph>\n                    Alice\n            <list_item>\n                <paragraph>\n                    Bob \n                    <emphasis>\n                        the builder\n",
+                    &[],
+                ),
+                // acks_not_a_list
+                (
+                    "Title\n=====\n\n.. acks::\n\n   not a list\n",
+                    "    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n",
+                    &[acks_at_4.as_str()],
+                ),
+                // acks_empty
+                (
+                    ".. acks::\n",
+                    "",
+                    &[acks_at_1.as_str()],
+                ),
+                // acks_two_lists
+                (
+                    ".. acks::\n\n   * a\n\n   - b\n",
+                    "",
+                    &[acks_at_1.as_str()],
+                ),
+                // acks_enumerated
+                (
+                    ".. acks::\n\n   1. a\n   2. b\n",
+                    "",
+                    &[acks_at_1.as_str()],
+                ),
+                // acks_target_kept
+                (
+                    ".. acks::\n\n   .. _t:\n\n   * a\n\nSee t_.\n",
+                    "    <paragraph>\n        See \n        <reference name=\"t\" refid=\"t\">\n            t\n        .\n",
+                    &[acks_at_1.as_str()],
+                ),
+                // acks_problem_in_item
+                (
+                    ".. acks::\n\n   * *unclosed\n",
+                    "    <acks>\n        <bullet_list bullet=\"*\">\n            <list_item>\n                <paragraph>\n                    <problematic ids=\"id2\" refid=\"id1\">\n                        *\n                    unclosed\n                <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"3\" source=\"<SRCDIR>/index.rst\" type=\"WARNING\">\n                    <paragraph>\n                        Inline emphasis start-string without end-string.\n",
+                    &["<SRCDIR>/index.rst:3: WARNING: Inline emphasis start-string without end-string. [docutils]"],
+                ),
+                // acks_option
+                (
+                    ".. acks:: arg\n\n   * a\n",
+                    "",
+                    &[acks_at_1.as_str()],
+                ),
+                // productionlist
+                (
+                    ".. productionlist::\n   try_stmt: `try1_stmt` | `try2_stmt`\n   try1_stmt: \"try\" \":\" `suite`\n            : (\"except\" [`expression` [\"as\" `identifier`]] \":\" `suite`)+\n",
+                    "    <productionlist>\n        <production tokenname=\"try_stmt\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-try_stmt\">\n                try_stmt\n              ::= \n            <pending_xref refdomain=\"std\" reftarget=\"try1_stmt\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    try1_stmt\n             | \n            <pending_xref refdomain=\"std\" reftarget=\"try2_stmt\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    try2_stmt\n            \n        <production tokenname=\"try1_stmt\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-try1_stmt\">\n                try1_stmt\n             ::= \n            \"try\" \":\" \n            <pending_xref refdomain=\"std\" reftarget=\"suite\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    suite\n            \n        <production tokenname=\"\" xml:space=\"preserve\">\n                          \n            (\"except\" [\n            <pending_xref refdomain=\"std\" reftarget=\"expression\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    expression\n             [\"as\" \n            <pending_xref refdomain=\"std\" reftarget=\"identifier\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    identifier\n            ]] \":\" \n            <pending_xref refdomain=\"std\" reftarget=\"suite\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    suite\n            )+\n            \n",
+                    &[],
+                ),
+                // productionlist_group
+                (
+                    ".. productionlist:: mygroup\n   a: `b` | `other:c` | `~grp:d` | `:e`\n   b: \"x\"\n",
+                    "    <productionlist>\n        <production tokenname=\"a\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-mygroup-a\">\n                a\n             ::= \n            <pending_xref refdomain=\"std\" reftarget=\"mygroup:b\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    b\n             | \n            <pending_xref refdomain=\"std\" reftarget=\"other:c\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    other:c\n             | \n            <pending_xref refdomain=\"std\" reftarget=\"grp:d\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    d\n             | \n            <pending_xref refdomain=\"std\" reftarget=\"e\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    e\n            \n        <production tokenname=\"b\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-mygroup-b\">\n                b\n             ::= \n            \"x\"\n            \n",
+                    &[],
+                ),
+                // productionlist_nl_escape
+                (
+                    ".. productionlist::\n   a: b \\\n      c\n   d: e\n",
+                    "    <productionlist>\n        <production tokenname=\"a\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-a\">\n                a\n             ::= \n            b    c\n            \n        <production tokenname=\"d\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-d\">\n                d\n             ::= \n            e\n            \n",
+                    &[],
+                ),
+                // productionlist_stop
+                (
+                    ".. productionlist::\n   a: b\n   no colon here\n   c: d\n",
+                    "    <productionlist>\n        <production tokenname=\"a\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-a\">\n                a\n             ::= \n            b\n            \n",
+                    &[],
+                ),
+                // productionlist_dup
+                (
+                    ".. productionlist::\n   a: b\n   a: c\n",
+                    "    <productionlist>\n        <production tokenname=\"a\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-a\">\n                a\n             ::= \n            b\n            \n        <production tokenname=\"a\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token--0\">\n                a\n             ::= \n            c\n            \n",
+                    &["<SRCDIR>/index.rst:1: WARNING: duplicate token description of a, other instance in index"],
+                ),
+                // productionlist_names
+                (
+                    ".. productionlist::\n   Foo Bar: x\n   été: y\n   !!!: z\n   ???: w\n",
+                    "    <productionlist>\n        <production tokenname=\"Foo Bar\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-Foo-Bar\">\n                Foo Bar\n             ::= \n            x\n            \n        <production tokenname=\"été\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-ete\">\n                été\n                 ::= \n            y\n            \n        <production tokenname=\"!!!\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token\">\n                !!!\n                 ::= \n            z\n            \n        <production tokenname=\"???\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token--0\">\n                ???\n                 ::= \n            w\n            \n",
+                    &[],
+                ),
+                // productionlist_std_prefix
+                (
+                    ".. std:productionlist::\n   a: b\n",
+                    "    <productionlist>\n        <production tokenname=\"a\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-a\">\n                a\n             ::= \n            b\n            \n",
+                    &[],
+                ),
+                // productionlist_marker_line
+                (
+                    ".. productionlist:: a: `b`\n   b: c\n",
+                    "    <productionlist>\n        <production tokenname=\"a\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-a\">\n                a\n             ::= \n            <pending_xref refdomain=\"std\" reftarget=\"b\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    b\n            \n        <production tokenname=\"b\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-b\">\n                b\n             ::= \n            c\n            \n",
+                    &[],
+                ),
+                // productionlist_errors
+                (
+                    ".. productionlist::\n\n.. productionlist:: a: b\n\n   content\n",
+                    "    <system_message level=\"3\" line=\"1\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error in \"productionlist\" directive:\n            1 argument(s) required, 0 supplied.\n        <literal_block xml:space=\"preserve\">\n            .. productionlist::\n    <system_message level=\"3\" line=\"3\" source=\"<SRCDIR>/index.rst\" type=\"ERROR\">\n        <paragraph>\n            Error in \"productionlist\" directive:\n            no content permitted.\n        <literal_block xml:space=\"preserve\">\n            .. productionlist:: a: b\n            \n               content\n",
+                    &["<SRCDIR>/index.rst:1: ERROR: Error in \"productionlist\" directive:", "1 argument(s) required, 0 supplied.", "", ".. productionlist:: [docutils]", "<SRCDIR>/index.rst:3: ERROR: Error in \"productionlist\" directive:", "no content permitted.", "", ".. productionlist:: a: b", "", "   content [docutils]"],
+                ),
+                // productionlist_tokens
+                (
+                    ".. productionlist::\n   x: `a b` `-c` `a-b` `_x` `1` `~y` `~:z` `g:` `:` `é`\n",
+                    "    <productionlist>\n        <production tokenname=\"x\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-x\">\n                x\n             ::= \n            `a b` `-c` `a-b` \n            <pending_xref refdomain=\"std\" reftarget=\"_x\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    _x\n             \n            <pending_xref refdomain=\"std\" reftarget=\"1\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    1\n             `~y` \n            <pending_xref refdomain=\"std\" reftarget=\":z\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    z\n             `g:` `:` \n            <pending_xref refdomain=\"std\" reftarget=\"é\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    é\n            \n",
+                    &[],
+                ),
+                // productionlist_empty_names
+                (
+                    ".. productionlist::\n   : a\n   : b\n",
+                    "    <productionlist>\n        <production tokenname=\"\" xml:space=\"preserve\">\n                 \n            a\n            \n        <production tokenname=\"\" xml:space=\"preserve\">\n                 \n            b\n            \n",
+                    &[],
+                ),
+                // productionlist_in_note
+                (
+                    ".. note::\n\n   .. productionlist::\n      a: b\n",
+                    "    <note>\n        <productionlist>\n            <production tokenname=\"a\" xml:space=\"preserve\">\n                <literal_strong ids=\"grammar-token-a\">\n                    a\n                 ::= \n                b\n                \n",
+                    &[],
+                ),
+                // productionlist_upper
+                (
+                    ".. ProductionList::\n   a: b\n",
+                    "    <productionlist>\n        <production tokenname=\"a\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-a\">\n                a\n             ::= \n            b\n            \n",
+                    &[],
                 ),
             ],
             true,

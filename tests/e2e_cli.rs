@@ -5305,6 +5305,135 @@ fn contents_local_in_replace_content_exits_two() {
     );
 }
 
+/// Decision 13: a `productionlist` whose argument holds no production — a
+/// group name alone, or a group name and then a line without a colon —
+/// leaves `max()` an empty sequence: `ValueError` out of the directive
+/// (`SP/sphinx/domains/std/__init__.py:615`), after the record the parse
+/// logged before it and before the ones after it.
+//
+// oracle: Sphinx 9.1.0, `sphinx-build -b html -q -w` over these index.rst
+//   files: exit 2, the line-4 record, then the exception
+//   (scratchpad/t18c/probes/cli.py over crash2.json).
+#[test]
+fn productionlist_without_productions_exits_two() {
+    for (test, directive) in [
+        (
+            "t18c-crash-productionlist-group",
+            ".. productionlist:: grp\n",
+        ),
+        (
+            "t18c-crash-productionlist-no-colon",
+            ".. productionlist:: grp\n   nocolon\n",
+        ),
+    ] {
+        let index = format!("Title\n=====\n\nBefore *x.\n\n{directive}\nAfter *y.\n");
+        assert_eq!(
+            crash_stream(test, &[("index.rst", index.as_str())], &[], &[]),
+            format!(
+                "<SRCDIR>/index.rst:4: WARNING: Inline emphasis start-string without end-string. \
+                 [docutils]\n{}",
+                crash_report(
+                    None,
+                    "ValueError: max() iterable argument is empty",
+                    Some("<SRCDIR>/index.rst:6")
+                )
+            ),
+            "{test}"
+        );
+    }
+}
+
+/// The std domain's `ProductionList` notes each token with
+/// `location=self.get_location()` (`SP/sphinx/domains/std/__init__.py:616`,
+/// `:692`), a `source:line` string Sphinx prints as it is, where a node
+/// location would be made absolute: the source of the directive's input
+/// line, which for an included file is the include's own spelling, the
+/// one the reporter's records print, for the prologue `<rst_prologue>`,
+/// and for the document its path. Every document read after the first
+/// holds `rst_prolog`'s `productionlist` again, so the second one warns.
+//
+// oracle: Sphinx 9.1.0, `sphinx-build -b html -q -w` from the source
+//   directory over these files (scratchpad/t18c/probes/cli.py over
+//   inc1.json and prolog1.json).
+#[test]
+fn a_duplicate_token_is_located_as_its_source_spells_it() {
+    let include = [
+        (
+            "index.rst",
+            "Title\n=====\n\n.. productionlist::\n   tok: a\n\n.. include:: part.inc\n\nBad *x.\n",
+        ),
+        (
+            "part.inc",
+            "Part.\n\n.. productionlist::\n   tok: b\n\nBad *y.\n",
+        ),
+    ];
+    let prolog = [
+        (
+            "conf.py",
+            "project = 'Temp'\nrst_prolog = '''\n.. productionlist::\n   tok: p\n'''\n",
+        ),
+        ("index.rst", "Title\n=====\n\n.. toctree::\n\n   a\n"),
+        ("a.rst", "A\n=\n\nText.\n"),
+    ];
+    for (test, files, expected) in [
+        (
+            "t18c-token-include",
+            &include[..],
+            "\
+part.inc:3: WARNING: duplicate token description of tok, other instance in index
+part.inc:6: WARNING: Inline emphasis start-string without end-string. [docutils]
+<SRCDIR>/index.rst:9: WARNING: Inline emphasis start-string without end-string. [docutils]
+",
+        ),
+        (
+            "t18c-token-prolog",
+            &prolog[..],
+            "<rst_prologue>:2: WARNING: duplicate token description of tok, other instance in a\n",
+        ),
+    ] {
+        let src = temp_source(test, files);
+        let out = out_dir(test);
+        let (result, written) = warning_stream(&src, &out, &[]);
+        assert!(result.status.success(), "{test}: {}", stderr_of(&result));
+        assert_eq!(written, expected, "{test}");
+    }
+}
+
+/// Decision 13: `VersionChange` takes its type from the directive's name
+/// as written, through `name_aliases` (`version-added` is `versionadded`),
+/// and a name in another case has no label: `KeyError` out of the
+/// directive (`SP/sphinx/domains/changeset.py:65-71`), before its content
+/// is parsed, for the hyphenated spellings and the plain ones alike.
+//
+// oracle: Sphinx 9.1.0, `sphinx-build -b html -q -w` over these index.rst
+//   files: exit 2, the line-4 record, then the exception
+//   (scratchpad/t18c/probes/cli.py over crash2.json).
+#[test]
+fn version_change_in_another_case_exits_two() {
+    for (test, name) in [
+        ("t18c-crash-version-added", "Version-Added"),
+        ("t18c-crash-version-removed", "version-Removed"),
+        ("t18c-crash-versionadded", "VersionAdded"),
+        ("t18c-crash-deprecated", "DEPRECATED"),
+    ] {
+        let index =
+            format!("Title\n=====\n\nBefore *x.\n\n.. {name}:: 1.0\n\n   Body *z.\n\nAfter *y.\n");
+        assert_eq!(
+            crash_stream(test, &[("index.rst", index.as_str())], &[], &[]),
+            format!(
+                "<SRCDIR>/index.rst:4: WARNING: Inline emphasis start-string without end-string. \
+                 [docutils]\n{}",
+                crash_report(
+                    None,
+                    &format!("KeyError: '{name}'"),
+                    Some("<SRCDIR>/index.rst:6")
+                )
+            ),
+            "{test}"
+        );
+    }
+}
+
 /// Decision 13: `MenuSelection` is `GUILabel` after its `-->`s: the same
 /// `IndexError`.
 #[test]

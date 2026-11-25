@@ -395,7 +395,8 @@ pub struct PyModuleRecord {
 }
 
 /// One `StandardDomain.note_object` call the parse layer made
-/// (`GenericObject`/`ConfigurationValue.add_target_and_index`).
+/// (`GenericObject`/`ConfigurationValue.add_target_and_index`, and
+/// `ProductionList.make_name_target` for a production's `token`).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ObjectRegistration {
     /// Source-table index of the registering signature; the duplicate
@@ -410,7 +411,8 @@ pub struct ObjectRegistration {
     /// `:envvar:`/`:confval:` role resolves against.
     pub name: String,
     pub node_id: String,
-    /// 1-based line of the signature node (`location=signode`), for the
+    /// 1-based line of the signature node (`location=signode`), or of a
+    /// token's `productionlist` directive (`self.get_location()`), for the
     /// duplicate-description warning.
     pub line: u32,
     /// The parse's record sequence number, drawn at the registration (see
@@ -4188,18 +4190,19 @@ pub(crate) mod tests {
         let expected = "<document source=\"<SRC>/index.rst\">\n    <paragraph>\n        <pending_xref py:class=\"True\" py:module=\"True\" refdoc=\"index\" refdomain=\"py\" refexplicit=\"0\" reftarget=\"f\" reftype=\"func\" refwarn=\"0\">\n            <literal classes=\"xref py py-func\">\n                f()\n         \n        <pending_xref py:class=\"True\" py:module=\"True\" refdoc=\"index\" refdomain=\"py\" refexplicit=\"0\" reftarget=\"C\" reftype=\"class\" refwarn=\"0\">\n            <literal classes=\"xref py py-class\">\n                C\n         \n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"0\" reftarget=\"r\" reftype=\"ref\" refwarn=\"1\">\n            <inline classes=\"xref std std-ref\">\n                r\n         \n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"0\" reftarget=\"r2\" reftype=\"ref\" refwarn=\"1\">\n            <inline classes=\"xref std std-ref\">\n                r2\n         \n        <pending_xref refdoc=\"index\" refdomain=\"std\" refexplicit=\"0\" reftarget=\"index\" reftype=\"doc\" refwarn=\"1\">\n            <inline classes=\"xref std std-doc\">\n                index\n";
         assert_eq!(read_tree(source, ReadConfig::default()), expected);
 
+        // The std domain's `productionlist` (T18c) answers to both
+        // spellings.
+        for name in ["std:productionlist", "productionlist"] {
+            let out = read_parse(&format!(".. {name}:: x: y\n"), ReadConfig::default());
+            assert!(logged(&out).is_empty(), "{name}");
+            assert!(tree_messages(&out).is_empty(), "{name}");
+            let kinds: Vec<&str> = out.doctree.root.children.iter().map(|n| n.kind).collect();
+            assert_eq!(kinds, ["productionlist"], "{name}");
+        }
         // The c, cpp, js and rst domains are registered, so their prefixes
         // log nothing, but this crate implements none of their directives
-        // (decision 16), and `productionlist` waits for T18c in both
-        // spellings: each keeps `Unknown directive type`.
-        for name in [
-            "c:function",
-            "cpp:class",
-            "js:function",
-            "rst:directive",
-            "std:productionlist",
-            "productionlist",
-        ] {
+        // (decision 16): each keeps `Unknown directive type`.
+        for name in ["c:function", "cpp:class", "js:function", "rst:directive"] {
             let out = read_parse(&format!(".. {name}:: x\n"), ReadConfig::default());
             assert!(logged(&out).is_empty(), "{name}");
             let texts: Vec<String> = tree_messages(&out)

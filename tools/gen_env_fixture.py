@@ -2245,6 +2245,58 @@ x
 """,
         },
     },
+    {
+        # Wave 5a T18c (structure-directives report §3.9): the std domain's
+        # `productionlist` notes each named production as a std `token`
+        # object (`ProductionList.make_name_target`), `group:name` in a
+        # production group (`a`'s `lang`) and the bare name outside one.
+        # `b` and then `index` describe `term`: the later read warns
+        # (`duplicate token description of term, other instance in b`) and
+        # its registration wins. A production's backquoted tokens and the
+        # `:token:` role resolve against the objects: a bare token in a
+        # group names `group:name` (`a`'s `expr` finds nothing), `:name`
+        # leaves the group, and a token that resolves to nothing warns
+        # nowhere.
+        "name": "productionlist_tokens",
+        "conf": {},
+        "files": {
+            "index": """\
+Grammar
+=======
+
+.. toctree::
+
+   a
+   b
+
+.. productionlist::
+   expr: `term` ("+" `term`)*
+   term: `factor` | `lang:stmt`
+
+See :token:`expr`, :token:`lang:stmt`, :token:`missing` and :token:`the term <term>`.
+""",
+            "a": """\
+A
+=
+
+.. productionlist:: lang
+   stmt: `expr` ";"
+   factor: "x"
+       : `:term`
+
+See :token:`stmt` and :token:`lang:factor`.
+""",
+            "b": """\
+B
+=
+
+.. productionlist::
+   term: "dup"
+
+See :token:`term`.
+""",
+        },
+    },
 ]
 
 
