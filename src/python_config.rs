@@ -4128,6 +4128,14 @@ e = 'esc\n'
     /// it, as the reader drops those other bindings: a `-D` override of the
     /// key lifts the error, never the drop (`t17b-fix3/specs/chain_title*`,
     /// `tuple_title*`).
+    ///
+    /// Python 3.12 runs each row's text, as Sphinx runs `conf.py`, and
+    /// Sphinx reads each `Ok` row's value (scratch `t19b1/rows/`), but where
+    /// the run's failure is what the row pins (`+=` to an unset name, to
+    /// `None`, of a number or a `bytes`; `del` of an unbound name; a short
+    /// `\x` escape; `bytes` mixed with `str`), and in the row with a
+    /// character that is no ASCII right before a name, which Python reads
+    /// nowhere outside a string.
     #[test]
     fn unevaluable_prolog_or_epilog_fails_the_parse() {
         /// The pending binding, or what `rst_prolog` holds (`None`: unset
@@ -4148,8 +4156,8 @@ e = 'esc\n'
         let rows: [(&str, &str, Expected); 73] = [
             (
                 "f-string",
-                "rst_prolog = f\"x {version}\"\n",
-                Err(("rst_prolog", 1, "unsupported expression")),
+                "version = '1'\nrst_prolog = f\"x {version}\"\n",
+                Err(("rst_prolog", 2, "unsupported expression")),
             ),
             (
                 "str.format",
@@ -4193,13 +4201,13 @@ e = 'esc\n'
             ),
             (
                 "in an if block",
-                "if x:\n    rst_prolog = 'a'\n",
-                Err(("rst_prolog", 2, "an assignment inside a block")),
+                "x = 1\nif x:\n    rst_prolog = 'a'\n",
+                Err(("rst_prolog", 3, "an assignment inside a block")),
             ),
             (
                 "in a one-line if",
-                "if x: rst_prolog = 'a'\n",
-                Err(("rst_prolog", 1, "an assignment inside a block")),
+                "x = 1\nif x: rst_prolog = 'a'\n",
+                Err(("rst_prolog", 2, "an assignment inside a block")),
             ),
             (
                 "in a try block",
@@ -4208,34 +4216,36 @@ e = 'esc\n'
             ),
             (
                 "in a for block",
-                "for x in y:\n    rst_prolog = 'a'\n",
-                Err(("rst_prolog", 2, "an assignment inside a block")),
+                "y = [1]\nfor x in y:\n    rst_prolog = 'a'\n",
+                Err(("rst_prolog", 3, "an assignment inside a block")),
             ),
             (
                 "+= in a with block",
-                "with open('defs.rst.inc') as f:\n    rst_epilog += f.read()\n",
-                Err(("rst_epilog", 2, "an assignment inside a block")),
+                "import io\nrst_epilog = ''\nwith io.StringIO('defs') as f:\n    \
+                 rst_epilog += f.read()\n",
+                Err(("rst_epilog", 4, "an assignment inside a block")),
             ),
             (
                 "CPython's conf.py",
-                "rst_epilog = f\"\"\"\n|{v}|\n\"\"\"\nif lc:\n    rst_epilog += f\"\"\"\\\n.. _T: x\n\"\"\"\n\
+                "v = '3'\nlc = True\n\
+                 rst_epilog = f\"\"\"\n|{v}|\n\"\"\"\nif lc:\n    rst_epilog += f\"\"\"\\\n.. _T: x\n\"\"\"\n\
                  else:\n    rst_epilog += \"\"\"\\\n.. _T: y\n\"\"\"\n",
-                Err(("rst_epilog", 1, "unsupported expression")),
+                Err(("rst_epilog", 3, "unsupported expression")),
             ),
             (
                 "a tuple target",
-                "rst_prolog, rst_epilog = make()\n",
-                Err(("rst_prolog", 1, "an assignment it cannot evaluate")),
+                "make = lambda: ('a', 'b')\nrst_prolog, rst_epilog = make()\n",
+                Err(("rst_prolog", 2, "an assignment it cannot evaluate")),
             ),
             (
                 "a parenthesized tuple target",
-                "(x, [rst_epilog]) = make()\n",
-                Err(("rst_epilog", 1, "an assignment it cannot evaluate")),
+                "make = lambda: ('x', ['e'])\n(x, [rst_epilog]) = make()\n",
+                Err(("rst_epilog", 2, "an assignment it cannot evaluate")),
             ),
             (
                 "a starred target",
-                "*rst_epilog, x = make()\n",
-                Err(("rst_epilog", 1, "an assignment it cannot evaluate")),
+                "make = lambda: ('a', 'b')\n*rst_epilog, x = make()\n",
+                Err(("rst_epilog", 2, "an assignment it cannot evaluate")),
             ),
             (
                 "a chained assignment",
@@ -4264,8 +4274,8 @@ e = 'esc\n'
             ),
             (
                 "an unevaluable binding after the last evaluated one",
-                "rst_prolog = f'x'\nrst_prolog = 'a'\nif y:\n    rst_prolog += 'b'\n",
-                Err(("rst_prolog", 4, "an assignment inside a block")),
+                "y = 1\nrst_prolog = f'x'\nrst_prolog = 'a'\nif y:\n    rst_prolog += 'b'\n",
+                Err(("rst_prolog", 5, "an assignment inside a block")),
             ),
             (
                 "a later literal",
@@ -4284,12 +4294,13 @@ e = 'esc\n'
             ),
             (
                 "an unrelated block",
-                "rst_prolog = 'a'\nif x:\n    y = rst_prolog\n",
+                "x = 1\nrst_prolog = 'a'\nif x:\n    y = rst_prolog\n",
                 Ok(Some("a")),
             ),
             (
                 "a subscript's key",
-                "rst_prolog = 'a'\nx = {}\nx[rst_prolog] = 1\nx.y[rst_prolog] += 1\n",
+                "import types\nrst_prolog = 'a'\nx = {}\nx[rst_prolog] = 1\n\
+                 x = types.SimpleNamespace(y=x)\nx.y[rst_prolog] += 1\n",
                 Ok(Some("a")),
             ),
             (
@@ -4299,8 +4310,8 @@ e = 'esc\n'
             ),
             (
                 "a call's keyword argument",
-                "rst_prolog = 'a'\nconfigure(rst_prolog='x')\nhtml_context = dict(\n    \
-                 rst_prolog='x',\n)\n",
+                "rst_prolog = 'a'\nconfigure = dict\nconfigure(rst_prolog='x')\n\
+                 html_context = dict(\n    rst_prolog='x',\n)\n",
                 Ok(Some("a")),
             ),
             (
@@ -4390,17 +4401,17 @@ e = 'esc\n'
             ),
             (
                 "del of a name a block may have bound",
-                "if x:\n    rst_prolog = 'a'\ndel rst_prolog\n",
-                Err(("rst_prolog", 2, "an assignment inside a block")),
+                "x = 1\nif x:\n    rst_prolog = 'a'\ndel rst_prolog\n",
+                Err(("rst_prolog", 3, "an assignment inside a block")),
             ),
             (
                 "del in a block",
-                "rst_prolog = 'a'\nif x:\n    del rst_prolog\n",
-                Err(("rst_prolog", 3, "a del inside a block")),
+                "x = 1\nrst_prolog = 'a'\nif x:\n    del rst_prolog\n",
+                Err(("rst_prolog", 4, "a del inside a block")),
             ),
             (
                 "del of a subscript",
-                "rst_prolog = 'a'\nx = {}\ndel x[rst_prolog]\n",
+                "rst_prolog = 'a'\nx = {'a': 1}\ndel x[rst_prolog]\n",
                 Ok(Some("a")),
             ),
             (
@@ -4410,18 +4421,19 @@ e = 'esc\n'
             ),
             (
                 "a for target in a tuple",
-                "for x, rst_epilog in pairs: pass\n",
-                Err(("rst_epilog", 1, "a for target")),
+                "pairs = [('a', 'b')]\nfor x, rst_epilog in pairs: pass\n",
+                Err(("rst_epilog", 2, "a for target")),
             ),
             (
                 "a with target",
-                "with open('p') as rst_prolog:\n    pass\n",
-                Err(("rst_prolog", 1, "a with target")),
+                "import io\nwith io.StringIO('p') as rst_prolog:\n    pass\n",
+                Err(("rst_prolog", 2, "a with target")),
             ),
             (
                 "a parenthesized with target",
-                "with (open('p') as f, open('e') as rst_epilog):\n    pass\n",
-                Err(("rst_epilog", 1, "a with target")),
+                "import io\nwith (io.StringIO('p') as f, io.StringIO('e') as rst_epilog):\n    \
+                 pass\n",
+                Err(("rst_epilog", 2, "a with target")),
             ),
             (
                 "an except target",
@@ -4455,33 +4467,34 @@ e = 'esc\n'
             ),
             (
                 "an import",
-                "rst_prolog = 'a'\nfrom shared import rst_prolog\n",
+                "rst_prolog = 'a'\nfrom string import ascii_letters as rst_prolog\n",
                 Err(("rst_prolog", 2, "an import")),
             ),
             (
                 "an import's alias, parenthesized",
-                "from shared import (\n    x as rst_epilog,\n    y,\n)\n",
+                "from string import (\n    ascii_letters as rst_epilog,\n    digits,\n)\n",
                 Err(("rst_epilog", 1, "an import")),
             ),
             (
                 "a parenthesized import with no space",
-                "from shared import(rst_prolog)\n",
+                "from string import(ascii_letters as rst_prolog)\n",
                 Err(("rst_prolog", 1, "an import")),
             ),
             (
                 "an import in a function",
-                "rst_prolog = 'a'\ndef setup(app):\n    from shared import rst_prolog\n",
+                "rst_prolog = 'a'\ndef setup(app):\n    \
+                 from string import ascii_letters as rst_prolog\n",
                 Ok(Some("a")),
             ),
             (
                 "an import before a literal",
-                "from shared import rst_prolog\nrst_prolog = 'plain'\n",
+                "from string import ascii_letters as rst_prolog\nrst_prolog = 'plain'\n",
                 Ok(Some("plain")),
             ),
             (
                 "importing other names",
-                "import rst_prolog_tools as tools\nfrom shared import rst_prologue\n\
-                 rst_prolog = 'a'\n",
+                "import string as rst_prolog_tools\n\
+                 from string import ascii_letters as rst_prologue\nrst_prolog = 'a'\n",
                 Ok(Some("a")),
             ),
             (
@@ -4713,8 +4726,8 @@ e = 'esc\n'
         type Row = (&'static str, &'static [(&'static str, usize, bool)]);
         let rows: [Row; 8] = [
             (
-                "rst_prolog = f'{x}'\ndef setup(app):\n    app.config.rst_prolog = 'b'\n",
-                &[("rst_prolog", 1, true), ("rst_prolog", 3, false)],
+                "x = 'a'\nrst_prolog = f'{x}'\ndef setup(app):\n    app.config.rst_prolog = 'b'\n",
+                &[("rst_prolog", 2, true), ("rst_prolog", 4, false)],
             ),
             (
                 "def setup(app):\n    global rst_prolog\n    rst_prolog = 'c'\n    \
@@ -4727,9 +4740,9 @@ e = 'esc\n'
                 &[("rst_prolog", 2, false), ("rst_prolog", 4, true)],
             ),
             (
-                "def inited(app, config):\n    config.rst_epilog = 'a'\n    \
+                "x = 'a'\ndef inited(app, config):\n    config.rst_epilog = 'a'\n    \
                  config.rst_epilog += 'b'\nrst_epilog = f'{x}'\nrst_epilog += 'c'\n",
-                &[("rst_epilog", 2, false), ("rst_epilog", 4, true)],
+                &[("rst_epilog", 3, false), ("rst_epilog", 5, true)],
             ),
             (
                 "extensions = []\ndef setup(app):\n    \
@@ -4812,8 +4825,9 @@ e = 'esc\n'
             ),
             (
                 "item_module",
-                "app.config['rst_prolog'] = 'b'\n",
-                Err(&[("rst_prolog", 1, ITEM, false)]),
+                "import types\napp = types.SimpleNamespace(config={})\n\
+                 app.config['rst_prolog'] = 'b'\n",
+                Err(&[("rst_prolog", 3, ITEM, false)]),
             ),
             (
                 "an item with an attribute or a subscript after it",
