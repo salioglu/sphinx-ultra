@@ -7952,3 +7952,158 @@ fn the_first_document_read_misses_the_prolog_roles_in_its_field_lines() {
     assert!(result.status.success(), "stderr: {}", stderr_of(&result));
     assert_eq!(written, records("b"), "warm, b touched");
 }
+
+// ---------------------------------------------------------------------------
+// The conf.py reader's scopes and annotations (wave 5a T19b1)
+// ---------------------------------------------------------------------------
+
+/// A native `build` of `src`, canonicalized, into `out` with a `-w` file:
+/// the run, and the file's text with the source directory spelled
+/// `<SRCDIR>/`.
+fn native_warning_stream(src: &Path, out: &Path) -> (Output, String) {
+    let src = sphinx_ultra::utils::canonicalize_simplified(src).unwrap();
+    let log = out.with_extension("w");
+    let _ = std::fs::remove_file(&log);
+    let result = build(&src, out, &["-w", log.to_str().unwrap()]);
+    let written = std::fs::read(&log).unwrap_or_default();
+    (result, srcdir_spelled(&written, &src))
+}
+
+/// A statement in a `def` or a `class` body binds a local variable or a
+/// class attribute, not the module's name, for every key: Sphinx 9.1.0
+/// reads no `html_logo` that only `setup(app)` or a class body assigns,
+/// and keeps the module's value, and the `source_suffix` that makes
+/// `other.txt` a document, over a later local one, so it prints no record
+/// about them (scratch `t17b-rr1/specs/generic_local.json`;
+/// `t19b1/specs/generic_class.json`, `generic_local_after_top.json`,
+/// `generic_local_dict.json`). A name the innermost `def` or `class`
+/// declares `global` is the module's, and Sphinx warns about the missing
+/// logo (`generic_global.json`, `generic_class_global.json`). The native
+/// subcommand reads conf.py the same way.
+#[test]
+fn a_def_or_class_body_binds_a_conf_value_only_where_it_declares_it_global() {
+    let logo = "WARNING: logo file 'missing.png' does not exist\n";
+    let index = ("index.rst", "T\n=\n\nText.\n");
+    let cases = [
+        (
+            "t19b1-generic-local",
+            "extensions = []\ndef setup(app):\n    html_logo = 'missing.png'\n",
+            "",
+        ),
+        (
+            "t19b1-generic-class",
+            "extensions = []\nclass C:\n    html_logo = 'missing.png'\n",
+            "",
+        ),
+        (
+            "t19b1-generic-local-after-top",
+            "extensions = []\nhtml_logo = 'missing.png'\ndef setup(app):\n    \
+             html_logo = 'other.png'\n",
+            logo,
+        ),
+        (
+            "t19b1-generic-global",
+            "extensions = []\ndef setup(app):\n    global html_logo\n    \
+             html_logo = 'missing.png'\n",
+            logo,
+        ),
+        (
+            "t19b1-generic-class-global",
+            "extensions = []\nclass C:\n    global html_logo\n    html_logo = 'missing.png'\n",
+            logo,
+        ),
+    ];
+    for (name, conf, expected) in cases {
+        let src = temp_source(name, &[("conf.py", conf), index]);
+        let (result, written) = warning_stream(&src, &out_dir(name), &[]);
+        assert!(result.status.success(), "{name}: {}", stderr_of(&result));
+        assert_eq!(written, expected, "{name}");
+        let native = format!("{name}-native");
+        let (result, written) = native_warning_stream(&src, &out_dir(&native));
+        assert!(result.status.success(), "{native}: {}", stderr_of(&result));
+        assert_eq!(written, expected, "{native}");
+    }
+
+    let src = temp_source(
+        "t19b1-generic-local-dict",
+        &[
+            (
+                "conf.py",
+                "extensions = []\n\
+                 source_suffix = {'.txt': 'restructuredtext', '.rst': 'restructuredtext'}\n\
+                 def setup(app):\n    source_suffix = {'.rst': 'restructuredtext'}\n",
+            ),
+            ("index.rst", "T\n=\n\n.. toctree::\n\n   other\n"),
+            ("other.txt", "Other\n=====\n\nText.\n"),
+        ],
+    );
+    let out = out_dir("t19b1-generic-local-dict");
+    let (result, written) = warning_stream(&src, &out, &[]);
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert_eq!(written, "");
+    assert!(out.join("other.html").is_file());
+    let out = out_dir("t19b1-generic-local-dict-native");
+    let (result, written) = native_warning_stream(&src, &out);
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert_eq!(written, "");
+    assert!(out.join("other.html").is_file());
+}
+
+/// An annotated assignment binds its target as a plain one does, for
+/// every key: Sphinx 9.1.0 reads `rst_prolog: str = <literal>`, and reads
+/// a `-D` override of the key over it, and warns about the logo
+/// `html_logo: str = <literal>` names (scratch `t17b-rr3/specs/ann.json`,
+/// `ann_D.json`; `t19b1/specs/generic_ann.json`). Its annotation binds
+/// nothing, so the reader drops nothing and notices nothing: stderr is
+/// the warning stream. The native subcommand reads conf.py the same way.
+#[test]
+fn an_annotated_assignment_binds_as_a_plain_one_does() {
+    let undefined = |name: &str| {
+        format!("<SRCDIR>/index.rst:4: ERROR: Undefined substitution referenced: \"{name}\". [docutils]\n")
+    };
+    let src = temp_source(
+        "t19b1-ann",
+        &[
+            (
+                "conf.py",
+                "extensions = []\nrst_prolog: str = '.. |a| replace:: A\\n'\n",
+            ),
+            ("index.rst", "T\n=\n\nText |a| |b|.\n"),
+        ],
+    );
+    let out = out_dir("t19b1-ann");
+    for (extra, expected) in [
+        (&[][..], undefined("b")),
+        (
+            &["-D", "rst_prolog=.. |b| replace:: B\n"][..],
+            undefined("a"),
+        ),
+    ] {
+        let (result, written) = warning_stream(&src, &out, extra);
+        assert!(result.status.success(), "{extra:?}: {}", stderr_of(&result));
+        assert_eq!(written, expected, "{extra:?}");
+        assert_eq!(srcdir_spelled(&result.stderr, &src), written, "{extra:?}");
+    }
+    let (result, written) = native_warning_stream(&src, &out_dir("t19b1-ann-native"));
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert_eq!(written, undefined("b"));
+
+    let src = temp_source(
+        "t19b1-generic-ann",
+        &[
+            (
+                "conf.py",
+                "extensions = []\nhtml_logo: str = 'missing.png'\n",
+            ),
+            ("index.rst", "T\n=\n\nText.\n"),
+        ],
+    );
+    let logo = "WARNING: logo file 'missing.png' does not exist\n";
+    let (result, written) = warning_stream(&src, &out_dir("t19b1-generic-ann"), &[]);
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert_eq!(written, logo);
+    assert_eq!(srcdir_spelled(&result.stderr, &src), written);
+    let (result, written) = native_warning_stream(&src, &out_dir("t19b1-generic-ann-native"));
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert_eq!(written, logo);
+}

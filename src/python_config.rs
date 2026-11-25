@@ -449,7 +449,10 @@ impl PythonConfigParser {
     /// evaluated or recorded as [`Self::unevaluable`] for the key, and is
     /// warned about only when it binds anything else, which this reader
     /// drops: a `-D` override of the key may lift the error, never the
-    /// drop.
+    /// drop. An assignment of any other name in a `def` or a `class` body
+    /// binds a local variable or a class attribute, which the namespace
+    /// does not hold, unless the body declares the name `global`
+    /// ([`binds_module_name`]).
     fn parse_statements(&mut self, content: &str) -> Result<()> {
         // The `def` and `class` statements whose bodies the statements are
         // in, innermost last.
@@ -486,6 +489,11 @@ impl PythonConfigParser {
 
             match split_assignment(stmt) {
                 Some((name, value_src)) => match parse_python_literal(value_src) {
+                    // In a `def` or `class` body, a local variable or a
+                    // class attribute, unless the body declares the name
+                    // `global` (scratch `t17b-rr1/specs/generic_local.json`,
+                    // `t19b1/specs/generic_*`).
+                    Ok(_) if !binds_module_name(&scopes, name) => {}
                     Ok(value) => {
                         match python_dict_key_order(value_src).filter(|_| value.is_object()) {
                             Some(order) => self.dict_key_orders.insert(name.to_string(), order),
@@ -1237,9 +1245,24 @@ fn logical_statements(content: &str) -> Vec<(usize, String)> {
     statements
 }
 
-/// Split `identifier = <value>` at the first top-level `=` that is a plain
-/// assignment (not `==`, `!=`, `<=`, `>=`, or an augmented assignment).
-/// Returns `None` for anything that is not a simple assignment to a bare name.
+/// Python 3.12's keywords (`keyword.kwlist`), which no assignment binds:
+/// before a colon, one starts a compound statement's one-line body
+/// (`else: x = 1`), not an annotated assignment.
+const PYTHON_KEYWORDS: [&str; 35] = [
+    "False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue",
+    "def", "del", "elif", "else", "except", "finally", "for", "from", "global", "if", "import",
+    "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try", "while",
+    "with", "yield",
+];
+
+/// Split `identifier = <value>`, or the annotated assignment
+/// `identifier: <annotation> = <value>`, which binds the identifier as the
+/// plain one does ([`unannotated_target`]), at the first top-level `=`
+/// that is a plain assignment (not `==`, `!=`, `<=`, `>=`, or an augmented
+/// assignment). Returns `None` for anything that is not a simple
+/// assignment to a bare name: a bare annotation (`identifier:
+/// <annotation>`), which binds nothing, and a compound statement's one-line
+/// body after a keyword (`else: x = 1`) among them.
 fn split_assignment(stmt: &str) -> Option<(&str, &str)> {
     let bytes = stmt.as_bytes();
     let mut depth = 0i32;
@@ -1269,7 +1292,7 @@ fn split_assignment(stmt: &str) -> Option<(&str, &str)> {
                 ) {
                     return None; // augmented assignment
                 }
-                let name = stmt[..i].trim();
+                let name = unannotated_target(&stmt[..i])?;
                 let is_identifier = !name.is_empty()
                     && name
                         .chars()
@@ -1277,7 +1300,7 @@ fn split_assignment(stmt: &str) -> Option<(&str, &str)> {
                         .map(|c| c.is_ascii_alphabetic() || c == '_')
                         .unwrap_or(false)
                     && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
-                if !is_identifier {
+                if !is_identifier || PYTHON_KEYWORDS.contains(&name) {
                     return None;
                 }
                 return Some((name, stmt[i + 1..].trim()));
@@ -1288,6 +1311,40 @@ fn split_assignment(stmt: &str) -> Option<(&str, &str)> {
     None
 }
 
+/// Where the annotation of `target`, an assignment's target text, starts:
+/// the index of its first `:` outside strings and brackets, which only an
+/// annotated assignment (`name: <annotation> = <value>`) writes there.
+fn annotation_colon(target: &str) -> Option<usize> {
+    let bytes = target.as_bytes();
+    let (mut depth, mut i) = (0i32, 0usize);
+    while i < bytes.len() {
+        match bytes[i] {
+            quote @ (b'\'' | b'"') => {
+                i = skip_string(bytes, i, quote);
+                continue;
+            }
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            b':' if depth == 0 => return Some(i),
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// What `target`, an assignment's target text, binds, trimmed: all of it,
+/// or an annotated assignment's text before its annotation
+/// ([`annotation_colon`]), which is read, not bound. `None` for an empty
+/// annotation, which Python rejects.
+fn unannotated_target(target: &str) -> Option<&str> {
+    match annotation_colon(target) {
+        Some(colon) if target[colon + 1..].trim().is_empty() => None,
+        Some(colon) => Some(target[..colon].trim()),
+        None => Some(target.trim()),
+    }
+}
+
 /// A `def` or `class` statement whose body the statements after it, more
 /// indented, are in: a scope of its own, where a statement binds a local
 /// variable or a class attribute, not the module's name, unless a `global`
@@ -1295,8 +1352,30 @@ fn split_assignment(stmt: &str) -> Option<(&str, &str)> {
 struct Scope {
     /// The header's indentation ([`indentation`]).
     indent: usize,
-    /// The keys of [`MUST_EVALUATE`] the scope's `global` statements name.
-    globals: Vec<&'static str>,
+    /// Whether it is a `def`'s: a function body runs when something calls
+    /// the function, after every top-level statement (`setup(app)`, an
+    /// event handler), where a class body runs where its `class` statement
+    /// does, while `conf.py` runs.
+    function: bool,
+    /// The names the scope's `global` statements name.
+    globals: Vec<String>,
+}
+
+impl Scope {
+    /// Whether a `global` statement in the scope names `name`.
+    fn declares_global(&self, name: &str) -> bool {
+        self.globals.iter().any(|global| global == name)
+    }
+}
+
+/// Whether a binding of `name` in `scopes`, innermost last, binds the
+/// module's name: at the top level, or where the innermost scope declares
+/// it `global`. Anywhere else it binds a local variable or a class
+/// attribute.
+fn binds_module_name(scopes: &[Scope], name: &str) -> bool {
+    scopes
+        .last()
+        .is_none_or(|scope| scope.declares_global(name))
 }
 
 /// The indentation of `raw`, a logical statement as [`logical_statements`]
@@ -1386,12 +1465,13 @@ enum Bound<'s> {
 /// else, which this reader drops ([`statement_bindings`]). A statement
 /// that binds neither key returns no binding.
 ///
-/// The bindings it sees are an assignment's targets (`=`, `op=`, a tuple,
-/// starred or chained target; a name, an attribute, or an item whose
-/// subscript is a string literal, but not a subscript's key or a lambda's
-/// parameter), `del`'s, a `for`'s, a `with`'s or an `except`'s target, an
-/// assignment expression, an import's names, a `def`'s or a `class`'s
-/// name, and a `setattr` call whose name is a string literal. Each target
+/// The bindings it sees are an assignment's targets (`=`, `op=`, an
+/// annotated, a tuple, starred or chained target; a name, an attribute, or
+/// an item whose subscript is a string literal, but not a subscript's key,
+/// an annotation or a lambda's parameter), `del`'s, a `for`'s, a `with`'s
+/// or an `except`'s target, an assignment expression, an import's names, a
+/// `def`'s or a `class`'s name, and a `setattr` call whose name is a string
+/// literal, not a method of that name. Each target
 /// that binds a key is a binding of its own: a statement can bind the
 /// module's name and an attribute of that name both. A star import,
 /// `exec(...)`, and a key that a subscript or a `setattr` call names
@@ -1415,6 +1495,7 @@ fn bindings<'s>(
     if opens_scope {
         scopes.push(Scope {
             indent,
+            function: header.keyword == "def",
             globals: Vec::new(),
         });
     }
@@ -1445,10 +1526,8 @@ fn simple_bindings<'s>(
     if let Some(names) = keyword_rest(stmt, "global") {
         if let Some(scope) = scopes.last_mut() {
             for name in names.split(',').map(str::trim) {
-                if let Some(key) = MUST_EVALUATE.into_iter().find(|key| *key == name) {
-                    if !scope.globals.contains(&key) {
-                        scope.globals.push(key);
-                    }
+                if !scope.declares_global(name) {
+                    scope.globals.push(name.to_string());
                 }
             }
         }
@@ -1465,18 +1544,22 @@ fn simple_bindings<'s>(
 /// What `bound`, a statement's binding of `key`, binds in the scope it
 /// runs in. An attribute's or an item's of any object but `conf.py`'s
 /// namespace runs after every top-level statement (in a function Sphinx
-/// calls), and no `-D` override replaces it; a function's own binding of
-/// the module's name, which a `global` statement or an item of
-/// `globals()` makes, runs after them too, but an override replaces it;
-/// in a function or a class body otherwise, a name, or an item of
-/// `vars()` or `locals()`, is the scope's own. At the top level, in a
-/// block, a statement may run once, many times or not at all.
+/// calls), and no `-D` override replaces it. A binding of the module's
+/// name in a function or a class body, which a `global` statement or an
+/// item of `globals()` makes, is one an override replaces: in a function
+/// (a method, or a class in a function, included) it runs after every
+/// top-level statement too, and in a class body where the `class`
+/// statement runs, as a statement in a block may. In a function or a
+/// class body otherwise, a name, or an item of `vars()` or `locals()`, is
+/// the scope's own. At the top level, in a block, a statement may run
+/// once, many times or not at all.
 fn resolve<'s>(
     bound: Bound<'s>,
     key: &'static str,
     scopes: &[Scope],
     in_block: bool,
 ) -> Binding<'s> {
+    let deferred = scopes.iter().any(|scope| scope.function);
     match bound {
         Bound::Attribute { reason } => {
             return Binding::Opaque {
@@ -1493,7 +1576,7 @@ fn resolve<'s>(
                 true => Binding::Opaque {
                     reason,
                     definite: false,
-                    deferred: true,
+                    deferred,
                     overridable: true,
                 },
                 false => Binding::Local,
@@ -1502,11 +1585,11 @@ fn resolve<'s>(
         _ => {}
     }
     match scopes.last() {
-        Some(scope) if !scope.globals.contains(&key) => Binding::Local,
+        Some(scope) if !scope.declares_global(key) => Binding::Local,
         Some(_) => Binding::Opaque {
             reason: "a binding in a function or class body that declares it global",
             definite: false,
-            deferred: true,
+            deferred,
             overridable: true,
         },
         None if in_block => Binding::Opaque {
@@ -1578,7 +1661,12 @@ fn statement_bindings(stmt: &str) -> (Vec<(&'static str, Bound<'_>)>, bool) {
     let walrus = walrus_targets(stmt);
     for key in MUST_EVALUATE {
         if targets.iter().any(|target| target.names.contains(&key)) {
-            let alone = matches!(assignment.targets[..], [target] if target.trim() == key);
+            // An annotated assignment binds its one target as a plain one
+            // does (scratch `t17b-rr3/specs/ann*`).
+            let alone = matches!(
+                assignment.targets[..],
+                [target] if unannotated_target(target) == Some(key)
+            );
             let value_src = assignment.value;
             let bound = match (alone, assignment.augmented) {
                 (true, None) => Bound::Assign(value_src),
@@ -1691,7 +1779,9 @@ fn item_binding<'s>(
 /// argument, outside strings. Sphinx reads `setattr(app.config,
 /// 'rst_prolog', ...)` in `setup(app)` over any `-D` override (scratch
 /// `t17b-fix3/specs/setattr_setup*`), and this reader cannot tell another
-/// object from Sphinx's configuration.
+/// object from Sphinx's configuration. A `setattr` after a `.` is a
+/// method of that name, no call of the builtin
+/// (`t17b-rr3/specs/dot_setattr*`).
 fn setattr_keys(text: &str) -> Vec<&'static str> {
     let bytes = text.as_bytes();
     let mut keys = Vec::new();
@@ -1707,7 +1797,8 @@ fn setattr_keys(text: &str) -> Vec<&'static str> {
                 while i < bytes.len() && is_identifier_byte(bytes[i]) {
                     i += 1;
                 }
-                if &text[start..i] != "setattr" {
+                let method = text[..start].trim_end().ends_with('.');
+                if &text[start..i] != "setattr" || method {
                     continue;
                 }
                 let open = i + text[i..].len() - text[i..].trim_start().len();
@@ -1810,7 +1901,8 @@ impl<'s> Header<'s> {
     /// `with`'s or an `except`'s `as` target (a name, an attribute or an
     /// item, as an assignment's, [`statement_bindings`]), a `def`'s or a
     /// `class`'s name, an assignment expression or a `setattr` call in its
-    /// expressions; and whether it binds anything else.
+    /// expressions; and whether it binds anything else, a `def`'s or a
+    /// `class`'s name that is no key among them.
     fn bindings(&self) -> (Vec<(&'static str, Bound<'s>)>, bool) {
         let mut found: Vec<(&'static str, Bound<'s>)> = Vec::new();
         let mut others = false;
@@ -1847,14 +1939,15 @@ impl<'s> Header<'s> {
                     "def" => "a def statement",
                     _ => "a class statement",
                 };
-                if let Some(key) = MUST_EVALUATE.into_iter().find(|key| *key == name) {
-                    found.push((
+                match MUST_EVALUATE.into_iter().find(|key| *key == name) {
+                    Some(key) => found.push((
                         key,
                         Bound::Other {
                             reason,
                             definite: true,
                         },
-                    ));
+                    )),
+                    None => others = true,
                 }
             }
             _ => {}
@@ -2211,11 +2304,13 @@ impl TargetBindings<'_> {
 
 /// What `target` binds: each name, attribute or item that ends a target,
 /// outside strings and the brackets of a call or a subscript, whose content
-/// is read, not bound (`x[rst_prolog]` binds an item of `x`, not the name).
-/// A bracket that follows a name, a closing bracket or a string opens a
-/// call or a subscript; any other opens a tuple or a list, whose items are
+/// is read, not bound (`x[rst_prolog]` binds an item of `x`, not the name),
+/// as an annotated assignment's annotation is ([`annotation_colon`]). A
+/// bracket that follows a name, a closing bracket or a string opens a call
+/// or a subscript; any other opens a tuple or a list, whose items are
 /// targets.
 fn target_bindings(target: &str) -> TargetBindings<'_> {
+    let target = &target[..annotation_colon(target).unwrap_or(target.len())];
     #[derive(Clone, Copy, PartialEq)]
     enum Prev {
         Start,
@@ -4050,7 +4145,7 @@ e = 'esc\n'
             "a parenthesized with target",
             "an assignment expression after a character that is no ASCII",
         ];
-        let rows: [(&str, &str, Expected); 72] = [
+        let rows: [(&str, &str, Expected); 73] = [
             (
                 "f-string",
                 "rst_prolog = f\"x {version}\"\n",
@@ -4223,6 +4318,14 @@ e = 'esc\n'
                 "a class body",
                 "rst_prolog = 'a'\nclass C:\n    rst_prolog = 'y'\n    def m(self):\n        \
                  rst_prolog = 'z'\n",
+                Ok(Some("a")),
+            ),
+            // A class body runs where its `class` statement does: its
+            // `global` binding is the module's name's then, which a later
+            // literal binds again (`t19b1/specs/class_global_then_literal*`).
+            (
+                "a class body's global binding before a literal",
+                "class C:\n    global rst_prolog\n    rst_prolog = 'x'\nrst_prolog = 'a'\n",
                 Ok(Some("a")),
             ),
             (
@@ -4684,6 +4787,15 @@ e = 'esc\n'
     /// body's own namespace, where an item binds nothing. An item whose
     /// subscript names the key otherwise, or names another key, binds
     /// nothing of it. A `del` of an attribute has a reason of its own.
+    ///
+    /// A class body runs where its `class` statement does, so its item of
+    /// `globals()` binds the module's name then, and a later top-level
+    /// literal is the value Sphinx reads
+    /// (`t17b-rr3/specs/class_globals_then_literal*`); a function's, a
+    /// method's included, runs when something calls it, after every
+    /// top-level statement. A method named `setattr` is no call of the
+    /// builtin (`t17b-rr3/specs/dot_setattr*`,
+    /// `t19b1/specs/dot_setattr_spaced.json`).
     #[test]
     fn items_and_setattr_calls_bind_as_sphinx_reads_them() {
         /// The bindings left as `(key, line, reason, overridable)`, or what
@@ -4692,7 +4804,7 @@ e = 'esc\n'
             Result<Option<&'static str>, &'static [(&'static str, usize, &'static str, bool)]>;
         const ITEM: &str = "an assignment to an item of that name";
         const SETATTR: &str = "a setattr call with that name";
-        let rows: [(&str, &str, Expected); 19] = [
+        let rows: [(&str, &str, Expected); 23] = [
             (
                 "item_setup",
                 "def setup(app):\n    app.config['rst_prolog'] = 'b'\n",
@@ -4728,6 +4840,17 @@ e = 'esc\n'
                 "globals_class",
                 "class C:\n    globals ( ) [\"rst_prolog\"] = 'b'\n",
                 Err(&[("rst_prolog", 2, ITEM, true)]),
+            ),
+            (
+                "class_globals_then_literal",
+                "class C:\n    globals()['rst_prolog'] = 'x'\nrst_prolog = 'a'\n",
+                Ok(Some("a")),
+            ),
+            (
+                "a method's globals() item before a literal",
+                "class C:\n    def m(self):\n        globals()['rst_prolog'] = 'x'\n\
+                 rst_prolog = 'a'\n",
+                Err(&[("rst_prolog", 3, ITEM, true)]),
             ),
             (
                 "vars_module",
@@ -4769,6 +4892,18 @@ e = 'esc\n'
                 "def setup(app):\n    app.connect('config-inited', lambda app, config: \
                  setattr(config, 'rst_epilog', 'b'))\n",
                 Err(&[("rst_epilog", 2, SETATTR, false)]),
+            ),
+            (
+                "dot_setattr",
+                "class K:\n    def setattr(self, *a): pass\nk = K()\n\
+                 k.setattr(k, 'rst_prolog', 1)\nrst_prolog = 'a'\n",
+                Ok(Some("a")),
+            ),
+            (
+                "a method named setattr, spaced",
+                "class K:\n    def setattr(self, *a): pass\nk = K()\n\
+                 k . setattr(k, 'rst_prolog', 1)\nrst_prolog = 'a'\n",
+                Ok(Some("a")),
             ),
             (
                 "item_other_key, and setattr of another key or by a name",
@@ -4816,6 +4951,268 @@ e = 'esc\n'
                     );
                 }
             }
+        }
+    }
+
+    /// A statement in a `def` or a `class` body binds a local variable or a
+    /// class attribute, not the module's name, for every key, unless the
+    /// innermost `def` or `class` declares the name `global`: Sphinx 9.1.0
+    /// reads no `html_logo` that only a function or a class body assigns,
+    /// in a block of its body too, and keeps the module's value over a
+    /// later local one (scratch `t17b-rr1/specs/generic_local.json`;
+    /// `t19b1/specs/generic_class.json`, `generic_def_block.json`,
+    /// `generic_global_other_def.json`, `generic_local_after_top.json`),
+    /// but reads the one a `global` declaration binds
+    /// (`generic_global.json`, `generic_class_global.json`). A local dict
+    /// leaves the module's and the order of its keys, which Sphinx reads
+    /// `source_suffix` in (`generic_local_dict.json`). The reader's notices
+    /// stay as they were: a statement it cannot read is noticed wherever it
+    /// is, a local one too.
+    #[test]
+    fn a_def_or_class_body_binds_a_key_only_where_it_declares_it_global() {
+        let rows: [(&str, &str, Option<&str>); 7] = [
+            (
+                "generic_local",
+                "extensions = []\ndef setup(app):\n    html_logo = 'missing.png'\n",
+                None,
+            ),
+            (
+                "generic_global",
+                "extensions = []\ndef setup(app):\n    global html_logo\n    \
+                 html_logo = 'missing.png'\n",
+                Some("missing.png"),
+            ),
+            (
+                "generic_class",
+                "extensions = []\nclass C:\n    html_logo = 'missing.png'\n",
+                None,
+            ),
+            (
+                "generic_class_global",
+                "extensions = []\nclass C:\n    global html_logo\n    html_logo = 'missing.png'\n",
+                Some("missing.png"),
+            ),
+            (
+                "generic_def_block",
+                "extensions = []\ndef setup(app):\n    if app:\n        html_logo = 'missing.png'\n",
+                None,
+            ),
+            (
+                "generic_global_other_def",
+                "extensions = []\ndef f():\n    global html_logo\ndef setup(app):\n    \
+                 html_logo = 'missing.png'\n",
+                None,
+            ),
+            (
+                "generic_local_after_top",
+                "extensions = []\nhtml_logo = 'missing.png'\ndef setup(app):\n    \
+                 html_logo = 'other.png'\n",
+                Some("missing.png"),
+            ),
+        ];
+        for (name, content, expected) in rows {
+            let p = parse(content);
+            assert_eq!(
+                p.conf_namespace
+                    .get("html_logo")
+                    .and_then(serde_json::Value::as_str),
+                expected,
+                "{name}"
+            );
+        }
+
+        let p = parse(
+            "extensions = []\n\
+             source_suffix = {'.txt': 'restructuredtext', '.rst': 'restructuredtext'}\n\
+             def setup(app):\n    source_suffix = {'.rst': 'restructuredtext'}\n",
+        );
+        let suffixes = p.conf_namespace.get("source_suffix").unwrap();
+        assert_eq!(suffixes.as_object().map(serde_json::Map::len), Some(2));
+        assert_eq!(p.dict_key_orders["source_suffix"], [".txt", ".rst"]);
+
+        let p = parse(
+            "project = 'P'\ndef setup(app):\n    html_logo = 'a.png'\n    \
+             html_title = f'{project}'\nclass C:\n    global html_short_title\n",
+        );
+        let notices: Vec<(usize, &str)> = p
+            .warnings()
+            .iter()
+            .map(|warning| (warning.line, warning.message.as_str()))
+            .collect();
+        assert_eq!(
+            notices,
+            [
+                (2, "unsupported statement dropped: def setup(app):"),
+                (
+                    4,
+                    "unsupported value for 'html_title' dropped (unsupported expression): \
+                     f'{project}'"
+                ),
+                (5, "unsupported statement dropped: class C:"),
+                (6, "unsupported statement dropped: global html_short_title"),
+            ]
+        );
+        assert_eq!(
+            Vec::from_iter(p.conf_namespace.keys()),
+            ["project"],
+            "{:?}",
+            p.conf_namespace
+        );
+    }
+
+    /// An annotated assignment, `name: <annotation> = <value>`, binds
+    /// `name` as `name = <value>` does, for every key: Sphinx 9.1.0 reads
+    /// `rst_prolog: str = <literal>` and `rst_epilog: 'str' = <literal>`
+    /// (scratch `t17b-rr3/specs/ann.json`; `t19b1/specs/ann_epilog.json`),
+    /// and warns about the logo `html_logo: <annotation> = <literal>`
+    /// names, however its annotation is spelled (`generic_ann.json`,
+    /// `generic_ann_complex.json`), but not in a function
+    /// (`generic_ann_local.json`). The annotation is read, not bound, so
+    /// the statement binds the key alone and gets no notice of a dropped
+    /// binding (`ann_D.json`). A bare annotation binds nothing
+    /// (`generic_ann_bare.json`, `ann_bare_prolog.json`) and keeps its
+    /// notice, as a one-line compound statement whose keyword reads like a
+    /// name before a colon does: a keyword is no name Python binds.
+    #[test]
+    fn an_annotated_assignment_binds_as_a_plain_one_does() {
+        /// A `conf.py` text, the key, what the namespace holds for it, and
+        /// the reader's notices as `(line, message)`.
+        type Row = (
+            &'static str,
+            &'static str,
+            Option<&'static str>,
+            &'static [(usize, &'static str)],
+        );
+        let rows: [Row; 9] = [
+            (
+                "extensions = []\nrst_prolog: str = '.. |a| replace:: A\\n'\n",
+                "rst_prolog",
+                Some(".. |a| replace:: A\n"),
+                &[],
+            ),
+            (
+                "extensions = []\nrst_epilog: 'str' = '.. |a| replace:: A\\n'\n",
+                "rst_epilog",
+                Some(".. |a| replace:: A\n"),
+                &[],
+            ),
+            (
+                "extensions = []\nrst_prolog: str\n",
+                "rst_prolog",
+                None,
+                &[(2, "unsupported statement dropped: rst_prolog: str")],
+            ),
+            (
+                "extensions = []\nhtml_logo: str = 'missing.png'\n",
+                "html_logo",
+                Some("missing.png"),
+                &[],
+            ),
+            (
+                "extensions = []\nhtml_static_path: list[str] = []\n\
+                 html_logo: \"dict[str, 'a=b:c']\" = 'missing.png'\n",
+                "html_logo",
+                Some("missing.png"),
+                &[],
+            ),
+            (
+                "extensions = []\nhtml_logo: str\n",
+                "html_logo",
+                None,
+                &[(2, "unsupported statement dropped: html_logo: str")],
+            ),
+            (
+                "extensions = []\ndef setup(app):\n    html_logo: str = 'missing.png'\n",
+                "html_logo",
+                None,
+                &[(2, "unsupported statement dropped: def setup(app):")],
+            ),
+            // Neither branch runs (`t19b1/specs/kw_else.json`,
+            // `kw_except.json`), and neither keyword is a name.
+            (
+                "x = 1\nif x:\n    pass\nelse: html_logo = 'missing.png'\n",
+                "else",
+                None,
+                &[
+                    (2, "unsupported statement dropped: if x:"),
+                    (3, "unsupported statement dropped: pass"),
+                    (
+                        4,
+                        "unsupported statement dropped: else: html_logo = 'missing.png'",
+                    ),
+                ],
+            ),
+            (
+                "try:\n    pass\nexcept: html_logo = 'missing.png'\n",
+                "except",
+                None,
+                &[
+                    (1, "unsupported statement dropped: try:"),
+                    (2, "unsupported statement dropped: pass"),
+                    (
+                        3,
+                        "unsupported statement dropped: except: html_logo = 'missing.png'",
+                    ),
+                ],
+            ),
+        ];
+        for (content, key, value, notices) in rows {
+            let p = parse(content);
+            assert_eq!(p.unevaluable(), None, "{content}");
+            assert_eq!(
+                p.conf_namespace
+                    .get(key)
+                    .and_then(serde_json::Value::as_str),
+                value,
+                "{content}"
+            );
+            let got: Vec<(usize, &str)> = p
+                .warnings()
+                .iter()
+                .map(|warning| (warning.line, warning.message.as_str()))
+                .collect();
+            assert_eq!(got, notices, "{content}");
+        }
+        let p = parse("extensions = []\nhtml_static_path: list[str] = []\n");
+        assert_eq!(
+            p.conf_namespace.get("html_static_path"),
+            Some(&serde_json::json!([]))
+        );
+    }
+
+    /// A `def` or a `class` binds its own name, which this reader drops: a
+    /// one-line one whose body binds a key of [`MUST_EVALUATE`] gets the
+    /// notice a multi-line one gets, with or without the `-D` override
+    /// that lifts the configuration error (Sphinx 9.1.0 builds either way,
+    /// scratch `t17b-rr3/specs/def_oneline_globals*`). A `def` named like
+    /// the key binds nothing else, and gets none.
+    #[test]
+    fn a_one_line_def_or_class_is_noticed_for_its_own_name() {
+        for (content, notice) in [
+            (
+                "extensions = []\ndef setup(app): globals()['rst_prolog'] = \
+                 '.. |a| replace:: A\\n'\n",
+                Some(
+                    "unsupported statement dropped: def setup(app): \
+                     globals()['rst_prolog'] = '.. |a| replace:: …",
+                ),
+            ),
+            (
+                "class C: globals()['rst_epilog'] = 'x'\n",
+                Some("unsupported statement dropped: class C: globals()['rst_epilog'] = 'x'"),
+            ),
+            ("def rst_prolog(): pass\n", None),
+        ] {
+            let p = parse(content);
+            assert!(p.unevaluable().is_some(), "{content}");
+            let line = p.unevaluable().unwrap().line;
+            let notices: Vec<&str> = p
+                .warnings()
+                .iter()
+                .filter(|warning| warning.line == line)
+                .map(|warning| warning.message.as_str())
+                .collect();
+            assert_eq!(notices, Vec::from_iter(notice), "{content}");
         }
     }
 
