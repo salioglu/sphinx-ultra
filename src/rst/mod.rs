@@ -122,11 +122,11 @@ pub struct ReadConfig {
     pub math_number_all: bool,
     /// `rst_prolog` (`config.py:266`, default `None`): text Sphinx's reader
     /// puts before every document's own lines, after its leading
-    /// field-marker lines ([`prolog`], [RC §4.1]). An empty string adds
+    /// field-marker lines (`rst::prolog`, [RC §4.1]). An empty string adds
     /// nothing.
     pub rst_prolog: Option<String>,
     /// `rst_epilog` (`config.py:265`, default `None`): text it puts after
-    /// every document's last line ([`prolog`]).
+    /// every document's last line (`rst::prolog`).
     pub rst_epilog: Option<String>,
 }
 
