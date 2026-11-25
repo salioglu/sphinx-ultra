@@ -5343,6 +5343,80 @@ fn productionlist_without_productions_exits_two() {
     }
 }
 
+/// Decision 13: Sphinx's `make_id` formats an id with Python's `%`,
+/// `(prefix + '-%s') % term` (`SP/sphinx/util/nodes.py:619`, `:625`), and
+/// the std domain puts a production group and a program name into the
+/// prefix (`SP/sphinx/domains/std/__init__.py:686-687`, `:296-303`). A `%`
+/// that is not doubled raises at the list's first named production, or at
+/// an option of the program, with what Python raises, after the records
+/// logged before it (a malformed spelling the option's signature held
+/// first) and before the option's content and the rest of the document.
+//
+// oracle: Sphinx 9.1.0, `sphinx-build -b html -q -w` over these index.rst
+//   files: exit 2, the records, then the exception
+//   (scratchpad/t18c/fix1/cli.py over pct_cli.json).
+#[test]
+fn a_percent_in_an_id_prefix_exits_two() {
+    let malformed = "<SRCDIR>/index.rst:8: WARNING: Malformed option description '', should look \
+                     like \"opt\", \"-opt args\", \"--opt args\", \"/opt args\" or \"+opt args\"\n";
+    for (test, directive, before, line, exception) in [
+        (
+            "t18c-crash-percent-group",
+            ".. productionlist:: 100%\n   a: b\n",
+            "",
+            6,
+            "ValueError: unsupported format character '%' (0x25) at index 19",
+        ),
+        (
+            "t18c-crash-percent-after-unnamed",
+            ".. productionlist:: 100%\n   : x\n   a: b\n",
+            "",
+            6,
+            "ValueError: unsupported format character '%' (0x25) at index 19",
+        ),
+        (
+            "t18c-crash-percent-conversion",
+            ".. productionlist:: a%b\n   a: b\n",
+            "",
+            6,
+            "ValueError: unsupported format character 'b' (0x62) at index 16",
+        ),
+        (
+            "t18c-crash-percent-arguments",
+            ".. productionlist:: x%sy\n   a: b\n",
+            "",
+            6,
+            "TypeError: not enough arguments for format string",
+        ),
+        (
+            "t18c-crash-percent-program",
+            ".. program:: 50%\n\n.. option:: -a\n\n   Content *z.\n",
+            "",
+            8,
+            "ValueError: unsupported format character '%' (0x25) at index 14",
+        ),
+        (
+            "t18c-crash-percent-program-malformed",
+            ".. program:: 50%\n\n.. option:: , -a\n",
+            malformed,
+            8,
+            "ValueError: unsupported format character '%' (0x25) at index 14",
+        ),
+    ] {
+        let index = format!("Title\n=====\n\nBefore *x.\n\n{directive}\nAfter *y.\n");
+        let location = format!("<SRCDIR>/index.rst:{line}");
+        assert_eq!(
+            crash_stream(test, &[("index.rst", index.as_str())], &[], &[]),
+            format!(
+                "<SRCDIR>/index.rst:4: WARNING: Inline emphasis start-string without end-string. \
+                 [docutils]\n{before}{}",
+                crash_report(None, exception, Some(&location))
+            ),
+            "{test}"
+        );
+    }
+}
+
 /// The std domain's `ProductionList` notes each token with
 /// `location=self.get_location()` (`SP/sphinx/domains/std/__init__.py:616`,
 /// `:692`), a `source:line` string Sphinx prints as it is, where a node

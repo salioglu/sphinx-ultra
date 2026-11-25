@@ -583,21 +583,31 @@ impl DocumentState {
     /// sphinx `util.nodes.make_id(env, document, prefix, term)` (`:610-637`),
     /// both prefix regimes:
     ///
-    /// - non-empty prefix: candidate `_make_id(f'{prefix}-{term}')`, rejected
-    ///   when it collapses to just the prefix, then serial fallback
-    ///   `f'{prefix}-{env.new_serialno(prefix)}'` until the id is free;
+    /// - non-empty prefix: `idformat = prefix + '-%s'`, which Python's `%`
+    ///   formats ([`id_format`]): candidate `_make_id(idformat % term)`,
+    ///   rejected when it collapses to just the prefix, then serial fallback
+    ///   `idformat % env.new_serialno(prefix)` until the id is free, the
+    ///   counter keyed by the prefix as written. A doubled `%` in the prefix
+    ///   formats as one `%`, which `_make_id` makes a hyphen of in the
+    ///   candidate and the fallback keeps (the group `p%%q` falls back to
+    ///   `grammar-token-p%q-0`); any other `%` raises, the `Err`, which the
+    ///   caller raises as the crash it is in Sphinx 9.1.0 (decision 13);
     /// - EMPTY prefix (the py domain's object ids, `domains/python/
     ///   _object.py:420`): `idformat` becomes `(id_prefix or 'id') + '%s'`
     ///   with the Sphinx-pinned `id_prefix=''`, so the candidate is the bare
     ///   `_make_id(term)` — dots, underscores and capitals survive, making
     ///   `mymod.C.meth` its own node id — rejected when empty, and the
     ///   serial fallback is `id{n}` (`id0`, `id1`, …) with the counter still
-    ///   keyed by the empty prefix.
+    ///   keyed by the empty prefix. Nothing to raise.
     ///
     /// Sphinx does NOT register the result in `document.ids` here —
     /// `note_explicit_target` → `document.set_id` does, which is
     /// [`IdAllocator::register`](crate::transforms::state::IdAllocator::register).
-    pub(crate) fn sphinx_make_id(&mut self, prefix: &str, term: &str) -> String {
+    pub(crate) fn sphinx_make_id(
+        &mut self,
+        prefix: &str,
+        term: &str,
+    ) -> Result<String, crate::rst::SphinxCrash> {
         let mut node_id = if term.is_empty() {
             None
         } else if prefix.is_empty() {
@@ -605,21 +615,54 @@ impl DocumentState {
             // `if not node_id: node_id = None` — empty term hash.
             (!candidate.is_empty()).then_some(candidate)
         } else {
-            let candidate = sphinx_make_id(&format!("{prefix}-{term}"));
+            let candidate = sphinx_make_id(&id_format(prefix, term)?);
             // "*term* is not good to generate a node_id."
             (candidate != prefix).then_some(candidate)
         };
         loop {
             match &node_id {
-                Some(id) if !self.ids.is_taken(id) => return id.clone(),
+                Some(id) if !self.ids.is_taken(id) => return Ok(id.clone()),
                 _ => {}
             }
             let serial = self.new_serialno(prefix);
             node_id = Some(if prefix.is_empty() {
                 format!("id{serial}")
             } else {
-                format!("{prefix}-{serial}")
+                id_format(prefix, &serial.to_string())?
             });
+        }
+    }
+}
+
+/// Sphinx's `make_id` formatting `idformat = prefix + '-%s'` for a
+/// non-empty prefix (`SP/sphinx/util/nodes.py:619`), `idformat % arg`:
+/// Python's `%` with one `str` ([`crate::pyformat::percent`]). When every
+/// `%` of the prefix is doubled, the trailing `%s` is the one conversion
+/// and each `%%` makes one `%`. Any other `%` starts a conversion, which
+/// raises or takes the argument the trailing `%s` then lacks: the
+/// exception, unlocated, which the caller locates and raises.
+///
+/// Python formats the fallback's serial as an `int`, the port as its
+/// `str()`: the same id under every prefix that has formatted a term,
+/// each `%` of it doubled. Only an empty term reaches the fallback with no
+/// term formatted first, and under a prefix with an undoubled `%` both
+/// raise, though not always alike: for a conversion that takes an `int`
+/// and refuses the serial's `str()` (`%d`, `%*s`, `%c` from serial 10
+/// on), Python goes on to the trailing `%s` and raises `not enough
+/// arguments for format string`. No Sphinx caller gets there: a
+/// production's name is never empty, and an option's spelling is empty
+/// only after its signature's first, which Sphinx requires (`if not
+/// firstname: raise ValueError`) and which formats the same program
+/// first. Ultra's option signature, which keeps an empty first spelling,
+/// does.
+fn id_format(prefix: &str, arg: &str) -> Result<String, crate::rst::SphinxCrash> {
+    use crate::pyformat::{percent, FormatError};
+    match percent(&format!("{prefix}-%s"), arg) {
+        Ok(id) => Ok(id),
+        Err(FormatError::TypeError(crash) | FormatError::Crash(crash)) => Err(crash),
+        // `%` looks no key up and reads no attribute.
+        Err(FormatError::KeyError(_) | FormatError::NotModelled(_)) => {
+            unreachable!("`%` raises neither")
         }
     }
 }
@@ -733,18 +776,27 @@ mod tests {
     #[test]
     fn state_sphinx_make_id_falls_back_to_a_per_prefix_serial() {
         let mut state = DocumentState::default();
-        assert_eq!(state.sphinx_make_id("envvar", "HOME"), "envvar-HOME");
+        assert_eq!(
+            state.sphinx_make_id("envvar", "HOME").unwrap(),
+            "envvar-HOME"
+        );
         // Not registered until `IdAllocator::register`, so the same call
         // repeats.
-        assert_eq!(state.sphinx_make_id("envvar", "HOME"), "envvar-HOME");
+        assert_eq!(
+            state.sphinx_make_id("envvar", "HOME").unwrap(),
+            "envvar-HOME"
+        );
         state.ids.register("envvar-HOME", None);
-        assert_eq!(state.sphinx_make_id("envvar", "HOME"), "envvar-0");
+        assert_eq!(state.sphinx_make_id("envvar", "HOME").unwrap(), "envvar-0");
         state.ids.register("envvar-0", None);
-        assert_eq!(state.sphinx_make_id("envvar", "HOME"), "envvar-1");
+        assert_eq!(state.sphinx_make_id("envvar", "HOME").unwrap(), "envvar-1");
         // A term that collapses to the prefix itself is "not good to
         // generate a node_id" and goes straight to the serial; the counter
         // is per prefix.
-        assert_eq!(state.sphinx_make_id("cmdoption", "!!!"), "cmdoption-0");
+        assert_eq!(
+            state.sphinx_make_id("cmdoption", "!!!").unwrap(),
+            "cmdoption-0"
+        );
     }
 
     /// The empty-prefix regime the py domain's `make_id(env, doc, '',
@@ -755,18 +807,103 @@ mod tests {
     #[test]
     fn state_sphinx_make_id_empty_prefix_keeps_fullname_and_serials_as_id_n() {
         let mut state = DocumentState::default();
-        assert_eq!(state.sphinx_make_id("", "mymod.C.meth"), "mymod.C.meth");
+        assert_eq!(
+            state.sphinx_make_id("", "mymod.C.meth").unwrap(),
+            "mymod.C.meth"
+        );
         state.ids.register("mymod.C.meth", None);
-        assert_eq!(state.sphinx_make_id("", "mymod.C.meth"), "id0");
+        assert_eq!(state.sphinx_make_id("", "mymod.C.meth").unwrap(), "id0");
         state.ids.register("id0", None);
-        assert_eq!(state.sphinx_make_id("", "mymod.C.meth"), "id1");
+        assert_eq!(state.sphinx_make_id("", "mymod.C.meth").unwrap(), "id1");
         // A term whose hash is empty goes straight to the serial; the
         // counter is shared per prefix ('' here), not per term.
         state.ids.register("id1", None);
-        assert_eq!(state.sphinx_make_id("", "!!!"), "id2");
+        assert_eq!(state.sphinx_make_id("", "!!!").unwrap(), "id2");
         // Empty term likewise.
         state.ids.register("id2", None);
-        assert_eq!(state.sphinx_make_id("", ""), "id3");
+        assert_eq!(state.sphinx_make_id("", "").unwrap(), "id3");
+    }
+
+    /// Sphinx's `make_id` formats `prefix + '-%s'` with Python's `%`
+    /// (`SP/sphinx/util/nodes.py:619-635`), with the term for the candidate
+    /// and with the serial for the fallback: a doubled `%` in the prefix is
+    /// one `%`, which the candidate's `_make_id` makes a hyphen of and the
+    /// fallback keeps, the serial counted under the prefix as written; a
+    /// `%` in the term is data; any other `%` in the prefix raises what
+    /// Python raises.
+    //
+    // oracle: `sphinx.util.nodes.make_id` of Sphinx 9.1.0 on CPython 3.12.2
+    //   over a stub environment and document, each id registered
+    //   (scratchpad/t18c/fix1/makeid.py).
+    #[test]
+    fn state_sphinx_make_id_formats_its_prefix_with_python_percent() {
+        let mut state = DocumentState::default();
+        for (prefix, term, id) in [
+            ("grammar-token-p%%q", "a", "grammar-token-p-q-a"),
+            ("grammar-token-p%%q", "a", "grammar-token-p%q-0"),
+            ("grammar-token-p%%q", "a", "grammar-token-p%q-1"),
+            ("cmdoption-p%%q-arg", "x", "cmdoption-p-q-arg-x"),
+            ("cmdoption-p%%q-arg", "x", "cmdoption-p%q-arg-0"),
+            ("cmdoption-p%%q-arg", "", "cmdoption-p%q-arg-1"),
+            ("grammar-token-g", "a%b", "grammar-token-g-a-b"),
+            ("grammar-token-g", "a%%b", "grammar-token-g-0"),
+        ] {
+            let made = state.sphinx_make_id(prefix, term).unwrap();
+            assert_eq!(made, id, "{prefix:?} {term:?}");
+            state.ids.register(&made, None);
+        }
+        let not_enough = "TypeError: not enough arguments for format string";
+        for (prefix, term, raised) in [
+            (
+                "grammar-token-100%",
+                "a",
+                "ValueError: unsupported format character '%' (0x25) at index 19",
+            ),
+            (
+                "grammar-token-a%b",
+                "a",
+                "ValueError: unsupported format character 'b' (0x62) at index 16",
+            ),
+            ("grammar-token-x%sy", "a", not_enough),
+            (
+                "cmdoption-50%",
+                "-a",
+                "ValueError: unsupported format character '%' (0x25) at index 14",
+            ),
+            ("cmdoption-p%-arg", "x", not_enough),
+            (
+                "grammar-token-%d",
+                "a",
+                "TypeError: %d format: a real number is required, not str",
+            ),
+            (
+                "grammar-token-%(x)s",
+                "a",
+                "TypeError: format requires a mapping",
+            ),
+            ("grammar-token-%*d", "a", "TypeError: * wants int"),
+            ("grammar-token-%c", "a", not_enough),
+            (
+                "grammar-token-%c",
+                "ab",
+                "TypeError: %c requires int or char",
+            ),
+            (
+                "grammar-token-\u{e9}%\u{fc}",
+                "a",
+                "ValueError: unsupported format character '?' (0xfc) at index 16",
+            ),
+            // An empty term formats only the serial, an `int` in Python and
+            // its `str()` here ([`id_format`]): these raise as Python does,
+            // where under `cmdoption-%d-arg` or `cmdoption-%*d` Python
+            // raises `not enough arguments` and the port what a `str` gets.
+            ("cmdoption-50%-arg", "", not_enough),
+            ("cmdoption-%s-arg", "", not_enough),
+            ("cmdoption-%c", "", not_enough),
+        ] {
+            let crash = state.sphinx_make_id(prefix, term).unwrap_err();
+            assert_eq!(crash.to_string(), raised, "{prefix:?} {term:?}");
+        }
     }
 
     /// A `Duplicate ID` record no node completes, its holder in no tree, no

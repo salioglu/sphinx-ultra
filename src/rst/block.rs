@@ -6052,7 +6052,9 @@ impl BlockParser {
                 format!("{:>width$}", " ::= ")
             };
             if !name.is_empty() {
-                let target = self.production_name_target(name, &group, &input);
+                let Some(target) = self.production_name_target(name, &group, &input) else {
+                    return;
+                };
                 production.children.push(target);
             }
             production.children.push(Node::text_node(&separator, span));
@@ -6073,18 +6075,35 @@ impl BlockParser {
     /// replays ([`super::ObjectRegistration`]). Its location is the
     /// directive's (`self.get_location()`), the one every production of
     /// the list shares.
+    ///
+    /// `None` when `make_id` raises, at a `%` the group does not double
+    /// (`(prefix + '-%s') % name`): Sphinx 9.1.0 crashes there, at the
+    /// list's first named production (decision 13), and the crash, at the
+    /// directive, is raised.
     fn production_name_target(
         &mut self,
         name: &str,
         group: &str,
         input: &DirectiveInput<'_>,
-    ) -> Node {
+    ) -> Option<Node> {
         let mut node = Node::elem("literal_strong", input.span);
         node.set_rawsource(name);
         node.children.push(Node::text_node(name, input.span));
-        let node_id = self
+        let node_id = match self
             .state
-            .sphinx_make_id(&format!("grammar-token-{group}"), name);
+            .sphinx_make_id(&format!("grammar-token-{group}"), name)
+        {
+            Ok(node_id) => node_id,
+            Err(crash) => {
+                let location = super::LogLocation::Node {
+                    source: input.span.source,
+                    line: input.lineno,
+                };
+                self.state
+                    .raise(super::SphinxCrash { location, ..crash }, 0, 0);
+                return None;
+            }
+        };
         node.attrs.ids.push(node_id.clone());
         self.state.ids.register(&node_id, None);
         let name = if group.is_empty() {
@@ -6104,7 +6123,7 @@ impl BlockParser {
                 line: input.lineno,
                 seq,
             });
-        node
+        Some(node)
     }
 
     /// sphinx glossary (std domain): term lines + indented definitions;
@@ -6289,7 +6308,10 @@ impl BlockParser {
                 // `make_id(env, document, 'term', termtext)` — sphinx's
                 // case-preserving `_make_id` fork, with a `term`-keyed
                 // serial fallback of its own, then `note_explicit_target`.
-                let node_id = self.state.sphinx_make_id("term", &term_text);
+                let node_id = self
+                    .state
+                    .sphinx_make_id("term", &term_text)
+                    .expect("a prefix without '%' formats");
                 self.state.ids.register(&node_id, None);
                 term.attrs.ids.push(node_id.clone());
                 // `std._note_term(termtext, node_id, location=term)`.
@@ -6703,8 +6725,20 @@ impl BlockParser {
                     if !optname.starts_with(['-', '/']) {
                         prefix.push_str("-arg");
                     }
-                    let node_id = self.state.sphinx_make_id(&prefix, optname);
-                    signode.attrs.ids.push(node_id);
+                    // `make_id` raises at a `%` the program name does not
+                    // double: Sphinx 9.1.0 crashes there (decision 13).
+                    match self.state.sphinx_make_id(&prefix, optname) {
+                        Ok(node_id) => signode.attrs.ids.push(node_id),
+                        Err(crash) => {
+                            let location = super::LogLocation::Node {
+                                source: input.span.source,
+                                line,
+                            };
+                            self.state
+                                .raise(super::SphinxCrash { location, ..crash }, 0, 0);
+                            return;
+                        }
+                    }
                 }
                 // `note_explicit_target` runs once, AFTER every id is
                 // chosen, so the ids of one signature never see each other
@@ -6753,8 +6787,12 @@ impl BlockParser {
         line: u32,
         signode: &mut Node,
     ) -> String {
-        // Both callers pass `self.objtype` as the make_id prefix.
-        let node_id = self.state.sphinx_make_id(objtype, name);
+        // Both callers pass `self.objtype` as the make_id prefix: a
+        // directive's name, which holds no `%`.
+        let node_id = self
+            .state
+            .sphinx_make_id(objtype, name)
+            .expect("a prefix without '%' formats");
         signode.attrs.ids.push(node_id.clone());
         self.state.ids.register(&node_id, None);
         let seq = self.state.draw_seq();
@@ -7103,7 +7141,10 @@ impl BlockParser {
         };
         // Empty prefix: the id IS the fullname, `id{n}` on collision
         // ([PY §1.5], the empty-prefix branch of `sphinx_make_id`).
-        let node_id = self.state.sphinx_make_id("", &fullname);
+        let node_id = self
+            .state
+            .sphinx_make_id("", &fullname)
+            .expect("an empty prefix formats nothing");
         signode.attrs.ids.push(node_id.clone());
         self.state.ids.register(&node_id, None);
         let seq = self.state.draw_seq();
@@ -7289,7 +7330,10 @@ impl BlockParser {
         // the directive's own nodes, after the index and target.
         let (content, _) = self.parse_nested_titled(&input.content, "py_module");
         if !no_index {
-            let node_id = self.state.sphinx_make_id("module", &modname);
+            let node_id = self
+                .state
+                .sphinx_make_id("module", &modname)
+                .expect("a prefix without '%' formats");
             self.state.ids.register(&node_id, None);
             let mut target = Node::elem(kinds::TARGET, input.span);
             target.attrs.ids.push(node_id.clone());
@@ -25745,6 +25789,55 @@ mod structure_directive_tests {
             ],
             true,
         ));
+        assert!(differences.is_empty(), "{}", differences.join("\n\n"));
+    }
+
+    /// `make_id` (`SP/sphinx/util/nodes.py:610-637`) formats an id with
+    /// Python's `%`, `(prefix + '-%s') % term`, and the std domain puts a
+    /// production group and a program name into the prefix
+    /// (`SP/sphinx/domains/std/__init__.py:686-687`, `:296-303`). A doubled
+    /// `%` formats as one `%`, which `_make_id` turns into a hyphen in the
+    /// candidate id and the serial fallback, `idformat % serial`, keeps
+    /// (`grammar-token-p%q-0`), the serial counted under the prefix as
+    /// written; a `%` in the name is data; and a group that no named
+    /// production formats raises nothing, its `%` kept in the productions'
+    /// references. An undoubled `%` raises at the first named production or
+    /// option (`tests/e2e_cli.rs` `a_percent_in_an_id_prefix_exits_two`).
+    //
+    // oracle: Sphinx 9.1.0 through tools/gen_sphinx_fixture.py's harness
+    //   with `keep_warnings = True` (scratchpad/t18c/fix1/sread.py over
+    //   pct_read.json).
+    #[test]
+    fn a_percent_in_an_id_prefix_reads_like_sphinx() {
+        let differences = super::tests::sphinx_read_differences(
+            &[
+                // productionlist_doubled_percent_group
+                (
+                    ".. productionlist:: p%%q\n   a: b\n   a: c\n   a: d\n",
+                    "    <productionlist>\n        <production tokenname=\"a\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-p-q-a\">\n                a\n             ::= \n            b\n            \n        <production tokenname=\"a\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-p%q-0\">\n                a\n             ::= \n            c\n            \n        <production tokenname=\"a\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-p%q-1\">\n                a\n             ::= \n            d\n            \n",
+                    &["<SRCDIR>/index.rst:1: WARNING: duplicate token description of p%%q:a, other instance in index", "<SRCDIR>/index.rst:1: WARNING: duplicate token description of p%%q:a, other instance in index"],
+                ),
+                // productionlist_percent_group_unnamed_only
+                (
+                    ".. productionlist:: 100%\n   : x `y`\n",
+                    "    <productionlist>\n        <production tokenname=\"\" xml:space=\"preserve\">\n                 \n            x \n            <pending_xref refdomain=\"std\" reftarget=\"100%:y\" reftype=\"token\">\n                <literal classes=\"xref\">\n                    y\n            \n",
+                    &[],
+                ),
+                // productionlist_percent_in_names
+                (
+                    ".. productionlist:: g\n   a%b: c\n   a%%b: d\n",
+                    "    <productionlist>\n        <production tokenname=\"a%b\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-g-a-b\">\n                a%b\n              ::= \n            c\n            \n        <production tokenname=\"a%%b\" xml:space=\"preserve\">\n            <literal_strong ids=\"grammar-token-g-0\">\n                a%%b\n             ::= \n            d\n            \n",
+                    &[],
+                ),
+                // option_doubled_percent_program
+                (
+                    ".. program:: p%%q\n\n.. option:: -a\n\n.. option:: -a\n\n.. option:: x\n\n.. option:: x\n",
+                    "    <index entries=\"('pair',\\ 'p%%q\\ command\\ line\\ option;\\ -a',\\ 'cmdoption-p-q-a',\\ '',\\ None)\">\n    <desc classes=\"std option\" desctype=\"option\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"option\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" allnames=\"-a\" classes=\"sig sig-object\" ids=\"cmdoption-p-q-a\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                -a\n            <desc_addname classes=\"sig-prename descclassname\" xml:space=\"preserve\">\n        <desc_content>\n    <index entries=\"('pair',\\ 'p%%q\\ command\\ line\\ option;\\ -a',\\ 'cmdoption-p%q-0',\\ '',\\ None)\">\n    <desc classes=\"std option\" desctype=\"option\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"option\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" allnames=\"-a\" classes=\"sig sig-object\" ids=\"cmdoption-p%q-0\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                -a\n            <desc_addname classes=\"sig-prename descclassname\" xml:space=\"preserve\">\n        <desc_content>\n    <index entries=\"('pair',\\ 'p%%q\\ command\\ line\\ option;\\ x',\\ 'cmdoption-p-q-arg-x',\\ '',\\ None)\">\n    <desc classes=\"std option\" desctype=\"option\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"option\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" allnames=\"x\" classes=\"sig sig-object\" ids=\"cmdoption-p-q-arg-x\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                x\n            <desc_addname classes=\"sig-prename descclassname\" xml:space=\"preserve\">\n        <desc_content>\n    <index entries=\"('pair',\\ 'p%%q\\ command\\ line\\ option;\\ x',\\ 'cmdoption-p%q-arg-0',\\ '',\\ None)\">\n    <desc classes=\"std option\" desctype=\"option\" domain=\"std\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"option\">\n        <desc_signature _toc_name=\"\" _toc_parts=\"()\" allnames=\"x\" classes=\"sig sig-object\" ids=\"cmdoption-p%q-arg-0\">\n            <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n                x\n            <desc_addname classes=\"sig-prename descclassname\" xml:space=\"preserve\">\n        <desc_content>\n",
+                    &[],
+                ),
+            ],
+            true,
+        );
         assert!(differences.is_empty(), "{}", differences.join("\n\n"));
     }
 }
