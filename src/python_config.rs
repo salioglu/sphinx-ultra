@@ -22,11 +22,9 @@ pub struct PythonConfigParser {
     /// override replaces, and the first one none does
     /// ([`Unevaluable::overridable`]): at most three per key.
     unevaluable: Vec<Pending>,
-    /// For a key of [`MUST_EVALUATE`] the namespace holds, the Python type
-    /// of the literal it holds (`type(value).__name__`), which its JSON
-    /// form cannot always tell: a tuple's is an array, as a list's is, and
-    /// an empty `bytes`, which reads as no value, has none.
-    literal_types: HashMap<&'static str, &'static str>,
+    /// For every name the namespace holds, the Python type of the literal
+    /// it holds (`type(value).__name__`, [`Self::literal_type`]).
+    literal_types: HashMap<String, &'static str>,
     /// For a name the namespace holds a dict literal under, the order the
     /// literal wrote its keys in, which the dict's JSON form, sorted by
     /// key, does not keep: `source_suffix`'s first key is data
@@ -382,6 +380,26 @@ impl PythonConfigParser {
         &self.warnings
     }
 
+    /// The Python type (`type(value).__name__`: `str`, `bytes`, `int`,
+    /// `float`, `bool`, `NoneType`, `list`, `tuple`, `dict`) of the literal
+    /// the namespace holds for `key`, or `None` when it holds nothing for
+    /// it. Its JSON form cannot always tell: a tuple's is an array, as a
+    /// list's is, and a `bytes` reads as the `str` its bytes are the
+    /// Latin-1 code points of, or as no value for `rst_prolog` and
+    /// `rst_epilog` when it is empty. Sphinx reads the type: its type check
+    /// names it, and its discovery cannot join a tuple to a list
+    /// (`find_files`, `SP/sphinx/environment/__init__.py:490-494`).
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "read once the type checks of the discovery keys are modelled"
+        )
+    )]
+    pub(crate) fn literal_type(&self, key: &str) -> Option<&'static str> {
+        self.literal_types.get(key).copied()
+    }
+
     /// The first statement binding `rst_prolog` or `rst_epilog` that the
     /// last parse could not evaluate, and that no later statement it could
     /// evaluate bound again (by line; at one line, `rst_prolog` first).
@@ -481,25 +499,30 @@ impl PythonConfigParser {
                 continue;
             }
 
-            // Imports set no configuration values; ignoring them loses
-            // nothing.
+            // An import is skipped without a notice, and what it binds is
+            // lost: `from m import <key>` binds that key, and
+            // `from m import *` any key `m` holds, to values this reader
+            // cannot see without running `m`, so an earlier value of the key
+            // stands. ([`bindings`] reports an import naming a key of
+            // [`MUST_EVALUATE`]; a star import binding one is unseen too.)
             if imported_names(stmt).is_some() {
                 continue;
             }
 
             match split_assignment(stmt) {
-                Some((name, value_src)) => match parse_python_literal(value_src) {
+                Some((name, value_src)) => match parse_python_literal_typed(value_src) {
                     // In a `def` or `class` body, a local variable or a
                     // class attribute, unless the body declares the name
                     // `global` (scratch `t17b-rr1/specs/generic_local.json`,
                     // `t19b1/specs/generic_*`).
                     Ok(_) if !binds_module_name(&scopes, name) => {}
-                    Ok(value) => {
+                    Ok((value, type_name)) => {
                         match python_dict_key_order(value_src).filter(|_| value.is_object()) {
                             Some(order) => self.dict_key_orders.insert(name.to_string(), order),
                             None => self.dict_key_orders.remove(name),
                         };
                         self.conf_namespace.insert(name.to_string(), value);
+                        self.literal_types.insert(name.to_string(), type_name);
                     }
                     Err(reason) => self.warnings.push(ConfigWarning {
                         line,
@@ -622,7 +645,7 @@ impl PythonConfigParser {
     /// binding Python's last one wins over, unless it is deferred.
     fn evaluated(&mut self, key: &'static str, value: serde_json::Value, type_name: &'static str) {
         self.conf_namespace.insert(key.to_string(), value);
-        self.literal_types.insert(key, type_name);
+        self.literal_types.insert(key.to_string(), type_name);
         self.unevaluable
             .retain(|pending| pending.binding.key != key || pending.deferred);
     }
@@ -2444,19 +2467,21 @@ static DECIMAL_LITERAL: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock:
     .expect("the decimal literal pattern compiles")
 });
 
-/// Recursive-descent parser for Python literals → JSON values.
+/// [`parse_python_literal_typed`]'s value alone, for the tests that read
+/// a `conf.py` literal through the reader's parser.
+#[cfg(test)]
+pub(crate) fn parse_python_literal(src: &str) -> std::result::Result<serde_json::Value, String> {
+    parse_python_literal_typed(src).map(|(value, _)| value)
+}
+
+/// Recursive-descent parser for Python literals → JSON values, with the
+/// value's Python type (`type(value).__name__`): `str` or `bytes` for a
+/// string literal, `tuple` or `list` for an array, and so on.
 /// Supports: strings (CPython 3.12's escapes, implicit adjacent
 /// concatenation, triple quotes; a `bytes` literal reads as the `str` its
 /// bytes are the Latin-1 code points of), ints/floats, True/False/None,
 /// lists, tuples (as arrays), dicts with string keys, arbitrary nesting,
 /// trailing commas.
-pub(crate) fn parse_python_literal(src: &str) -> std::result::Result<serde_json::Value, String> {
-    parse_python_literal_typed(src).map(|(value, _)| value)
-}
-
-/// [`parse_python_literal`], with the value's Python type
-/// (`type(value).__name__`): `str` or `bytes` for a string literal,
-/// `tuple` or `list` for an array, and so on.
 pub(crate) fn parse_python_literal_typed(
     src: &str,
 ) -> std::result::Result<(serde_json::Value, &'static str), String> {
@@ -5191,6 +5216,96 @@ e = 'esc\n'
         assert_eq!(
             p.conf_namespace.get("html_static_path"),
             Some(&serde_json::json!([]))
+        );
+    }
+
+    /// The reader keeps the Python type of the literal the namespace holds
+    /// for every key ([`PythonConfigParser::literal_type`]), which its JSON
+    /// form cannot always tell: a tuple `exclude_patterns` is an array, as
+    /// a list is, and a `bytes` `project` reads as the `str` of its bytes.
+    /// Sphinx 9.1.0 keeps the tuple and the `bytes`: it warns about the
+    /// tuple's type, then cannot join it to the `templates_path` list
+    /// (`find_files`, `SP/sphinx/environment/__init__.py:490-494`), and its
+    /// type check warns about the `bytes`, then fails on it (scratch
+    /// `t19b1/specs/types_*`). The type follows the namespace: a later
+    /// assignment replaces it, and an assignment the reader drops or a
+    /// function's local one leaves both as they were.
+    #[test]
+    fn every_key_keeps_its_literal_python_type() {
+        let rows: [(&str, &str, Option<&str>); 8] = [
+            (
+                "exclude_patterns = ('_build',)\n",
+                "exclude_patterns",
+                Some("tuple"),
+            ),
+            (
+                "exclude_patterns = ['_build']\n",
+                "exclude_patterns",
+                Some("list"),
+            ),
+            ("project = b'Docs'\n", "project", Some("bytes")),
+            (
+                "exclude_patterns = ('_build',)\nexclude_patterns = ['_build']\n",
+                "exclude_patterns",
+                Some("list"),
+            ),
+            (
+                "exclude_patterns = ('_build',)\ndef setup(app):\n    \
+                 exclude_patterns = ['_build']\n",
+                "exclude_patterns",
+                Some("tuple"),
+            ),
+            (
+                "version = '1'\nexclude_patterns = ('_build',)\n\
+                 exclude_patterns = [f'_build{version}']\n",
+                "exclude_patterns",
+                Some("tuple"),
+            ),
+            ("html_logo: str = 'logo.png'\n", "html_logo", Some("str")),
+            ("rst_prolog = b''\n", "rst_prolog", Some("bytes")),
+        ];
+        for (content, key, expected) in rows {
+            let p = parse(content);
+            assert_eq!(p.literal_type(key), expected, "{content}");
+        }
+        let p = parse(
+            "numfig = True\nnumfig_secnum_depth = 2\nintersphinx_timeout = 1.5\n\
+             math_numsep = None\nhtml_context = {'a': 1}\nrst_epilog = ('x',)\n",
+        );
+        let types: Vec<Option<&str>> = [
+            "numfig",
+            "numfig_secnum_depth",
+            "intersphinx_timeout",
+            "math_numsep",
+            "html_context",
+            "rst_epilog",
+            "unset",
+        ]
+        .into_iter()
+        .map(|key| p.literal_type(key))
+        .collect();
+        assert_eq!(
+            types,
+            [
+                Some("bool"),
+                Some("int"),
+                Some("float"),
+                Some("NoneType"),
+                Some("dict"),
+                Some("tuple"),
+                None
+            ]
+        );
+        // The value the namespace holds is as before: the tuple is an
+        // array, the `bytes` the `str` of its bytes.
+        let p = parse("exclude_patterns = ('_build',)\nproject = b'Docs'\n");
+        assert_eq!(
+            p.conf_namespace.get("exclude_patterns"),
+            Some(&serde_json::json!(["_build"]))
+        );
+        assert_eq!(
+            p.conf_namespace.get("project"),
+            Some(&serde_json::json!("Docs"))
         );
     }
 
