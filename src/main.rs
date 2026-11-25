@@ -463,6 +463,10 @@ fn configure(args: &RunArgs) -> Result<Configured> {
             records.push(config_record(message));
         }
     }
+    // A `conf.py` prolog or epilog this crate could not evaluate fails the
+    // configuration, unless an override replaced it: Sphinx never reads a
+    // value `-D` overrides.
+    config.check_evaluated()?;
     for (key, value) in &args.html_defines {
         config
             .html_context

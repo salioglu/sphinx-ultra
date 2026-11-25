@@ -5701,7 +5701,8 @@ fn conf_py_floats_with_a_signed_exponent_are_read() {
 /// the prolog is read before every document, so a build without it would
 /// read every document differently from Sphinx. The report is the one a
 /// configuration that fails to load gets, on stderr and in the `-w`
-/// file, exit 2.
+/// file, exit 2; it names the `-D` override that builds all the same
+/// ([`a_d_override_rescues_an_unevaluable_rst_epilog`]).
 #[test]
 fn unevaluable_rst_prolog_is_a_configuration_error() {
     let src = temp_source(
@@ -5726,9 +5727,167 @@ fn unevaluable_rst_prolog_is_a_configuration_error() {
         written,
         "\nConfiguration error!\n\n    sphinx.errors.ConfigError: cannot evaluate rst_prolog \
          (conf.py, line 3: unsupported expression): sphinx-ultra reads conf.py without \
-         running it, so rst_prolog and rst_epilog must be string literals\n"
+         running it, so rst_prolog and rst_epilog must be string literals; set it with \
+         -D rst_prolog=... to build without editing conf.py\n"
     );
     assert_eq!(String::from_utf8(result.stderr).unwrap(), written);
+}
+
+/// Sphinx never reads a value a `-D` override replaces, so a `-D` for an
+/// `rst_epilog` this crate could not evaluate builds as Sphinx 9.1.0 does
+/// with the same override: the epilog's record and the document's, exit
+/// 0 (scratch `t17b-fix1/specs/d_rescue.json`). Without it, or with an
+/// override of `rst_prolog` only, the configuration error names
+/// `rst_epilog`.
+#[test]
+fn a_d_override_rescues_an_unevaluable_rst_epilog() {
+    let src = temp_source(
+        "t17b-d-rescue",
+        &[
+            (
+                "conf.py",
+                "project = 'P'\nversion = '1.0'\n\
+                 rst_epilog = f\"\"\"\n.. |a| replace:: {version}\n\"\"\"\n",
+            ),
+            ("index.rst", "Index\n=====\n\nUses |a| and |b|.\n"),
+        ],
+    );
+    let out = out_dir("t17b-d-rescue");
+    let epilog = "rst_epilog=.. |a| replace:: A\n\n*unclosed epilog emphasis\n";
+    let (result, written) = warning_stream(&src, &out, &["-D", epilog]);
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert_eq!(
+        written,
+        "\
+<rst_epilogue>:3: WARNING: Inline emphasis start-string without end-string. [docutils]
+<SRCDIR>/index.rst:4: ERROR: Undefined substitution referenced: \"b\". [docutils]
+"
+    );
+
+    let error = "\nConfiguration error!\n\n    sphinx.errors.ConfigError: cannot evaluate \
+                 rst_epilog (conf.py, line 3: unsupported expression): sphinx-ultra reads \
+                 conf.py without running it, so rst_prolog and rst_epilog must be string \
+                 literals; set it with -D rst_epilog=... to build without editing conf.py\n";
+    for extra in [&[][..], &["-D", "rst_prolog=.. |b| replace:: B"][..]] {
+        let (result, written) = warning_stream(&src, &out, extra);
+        assert_eq!(result.status.code(), Some(2), "{extra:?}");
+        assert_eq!(written, error, "{extra:?}");
+    }
+}
+
+/// A backslash that ends a line of a string literal removes the line
+/// break, as Python reads it: the epilog opens with its substitution
+/// definition, and Sphinx 9.1.0 prints nothing (scratch `t17b/esc`).
+#[test]
+fn an_escaped_line_break_in_rst_epilog_is_removed() {
+    let src = temp_source(
+        "t17b-esc",
+        &[
+            (
+                "conf.py",
+                "project = 'P'\nrst_epilog = \"\"\"\\\n.. |a| replace:: A\n\"\"\"\n",
+            ),
+            ("index.rst", "T\n=\n\nText |a|.\n"),
+        ],
+    );
+    let (result, written) = warning_stream(&src, &out_dir("t17b-esc"), &[]);
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert_eq!(written, "");
+}
+
+/// A true `rst_prolog` or `rst_epilog` that is no `str` crashes Sphinx
+/// 9.1.0 (decision 13): `check_confval_types` warns about its type, and
+/// the reader raises `AttributeError` on its `splitlines` as it decorates
+/// the first document it reads (`a`, of `a`, `b` and `index`), before any
+/// of its records: exit 2, nothing on stdout under `-q`, and the same
+/// stream on stderr and in the `-w` file (scratch
+/// `t17b-fix1/specs/crash_*.json`, `stdout/so.out`; Sphinx `-j 1`).
+#[test]
+fn a_true_mistyped_prolog_or_epilog_crashes_the_first_read() {
+    let documents = [
+        (
+            "index.rst",
+            "Index\n=====\n\n.. toctree::\n\n   a\n   b\n\nText :nope:`x`.\n",
+        ),
+        ("a.rst", "A\n=\n\nText :nope:`y`.\n"),
+        ("b.rst", "B\n=\n\nText.\n"),
+    ];
+    for (test, conf, key, type_name) in [
+        ("t17b-crash-int", "rst_prolog = 1\n", "rst_prolog", "int"),
+        (
+            "t17b-crash-bool",
+            "rst_prolog = True\n",
+            "rst_prolog",
+            "bool",
+        ),
+        (
+            "t17b-crash-list",
+            "rst_epilog = ['x']\n",
+            "rst_epilog",
+            "list",
+        ),
+        (
+            "t17b-crash-dict",
+            "rst_epilog = {'a': 1}\n",
+            "rst_epilog",
+            "dict",
+        ),
+    ] {
+        let conf = format!("project = 'P'\n{conf}");
+        let mut files = vec![("conf.py", conf.as_str())];
+        files.extend(documents);
+        let src = temp_source(test, &files);
+        let out = out_dir(test);
+        let log = out.with_extension("w");
+        let result = bin()
+            .arg(&src)
+            .arg(&out)
+            .args(["-q", "-w"])
+            .arg(&log)
+            .output()
+            .expect("binary should run");
+        assert_eq!(
+            result.status.code(),
+            Some(2),
+            "{test}: {}",
+            stderr_of(&result)
+        );
+        assert_eq!(result.stdout, b"", "{test}");
+        let written = srcdir_spelled(&std::fs::read(&log).unwrap(), &src);
+        assert_eq!(srcdir_spelled(&result.stderr, &src), written, "{test}");
+        assert_eq!(
+            written,
+            format!(
+                "WARNING: The config value `{key}' has type `{type_name}'; expected `str'.\n{}",
+                crash_report(
+                    None,
+                    &format!("AttributeError: '{type_name}' object has no attribute 'splitlines'"),
+                    Some("<SRCDIR>/a.rst")
+                )
+            ),
+            "{test}"
+        );
+    }
+
+    // The records Sphinx logs before it, the configuration's and the
+    // first document's default role's, print first (scratch
+    // `t17b-fix1/specs/crash_default_role3.json`).
+    let conf = "project = 'P'\nhtml_logo = 'missing.png'\ndefault_role = 'nope'\nrst_prolog = 1\n";
+    let mut files = vec![("conf.py", conf)];
+    files.extend(documents);
+    assert_eq!(
+        crash_stream("t17b-crash-after-records", &files, &[], &[]),
+        format!(
+            "WARNING: logo file 'missing.png' does not exist\n\
+             WARNING: The config value `rst_prolog' has type `int'; expected `str'.\n\
+             <SRCDIR>/a.rst: WARNING: default role nope not found\n{}",
+            crash_report(
+                None,
+                "AttributeError: 'int' object has no attribute 'splitlines'",
+                Some("<SRCDIR>/a.rst")
+            )
+        )
+    );
 }
 
 /// A hyperlink target's location is docutils' `abs_line_number()`, its

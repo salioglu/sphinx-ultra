@@ -18,14 +18,35 @@ pub struct PythonConfigParser {
     warnings: Vec<ConfigWarning>,
     /// For a key of [`MUST_EVALUATE`], the first statement since the last
     /// one this reader evaluated for it that binds it to something it
-    /// cannot evaluate: at most one per key.
-    unevaluable: Vec<Unevaluable>,
+    /// cannot evaluate, and the first such deferred one ([`Pending`]): at
+    /// most two per key.
+    unevaluable: Vec<Pending>,
+    /// For a key of [`MUST_EVALUATE`] the namespace holds, the Python type
+    /// of the literal it holds (`type(value).__name__`), which its JSON
+    /// form cannot always tell: a tuple's is an array, as a list's is, and
+    /// an empty `bytes`, which reads as no value, has none.
+    literal_types: HashMap<&'static str, &'static str>,
+}
+
+/// An [`Unevaluable`] binding while the parse goes on.
+#[derive(Debug, Clone)]
+struct Pending {
+    binding: Unevaluable,
+    /// Whether the module's name is bound once the statements so far have
+    /// run: a top-level statement binds it whenever `conf.py` runs, one in
+    /// a block may not.
+    definite: bool,
+    /// Whether the binding runs when something calls the function it is
+    /// in (`setup(app)`, an event handler), or changes an attribute of
+    /// another object (`app.config.rst_prolog`): after every top-level
+    /// statement, so no later statement binds the key again.
+    deferred: bool,
 }
 
 /// The keys whose `conf.py` value this reader must evaluate or fail the
-/// configuration with (wave 5a T17b): Sphinx reads `rst_prolog` and
-/// `rst_epilog` around every document, so a value dropped would read every
-/// document differently.
+/// configuration with, unless a `-D` override sets them (wave 5a T17b):
+/// Sphinx reads `rst_prolog` and `rst_epilog` around every document, so a
+/// value dropped would read every document differently.
 const MUST_EVALUATE: [&str; 2] = ["rst_prolog", "rst_epilog"];
 
 /// A conf.py construct that could not be parsed and was dropped.
@@ -37,7 +58,9 @@ pub struct ConfigWarning {
 }
 
 /// A statement binding `rst_prolog` or `rst_epilog` that this reader
-/// cannot evaluate.
+/// cannot evaluate: a configuration error, unless a `-D` override sets the
+/// key ([`crate::config::BuildConfig::check_evaluated`]), as Sphinx then
+/// never reads what `conf.py` bound it to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Unevaluable {
     /// The key the statement binds.
@@ -46,6 +69,30 @@ pub struct Unevaluable {
     pub line: usize,
     /// Why the reader cannot evaluate it.
     pub reason: String,
+    /// The configuration file's name, as the message names it
+    /// (`conf.py`); empty for a parse of a text with no file.
+    pub file: String,
+}
+
+impl std::fmt::Display for Unevaluable {
+    /// The configuration error: Sphinx names its configuration file the
+    /// same way when it cannot compile it, `(conf.py, line N)`.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let file = if self.file.is_empty() {
+            "conf.py"
+        } else {
+            &self.file
+        };
+        write!(
+            f,
+            "cannot evaluate {key} ({file}, line {line}: {reason}): sphinx-ultra reads conf.py \
+             without running it, so rst_prolog and rst_epilog must be string literals; set it \
+             with -D {key}=... to build without editing conf.py",
+            key = self.key,
+            line = self.line,
+            reason = self.reason,
+        )
+    }
 }
 
 /// Represents a parsed conf.py configuration
@@ -205,11 +252,20 @@ pub struct ConfPyConfig {
     pub math_numsep: Option<String>,
     /// `rst_prolog` (`config.py:266`): `None` when conf.py said nothing or
     /// set it to `None`, which Sphinx's reader reads alike. A value this
-    /// reader cannot evaluate fails the parse
-    /// ([`PythonConfigParser::parse_conf_py`]).
+    /// reader cannot evaluate is in [`Self::unevaluable`].
     pub rst_prolog: Option<String>,
     /// `rst_epilog` (`config.py:265`), read as `rst_prolog` is.
     pub rst_epilog: Option<String>,
+    /// The bindings of `rst_prolog` and `rst_epilog` this reader could not
+    /// evaluate ([`PythonConfigParser::unevaluable_bindings`]): a
+    /// configuration error unless a `-D` override sets the key
+    /// ([`crate::config::BuildConfig::check_evaluated`]).
+    #[serde(skip)]
+    pub unevaluable: Vec<Unevaluable>,
+    /// `(key, python type name)` for a true `rst_prolog` or `rst_epilog`
+    /// that is no `str`, on which Sphinx's reader crashes
+    /// ([`crate::config::BuildConfig::decoration_crashes`]).
+    pub decoration_crashes: Vec<(String, String)>,
 
     // Object-signature / py-domain family. `None` means "conf.py did not
     // mention it", which is what keeps sphinx's own default in place —
@@ -268,6 +324,7 @@ impl PythonConfigParser {
             conf_namespace: HashMap::new(),
             warnings: Vec::new(),
             unevaluable: Vec::new(),
+            literal_types: HashMap::new(),
         })
     }
 
@@ -280,89 +337,87 @@ impl PythonConfigParser {
     /// last parse could not evaluate, and that no later statement it could
     /// evaluate bound again (by line; at one line, `rst_prolog` first).
     pub fn unevaluable(&self) -> Option<&Unevaluable> {
-        self.unevaluable.iter().min_by_key(|binding| binding.line)
+        self.unevaluable_bindings().into_iter().next()
+    }
+
+    /// Every such binding, the first by line first (at one line,
+    /// `rst_prolog` first), one per key: a key's first.
+    pub fn unevaluable_bindings(&self) -> Vec<&Unevaluable> {
+        let mut bindings: Vec<&Unevaluable> = self
+            .unevaluable
+            .iter()
+            .map(|pending| &pending.binding)
+            .collect();
+        bindings.sort_by_key(|binding| (binding.line, binding.key != "rst_prolog"));
+        let mut keys = Vec::new();
+        bindings.retain(|binding| {
+            let first = !keys.contains(&binding.key);
+            keys.push(binding.key);
+            first
+        });
+        bindings
     }
 
     /// Parse a conf.py file and extract configuration. A value of
-    /// `rst_prolog` or `rst_epilog` it cannot evaluate fails it, naming
-    /// the key ([`Self::unevaluable`]); [`Self::warnings`] still holds what
-    /// the parse dropped.
+    /// `rst_prolog` or `rst_epilog` it cannot evaluate is carried, naming
+    /// the key ([`ConfPyConfig::unevaluable`]), into the build
+    /// configuration, which fails once the `-D` overrides are in unless one
+    /// sets the key ([`crate::config::BuildConfig::check_evaluated`]);
+    /// [`Self::warnings`] holds what the parse dropped.
     pub fn parse_conf_py<P: AsRef<Path>>(&mut self, conf_py_path: P) -> Result<ConfPyConfig> {
         let conf_py_path = conf_py_path.as_ref();
         let _conf_dir = conf_py_path
             .parent()
             .ok_or_else(|| anyhow!("Invalid conf.py path"))?;
 
-        // Read the conf.py file
-        let conf_py_content = std::fs::read_to_string(conf_py_path)?;
+        // Read the conf.py file. Python's tokenizer reads `\r\n` and `\r`
+        // as `\n`, inside string literals too.
+        let conf_py_content = std::fs::read_to_string(conf_py_path)?
+            .replace("\r\n", "\n")
+            .replace('\r', "\n");
 
         self.parse_statements(&conf_py_content)?;
-        if let Some(binding) = self.unevaluable() {
-            // Sphinx names its configuration file the same way when it
-            // cannot compile it: `(conf.py, line N)`.
-            let file = conf_py_path
-                .file_name()
-                .map_or_else(|| "conf.py".into(), |name| name.to_string_lossy());
-            anyhow::bail!(
-                "cannot evaluate {} ({file}, line {}: {}): sphinx-ultra reads conf.py without \
-                 running it, so rst_prolog and rst_epilog must be string literals",
-                binding.key,
-                binding.line,
-                binding.reason
-            );
-        }
 
         // Extract configuration values
-        self.extract_configuration()
+        let mut config = self.extract_configuration()?;
+        let file = conf_py_path
+            .file_name()
+            .map_or_else(|| "conf.py".into(), |name| name.to_string_lossy());
+        for binding in &mut config.unevaluable {
+            binding.file = file.to_string();
+        }
+        Ok(config)
     }
 
     /// Parse the declarative subset of a conf.py: literal assignments, with a
     /// warning recorded for every construct that had to be dropped, except
-    /// the statements that bind a key of [`MUST_EVALUATE`], which are
-    /// evaluated or recorded as [`Self::unevaluable`].
+    /// the statements that bind a key of [`MUST_EVALUATE`] ([`bindings`]),
+    /// which are evaluated or recorded as [`Self::unevaluable`].
     fn parse_statements(&mut self, content: &str) -> Result<()> {
+        // The `def` and `class` statements whose bodies the statements are
+        // in, innermost last.
+        let mut scopes: Vec<Scope> = Vec::new();
         for (line, raw) in logical_statements(content) {
             let stmt = raw.trim();
             if stmt.is_empty() {
                 continue;
             }
+            let indent = indentation(&raw);
+            while scopes.last().is_some_and(|scope| scope.indent >= indent) {
+                scopes.pop();
+            }
 
-            // Imports set no configuration values; ignoring them loses
-            // nothing, except an import that binds a key this reader must
-            // evaluate (a star import names nothing it can tell).
-            if stmt.starts_with("import ") || stmt.starts_with("from ") {
-                let imported = imported_names(stmt);
-                for key in MUST_EVALUATE {
-                    if imported.contains(&key)
-                        && !self.unevaluable.iter().any(|binding| binding.key == key)
-                    {
-                        let reason = "an import".to_string();
-                        self.unevaluable.push(Unevaluable { key, line, reason });
-                    }
+            let found = bindings(stmt, indent, &mut scopes);
+            if !found.is_empty() {
+                for (key, binding) in found {
+                    self.bind(line, key, binding);
                 }
                 continue;
             }
 
-            // A statement indented under a compound statement's header,
-            // which this reader drops: it may run once, many times or not
-            // at all.
-            let indented = raw.starts_with([' ', '\t']);
-            let assignment = assignment(stmt);
-            let bound: Vec<&'static str> = MUST_EVALUATE
-                .into_iter()
-                .filter(|key| assignment.binds(key))
-                .collect();
-            if !bound.is_empty() {
-                for key in bound {
-                    match self.evaluate_binding(stmt, &assignment, key, indented) {
-                        Ok(()) => self.unevaluable.retain(|binding| binding.key != key),
-                        Err(reason) => {
-                            if !self.unevaluable.iter().any(|binding| binding.key == key) {
-                                self.unevaluable.push(Unevaluable { key, line, reason });
-                            }
-                        }
-                    }
-                }
+            // Imports set no configuration values; ignoring them loses
+            // nothing.
+            if imported_names(stmt).is_some() {
                 continue;
             }
 
@@ -391,53 +446,132 @@ impl PythonConfigParser {
         Ok(())
     }
 
-    /// Evaluates `stmt`, whose `assignment` binds `key` (a key of
-    /// [`MUST_EVALUATE`]), into the namespace, or says why it cannot. Only
-    /// two statements are evaluated, both at the top level: an assignment
-    /// of a literal to the key alone, and `key += <string literal>` while
-    /// the key holds a string (Python's concatenation; implicit
-    /// concatenation of literals included).
-    fn evaluate_binding(
-        &mut self,
-        stmt: &str,
-        assignment: &Assignment<'_>,
-        key: &'static str,
-        indented: bool,
-    ) -> std::result::Result<(), String> {
-        if indented {
-            return Err("an assignment inside a block".to_string());
-        }
-        if assignment.augmented {
-            // What the key holds, unless a binding since the last value
-            // this reader evaluated left it unknown.
-            let held = if self.unevaluable.iter().any(|binding| binding.key == key) {
-                None
-            } else {
-                self.conf_namespace
-                    .get(key)
-                    .and_then(serde_json::Value::as_str)
-            };
-            let added = stmt
-                .strip_prefix(key)
-                .and_then(|rest| rest.trim_start().strip_prefix("+="))
-                .map(|value_src| parse_python_literal(value_src.trim()));
-            return match (held, added) {
-                (Some(held), Some(Ok(serde_json::Value::String(added)))) => {
-                    let joined = serde_json::Value::String(format!("{held}{added}"));
-                    self.conf_namespace.insert(key.to_string(), joined);
-                    Ok(())
+    /// Applies `binding`, the statement on `line`'s binding of `key` (a
+    /// key of [`MUST_EVALUATE`]): evaluates it into the namespace, or
+    /// records it as [`Self::unevaluable`]. Only three statements are
+    /// evaluated, all at the top level: an assignment of a literal to the
+    /// key alone; `key += <string literal>` while the key holds a string
+    /// (Python's concatenation; implicit concatenation of literals
+    /// included); and `del key` while the key is bound, which leaves it to
+    /// Sphinx's default, `None`.
+    fn bind(&mut self, line: usize, key: &'static str, binding: Binding<'_>) {
+        match binding {
+            Binding::Local => {}
+            Binding::Assign(value_src) => match parse_python_literal_typed(value_src) {
+                // A true `bytes` crashes Sphinx's reader where docutils first
+                // matches a pattern against one of its lines, after whatever
+                // records the parse makes before it, which this reader cannot
+                // place among them.
+                Ok((value, "bytes")) if is_true(&value) => {
+                    self.opaque(key, line, "a bytes literal".to_string(), true, false);
                 }
-                _ => Err("an augmented assignment".to_string()),
-            };
-        }
-        match split_assignment(stmt) {
-            Some((name, value_src)) if name == key => {
-                let value = parse_python_literal(value_src)?;
-                self.conf_namespace.insert(key.to_string(), value);
-                Ok(())
+                Ok((value, type_name)) => {
+                    let value = if type_name == "bytes" {
+                        serde_json::Value::Null
+                    } else {
+                        value
+                    };
+                    self.evaluated(key, value, type_name);
+                }
+                Err(reason) => self.opaque(key, line, reason, true, false),
+            },
+            Binding::Augment { plus, value_src } => {
+                // What the key holds, unless a binding since the last value
+                // this reader evaluated left it unknown.
+                let held = if self.pending(key).is_some() {
+                    None
+                } else {
+                    self.conf_namespace
+                        .get(key)
+                        .and_then(serde_json::Value::as_str)
+                        .filter(|_| self.literal_types.get(key) == Some(&"str"))
+                };
+                match (plus, held, parse_python_literal_typed(value_src)) {
+                    (true, Some(held), Ok((serde_json::Value::String(added), "str"))) => {
+                        let joined = serde_json::Value::String(format!("{held}{added}"));
+                        self.evaluated(key, joined, "str");
+                    }
+                    _ => self.opaque(
+                        key,
+                        line,
+                        "an augmented assignment".to_string(),
+                        true,
+                        false,
+                    ),
+                }
             }
-            _ => Err("an assignment it cannot evaluate".to_string()),
+            Binding::Delete => {
+                // `del` of a name that is not bound raises `NameError`,
+                // which fails Sphinx's configuration.
+                let bound = match self.pending(key) {
+                    Some(pending) => pending.definite,
+                    None => self.conf_namespace.contains_key(key),
+                };
+                if bound {
+                    self.conf_namespace.remove(key);
+                    self.literal_types.remove(key);
+                    self.unevaluable
+                        .retain(|pending| pending.binding.key != key || pending.deferred);
+                } else {
+                    let reason = "a del of a name that may not be bound".to_string();
+                    self.opaque(key, line, reason, false, false);
+                }
+            }
+            Binding::Opaque {
+                reason,
+                definite,
+                deferred,
+            } => self.opaque(key, line, reason.to_string(), definite, deferred),
         }
+    }
+
+    /// The binding of `key` since the last value this reader evaluated
+    /// for it that it could not evaluate, if any: a deferred one stands
+    /// whatever the top-level statements do.
+    fn pending(&self, key: &str) -> Option<&Pending> {
+        self.unevaluable
+            .iter()
+            .find(|pending| pending.binding.key == key && !pending.deferred)
+    }
+
+    /// `key` now holds `value`, a literal of Python type `type_name`: the
+    /// binding Python's last one wins over, unless it is deferred.
+    fn evaluated(&mut self, key: &'static str, value: serde_json::Value, type_name: &'static str) {
+        self.conf_namespace.insert(key.to_string(), value);
+        self.literal_types.insert(key, type_name);
+        self.unevaluable
+            .retain(|pending| pending.binding.key != key || pending.deferred);
+    }
+
+    /// Records a binding of `key` on `line` this reader cannot evaluate,
+    /// unless an earlier one since the last value it evaluated stands: the
+    /// first is the one reported.
+    fn opaque(
+        &mut self,
+        key: &'static str,
+        line: usize,
+        reason: String,
+        definite: bool,
+        deferred: bool,
+    ) {
+        if let Some(pending) = self
+            .unevaluable
+            .iter_mut()
+            .find(|pending| pending.binding.key == key && pending.deferred == deferred)
+        {
+            pending.definite |= definite;
+            return;
+        }
+        self.unevaluable.push(Pending {
+            binding: Unevaluable {
+                key,
+                line,
+                reason,
+                file: String::new(),
+            },
+            definite,
+            deferred,
+        });
     }
 
     /// Extract configuration values from the parsed Python namespace
@@ -660,23 +794,38 @@ impl PythonConfigParser {
         }
         // `rst_prolog` and `rst_epilog` are `str` (`config.py:265-266`):
         // any other value but `None` is what `check_confval_types`
-        // reports, and Sphinx's reader adds nothing for a false one (`if
-        // not prologue: return`, `SP/sphinx/util/rst.py:82-83`). A true one
-        // makes Sphinx's reader raise `AttributeError` (`splitlines`),
-        // which is not modelled: it reads as `None` here.
+        // reports, under its Python type ([`Self::literal_types`]: a
+        // tuple, an empty `bytes`), and Sphinx's reader adds nothing for a
+        // false one (`if not prologue: return`,
+        // `SP/sphinx/util/rst.py:82-83`). On a true one it raises
+        // `AttributeError` (`splitlines`), where it reads the first
+        // document (decision 13; a true `bytes` is unevaluable,
+        // [`PythonConfigParser::bind`]).
         for (key, slot) in [
             ("rst_prolog", &mut config.rst_prolog),
             ("rst_epilog", &mut config.rst_epilog),
         ] {
-            *slot = match self.conf_namespace.get(key) {
-                None | Some(serde_json::Value::Null) => None,
-                Some(serde_json::Value::String(text)) => Some(text.clone()),
-                Some(value) => {
-                    mismatches.push((key.to_string(), python_type_name(value).to_string()));
+            let type_name = self.literal_types.get(key).copied();
+            *slot = match (self.conf_namespace.get(key), type_name) {
+                (_, Some("bytes")) => {
+                    mismatches.push((key.to_string(), "bytes".to_string()));
+                    None
+                }
+                (None | Some(serde_json::Value::Null), _) => None,
+                (Some(serde_json::Value::String(text)), _) => Some(text.clone()),
+                (Some(value), type_name) => {
+                    let type_name = type_name.unwrap_or_else(|| python_type_name(value));
+                    mismatches.push((key.to_string(), type_name.to_string()));
+                    if is_true(value) {
+                        config
+                            .decoration_crashes
+                            .push((key.to_string(), type_name.to_string()));
+                    }
                     None
                 }
             };
         }
+        config.unevaluable = self.unevaluable_bindings().into_iter().cloned().collect();
 
         // Object-signature / py-domain family. The two line-length keys are
         // `int | None`, so they read through `as_i64` rather than
@@ -1046,35 +1195,524 @@ fn split_assignment(stmt: &str) -> Option<(&str, &str)> {
     None
 }
 
+/// A `def` or `class` statement whose body the statements after it, more
+/// indented, are in: a scope of its own, where a statement binds a local
+/// variable or a class attribute, not the module's name, unless a `global`
+/// statement in it names that name.
+struct Scope {
+    /// The header's indentation ([`indentation`]).
+    indent: usize,
+    /// The keys of [`MUST_EVALUATE`] the scope's `global` statements name.
+    globals: Vec<&'static str>,
+}
+
+/// The indentation of `raw`, a logical statement as [`logical_statements`]
+/// yields it: its leading columns, as Python's tokenizer counts them (a tab
+/// to the next multiple of 8; a form feed starts the count again).
+fn indentation(raw: &str) -> usize {
+    let mut column = 0;
+    for c in raw.chars() {
+        match c {
+            ' ' => column += 1,
+            '\t' => column = (column / 8 + 1) * 8,
+            '\x0c' => column = 0,
+            _ => break,
+        }
+    }
+    column
+}
+
+/// What a statement's binding of a key of [`MUST_EVALUATE`] binds, in the
+/// scope it runs in ([`PythonConfigParser::bind`]).
+enum Binding<'s> {
+    /// A local variable or a class attribute: nothing this reader reads.
+    Local,
+    /// `key = <value_src>`, the key the one target, at the top level.
+    Assign(&'s str),
+    /// `key op= <value_src>` at the top level; `plus` for `+=`.
+    Augment { plus: bool, value_src: &'s str },
+    /// `del key` at the top level.
+    Delete,
+    /// Any other binding: why this reader cannot evaluate it, whether it
+    /// binds the module's name whenever `conf.py` runs, and whether it runs
+    /// after every top-level statement ([`Pending`]).
+    Opaque {
+        reason: &'static str,
+        definite: bool,
+        deferred: bool,
+    },
+}
+
+/// A statement's binding of a key of [`MUST_EVALUATE`] as the statement
+/// alone tells it, before the scope it runs in decides what it binds
+/// ([`resolve`]).
+enum Bound<'s> {
+    Assign(&'s str),
+    Augment {
+        plus: bool,
+        value_src: &'s str,
+    },
+    Delete,
+    /// Another binding of the name: why this reader cannot evaluate it, and
+    /// whether it binds the name whenever the statement runs.
+    Other {
+        reason: &'static str,
+        definite: bool,
+    },
+    /// A target that is an attribute named like the key: Sphinx 9.1.0 reads
+    /// `app.config.rst_prolog = ...` in `setup(app)`, and `config.rst_epilog
+    /// = ...` in a `config-inited` handler (scratch `t17b-fix1/specs/attr_*`).
+    Attribute,
+}
+
+/// The keys of [`MUST_EVALUATE`] that `stmt`, a logical statement at
+/// `indent`, binds, and what each binding binds in the scope it runs in:
+/// `scopes`, which a `def` or `class` header opens one in and a `global`
+/// statement declares names in. A statement that binds neither key
+/// returns nothing.
+///
+/// The bindings it sees are an assignment's targets (`=`, `op=`, a tuple,
+/// starred or chained target, but not a subscript's key or a lambda's
+/// parameter), `del`'s, a `for`'s, a `with`'s or an `except`'s target, an
+/// assignment expression, an import's names, and a `def`'s or a `class`'s
+/// name. A star import and `exec(...)` bind names it cannot see.
+fn bindings<'s>(
+    stmt: &'s str,
+    indent: usize,
+    scopes: &mut Vec<Scope>,
+) -> Vec<(&'static str, Binding<'s>)> {
+    let in_block = indent > 0;
+    let Some(header) = compound_header(stmt) else {
+        return simple_bindings(stmt, scopes, in_block);
+    };
+    // A header binds in the scope around it.
+    let mut found: Vec<(&'static str, Binding<'s>)> = header
+        .bindings()
+        .into_iter()
+        .map(|(key, bound)| (key, resolve(bound, key, scopes, in_block)))
+        .collect();
+    let opens_scope = matches!(header.keyword, "def" | "class");
+    if opens_scope {
+        scopes.push(Scope {
+            indent,
+            globals: Vec::new(),
+        });
+    }
+    if !header.body.is_empty() {
+        // A one-line compound statement: its body is in the scope the
+        // header opens, or in a block.
+        for (key, binding) in simple_bindings(header.body, scopes, true) {
+            if !found.iter().any(|(bound, _)| *bound == key) {
+                found.push((key, binding));
+            }
+        }
+        if opens_scope {
+            scopes.pop();
+        }
+    }
+    found
+}
+
+/// [`bindings`] of a simple statement, in `scopes`, `in_block` when a
+/// compound statement at the top level holds it: a `global` statement
+/// declares its names in the innermost scope, and binds nothing.
+fn simple_bindings<'s>(
+    stmt: &'s str,
+    scopes: &mut [Scope],
+    in_block: bool,
+) -> Vec<(&'static str, Binding<'s>)> {
+    if let Some(names) = keyword_rest(stmt, "global") {
+        if let Some(scope) = scopes.last_mut() {
+            for name in names.split(',').map(str::trim) {
+                if let Some(key) = MUST_EVALUATE.into_iter().find(|key| *key == name) {
+                    if !scope.globals.contains(&key) {
+                        scope.globals.push(key);
+                    }
+                }
+            }
+        }
+        return Vec::new();
+    }
+    statement_bindings(stmt)
+        .into_iter()
+        .map(|(key, bound)| (key, resolve(bound, key, scopes, in_block)))
+        .collect()
+}
+
+/// What `bound`, a statement's binding of `key`, binds in the scope it
+/// runs in. An attribute's runs after every top-level statement (in a
+/// function Sphinx calls); so does a function's own binding of the module's
+/// name, which a `global` statement makes; in a function or a class body
+/// otherwise, a name is the scope's own. At the top level, in a block, a
+/// statement may run once, many times or not at all.
+fn resolve<'s>(
+    bound: Bound<'s>,
+    key: &'static str,
+    scopes: &[Scope],
+    in_block: bool,
+) -> Binding<'s> {
+    if let Bound::Attribute = bound {
+        return Binding::Opaque {
+            reason: "an assignment to an attribute of that name",
+            definite: false,
+            deferred: true,
+        };
+    }
+    match scopes.last() {
+        Some(scope) if !scope.globals.contains(&key) => Binding::Local,
+        Some(_) => Binding::Opaque {
+            reason: "a binding in a function or class body that declares it global",
+            definite: false,
+            deferred: true,
+        },
+        None if in_block => Binding::Opaque {
+            reason: match bound {
+                Bound::Delete => "a del inside a block",
+                _ => "an assignment inside a block",
+            },
+            definite: false,
+            deferred: false,
+        },
+        None => match bound {
+            Bound::Assign(value_src) => Binding::Assign(value_src),
+            Bound::Augment { plus, value_src } => Binding::Augment { plus, value_src },
+            Bound::Delete => Binding::Delete,
+            Bound::Other { reason, definite } => Binding::Opaque {
+                reason,
+                definite,
+                deferred: false,
+            },
+            Bound::Attribute => unreachable!("handled above"),
+        },
+    }
+}
+
+/// The bindings of the keys of [`MUST_EVALUATE`] that the simple statement
+/// `stmt` makes, as the statement alone tells them: an import's names,
+/// `del`'s targets, an assignment's targets, an assignment expression's.
+fn statement_bindings(stmt: &str) -> Vec<(&'static str, Bound<'_>)> {
+    let mut found: Vec<(&'static str, Bound<'_>)> = Vec::new();
+    if let Some(names) = imported_names(stmt) {
+        for key in MUST_EVALUATE {
+            if names.contains(&key) {
+                let (reason, definite) = ("an import", true);
+                found.push((key, Bound::Other { reason, definite }));
+            }
+        }
+        return found;
+    }
+    if let Some(targets) = keyword_rest(stmt, "del") {
+        let targets = target_bindings(targets);
+        for key in MUST_EVALUATE {
+            if targets.names.contains(&key) {
+                found.push((key, Bound::Delete));
+            } else if targets.attributes.contains(&key) {
+                found.push((key, Bound::Attribute));
+            }
+        }
+        return found;
+    }
+    let assignment = assignment(stmt);
+    let targets: Vec<TargetBindings<'_>> = assignment
+        .targets
+        .iter()
+        .map(|target| target_bindings(target))
+        .collect();
+    for key in MUST_EVALUATE {
+        if targets.iter().any(|target| target.names.contains(&key)) {
+            let alone = matches!(assignment.targets[..], [target] if target.trim() == key);
+            let value_src = assignment.value;
+            let bound = match (alone, assignment.augmented) {
+                (true, None) => Bound::Assign(value_src),
+                (true, Some(operator)) => Bound::Augment {
+                    plus: operator == "+",
+                    value_src,
+                },
+                (false, None) => Bound::Other {
+                    reason: "an assignment it cannot evaluate",
+                    definite: true,
+                },
+                (false, Some(_)) => Bound::Other {
+                    reason: "an augmented assignment",
+                    definite: true,
+                },
+            };
+            found.push((key, bound));
+        } else if targets
+            .iter()
+            .any(|target| target.attributes.contains(&key))
+        {
+            found.push((key, Bound::Attribute));
+        } else if walrus_targets(stmt).contains(&key) {
+            let (reason, definite) = ("an assignment expression", false);
+            found.push((key, Bound::Other { reason, definite }));
+        }
+    }
+    found
+}
+
+/// A compound statement's header: its keyword (`async` dropped), the text
+/// between the keyword and the colon, and the body after the colon on the
+/// same line (empty when the body is a block).
+struct Header<'s> {
+    keyword: &'static str,
+    text: &'s str,
+    body: &'s str,
+}
+
+/// The compound statements whose header can bind a name or end in a
+/// one-line body. (`match` and `case`, soft keywords, are not told apart
+/// from names here: a `case` pattern's capture binds a name this reader
+/// does not see.)
+const COMPOUND_KEYWORDS: [&str; 11] = [
+    "if", "elif", "else", "while", "for", "try", "except", "finally", "with", "def", "class",
+];
+
+/// `stmt`'s header, when it is a compound statement: its keyword, then a
+/// colon outside strings and brackets that no `=` follows (`:=`).
+fn compound_header(stmt: &str) -> Option<Header<'_>> {
+    let (word, rest) = leading_word(stmt);
+    let (word, rest) = match word {
+        "async" => leading_word(rest.trim_start()),
+        _ => (word, rest),
+    };
+    let keyword = COMPOUND_KEYWORDS
+        .into_iter()
+        .find(|keyword| *keyword == word)?;
+    let bytes = rest.as_bytes();
+    let (mut depth, mut i) = (0i32, 0usize);
+    while i < bytes.len() {
+        match bytes[i] {
+            quote @ (b'\'' | b'"') => {
+                i = skip_string(bytes, i, quote);
+                continue;
+            }
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            b':' if depth == 0 && bytes.get(i + 1) != Some(&b'=') => {
+                return Some(Header {
+                    keyword,
+                    text: rest[..i].trim(),
+                    body: rest[i + 1..].trim(),
+                });
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+impl<'s> Header<'s> {
+    /// The keys of [`MUST_EVALUATE`] the header binds: a `for`'s target, a
+    /// `with`'s or an `except`'s `as` target, a `def`'s or a `class`'s
+    /// name, an assignment expression in its expressions.
+    fn bindings(&self) -> Vec<(&'static str, Bound<'s>)> {
+        let mut found: Vec<(&'static str, Bound<'s>)> = Vec::new();
+        let mut targets = |targets: TargetBindings<'_>, reason: &'static str, definite: bool| {
+            for key in MUST_EVALUATE {
+                if found.iter().any(|(bound, _)| *bound == key) {
+                    continue;
+                }
+                if targets.names.contains(&key) {
+                    found.push((key, Bound::Other { reason, definite }));
+                } else if targets.attributes.contains(&key) {
+                    found.push((key, Bound::Attribute));
+                }
+            }
+        };
+        match self.keyword {
+            "for" => targets(
+                target_bindings(for_target(self.text)),
+                "a for target",
+                false,
+            ),
+            "with" | "except" => {
+                for target in as_targets(self.text) {
+                    match self.keyword {
+                        "with" => targets(target_bindings(target), "a with target", true),
+                        _ => targets(target_bindings(target), "an except target", false),
+                    }
+                }
+            }
+            "def" | "class" => {
+                let (name, _) = leading_word(self.text);
+                let reason = match self.keyword {
+                    "def" => "a def statement",
+                    _ => "a class statement",
+                };
+                if let Some(key) = MUST_EVALUATE.into_iter().find(|key| *key == name) {
+                    found.push((
+                        key,
+                        Bound::Other {
+                            reason,
+                            definite: true,
+                        },
+                    ));
+                }
+            }
+            _ => {}
+        }
+        for key in MUST_EVALUATE {
+            if !found.iter().any(|(bound, _)| *bound == key)
+                && walrus_targets(self.text).contains(&key)
+            {
+                let (reason, definite) = ("an assignment expression", false);
+                found.push((key, Bound::Other { reason, definite }));
+            }
+        }
+        found
+    }
+}
+
+/// The identifier `text` starts with (empty when it starts with something
+/// else), and what follows it.
+fn leading_word(text: &str) -> (&str, &str) {
+    let end = text
+        .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .unwrap_or(text.len());
+    text.split_at(end)
+}
+
+/// `text` after `keyword`, when `text` starts with it as a whole word.
+fn keyword_rest<'s>(text: &'s str, keyword: &str) -> Option<&'s str> {
+    let rest = text.strip_prefix(keyword)?;
+    match rest.chars().next() {
+        Some(c) if c.is_alphanumeric() || c == '_' => None,
+        _ => Some(rest),
+    }
+}
+
+/// A `for` header's target: the text before the first `in` outside
+/// strings and brackets.
+fn for_target(text: &str) -> &str {
+    let bytes = text.as_bytes();
+    let (mut depth, mut i) = (0i32, 0usize);
+    while i < bytes.len() {
+        match bytes[i] {
+            quote @ (b'\'' | b'"') => {
+                i = skip_string(bytes, i, quote);
+                continue;
+            }
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            byte if is_identifier_byte(byte) => {
+                let start = i;
+                while i < bytes.len() && is_identifier_byte(bytes[i]) {
+                    i += 1;
+                }
+                if depth == 0 && &text[start..i] == "in" {
+                    return &text[..start];
+                }
+                continue;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    text
+}
+
+/// The targets of the `as` clauses in `text`, a `with` or an `except`
+/// header's: after each `as` outside strings, a name, an attribute, or a
+/// bracketed target, up to the `,` or the end of the clause.
+fn as_targets(text: &str) -> Vec<&str> {
+    let bytes = text.as_bytes();
+    let mut targets = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            quote @ (b'\'' | b'"') => i = skip_string(bytes, i, quote),
+            byte if is_identifier_byte(byte) => {
+                let start = i;
+                while i < bytes.len() && is_identifier_byte(bytes[i]) {
+                    i += 1;
+                }
+                if &text[start..i] != "as" {
+                    continue;
+                }
+                while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                    i += 1;
+                }
+                let (target, mut depth) = (i, 0i32);
+                while i < bytes.len() {
+                    match bytes[i] {
+                        quote @ (b'\'' | b'"') => {
+                            i = skip_string(bytes, i, quote);
+                            continue;
+                        }
+                        b'(' | b'[' | b'{' => depth += 1,
+                        b')' | b']' | b'}' if depth > 0 => depth -= 1,
+                        b')' | b']' | b'}' | b',' | b':' if depth == 0 => break,
+                        byte if byte.is_ascii_whitespace() && depth == 0 => break,
+                        _ => {}
+                    }
+                    i += 1;
+                }
+                targets.push(&text[target..i]);
+            }
+            _ => i += 1,
+        }
+    }
+    targets
+}
+
+/// The names `stmt` binds with assignment expressions (`name := value`),
+/// in brackets or not.
+fn walrus_targets(stmt: &str) -> Vec<&str> {
+    let bytes = stmt.as_bytes();
+    let mut names = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            quote @ (b'\'' | b'"') => {
+                i = skip_string(bytes, i, quote);
+                continue;
+            }
+            b':' if bytes.get(i + 1) == Some(&b'=') => {
+                let before = stmt[..i].trim_end();
+                let start = before
+                    .char_indices()
+                    .rev()
+                    .find(|(_, c)| !(c.is_alphanumeric() || *c == '_'))
+                    .map_or(0, |(at, c)| at + c.len_utf8());
+                names.push(&before[start..]);
+                i += 2;
+                continue;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    names
+}
+
+/// Whether `byte` can be part of an identifier (any non-ASCII byte is taken
+/// for one).
+fn is_identifier_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_' || byte >= 0x80
+}
+
 /// What an assignment statement assigns to, as far as a key of
-/// [`MUST_EVALUATE`] needs telling: the text of each of its targets and
-/// whether it is an augmented assignment (`+=`, `-=`, ...).
+/// [`MUST_EVALUATE`] needs telling.
 struct Assignment<'s> {
     /// The text before each top-level `=` (a chained assignment has
     /// several), or before the augmented operator; empty for a statement
     /// with neither.
     targets: Vec<&'s str>,
-    augmented: bool,
-}
-
-impl Assignment<'_> {
-    /// Whether one of the targets names `key`, outside strings and
-    /// attribute access (`x.key`): a plain or augmented assignment to it,
-    /// a tuple or a chained target holding it, or one written after a
-    /// compound statement's header on the same line (`if x: key = ...`).
-    fn binds(&self, key: &str) -> bool {
-        self.targets
-            .iter()
-            .any(|target| target_names(target).any(|name| name == key))
-    }
+    /// An augmented assignment's operator (`+`, `//`, ...).
+    augmented: Option<&'s str>,
+    /// What is assigned: the text after the last target's `=`.
+    value: &'s str,
 }
 
 /// The assignment `stmt` makes, from its top-level `=` signs: outside
 /// strings and brackets, and none of `==`, `!=`, `<=`, `>=` or `:=`. An
 /// `=` that a binary operator precedes (`+=`, `//=`, `>>=`, ...) makes it
 /// an augmented assignment, whose one target stops before the operator.
-/// A `for` or `with` target, a `def`, an import and a `del` are not
-/// assignments here.
+/// The `=` of a lambda's default parameter is part of the value
+/// (`f = lambda x='': x`). A `for` or `with` target, a `def`, an import
+/// and a `del` are not assignments here.
 fn assignment(stmt: &str) -> Assignment<'_> {
     let bytes = stmt.as_bytes();
     let mut targets = Vec::new();
@@ -1104,11 +1742,16 @@ fn assignment(stmt: &str) -> Assignment<'_> {
                     Some(b'+' | b'-' | b'*' | b'/' | b'%' | b'&' | b'|' | b'^' | b'@') => 1,
                     _ => 0,
                 };
-                targets.push(&stmt[start..i - operator]);
+                let target = &stmt[start..i - operator];
+                if has_lambda(target) {
+                    break;
+                }
+                targets.push(target);
                 if operator > 0 {
                     return Assignment {
                         targets,
-                        augmented: true,
+                        augmented: Some(&stmt[i - operator..i]),
+                        value: stmt[i + 1..].trim(),
                     };
                 }
                 start = i + 1;
@@ -1118,39 +1761,81 @@ fn assignment(stmt: &str) -> Assignment<'_> {
         i += 1;
     }
     Assignment {
+        value: if targets.is_empty() {
+            ""
+        } else {
+            stmt[start..].trim()
+        },
         targets,
-        augmented: false,
+        augmented: None,
     }
 }
 
-/// The names the import statement `stmt` binds: each name (or its `as`
-/// alias) of `from m import a, b as c`, parenthesized or not, and the
-/// first component (or the alias) of each module of `import a.b, d as e`.
-/// A star import binds nothing this reader can name.
-fn imported_names(stmt: &str) -> Vec<&str> {
-    let (items, from) = match stmt.strip_prefix("from ") {
-        Some(rest) => match rest.split_once(" import ") {
-            Some((_, names)) => (names, true),
-            None => return Vec::new(),
-        },
-        None => match stmt.strip_prefix("import ") {
-            Some(modules) => (modules, false),
-            None => return Vec::new(),
-        },
-    };
-    let items = items.trim().trim_start_matches('(').trim_end_matches(')');
-    items
-        .split(',')
-        .filter_map(|item| {
-            let mut words = item.split_whitespace();
-            let name = words.next()?;
-            match (words.next(), words.next()) {
-                (Some("as"), Some(alias)) => Some(alias),
-                _ if from => Some(name),
-                _ => name.split('.').next(),
+/// Whether `text` holds the keyword `lambda` outside strings and brackets.
+fn has_lambda(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    let (mut depth, mut i) = (0i32, 0usize);
+    while i < bytes.len() {
+        match bytes[i] {
+            quote @ (b'\'' | b'"') => {
+                i = skip_string(bytes, i, quote);
+                continue;
             }
-        })
-        .collect()
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            byte if is_identifier_byte(byte) => {
+                let start = i;
+                while i < bytes.len() && is_identifier_byte(bytes[i]) {
+                    i += 1;
+                }
+                if depth == 0 && &text[start..i] == "lambda" {
+                    return true;
+                }
+                continue;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    false
+}
+
+/// The names the import statement `stmt` binds, or `None` when it is no
+/// import: each name (or its `as` alias) of `from m import a, b as c`,
+/// parenthesized or not (`import(a)` too), and the first component (or
+/// the alias) of each module of `import a.b, d as e`. A star import binds
+/// nothing this reader can name.
+fn imported_names(stmt: &str) -> Option<Vec<&str>> {
+    let (items, from) = match keyword_rest(stmt, "from") {
+        Some(rest) => {
+            // `from <module> import ...`: the module is a dotted name or dots.
+            let rest = rest.trim_start();
+            let module = rest
+                .find(|c: char| !(c.is_alphanumeric() || c == '_' || c == '.'))
+                .unwrap_or(rest.len());
+            (keyword_rest(rest[module..].trim_start(), "import")?, true)
+        }
+        None => (keyword_rest(stmt, "import")?, false),
+    };
+    let items = items.trim();
+    let items = items
+        .strip_prefix('(')
+        .and_then(|inner| inner.strip_suffix(')'))
+        .unwrap_or(items);
+    Some(
+        items
+            .split(',')
+            .filter_map(|item| {
+                let mut words = item.split_whitespace();
+                let name = words.next()?;
+                match (words.next(), words.next()) {
+                    (Some("as"), Some(alias)) => Some(alias),
+                    _ if from => Some(name),
+                    _ => name.split('.').next(),
+                }
+            })
+            .collect(),
+    )
 }
 
 /// The index just past the Python string literal whose opening quote,
@@ -1175,32 +1860,93 @@ fn skip_string(bytes: &[u8], start: usize, quote: u8) -> usize {
     bytes.len()
 }
 
-/// The names `target` holds, outside strings and attribute names (the
-/// `name` of `x.name`): every identifier, whether the target binds it or
-/// only reads it (a subscript's key).
-fn target_names(target: &str) -> impl Iterator<Item = &str> {
+/// The names and attributes a target binds.
+struct TargetBindings<'s> {
+    /// The names it binds: the target itself, or a tuple's or list's items.
+    names: Vec<&'s str>,
+    /// The attributes it binds: `name` of `x.name`.
+    attributes: Vec<&'s str>,
+}
+
+/// What `target` binds: each name or attribute that ends a target, outside
+/// strings and the brackets of a call or a subscript, whose content is
+/// read, not bound (`x[rst_prolog]` binds nothing by name). A bracket that
+/// follows a name, a closing bracket or a string opens a call or a
+/// subscript; any other opens a tuple or a list, whose items are targets.
+fn target_bindings(target: &str) -> TargetBindings<'_> {
+    #[derive(Clone, Copy, PartialEq)]
+    enum Prev {
+        Start,
+        Name,
+        Close,
+        Dot,
+        Other,
+    }
     let bytes = target.as_bytes();
-    let identifier = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_' || byte >= 0x80;
-    let mut names = Vec::new();
+    let mut bound = TargetBindings {
+        names: Vec::new(),
+        attributes: Vec::new(),
+    };
+    // For each open bracket, whether it is a tuple's or a list's.
+    let mut displays: Vec<bool> = Vec::new();
+    let mut prev = Prev::Start;
+    // A name, and whether it is an attribute, until what follows it tells
+    // whether it ends a target: what `.`, `(` or `[` follows is read.
+    let mut waiting: Option<(&str, bool)> = None;
+    fn flush<'s>(
+        waiting: &mut Option<(&'s str, bool)>,
+        next: Option<u8>,
+        bound: &mut TargetBindings<'s>,
+    ) {
+        if let Some((name, attribute)) = waiting.take() {
+            if !matches!(next, Some(b'.' | b'(' | b'[')) {
+                match attribute {
+                    true => bound.attributes.push(name),
+                    false => bound.names.push(name),
+                }
+            }
+        }
+    }
     let mut i = 0;
     while i < bytes.len() {
         let byte = bytes[i];
+        if byte.is_ascii_whitespace() {
+            i += 1;
+            continue;
+        }
+        flush(&mut waiting, Some(byte), &mut bound);
         if byte == b'\'' || byte == b'"' {
             i = skip_string(bytes, i, byte);
-        } else if identifier(byte) {
+            prev = Prev::Close;
+            continue;
+        }
+        if is_identifier_byte(byte) {
             let start = i;
-            while i < bytes.len() && identifier(bytes[i]) {
+            while i < bytes.len() && is_identifier_byte(bytes[i]) {
                 i += 1;
             }
-            let attribute = target[..start].trim_end().ends_with('.');
-            if !byte.is_ascii_digit() && !attribute {
-                names.push(&target[start..i]);
+            if !byte.is_ascii_digit() && !displays.contains(&false) {
+                waiting = Some((&target[start..i], prev == Prev::Dot));
             }
-        } else {
-            i += 1;
+            prev = Prev::Name;
+            continue;
         }
+        match byte {
+            b'(' | b'[' | b'{' => {
+                displays.push(!matches!(prev, Prev::Name | Prev::Close));
+                prev = Prev::Other;
+            }
+            b')' | b']' | b'}' => {
+                displays.pop();
+                prev = Prev::Close;
+            }
+            b'.' => prev = Prev::Dot,
+            _ => prev = Prev::Other,
+        }
+        i += 1;
     }
-    names.into_iter()
+    flush(&mut waiting, None, &mut bound);
+    bound
 }
 
 /// Python 3.12's decimal number literals, unsigned: `Decnumber` and
@@ -1223,22 +1969,47 @@ static DECIMAL_LITERAL: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock:
 });
 
 /// Recursive-descent parser for Python literals → JSON values.
-/// Supports: strings (escapes, implicit adjacent concatenation, triple
-/// quotes), ints/floats, True/False/None, lists, tuples (as arrays), dicts
-/// with string keys, arbitrary nesting, trailing commas.
+/// Supports: strings (CPython 3.12's escapes, implicit adjacent
+/// concatenation, triple quotes; a `bytes` literal reads as the `str` its
+/// bytes are the Latin-1 code points of), ints/floats, True/False/None,
+/// lists, tuples (as arrays), dicts with string keys, arbitrary nesting,
+/// trailing commas.
 pub(crate) fn parse_python_literal(src: &str) -> std::result::Result<serde_json::Value, String> {
+    parse_python_literal_typed(src).map(|(value, _)| value)
+}
+
+/// [`parse_python_literal`], with the value's Python type
+/// (`type(value).__name__`): `str` or `bytes` for a string literal,
+/// `tuple` or `list` for an array, and so on.
+pub(crate) fn parse_python_literal_typed(
+    src: &str,
+) -> std::result::Result<(serde_json::Value, &'static str), String> {
     let chars: Vec<char> = src.chars().collect();
     let mut p = PyLiteralParser {
         chars,
         pos: 0,
         saw_comma: false,
+        type_name: "NoneType",
     };
     let value = p.parse_value()?;
     p.skip_ws();
     if p.pos < p.chars.len() {
         return Err("trailing expression".to_string());
     }
-    Ok(value)
+    Ok((value, p.type_name))
+}
+
+/// Python's truth value of a literal: false for `None`, `False`, a zero,
+/// and an empty string, sequence or dict.
+fn is_true(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Null => false,
+        serde_json::Value::Bool(value) => *value,
+        serde_json::Value::Number(number) => number.as_f64() != Some(0.0),
+        serde_json::Value::String(text) => !text.is_empty(),
+        serde_json::Value::Array(items) => !items.is_empty(),
+        serde_json::Value::Object(map) => !map.is_empty(),
+    }
 }
 
 struct PyLiteralParser {
@@ -1247,7 +2018,23 @@ struct PyLiteralParser {
     /// Whether the most recently closed sequence contained a comma — used to
     /// tell a parenthesized grouping `(x)` from a one-element tuple `(x,)`.
     saw_comma: bool,
+    /// The Python type of the value parsed last: once the parse is done,
+    /// the whole value's.
+    type_name: &'static str,
 }
+
+/// What a string literal's prefix makes it.
+#[derive(Clone, Copy)]
+struct StringKind {
+    /// `r`: a backslash escapes nothing.
+    raw: bool,
+    /// `b`: a `bytes` literal.
+    bytes: bool,
+}
+
+/// CPython's message for a `bytes` literal holding a character that is not
+/// ASCII.
+const BYTES_ASCII: &str = "bytes can only contain ASCII literal characters";
 
 impl PyLiteralParser {
     fn peek(&self) -> Option<char> {
@@ -1262,31 +2049,47 @@ impl PyLiteralParser {
 
     fn parse_value(&mut self) -> std::result::Result<serde_json::Value, String> {
         self.skip_ws();
-        if let Some(raw) = self.string_prefix() {
-            let mut s = self.parse_string(raw)?;
+        if let Some(kind) = self.string_prefix() {
+            let mut s = self.parse_string(kind)?;
             // Implicit adjacent string concatenation: 'a' 'b' == 'ab'
-            while let Some(raw) = {
+            while let Some(next) = {
                 self.skip_ws();
                 self.string_prefix()
             } {
-                s.push_str(&self.parse_string(raw)?);
+                if next.bytes != kind.bytes {
+                    return Err("cannot mix bytes and nonbytes literals".to_string());
+                }
+                s.push_str(&self.parse_string(next)?);
             }
+            self.type_name = if kind.bytes { "bytes" } else { "str" };
             return Ok(serde_json::Value::String(s));
         }
-        match self.peek() {
-            Some('[') => self.parse_sequence('[', ']'),
+        let value = match self.peek() {
+            Some('[') => {
+                let value = self.parse_sequence('[', ']');
+                self.type_name = "list";
+                value
+            }
             Some('(') => {
                 // Python: `(x)` is grouping, `(x,)` / `(x, y)` is a tuple.
-                // Either way an array (or the inner value) serves config needs.
+                // Either way an array (or the inner value) serves config
+                // needs; the type is the inner value's, or `tuple`.
                 let value = self.parse_sequence('(', ')')?;
                 match value {
                     serde_json::Value::Array(items) if items.len() == 1 && !self.saw_comma => {
-                        Ok(items.into_iter().next().unwrap())
+                        return Ok(items.into_iter().next().unwrap());
                     }
-                    other => Ok(other),
+                    other => {
+                        self.type_name = "tuple";
+                        Ok(other)
+                    }
                 }
             }
-            Some('{') => self.parse_dict(),
+            Some('{') => {
+                let value = self.parse_dict();
+                self.type_name = "dict";
+                value
+            }
             Some(c) if c.is_ascii_digit() || c == '-' || c == '+' || c == '.' => {
                 self.parse_number()
             }
@@ -1302,7 +2105,14 @@ impl PyLiteralParser {
                 }
             }
             None => Err("empty value".to_string()),
+        }?;
+        if !matches!(
+            value,
+            serde_json::Value::Array(_) | serde_json::Value::Object(_)
+        ) {
+            self.type_name = python_type_name(&value);
         }
+        Ok(value)
     }
 
     fn eat_keyword(&mut self, kw: &str) -> bool {
@@ -1322,15 +2132,18 @@ impl PyLiteralParser {
     }
 
     /// A string literal starts here — with an optional Python prefix, which
-    /// is consumed. `Some(true)` means the literal is *raw*: `nitpick_ignore_regex`
-    /// entries are conventionally written `r'...'`, and a raw literal's
-    /// backslashes must survive into the pattern. `f` prefixes are
+    /// is consumed: what kind of literal it is. A raw literal's backslashes
+    /// survive (`nitpick_ignore_regex` entries are conventionally written
+    /// `r'...'`); a `b` prefix makes it a `bytes` literal. `f` prefixes are
     /// deliberately not accepted: an f-string's braces are an expression
     /// this parser cannot evaluate, so it stays an unsupported expression
     /// (skipped) rather than being taken literally.
-    fn string_prefix(&mut self) -> Option<bool> {
+    fn string_prefix(&mut self) -> Option<StringKind> {
         if matches!(self.peek(), Some('\'') | Some('"')) {
-            return Some(false);
+            return Some(StringKind {
+                raw: false,
+                bytes: false,
+            });
         }
         for len in [2usize, 1] {
             let quote_at = self.pos + len;
@@ -1343,13 +2156,22 @@ impl PyLiteralParser {
                 .to_lowercase();
             if matches!(prefix.as_str(), "r" | "u" | "b" | "rb" | "br") {
                 self.pos = quote_at;
-                return Some(prefix.contains('r'));
+                return Some(StringKind {
+                    raw: prefix.contains('r'),
+                    bytes: prefix.contains('b'),
+                });
             }
         }
         None
     }
 
-    fn parse_string(&mut self, raw: bool) -> std::result::Result<String, String> {
+    /// The string literal here, its prefix consumed ([`Self::string_prefix`]),
+    /// as CPython 3.12 reads it, or why CPython rejects it or this reader
+    /// cannot hold what it gives: a raw literal keeps every backslash; any
+    /// other reads its escape sequences ([`Self::escape`]). A newline ends
+    /// a single-quoted literal unless a backslash escapes it, and a `bytes`
+    /// literal holds ASCII characters only.
+    fn parse_string(&mut self, kind: StringKind) -> std::result::Result<String, String> {
         let quote = self.peek().ok_or("expected string")?;
         self.pos += 1;
         let triple = self.chars.get(self.pos) == Some(&quote)
@@ -1364,34 +2186,26 @@ impl PyLiteralParser {
                 .chars
                 .get(self.pos)
                 .ok_or("unterminated string literal")?;
+            if kind.bytes && !c.is_ascii() {
+                return Err(BYTES_ASCII.to_string());
+            }
             if c == '\\' {
                 let next = *self
                     .chars
                     .get(self.pos + 1)
-                    .ok_or("unterminated escape sequence")?;
-                if raw {
+                    .ok_or("unterminated string literal")?;
+                if kind.bytes && !next.is_ascii() {
+                    return Err(BYTES_ASCII.to_string());
+                }
+                self.pos += 2;
+                if kind.raw {
                     // A raw literal keeps both characters — but the escaped
                     // quote still does not end the string.
                     out.push('\\');
                     out.push(next);
-                    self.pos += 2;
-                    continue;
+                } else {
+                    self.escape(next, kind.bytes, &mut out)?;
                 }
-                let translated = match next {
-                    'n' => '\n',
-                    't' => '\t',
-                    'r' => '\r',
-                    '\\' => '\\',
-                    '\'' => '\'',
-                    '"' => '"',
-                    other => {
-                        // Unknown escape: Python keeps the backslash.
-                        out.push('\\');
-                        other
-                    }
-                };
-                out.push(translated);
-                self.pos += 2;
                 continue;
             }
             if c == quote {
@@ -1407,9 +2221,111 @@ impl PyLiteralParser {
                     return Ok(out);
                 }
             }
+            if !triple && matches!(c, '\n' | '\r') {
+                return Err("unterminated string literal".to_string());
+            }
             out.push(c);
             self.pos += 1;
         }
+    }
+
+    /// The escape sequence a backslash and `next` start, the parser past
+    /// `next`, as CPython 3.12 reads it in a `str` literal (`bytes`
+    /// false) or a `bytes` one, onto `out` — a `bytes` value's bytes as
+    /// the Latin-1 code points they are:
+    /// - a backslash before a line break removes both;
+    /// - `\\`, `\'`, `\"`, `\a`, `\b`, `\f`, `\n`, `\r`, `\t`, `\v`;
+    /// - one to three octal digits: the code point they give, up to 0o777
+    ///   in a `str` (CPython 3.12 warns above 0o377), that modulo 256 in a
+    ///   `bytes`;
+    /// - `\x` and exactly two hex digits;
+    /// - in a `str`, `\u` and four, `\U` and eight hex digits; a lone
+    ///   surrogate, which a Rust `String` cannot hold, and `\N{...}`, whose
+    ///   names this crate has no table of, fail the literal;
+    /// - any other keeps the backslash (CPython 3.12 warns).
+    ///
+    /// A short `\x`, `\u` or `\U`, and a `\U` past U+10FFFF, are CPython's
+    /// `SyntaxError`s: they fail the literal with its message.
+    fn escape(
+        &mut self,
+        next: char,
+        bytes: bool,
+        out: &mut String,
+    ) -> std::result::Result<(), String> {
+        let simple = match next {
+            '\n' => return Ok(()),
+            '\r' => {
+                // CPython reads a source's `\r\n` as one line break.
+                if self.peek() == Some('\n') {
+                    self.pos += 1;
+                }
+                return Ok(());
+            }
+            '\\' | '\'' | '"' => Some(next),
+            'a' => Some('\x07'),
+            'b' => Some('\x08'),
+            'f' => Some('\x0c'),
+            'n' => Some('\n'),
+            'r' => Some('\r'),
+            't' => Some('\t'),
+            'v' => Some('\x0b'),
+            _ => None,
+        };
+        if let Some(c) = simple {
+            out.push(c);
+            return Ok(());
+        }
+        let code = match next {
+            '0'..='7' => {
+                let mut value = next.to_digit(8).expect("an octal digit");
+                for _ in 0..2 {
+                    match self.peek().and_then(|c| c.to_digit(8)) {
+                        Some(digit) => {
+                            value = value * 8 + digit;
+                            self.pos += 1;
+                        }
+                        None => break,
+                    }
+                }
+                if bytes {
+                    value % 256
+                } else {
+                    value
+                }
+            }
+            'x' => self.hex_digits(2, "truncated \\xXX escape")?,
+            'u' if !bytes => self.hex_digits(4, "truncated \\uXXXX escape")?,
+            'U' if !bytes => {
+                let value = self.hex_digits(8, "truncated \\UXXXXXXXX escape")?;
+                if value > 0x10FFFF {
+                    return Err("illegal Unicode character".to_string());
+                }
+                value
+            }
+            'N' if !bytes => return Err("a \\N{...} escape".to_string()),
+            _ => {
+                out.push('\\');
+                out.push(next);
+                return Ok(());
+            }
+        };
+        out.push(char::from_u32(code).ok_or("a lone surrogate")?);
+        Ok(())
+    }
+
+    /// The value of the `count` hex digits here, the parser past them, or
+    /// `error` when fewer follow.
+    fn hex_digits(&mut self, count: usize, error: &str) -> std::result::Result<u32, String> {
+        let mut value = 0;
+        for _ in 0..count {
+            let digit = self
+                .peek()
+                .and_then(|c| c.to_digit(16))
+                .ok_or_else(|| error.to_string())?;
+            value = value * 16 + digit;
+            self.pos += 1;
+        }
+        Ok(value)
     }
 
     /// A number: an optional sign, then the run of characters a decimal
@@ -1633,6 +2549,8 @@ impl Default for ConfPyConfig {
             math_numsep: None,
             rst_prolog: None,
             rst_epilog: None,
+            unevaluable: Vec::new(),
+            decoration_crashes: Vec::new(),
             // `None` = "conf.py said nothing", which leaves
             // `BuildConfig::default()`'s sphinx defaults untouched.
             maximum_signature_line_length: None,
@@ -1863,6 +2781,8 @@ impl ConfPyConfig {
         }
         config.rst_prolog = self.rst_prolog.clone();
         config.rst_epilog = self.rst_epilog.clone();
+        config.unevaluable = self.unevaluable.clone();
+        config.decoration_crashes = self.decoration_crashes.clone();
         if let Some(math_number_all) = self.math_number_all {
             config.math_number_all = math_number_all;
         }
@@ -2569,13 +3489,24 @@ e = 'esc\n'
     /// the key, instead of being dropped (wave 5a T17b): an expression it
     /// cannot evaluate, an augmented assignment other than a top-level
     /// `+=` of a string literal to a string it holds, an assignment inside
-    /// a block, one it cannot split, or an import of the name. A later
-    /// top-level assignment it can evaluate is the value Python's last
-    /// binding leaves, and reading the keys binds nothing.
+    /// a block, one it cannot split, an import of the name, a `for`'s, a
+    /// `with`'s or an `except`'s target, an assignment expression, a `def`
+    /// or a `class` of the name, a binding in a function that declares it
+    /// global, and an assignment to an attribute of that name, which
+    /// Sphinx 9.1.0 reads in `setup(app)` (scratch
+    /// `t17b-fix1/specs/attr_*`, `def_*`, `del_prolog`). A later top-level
+    /// assignment it can evaluate is the value Python's last binding
+    /// leaves, unless the earlier binding runs later, in a function; `del`
+    /// of a bound name leaves Sphinx's `None`. Reading the keys binds
+    /// nothing, nor does a subscript's key, a lambda's parameter, a call's
+    /// keyword argument, or an assignment in a function or a class body,
+    /// which binds a local variable or a class attribute.
     #[test]
     fn unevaluable_prolog_or_epilog_fails_the_parse() {
-        type Expected = Result<&'static str, (&'static str, usize, &'static str)>;
-        let rows: [(&str, &str, Expected); 23] = [
+        /// The pending binding, or what `rst_prolog` holds (`None`: unset
+        /// or `None`).
+        type Expected = Result<Option<&'static str>, (&'static str, usize, &'static str)>;
+        let rows: [(&str, &str, Expected); 68] = [
             (
                 "f-string",
                 "rst_prolog = f\"x {version}\"\n",
@@ -2612,6 +3543,11 @@ e = 'esc\n'
                 Err(("rst_prolog", 2, "an augmented assignment")),
             ),
             (
+                "+= of a bytes",
+                "rst_prolog = 'a'\nrst_prolog += b'b'\n",
+                Err(("rst_prolog", 2, "an augmented assignment")),
+            ),
+            (
                 "*=",
                 "rst_prolog = 'a'\nrst_prolog *= 2\n",
                 Err(("rst_prolog", 2, "an augmented assignment")),
@@ -2622,8 +3558,18 @@ e = 'esc\n'
                 Err(("rst_prolog", 2, "an assignment inside a block")),
             ),
             (
+                "in a one-line if",
+                "if x: rst_prolog = 'a'\n",
+                Err(("rst_prolog", 1, "an assignment inside a block")),
+            ),
+            (
                 "in a try block",
                 "try:\n    rst_prolog = 'a'\nexcept ImportError:\n    pass\n",
+                Err(("rst_prolog", 2, "an assignment inside a block")),
+            ),
+            (
+                "in a for block",
+                "for x in y:\n    rst_prolog = 'a'\n",
                 Err(("rst_prolog", 2, "an assignment inside a block")),
             ),
             (
@@ -2643,6 +3589,16 @@ e = 'esc\n'
                 Err(("rst_prolog", 1, "an assignment it cannot evaluate")),
             ),
             (
+                "a parenthesized tuple target",
+                "(x, [rst_epilog]) = make()\n",
+                Err(("rst_epilog", 1, "an assignment it cannot evaluate")),
+            ),
+            (
+                "a starred target",
+                "*rst_epilog, x = make()\n",
+                Err(("rst_epilog", 1, "an assignment it cannot evaluate")),
+            ),
+            (
                 "a chained assignment",
                 "a = rst_epilog = 'x'\n",
                 Err(("rst_epilog", 1, "an assignment it cannot evaluate")),
@@ -2655,22 +3611,180 @@ e = 'esc\n'
             (
                 "a later literal",
                 "rst_prolog = f'x'\nrst_prolog = 'plain'\n",
-                Ok("plain"),
+                Ok(Some("plain")),
             ),
             (
                 "+= of string literals",
                 "rst_prolog = 'a'\nrst_prolog += 'b' 'c'\nrst_prolog += \"\"\"\nd\"\"\"\n",
-                Ok("abc\nd"),
+                Ok(Some("abc\nd")),
             ),
             (
                 "reads bind nothing",
                 "rst_prolog = 'a'\nx = rst_prolog + 'b'\nhtml_context = {'p': rst_prolog}\n",
-                Ok("a"),
+                Ok(Some("a")),
             ),
             (
                 "an unrelated block",
                 "rst_prolog = 'a'\nif x:\n    y = rst_prolog\n",
-                Ok("a"),
+                Ok(Some("a")),
+            ),
+            (
+                "a subscript's key",
+                "rst_prolog = 'a'\nx = {}\nx[rst_prolog] = 1\nx.y[rst_prolog] += 1\n",
+                Ok(Some("a")),
+            ),
+            (
+                "a lambda's parameter",
+                "rst_prolog = 'a'\nf = lambda rst_prolog='': rst_prolog\n",
+                Ok(Some("a")),
+            ),
+            (
+                "a call's keyword argument",
+                "rst_prolog = 'a'\nconfigure(rst_prolog='x')\nhtml_context = dict(\n    \
+                 rst_prolog='x',\n)\n",
+                Ok(Some("a")),
+            ),
+            (
+                "a def body",
+                "rst_prolog = 'a'\ndef setup(app):\n    rst_prolog = 'x'\n    if app:\n        \
+                 rst_prolog += 'y'\n",
+                Ok(Some("a")),
+            ),
+            (
+                "a one-line def",
+                "rst_prolog = 'a'\ndef f(): rst_prolog = 'x'\n",
+                Ok(Some("a")),
+            ),
+            (
+                "a class body",
+                "rst_prolog = 'a'\nclass C:\n    rst_prolog = 'y'\n    def m(self):\n        \
+                 rst_prolog = 'z'\n",
+                Ok(Some("a")),
+            ),
+            (
+                "a global in another function",
+                "def f():\n    global rst_prolog\ndef g():\n    rst_prolog = 'x'\nrst_prolog = 'a'\n",
+                Ok(Some("a")),
+            ),
+            (
+                "a function nested in one with the global",
+                "def f():\n    global rst_prolog\n    def g():\n        rst_prolog = 'x'\n\
+                 rst_prolog = 'a'\n",
+                Ok(Some("a")),
+            ),
+            (
+                "a global binding in a function",
+                "rst_prolog = 'a'\ndef setup(app):\n    global rst_prolog\n    rst_prolog = 'b'\n",
+                Err((
+                    "rst_prolog",
+                    4,
+                    "a binding in a function or class body that declares it global",
+                )),
+            ),
+            (
+                "a function's global binding runs after a later literal",
+                "def setup(app):\n    global rst_epilog\n    if app:\n        rst_epilog += 'b'\n\
+                 rst_epilog = 'a'\n",
+                Err((
+                    "rst_epilog",
+                    4,
+                    "a binding in a function or class body that declares it global",
+                )),
+            ),
+            (
+                "an attribute in setup",
+                "rst_prolog = 'a'\ndef setup(app):\n    app.config.rst_prolog = 'b'\n",
+                Err(("rst_prolog", 3, "an assignment to an attribute of that name")),
+            ),
+            (
+                "an attribute in an event handler",
+                "def inited(app, config):\n    config.rst_epilog += 'b'\n",
+                Err(("rst_epilog", 2, "an assignment to an attribute of that name")),
+            ),
+            (
+                "del",
+                "rst_prolog = 'a'\ndel rst_prolog\n",
+                Ok(None),
+            ),
+            (
+                "del after a binding it cannot evaluate",
+                "rst_prolog = f'x'\ndel x, (rst_prolog)\n",
+                Ok(None),
+            ),
+            (
+                "a literal after del",
+                "rst_prolog = 'a'\ndel rst_prolog\nrst_prolog = 'b'\n",
+                Ok(Some("b")),
+            ),
+            (
+                "del of an unbound name",
+                "del rst_prolog\n",
+                Err(("rst_prolog", 1, "a del of a name that may not be bound")),
+            ),
+            (
+                "del of a name a block may have bound",
+                "if x:\n    rst_prolog = 'a'\ndel rst_prolog\n",
+                Err(("rst_prolog", 2, "an assignment inside a block")),
+            ),
+            (
+                "del in a block",
+                "rst_prolog = 'a'\nif x:\n    del rst_prolog\n",
+                Err(("rst_prolog", 3, "a del inside a block")),
+            ),
+            (
+                "del of a subscript",
+                "rst_prolog = 'a'\nx = {}\ndel x[rst_prolog]\n",
+                Ok(Some("a")),
+            ),
+            (
+                "a for target",
+                "for rst_prolog in ['a']:\n    pass\n",
+                Err(("rst_prolog", 1, "a for target")),
+            ),
+            (
+                "a for target in a tuple",
+                "for x, rst_epilog in pairs: pass\n",
+                Err(("rst_epilog", 1, "a for target")),
+            ),
+            (
+                "a with target",
+                "with open('p') as rst_prolog:\n    pass\n",
+                Err(("rst_prolog", 1, "a with target")),
+            ),
+            (
+                "a parenthesized with target",
+                "with (open('p') as f, open('e') as rst_epilog):\n    pass\n",
+                Err(("rst_epilog", 1, "a with target")),
+            ),
+            (
+                "an except target",
+                "try:\n    pass\nexcept OSError as rst_prolog:\n    pass\n",
+                Err(("rst_prolog", 3, "an except target")),
+            ),
+            (
+                "an assignment expression",
+                "print(rst_epilog := 'x')\n",
+                Err(("rst_epilog", 1, "an assignment expression")),
+            ),
+            (
+                "an assignment expression after a character that is no ASCII",
+                "x = (\u{ab}rst_epilog := 'x')\n",
+                Err(("rst_epilog", 1, "an assignment expression")),
+            ),
+            (
+                "a parenthesized assignment expression in a header",
+                "if (rst_prolog := 'a'):\n    pass\n",
+                Err(("rst_prolog", 1, "an assignment expression")),
+            ),
+            (
+                "a def of the name",
+                "def rst_prolog():\n    pass\n",
+                Err(("rst_prolog", 1, "a def statement")),
+            ),
+            (
+                "a class of the name",
+                "class rst_epilog:\n    pass\n",
+                Err(("rst_epilog", 1, "a class statement")),
             ),
             (
                 "an import",
@@ -2683,15 +3797,70 @@ e = 'esc\n'
                 Err(("rst_epilog", 1, "an import")),
             ),
             (
+                "a parenthesized import with no space",
+                "from shared import(rst_prolog)\n",
+                Err(("rst_prolog", 1, "an import")),
+            ),
+            (
+                "an import in a function",
+                "rst_prolog = 'a'\ndef setup(app):\n    from shared import rst_prolog\n",
+                Ok(Some("a")),
+            ),
+            (
                 "an import before a literal",
                 "from shared import rst_prolog\nrst_prolog = 'plain'\n",
-                Ok("plain"),
+                Ok(Some("plain")),
             ),
             (
                 "importing other names",
                 "import rst_prolog_tools as tools\nfrom shared import rst_prologue\n\
                  rst_prolog = 'a'\n",
-                Ok("a"),
+                Ok(Some("a")),
+            ),
+            (
+                "an escaped line break",
+                "rst_prolog = \"\"\"\\\n.. |a| replace:: A\n\"\"\"\n",
+                Ok(Some(".. |a| replace:: A\n")),
+            ),
+            (
+                "a \\N escape",
+                "rst_prolog = '\\N{BULLET}'\n",
+                Err(("rst_prolog", 1, "a \\N{...} escape")),
+            ),
+            (
+                "a short \\x escape",
+                "rst_epilog = '\\x4'\n",
+                Err(("rst_epilog", 1, "truncated \\xXX escape")),
+            ),
+            (
+                "a lone surrogate",
+                "rst_prolog = '\\ud800'\n",
+                Err(("rst_prolog", 1, "a lone surrogate")),
+            ),
+            (
+                "a true bytes",
+                "rst_prolog = b'.. |a| replace:: A\\n'\n",
+                Err(("rst_prolog", 1, "a bytes literal")),
+            ),
+            (
+                "bytes mixed with str",
+                "rst_prolog = b'a' 'b'\n",
+                Err(("rst_prolog", 1, "cannot mix bytes and nonbytes literals")),
+            ),
+            (
+                "an empty bytes",
+                "rst_prolog = b''\n",
+                Ok(None),
+            ),
+            (
+                "None",
+                "rst_prolog = 'a'\nrst_prolog = None\n",
+                Ok(None),
+            ),
+            (
+                "a mistyped value",
+                "rst_prolog = ('x',)\n",
+                Ok(None),
             ),
         ];
         for (name, content, expected) in rows {
@@ -2712,14 +3881,230 @@ e = 'esc\n'
                 }
                 Ok(value) => {
                     assert_eq!(unevaluable, None, "{name}");
-                    assert_eq!(
-                        p.conf_namespace.get("rst_prolog"),
-                        Some(&serde_json::Value::String(value.to_string())),
-                        "{name}"
-                    );
+                    let held = p.conf_namespace.get("rst_prolog");
+                    match value {
+                        Some(value) => assert_eq!(
+                            held,
+                            Some(&serde_json::Value::String(value.to_string())),
+                            "{name}"
+                        ),
+                        None if name == "a mistyped value" => {
+                            assert!(held.is_some_and(serde_json::Value::is_array), "{name}");
+                        }
+                        None => assert!(
+                            held.is_none_or(serde_json::Value::is_null),
+                            "{name}: {held:?}"
+                        ),
+                    }
                 }
             }
         }
+    }
+
+    /// A true `rst_prolog` or `rst_epilog` that is no `str` crashes
+    /// Sphinx 9.1.0's reader on its `splitlines` (decision 13): its Python
+    /// type is recorded for the type warning and the crash, a tuple's as
+    /// `tuple`. A false one, an empty `bytes` included, warns only
+    /// (scratch `t17b-fix1/specs/crash_*`, `bytes_empty`).
+    #[test]
+    fn a_true_mistyped_prolog_or_epilog_is_a_crash() {
+        for (content, mismatches, crashes) in [
+            (
+                "rst_prolog = 1\n",
+                vec![("rst_prolog", "int")],
+                vec![("rst_prolog", "int")],
+            ),
+            (
+                "rst_epilog = ('x',)\n",
+                vec![("rst_epilog", "tuple")],
+                vec![("rst_epilog", "tuple")],
+            ),
+            (
+                "rst_prolog = ['p']\nrst_epilog = {'a': 1}\n",
+                vec![("rst_prolog", "list"), ("rst_epilog", "dict")],
+                vec![("rst_prolog", "list"), ("rst_epilog", "dict")],
+            ),
+            (
+                "rst_prolog = (['p'])\n",
+                vec![("rst_prolog", "list")],
+                vec![("rst_prolog", "list")],
+            ),
+            (
+                "rst_prolog = 0.0\nrst_epilog = ()\n",
+                vec![("rst_prolog", "float"), ("rst_epilog", "tuple")],
+                vec![],
+            ),
+            ("rst_prolog = b''\n", vec![("rst_prolog", "bytes")], vec![]),
+            (
+                "rst_prolog = True\n",
+                vec![("rst_prolog", "bool")],
+                vec![("rst_prolog", "bool")],
+            ),
+        ] {
+            let config = parse(content).extract_configuration().unwrap();
+            let pairs = |pairs: &[(String, String)]| {
+                pairs
+                    .iter()
+                    .map(|(key, type_name)| (key.clone(), type_name.clone()))
+                    .collect::<Vec<_>>()
+            };
+            let owned = |pairs: Vec<(&str, &str)>| {
+                pairs
+                    .into_iter()
+                    .map(|(key, type_name)| (key.to_string(), type_name.to_string()))
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(
+                pairs(&config.confval_type_mismatches),
+                owned(mismatches),
+                "{content}"
+            );
+            assert_eq!(
+                pairs(&config.decoration_crashes),
+                owned(crashes),
+                "{content}"
+            );
+            assert_eq!(
+                (&config.rst_prolog, &config.rst_epilog),
+                (&None, &None),
+                "{content}"
+            );
+        }
+    }
+
+    /// The bindings it cannot evaluate reach the build configuration, the
+    /// first by line first, named with the configuration file
+    /// ([`PythonConfigParser::parse_conf_py`]), and fail it only there,
+    /// once the `-D` overrides are in
+    /// ([`crate::config::BuildConfig::check_evaluated`]).
+    #[test]
+    fn unevaluable_bindings_reach_the_build_config() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("conf.py");
+        std::fs::write(
+            &path,
+            "rst_epilog = f'{x}'\r\nrst_prolog = PROLOG\r\nrst_epilog += 'b'\r\n",
+        )
+        .unwrap();
+        let config = PythonConfigParser::new()
+            .unwrap()
+            .parse_conf_py(&path)
+            .unwrap()
+            .to_build_config()
+            .unwrap();
+        let bindings: Vec<(&str, usize, &str, &str)> = config
+            .unevaluable
+            .iter()
+            .map(|binding| {
+                let (key, line) = (binding.key, binding.line);
+                (key, line, binding.reason.as_str(), binding.file.as_str())
+            })
+            .collect();
+        assert_eq!(
+            bindings,
+            [
+                ("rst_epilog", 1, "unsupported expression", "conf.py"),
+                ("rst_prolog", 2, "unsupported expression", "conf.py"),
+            ]
+        );
+        assert_eq!(
+            config.check_evaluated().unwrap_err().to_string(),
+            "cannot evaluate rst_epilog (conf.py, line 1: unsupported expression): sphinx-ultra \
+             reads conf.py without running it, so rst_prolog and rst_epilog must be string \
+             literals; set it with -D rst_epilog=... to build without editing conf.py"
+        );
+    }
+
+    /// The conf.py reader's string literals, as CPython 3.12.2 compiles
+    /// them (scratch `t17b-fix1/esc/cpython.out`, through the locked core
+    /// profile): every escape of a `str` and a `bytes` literal, a raw
+    /// literal's kept backslashes, implicit concatenation of a raw and a
+    /// plain literal, and the literals CPython rejects. A `bytes` value
+    /// reads as the `str` of its bytes' Latin-1 code points. Two values
+    /// CPython gives fail here instead: a `\N{...}` escape (this crate has
+    /// no Unicode name table) and a lone surrogate (a `String` holds none).
+    #[test]
+    fn string_literals_read_as_cpython_compiles_them() {
+        let rows: [(&str, Result<&str, &str>, &str); 46] = [
+            ("'a\\\nb'", Ok("ab"), "str"),
+            (
+                "\"\"\"\\\n.. |a| replace:: A\n\"\"\"",
+                Ok(".. |a| replace:: A\n"),
+                "str",
+            ),
+            ("'\\a\\b\\f\\v'", Ok("\u{7}\u{8}\u{c}\u{b}"), "str"),
+            ("'\\n\\r\\t\\\\\\'\\\"'", Ok("\n\r\t\\'\""), "str"),
+            ("'\\0'", Ok("\0"), "str"),
+            ("'\\12'", Ok("\n"), "str"),
+            ("'\\123'", Ok("S"), "str"),
+            ("'\\1234'", Ok("S4"), "str"),
+            ("'\\400'", Ok("\u{100}"), "str"),
+            ("'\\777'", Ok("\u{1ff}"), "str"),
+            ("'\\8'", Ok("\\8"), "str"),
+            ("'\\9'", Ok("\\9"), "str"),
+            ("'\\d'", Ok("\\d"), "str"),
+            ("'\\q'", Ok("\\q"), "str"),
+            ("'\\x41'", Ok("A"), "str"),
+            ("'\\x4'", Err("truncated \\xXX escape"), ""),
+            ("'\\xg1'", Err("truncated \\xXX escape"), ""),
+            ("'\\xE9'", Ok("\u{e9}"), "str"),
+            ("'\\u0041'", Ok("A"), "str"),
+            ("'\\u004'", Err("truncated \\uXXXX escape"), ""),
+            ("'\\u00e9x'", Ok("\u{e9}x"), "str"),
+            ("'\\U00000041'", Ok("A"), "str"),
+            ("'\\U0001F600'", Ok("\u{1f600}"), "str"),
+            ("'\\U00110000'", Err("illegal Unicode character"), ""),
+            ("'\\U0000004'", Err("truncated \\UXXXXXXXX escape"), ""),
+            ("'\\N{BULLET}'", Err("a \\N{...} escape"), ""),
+            ("'\\ud800'", Err("a lone surrogate"), ""),
+            ("r'\\n'", Ok("\\n"), "str"),
+            ("r'\\''", Ok("\\'"), "str"),
+            ("R'\\x41'", Ok("\\x41"), "str"),
+            ("r'a\\\nb'", Ok("a\\\nb"), "str"),
+            ("'a' r'\\b'", Ok("a\\b"), "str"),
+            ("r'\\b' '\\b'", Ok("\\b\u{8}"), "str"),
+            ("b'\\x41'", Ok("A"), "bytes"),
+            ("b'\\u0041'", Ok("\\u0041"), "bytes"),
+            ("b'\\777'", Ok("\u{ff}"), "bytes"),
+            ("b'\\N{BULLET}'", Ok("\\N{BULLET}"), "bytes"),
+            ("b'\\a'", Ok("\u{7}"), "bytes"),
+            ("rb'\\x41'", Ok("\\x41"), "bytes"),
+            ("b'\\xff'", Ok("\u{ff}"), "bytes"),
+            (
+                "b'a' 'b'",
+                Err("cannot mix bytes and nonbytes literals"),
+                "",
+            ),
+            (
+                "b'\u{e9}'",
+                Err("bytes can only contain ASCII literal characters"),
+                "",
+            ),
+            ("'\\\r\nb'", Ok("b"), "str"),
+            ("'a\nb'", Err("unterminated string literal"), ""),
+            ("u'\\x41'", Ok("A"), "str"),
+            ("'\\x41\\\nx'", Ok("Ax"), "str"),
+        ];
+        for (src, expected, type_name) in rows {
+            let got = parse_python_literal_typed(src);
+            match expected {
+                Ok(value) => assert_eq!(
+                    got,
+                    Ok((serde_json::Value::String(value.to_string()), type_name)),
+                    "{src:?}"
+                ),
+                Err(reason) => assert_eq!(got, Err(reason.to_string()), "{src:?}"),
+            }
+        }
+
+        // What CPython rejects or this reader cannot hold is any other
+        // key's drop warning, as before.
+        let p = parse("project = '\\x4'\n");
+        assert_eq!(p.conf_namespace.get("project"), None);
+        assert_eq!(
+            p.warnings()[0].message,
+            "unsupported value for 'project' dropped (truncated \\xXX escape): '\\x4'"
+        );
     }
 
     #[test]

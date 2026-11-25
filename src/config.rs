@@ -332,6 +332,27 @@ pub struct BuildConfig {
     #[serde(skip)]
     pub confval_type_mismatches: Vec<(String, String)>,
 
+    /// The `conf.py` bindings of `rst_prolog` and `rst_epilog` this crate
+    /// could not evaluate, the first by line first
+    /// ([`crate::python_config::Unevaluable`]): a configuration error once
+    /// the `-D` overrides are in, for a key no override set
+    /// ([`Self::check_evaluated`]). Sphinx reads an override, never what
+    /// `conf.py` bound the key to. Diagnostic state like
+    /// [`Self::confval_type_mismatches`]: skipped by serde.
+    #[serde(skip)]
+    pub unevaluable: Vec<crate::python_config::Unevaluable>,
+
+    /// `(key, python type name)` for a `conf.py` `rst_prolog` or
+    /// `rst_epilog` that is true and no `str`, which the typed fields
+    /// cannot hold (they read `None`): Sphinx's reader raises
+    /// `AttributeError` on its `splitlines` as it reads the first document
+    /// (decision 13, [`crate::rst::ReadConfig::decoration_crash`]). A `-D`
+    /// override, a `str`, clears its key's. Skipped by serde, it enters
+    /// the cache fingerprint all the same (`builder::config_fingerprint`):
+    /// it changes what every read does.
+    #[serde(skip)]
+    pub decoration_crashes: Vec<(String, String)>,
+
     // --- Object-signature / py-domain family (research spec §1-5, §7) ---
     //
     // The first ten keys below are rebuild category `'env'` in sphinx, i.e.
@@ -720,6 +741,8 @@ impl Default for BuildConfig {
             numfig_secnum_depth: 1,
             source_encoding: DEFAULT_SOURCE_ENCODING.to_string(),
             confval_type_mismatches: Vec::new(),
+            unevaluable: Vec::new(),
+            decoration_crashes: Vec::new(),
 
             // Object-signature / py-domain family, probe-verified against
             // sphinx 9.1.0 (task-2 brief, "Probe outcomes").
@@ -984,6 +1007,18 @@ impl BuildConfig {
         warnings
     }
 
+    /// Fails with the configuration error of the first `conf.py` binding
+    /// of `rst_prolog` or `rst_epilog` this crate could not evaluate and no
+    /// `-D` override replaced ([`Self::unevaluable`]): run once the
+    /// overrides are in. The error names the key and the override that
+    /// builds without an edit to `conf.py`.
+    pub fn check_evaluated(&self) -> Result<()> {
+        match self.unevaluable.first() {
+            Some(binding) => Err(anyhow::anyhow!("{binding}")),
+            None => Ok(()),
+        }
+    }
+
     /// Record that `key` (one of [`CONFVAL_TYPE_CHECKED_KEYS`]) received a
     /// value of python type `type_name`, for [`Self::validate`] to report.
     /// One entry per key, like sphinx's `once=True`.
@@ -1222,6 +1257,8 @@ impl BuildConfig {
 
         // Serde-skipped state does not survive the round trip; carry it.
         applied.confval_type_mismatches = std::mem::take(&mut self.confval_type_mismatches);
+        applied.unevaluable = std::mem::take(&mut self.unevaluable);
+        applied.decoration_crashes = std::mem::take(&mut self.decoration_crashes);
         // `check_confval_types` reads the override, which `Config.__getattr__`
         // takes before `conf.py`'s value, and a bool override has the one
         // type the key allows, as a `str` key's does: nothing to report
@@ -1230,6 +1267,15 @@ impl BuildConfig {
             applied
                 .confval_type_mismatches
                 .retain(|(mismatched, _)| mismatched != key);
+        }
+        // Nor does Sphinx read the prolog or epilog `conf.py` bound, which
+        // this crate may not have evaluated, or on which Sphinx's reader
+        // would crash: an override of the key replaces it.
+        if matches!(key, "rst_prolog" | "rst_epilog") {
+            applied.unevaluable.retain(|binding| binding.key != key);
+            applied
+                .decoration_crashes
+                .retain(|(crashing, _)| crashing != key);
         }
         // A top-level key is a Sphinx setting name: the `.buildinfo` hash
         // sees the override as conf.py would have. (A dotted key names
@@ -1719,10 +1765,22 @@ output:
     fn prolog_and_epilog_take_overrides() {
         let mut config = BuildConfig::default();
         config.note_confval_type_mismatch("rst_epilog", "int");
+        config.decoration_crashes = vec![("rst_epilog".to_string(), "int".to_string())];
+        config.unevaluable = vec![crate::python_config::Unevaluable {
+            key: "rst_prolog",
+            line: 3,
+            reason: "unsupported expression".to_string(),
+            file: "conf.py".to_string(),
+        }];
         for (key, value) in [("rst_prolog", ".. |a| replace:: A"), ("rst_epilog", "1")] {
             assert_eq!(config.apply_override(key, value).unwrap(), None, "{key}");
         }
         assert_eq!(config.validate_confval_types(), Vec::<String>::new());
+        // Sphinx reads the override, never what conf.py bound the key to:
+        // neither the binding this crate could not evaluate nor the value
+        // its reader crashes on.
+        assert!(config.check_evaluated().is_ok());
+        assert_eq!(config.decoration_crashes, Vec::new());
         assert_eq!(
             crate::rst::ReadConfig::from(&config),
             crate::rst::ReadConfig {
@@ -1734,6 +1792,49 @@ output:
         assert_eq!(
             config.conf_values.get("rst_epilog"),
             Some(&serde_json::Value::String("1".to_string()))
+        );
+    }
+
+    /// An override of one key leaves the other's unevaluable binding and
+    /// crash in place, and an unrelated override keeps both
+    /// ([`BuildConfig::check_evaluated`],
+    /// [`crate::rst::ReadConfig::decoration_crash`], the prolog's first).
+    #[test]
+    fn an_override_replaces_only_its_own_key() {
+        let binding = |key| crate::python_config::Unevaluable {
+            key,
+            line: 2,
+            reason: "an import".to_string(),
+            file: "conf.py".to_string(),
+        };
+        let mut config = BuildConfig {
+            unevaluable: vec![binding("rst_epilog")],
+            decoration_crashes: vec![
+                ("rst_prolog".to_string(), "list".to_string()),
+                ("rst_epilog".to_string(), "dict".to_string()),
+            ],
+            ..BuildConfig::default()
+        };
+        assert_eq!(
+            crate::rst::ReadConfig::from(&config)
+                .decoration_crash
+                .as_deref(),
+            Some("list")
+        );
+        for (key, value) in [("project", "P"), ("rst_prolog", "x")] {
+            assert_eq!(config.apply_override(key, value).unwrap(), None, "{key}");
+        }
+        assert_eq!(
+            config.check_evaluated().unwrap_err().to_string(),
+            "cannot evaluate rst_epilog (conf.py, line 2: an import): sphinx-ultra reads \
+             conf.py without running it, so rst_prolog and rst_epilog must be string literals; \
+             set it with -D rst_epilog=... to build without editing conf.py"
+        );
+        assert_eq!(
+            crate::rst::ReadConfig::from(&config)
+                .decoration_crash
+                .as_deref(),
+            Some("dict")
         );
     }
 

@@ -271,8 +271,8 @@ pub struct SphinxBuilder {
     /// once per build. Empty (and inert) unless a mapping is configured.
     intersphinx: Intersphinx,
     /// How many documents the last read phase parsed a second time, in
-    /// sorted docname order, to follow decision 14's schedule
-    /// ([`Self::reparsed_documents`]).
+    /// sorted docname order, to follow decision 14's schedule: what the
+    /// unit tests read to pin that the parallel parses stand.
     reparsed: std::sync::atomic::AtomicUsize,
 }
 
@@ -345,6 +345,15 @@ fn config_fingerprint(config: &BuildConfig) -> Result<String> {
     if let Some(map) = value.as_object_mut() {
         for key in EXCLUDED_FROM_FINGERPRINT {
             map.remove(key);
+        }
+        // A prolog or an epilog Sphinx's reader crashes on changes every
+        // read, though the typed fields read it as `None`
+        // ([`BuildConfig::decoration_crashes`]).
+        if !config.decoration_crashes.is_empty() {
+            map.insert(
+                "decoration_crashes".to_string(),
+                serde_json::to_value(&config.decoration_crashes)?,
+            );
         }
     }
     Ok(blake3::hash(serde_json::to_string(&value)?.as_bytes())
@@ -639,6 +648,10 @@ impl SphinxBuilder {
         // Sphinx logs for a rejected mapping, and running it again changes
         // nothing.
         config.init_intersphinx_mapping()?;
+        // A `conf.py` prolog or epilog this crate could not evaluate, which
+        // no override replaced, for a caller that has not checked: the CLI
+        // has, once its `-D` overrides were in.
+        config.check_evaluated()?;
         // -d/doctree_dir relocates the cache (sphinx-build's doctree dir).
         let cache_dir = config
             .doctree_dir
@@ -722,8 +735,10 @@ impl SphinxBuilder {
     /// How many documents the last build's read phase parsed a second
     /// time, in sorted docname order, because one read before them left
     /// role registries other than the ones they started from (decision
-    /// 14): 0 while the parallel parses stand.
-    pub fn reparsed_documents(&self) -> usize {
+    /// 14): 0 while the parallel parses stand. The crate's own tests read
+    /// it; it is no API.
+    #[cfg(test)]
+    pub(crate) fn reparsed_documents(&self) -> usize {
         self.reparsed.load(std::sync::atomic::Ordering::Relaxed)
     }
 
@@ -2809,6 +2824,42 @@ mod tests {
         }
     }
 
+    /// A prolog's `include` reads its file where a document at the root of
+    /// the source directory would (Sphinx's `Include` resolves the path
+    /// against the document's directory), so the baseline, computed once
+    /// the source directory is known, holds the role the included file
+    /// defines, and the parallel parses stand. (Sphinx 9.1.0, scratch
+    /// `t17b-fix1/specs/prolog_include_role.json`: no record.)
+    #[test]
+    fn a_role_a_prolog_includes_keeps_reads_parallel() {
+        let config = BuildConfig {
+            rst_prolog: Some(".. include:: roles.inc\n".to_string()),
+            ..BuildConfig::default()
+        };
+        let files = [
+            ("roles.inc", ".. role:: red\n"),
+            (
+                "index.rst",
+                "Index\n=====\n\n.. toctree::\n\n   a\n   b\n\nIndex :red:`i`.\n",
+            ),
+            ("a.rst", "A\n=\n\nEarly :red:`x`.\n"),
+            ("b.rst", "B\n=\n\nLater :red:`y`.\n"),
+        ];
+        for jobs in [4, 1] {
+            let (resolved, warnings, reparsed) =
+                build_roles_project_with(config.clone(), &files, jobs);
+            assert_eq!(warnings, Vec::<String>::new(), "-j {jobs}");
+            assert_eq!(reparsed, 0, "-j {jobs}: the parallel parses stand");
+            for docname in ["a", "b", "index"] {
+                let paragraph = paragraph(&resolved, docname).join("\n");
+                assert!(
+                    paragraph.contains("<inline classes=\"red\">"),
+                    "-j {jobs}, {docname}: {paragraph}"
+                );
+            }
+        }
+    }
+
     /// The first document Sphinx reads starts from the registries no
     /// document has changed, so the leading field-marker lines of that
     /// one alone, which come before `rst_prolog`, see none of its
@@ -3026,6 +3077,16 @@ mod tests {
             config_fingerprint(&mismatched).unwrap(),
             baseline,
             "confval_type_mismatches"
+        );
+        // A prolog Sphinx's reader crashes on, which the typed field reads
+        // as `None`, changes every read: Sphinx re-reads every document
+        // when it changes, so the cache must miss.
+        let mut crashing = base.clone();
+        crashing.decoration_crashes = vec![("rst_prolog".to_string(), "int".to_string())];
+        assert_ne!(
+            config_fingerprint(&crashing).unwrap(),
+            baseline,
+            "decoration_crashes"
         );
 
         let mut nitpick_ignore = base.clone();

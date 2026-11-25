@@ -128,6 +128,12 @@ pub struct ReadConfig {
     /// `rst_epilog` (`config.py:265`, default `None`): text it puts after
     /// every document's last line (`rst::prolog`).
     pub rst_epilog: Option<String>,
+    /// The Python type of the `rst_prolog` or `rst_epilog` that is true
+    /// and no `str`, the prolog's first: Sphinx's reader calls its
+    /// `splitlines` and raises `AttributeError` before it parses the
+    /// document (`SP/sphinx/util/rst.py:98`, `:114`), which ends the build
+    /// (decision 13; [`crate::config::BuildConfig::decoration_crashes`]).
+    pub decoration_crash: Option<String>,
 }
 
 impl Default for ReadConfig {
@@ -141,6 +147,7 @@ impl Default for ReadConfig {
             math_number_all: false,
             rst_prolog: None,
             rst_epilog: None,
+            decoration_crash: None,
         }
     }
 }
@@ -156,6 +163,13 @@ impl From<&crate::config::BuildConfig> for ReadConfig {
             math_number_all: config.math_number_all,
             rst_prolog: config.rst_prolog.clone(),
             rst_epilog: config.rst_epilog.clone(),
+            decoration_crash: ["rst_prolog", "rst_epilog"].into_iter().find_map(|key| {
+                config
+                    .decoration_crashes
+                    .iter()
+                    .find(|(crashing, _)| crashing == key)
+                    .map(|(_, type_name)| type_name.clone())
+            }),
         }
     }
 }
@@ -905,6 +919,20 @@ pub fn parse_rst_full(source: &str, opts: &ParseOptions) -> ParseOutput {
     parser.state.parse.roles = opts.roles.clone();
     if opts.sphinx {
         start_default_role(&mut parser.state, opts, parser.default_domain);
+        // `RSTParser.decorate` runs before the state machine: on a prolog or
+        // an epilog that is true and no `str`, it raises before any record
+        // of the document, after the default role's (decision 13).
+        if let Some(type_name) = &opts.read.decoration_crash {
+            parser.state.raise(
+                SphinxCrash::python(
+                    "AttributeError",
+                    format!("'{type_name}' object has no attribute 'splitlines'"),
+                    LogLocation::Doc,
+                ),
+                0,
+                0,
+            );
+        }
     }
     parser.parse_document_full()
 }

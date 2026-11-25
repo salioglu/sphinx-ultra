@@ -56,8 +56,10 @@ pub struct Parser {
     /// unless a document read before it changed them (decision 14): the
     /// fresh ones with the role and default-role definitions of
     /// `rst_prolog`, which every document makes before its own text
-    /// ([`Self::prolog_baseline`]).
-    baseline_roles: Arc<rst::roles::RoleTable>,
+    /// ([`Self::prolog_baseline`]). Computed once, on first use: by then
+    /// the source directory a prolog's `include` resolves in is known
+    /// ([`Self::with_srcdir`]).
+    baseline_roles: std::sync::OnceLock<Arc<rst::roles::RoleTable>>,
 }
 
 /// Everything one source file's read produces: the pipeline's [`Document`]
@@ -76,19 +78,16 @@ pub struct ParsedFile {
 
 impl Parser {
     pub fn new(config: &BuildConfig) -> Result<Self> {
-        let fresh_roles = rst::roles::RoleTable::builtin(true);
-        let mut parser = Self {
+        Ok(Self {
             exclude_patterns: config.exclude_patterns.clone(),
             py: crate::py::PySigConfig::from(config),
             srcdir: None,
             source_encoding: config.source_encoding.clone(),
             read: ReadSettings::from_config(config, BuilderKind::default()),
             read_config: rst::ReadConfig::from(config),
-            baseline_roles: Arc::clone(&fresh_roles),
-            fresh_roles,
-        };
-        parser.baseline_roles = parser.prolog_baseline();
-        Ok(parser)
+            fresh_roles: rst::roles::RoleTable::builtin(true),
+            baseline_roles: std::sync::OnceLock::new(),
+        })
     }
 
     /// The role registries the first document a build reads starts from,
@@ -106,7 +105,7 @@ impl Parser {
     /// whether the documents after it must be read again from its
     /// registries.
     pub(crate) fn baseline_roles(&self) -> &Arc<rst::roles::RoleTable> {
-        &self.baseline_roles
+        self.baseline_roles.get_or_init(|| self.prolog_baseline())
     }
 
     /// The registries a read of `rst_prolog` alone leaves, from the fresh
@@ -154,8 +153,9 @@ impl Parser {
     /// `included`/`dependencies` recording.
     pub fn with_srcdir(mut self, srcdir: std::path::PathBuf) -> Self {
         self.srcdir = Some(srcdir);
-        // A prolog's `include` now resolves in the source directory.
-        self.baseline_roles = self.prolog_baseline();
+        // A prolog's `include` now resolves in the source directory: a
+        // baseline computed without it no longer holds.
+        self.baseline_roles = std::sync::OnceLock::new();
         self
     }
 
