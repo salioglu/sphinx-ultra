@@ -312,6 +312,26 @@ impl NameTable {
         }
         reported
     }
+
+    /// The name half of docutils `note_explicit_target(node, msgnode)`
+    /// (`set_name_id_map(node, id, msgnode, explicit=True)`,
+    /// `nodes.py:2002-2007`) for a node a read transform made, whose names
+    /// no node holds yet: each maps to `id`, the id `set_id` gave the node,
+    /// as an explicit target's. TargetNotes (540) binds its footnotes so
+    /// (`SP/docutils/transforms/references.py:828`): a footnote's name is
+    /// `TARGET_NOTE: <its id>`, which no parsed node holds, the parser's
+    /// names being fully normalized (lower case), and which no other
+    /// footnote holds, each id being fresh. So `set_duplicate_name_id`,
+    /// which reads the node a name is bound to live (`nodes.py:1943-1951`)
+    /// where [`NameEntry`] holds what it was when bound, is never reached;
+    /// a debug assertion keeps the precondition.
+    pub fn note_explicit_name(&mut self, node: NodeView<'_>, id: &str) {
+        let duplicates = self.bind(node, id, true);
+        debug_assert!(
+            duplicates.is_empty(),
+            "note_explicit_name on a name a node already holds"
+        );
+    }
 }
 
 /// docutils `set_duplicate_name_id` (`nodes.py:1929-1990`) for `name`,
@@ -578,7 +598,8 @@ pub struct DocumentState {
 /// registration order and holding node identities, so registered nodes
 /// that the parse later moved or discarded keep their place ([DS §4.4,
 /// §8.1]). The `note_*` calls that fill them are the parser's
-/// ([`crate::doctree::ids`]); the read transforms consume them.
+/// ([`crate::doctree::ids`]) and, for the nodes they make, Substitutions'
+/// (220) and TargetNotes' (540); the read transforms consume them.
 #[derive(Debug, Default, Clone)]
 pub struct Registries {
     /// `note_autofootnote` / `note_autofootnote_ref`: `[#]` and `[#name]`.

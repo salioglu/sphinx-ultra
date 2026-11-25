@@ -2139,6 +2139,112 @@ Just a paragraph.
 """,
         },
     },
+    {
+        # Wave 5a T18b (structure-directives report §3.2, §6.3,
+        # `sectnum_toctree_numbered`): SectNum (710) numbers `sub`'s titles
+        # before the title and toc collectors (880) read them, so
+        # `env.titles`, `env.tocs` and the resolved `index` toctree carry
+        # its `generated` nodes, beside the `:numbered:` toctree's own
+        # `secnumber`s.
+        "name": "sectnum_numbered_toctree",
+        "conf": {},
+        "files": {
+            "index": """\
+Root
+====
+
+.. toctree::
+   :numbered:
+
+   sub
+""",
+            "sub": """\
+Title
+=====
+
+.. sectnum::
+
+Section A
+---------
+
+Text A.
+
+Sub A1
+~~~~~~
+
+Text A1.
+
+Section B
+---------
+
+Text B.
+""",
+        },
+    },
+    {
+        # Wave 5a T18b (structure-directives report §6.3,
+        # `contents_two_docs`): a local, one-level contents table in a
+        # subdocument; Contents (720) lists `sub`'s sections in the tree,
+        # and `env.tocs` holds the document's sections alone, not the
+        # table's entries.
+        "name": "contents_in_subdoc",
+        "conf": {},
+        "files": {
+            "index": """\
+Root
+====
+
+.. toctree::
+
+   sub
+""",
+            "sub": """\
+Title
+=====
+
+.. contents::
+   :local:
+   :depth: 1
+
+Section A
+---------
+
+Text A.
+
+Sub A1
+~~~~~~
+
+Text A1.
+
+Section B
+---------
+
+Text B.
+""",
+        },
+    },
+    {
+        # Wave 5a T18b (structure-directives report §3.1,
+        # `contents_unresolved_xref_title`): the contents entry copies the
+        # title's `pending_xref` (docutils' ContentsFilter), and the write
+        # phase resolves both, so the unresolved `:ref:` warns twice,
+        # identically.
+        "name": "contents_unresolved_xref",
+        "conf": {},
+        "files": {
+            "index": """\
+Title
+=====
+
+.. contents::
+
+About :ref:`missing-label`
+--------------------------
+
+x
+""",
+        },
+    },
 ]
 
 

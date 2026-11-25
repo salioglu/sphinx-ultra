@@ -1261,6 +1261,52 @@ Term : "classifier" : 'c2'
     # first item, so a meta in the item goes after the metas before the
     # list and before the list =====
     ('sx_parts', 'meta_in_list_after_meta', '.. meta::\n   :a: AAAAFIRST\n\n- item\n\n  .. meta::\n     :b: BBBBSECOND\n'),
+    # ===== sx_parts, appended (wave 5a T18b): the pending transforms
+    # TargetNotes (540), SectNum (710) and Contents (720) (research report
+    # "structure directives" §6.2, the contents, sectnum and target-notes
+    # cases; `contents_xref_titles` without its `:doc:` role and toctree,
+    # which need a second document, and `contents_title_markup` without
+    # its image; the report's per-case `language` cases stay out, since the
+    # harness pins `language` 'en' for every app) =====
+    ('sx_parts', 'contents_basic', 'Title\n=====\n\n.. contents::\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n'),
+    ('sx_parts', 'contents_local', 'Title\n=====\n\n.. contents::\n   :local:\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n'),
+    ('sx_parts', 'contents_depth1', 'Title\n=====\n\n.. contents::\n   :depth: 1\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n'),
+    ('sx_parts', 'contents_title_arg', 'Title\n=====\n\n.. contents:: Table of *Contents*\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n'),
+    ('sx_parts', 'contents_backlinks_top', 'Title\n=====\n\n.. contents::\n   :backlinks: top\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n'),
+    ('sx_parts', 'contents_backlinks_none', 'Title\n=====\n\n.. contents::\n   :backlinks: none\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n'),
+    ('sx_parts', 'contents_class', 'Title\n=====\n\n.. contents:: On this page\n   :local:\n   :class: this-page Fancy\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n'),
+    ('sx_parts', 'contents_before_title', '.. contents::\n\nTitle\n=====\n\nIntro.\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n'),
+    ('sx_parts', 'contents_local_toplevel', '.. contents::\n   :local:\n   :depth: 1\n\nOne\n===\n\n1a\n--\n\nTwo\n===\n'),
+    ('sx_parts', 'contents_no_sections', 'Para before.\n\n.. contents::\n\nPara after.\n'),
+    ('sx_parts', 'contents_local_no_subsections', 'Title\n=====\n\n.. contents::\n   :local:\n\nOnly text.\n'),
+    ('sx_parts', 'contents_in_sidebar', 'Title\n=====\n\n.. sidebar:: Side\n\n   .. contents::\n      :local:\n\nSec\n---\n\nx\n'),
+    ('sx_parts', 'contents_inside_only', 'Title\n=====\n\n.. only:: html\n\n   .. contents::\n      :local:\n\n.. only:: latex\n\n   .. topic:: T\n\n      body\n\nSec\n---\n\nx\n'),
+    ('sx_parts', 'contents_only_sections', 'Title\n=====\n\n.. contents::\n\n.. only:: html\n\n   Inside Only\n   -----------\n\n   x\n\nAfter\n-----\n'),
+    ('sx_parts', 'contents_in_admonition', 'Title\n=====\n\n.. note::\n\n   .. contents::\n\nSec\n---\n\nx\n'),
+    ('sx_parts', 'contents_bad_options', 'Title\n=====\n\n.. contents::\n   :depth: -1\n\n.. contents::\n   :backlinks: bogus\n\n.. contents::\n   :depth: two\n\nSec\n---\n\nx\n'),
+    ('sx_parts', 'contents_name_clash', 'Contents\n========\n\n.. contents::\n\n.. contents::\n\nSec\n---\n\nx\n'),
+    ('sx_parts', 'contents_then_section_named_contents', 'Title\n=====\n\n.. contents::\n\nContents\n--------\n\nx\n'),
+    ('sx_parts', 'contents_label_clash_with_sections', 'Title\n=====\n\n.. contents::\n\n.. _contents:\n\nSec\n---\n\nsee contents_ and `Contents`_.\n'),
+    ('sx_parts', 'contents_removed_topic_label', 'Para.\n\n.. contents::\n\n.. _contents:\n\nPara two, see contents_.\n'),
+    ('sx_parts', 'contents_and_explicit_target_ids', 'Title\n=====\n\n.. contents::\n\n.. _lbl:\n\nSection A\n---------\n\nSection B\n---------\n\nSection B\n---------\n'),
+    ('sx_parts', 'contents_xref_titles', 'Title\n=====\n\n.. contents::\n\n.. _lab:\n\nSee :ref:`lab`\n--------------\n\nThe :py:func:`len` function\n---------------------------\n\nAn ``:abbr:`` :abbr:`LIFO (last-in, first-out)` title\n-----------------------------------------------------\n'),
+    ('sx_parts', 'contents_index_role_title', 'Title\n=====\n\n.. contents::\n\nThe :index:`spam` section\n-------------------------\n\nx\n'),
+    ('sx_parts', 'contents_title_markup', 'Title\n=====\n\n.. contents::\n\nA `link <https://example.org/>`_ title\n--------------------------------------\n\nFootnote [#f]_ and *emph* and ``lit``\n-------------------------------------\n\n`Internal`_ ref\n---------------\n\n.. _Internal:\n\nInternal\n--------\n\n.. [#f] Note.\n'),
+    ('sx_parts', 'sectnum_basic', 'Title\n=====\n\n.. sectnum::\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n'),
+    ('sx_parts', 'sectnum_options', 'Title\n=====\n\n.. sectnum::\n   :depth: 2\n   :prefix: A.\n   :suffix: )\n   :start: 3\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n'),
+    ('sx_parts', 'sectnum_alias', 'Title\n=====\n\n.. section-numbering::\n   :depth: 1\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n'),
+    ('sx_parts', 'sectnum_depth0', 'Title\n=====\n\n.. sectnum::\n   :depth: 0\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n'),
+    ('sx_parts', 'sectnum_after_sections', 'Title\n=====\n\nIntro.\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n\n.. sectnum::\n'),
+    ('sx_parts', 'sectnum_two', 'Title\n=====\n\n.. sectnum::\n\n.. sectnum::\n   :prefix: X\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n'),
+    ('sx_parts', 'sectnum_with_contents', 'Title\n=====\n\n.. sectnum::\n\n.. contents::\n\nSection A\n---------\n\nText A.\n\nSub A1\n~~~~~~\n\nText A1.\n\nSection B\n---------\n\nText B.\n'),
+    ('sx_parts', 'sectnum_contents_depth', 'Title\n=====\n\n.. sectnum::\n   :depth: 2\n\n.. contents::\n   :local:\n   :depth: 1\n\nA\n-\n\nA1\n~~\n\nB\n-\n'),
+    ('sx_parts', 'sectnum_bad_options', 'Title\n=====\n\n.. sectnum::\n   :depth: x\n\n.. sectnum::\n   :prefix:\n\n.. sectnum:: arg\n\nSec\n---\n\nx\n'),
+    ('sx_parts', 'target_notes_basic', 'Title\n=====\n\nSee Python_ and Docutils_ and Python_ again, and an anonymous__ link and\nan `embedded <https://embedded.example/>`_ one; unused_ is not referenced.\n\n.. _Python: https://www.python.org/\n.. _Docutils: https://docutils.sourceforge.io/\n.. _unused: https://unused.example/\n.. __: https://anon.example/\n.. _alias: Python_\n\nNotes\n-----\n\n.. target-notes::\n'),
+    ('sx_parts', 'target_notes_class', 'Title\n=====\n\nSee Python_ here.\n\n.. _Python: https://www.python.org/\n\n.. target-notes::\n   :class: custom\n'),
+    ('sx_parts', 'target_notes_dup_uri', 'Title\n=====\n\nSee one_ and two_ and `three <https://same.example/>`__.\n\n.. _one: https://same.example/\n.. _two: https://same.example/\n\n.. target-notes::\n'),
+    ('sx_parts', 'target_notes_with_footnotes', 'Title\n=====\n\nManual [#a]_ and Python_.\n\n.. [#a] Auto footnote.\n\n.. _Python: https://www.python.org/\n\n.. target-notes::\n'),
+    ('sx_parts', 'target_notes_bad', 'Title\n=====\n\n.. target-notes:: arg\n\n.. target-notes::\n   :name: x\n\n.. target-notes::\n\n   content\n'),
+    ('sx_parts', 'meta_title_together', '.. title:: HTML Page Title\n.. meta::\n   :description: d\n\n.. header:: H\n\nTitle\n=====\n\n.. contents::\n   :local:\n\n.. sectnum::\n\nSub\n---\n\nSee Python_.\n\n.. _Python: https://www.python.org/\n\n.. target-notes::\n\n.. footer:: F\n'),
 ]
 
 

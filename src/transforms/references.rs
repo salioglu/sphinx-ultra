@@ -11,7 +11,8 @@
 //! references paired with anonymous targets (440), indirect targets
 //! followed to what they refer to (460), then the references to external
 //! (640) and internal (660) targets — and report every reference still
-//! dangling (850). A reference, substitution reference or target they
+//! dangling (850). In between, a `.. target-notes::` turns the external
+//! targets referred to into footnotes (540). A reference, substitution reference or target they
 //! cannot resolve becomes a `problematic` holding its rawsource, which
 //! points at the message; the message itself is written to the stream and
 //! never placed in the tree, though its id is taken for good
@@ -28,11 +29,14 @@
 //! gone here: an external target dropped that way would give an indirect
 //! target its `refuri`, where here it gives its id.
 
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
 
+use super::state::NodeView;
 use super::tree::{Findall, TxId, TxNode, TxTree};
 use super::{Transform, TransformCx};
 use crate::doctree::messages::{self, ERROR, INFO};
+use crate::doctree::pending::PyValue;
 use crate::doctree::{is_text_element, kinds, unescape, AttrValue};
 use crate::rst::{LogLocation, SphinxCrash};
 use crate::utils::{py_isspace, py_repr_str};
@@ -54,6 +58,16 @@ fn is_targetable(kind: &str) -> bool {
 
 fn is_target(node: &TxNode) -> bool {
     node.kind == kinds::TARGET
+}
+
+/// `isinstance(node, nodes.reference)`: docutils' `reference` and its
+/// Sphinx subclasses `number_reference` and `download_reference`
+/// (`SP/sphinx/addnodes.py:551-559`).
+pub(super) fn is_reference(kind: &str) -> bool {
+    matches!(
+        kind,
+        kinds::REFERENCE | kinds::DOWNLOAD_REFERENCE | "number_reference"
+    )
 }
 
 /// Whether the node has the attribute `key` (`node.hasattr(key)`).
@@ -802,6 +816,217 @@ fn pass_on(
             resolve_indirect_references(cx, reference);
         }
     }
+}
+
+/// 540 `TargetNotes` (`references.py:767-847`), the transform a
+/// `.. target-notes::` defers to its `pending` node, after every static
+/// transform of its priority ([`super::schedule`]): each external target
+/// some node refers to by name gets a footnote holding its `refuri`
+/// ([`make_target_footnote`]), and so, after them, does each anonymous
+/// reference to a `refuri`; a footnote reference to it follows each
+/// referring node that is not itself a target. Footnotes with one `refuri`
+/// are one footnote. The footnotes take the pending node's place, and
+/// Footnotes (620) numbers them and their references after the parse's
+/// auto-numbered ones, through the registries this transform adds them
+/// to.
+///
+/// docutils' two loops are live walks (`findall`) over a tree the
+/// transform changes, and a footnote reference inserted ahead of the
+/// walk's position in a list it is walking makes it meet the target it is
+/// on again, and so again: Sphinx 9.1.0 never finishes reading a document
+/// where a reference to an external target comes before the target in the
+/// same paragraph (`See Python_ and `Python <https://python.org/>`_.`) or
+/// the same body (an image whose `:target:` names a target after it),
+/// probed. Every insertion is a footnote reference or a space after a
+/// node, never a target or a reference, so where Sphinx's read finishes
+/// the walks meet each node once, in document order: the walks here are
+/// snapshots, which also finish where Sphinx's never does, with each
+/// target noted once.
+pub struct TargetNotes;
+
+impl Transform for TargetNotes {
+    fn apply(&self, cx: &mut TransformCx<'_>) {
+        // The schedule runs this row for a `note_pending` record only, and
+        // the arena keeps every identity it ever held.
+        let pending = cx
+            .pending_record()
+            .and_then(|record| cx.tree.by_uid(record.node));
+        debug_assert!(pending.is_some(), "TargetNotes without its pending node");
+        let Some(pending) = pending else {
+            return;
+        };
+        // `startnode.details.get('class', [])`.
+        let classes = cx
+            .tree
+            .node(pending)
+            .ext
+            .as_deref()
+            .and_then(|ext| ext.pending.as_deref())
+            .and_then(|pending| {
+                pending.details.iter().find_map(|(key, value)| match value {
+                    PyValue::StrList(classes) if key == "class" => Some(classes.clone()),
+                    _ => None,
+                })
+            })
+            .unwrap_or_default();
+        let root = cx.tree.root();
+        let mut notes: HashMap<String, TxId> = HashMap::new();
+        let mut nodelist = Vec::new();
+        for target in cx.tree.findall(root, is_target) {
+            let node = cx.tree.node(target);
+            let Some(refuri) = node.str_attr("refuri").map(str::to_string) else {
+                continue;
+            };
+            let names = node.attrs.names.clone();
+            let refs: Vec<TxId> = names.iter().flat_map(|name| refnames(cx, name)).collect();
+            if refs.is_empty() {
+                continue;
+            }
+            let footnote = make_target_footnote(cx, &refuri, &refs, &notes, &classes);
+            if let Entry::Vacant(slot) = notes.entry(refuri) {
+                slot.insert(footnote);
+                nodelist.push(footnote);
+            }
+        }
+        // The anonymous references, which AnonymousHyperlinks (440) gave
+        // their target's `refuri`.
+        for reference in cx.tree.findall(root, |node| is_reference(node.kind)) {
+            let node = cx.tree.node(reference);
+            if !node.get("anonymous").is_some_and(AttrValue::is_truthy) {
+                continue;
+            }
+            let Some(refuri) = node.str_attr("refuri").map(str::to_string) else {
+                continue;
+            };
+            let footnote = make_target_footnote(cx, &refuri, &[reference], &notes, &classes);
+            if let Entry::Vacant(slot) = notes.entry(refuri) {
+                slot.insert(footnote);
+                nodelist.push(footnote);
+            }
+        }
+        cx.tree.replace_self(pending, nodelist);
+    }
+}
+
+/// `TargetNotes.make_target_footnote` (`references.py:808-847`): the
+/// footnote of `refuri`, the one `notes` holds or a new one, and a
+/// footnote reference to it after each of `refs` that is not a target.
+///
+/// A new footnote takes the next `idN` (`set_id`, before it has a name),
+/// then the name `TARGET_NOTE: idN` and `auto = 1`, and holds a paragraph
+/// with a reference to the `refuri`; it is noted as an auto-numbered
+/// footnote (`note_autofootnote`) and its name bound as an explicit
+/// target's ([`super::state::NameTable::note_explicit_name`]). Its
+/// identity is minted before its `set_id` (the T5b ruling): docutils'
+/// `note_autofootnote` and `note_explicit_target` `set_id` it again, which
+/// is a no-op for the node holding the id, as the allocator knows it by
+/// that identity.
+///
+/// Each footnote reference refers to the footnote by its name, `auto = 1`,
+/// with the directive's `:class:` values; it takes the next `idN`
+/// (`note_autofootnote_ref`) and is noted under the name as a footnote
+/// reference and a refname (`note_footnote_ref`). It goes in right after
+/// the node referring to the target, preceded by a space
+/// (`trim_footnote_reference_space` is off under Sphinx): a Text node, or
+/// an `inline` holding it with the `:class:` values. A referring node with
+/// no parent, a root of the detached forest (one docutils has in the
+/// anonymous element a directive parsed it into), keeps its footnote
+/// reference out of every tree, where docutils' is out of the document's.
+fn make_target_footnote(
+    cx: &mut TransformCx<'_>,
+    refuri: &str,
+    refs: &[TxId],
+    notes: &HashMap<String, TxId>,
+    classes: &[String],
+) -> TxId {
+    let (footnote, footnote_name) = match notes.get(refuri) {
+        Some(&footnote) => {
+            let names = &cx.tree.node(footnote).attrs.names;
+            debug_assert_eq!(names.len(), 1, "a target note has one name");
+            (footnote, names.first().cloned().unwrap_or_default())
+        }
+        None => {
+            let footnote = cx.tree.new_node(kinds::FOOTNOTE);
+            let uid = cx.tree.assign_uid(footnote, cx.state);
+            let footnote_id = cx.set_id(footnote);
+            let footnote_name = format!("TARGET_NOTE: {footnote_id}");
+            let node = cx.tree.node_mut(footnote);
+            node.set("auto", AttrValue::Int(1));
+            node.attrs.names = vec![footnote_name.clone()];
+            let paragraph = cx.tree.new_node(kinds::PARAGRAPH);
+            let reference = cx.tree.new_node(kinds::REFERENCE);
+            cx.tree
+                .node_mut(reference)
+                .set("refuri", AttrValue::Str(refuri.to_string()));
+            if !refuri.is_empty() {
+                let text = new_text(cx.tree, refuri);
+                cx.tree.append(reference, text);
+            }
+            cx.tree.append(paragraph, reference);
+            cx.tree.append(footnote, paragraph);
+            cx.state.registries.autofootnotes.push(uid);
+            let node = cx.tree.node(footnote);
+            let view = NodeView {
+                kind: node.kind,
+                names: &node.attrs.names,
+                refuri: node.str_attr("refuri"),
+                refname: node.str_attr("refname"),
+            };
+            cx.state.names.note_explicit_name(view, &footnote_id);
+            (footnote, footnote_name)
+        }
+    };
+    for &reference in refs {
+        if cx.tree.node(reference).kind == kinds::TARGET {
+            continue;
+        }
+        let refnode = cx.tree.new_node(kinds::FOOTNOTE_REFERENCE);
+        let node = cx.tree.node_mut(refnode);
+        node.set("refname", AttrValue::Str(footnote_name.clone()));
+        node.set("auto", AttrValue::Int(1));
+        node.attrs.classes.extend(classes.iter().cloned());
+        let uid = cx.tree.assign_uid(refnode, cx.state);
+        cx.set_id(refnode);
+        let registries = &mut cx.state.registries;
+        registries.autofootnote_refs.push(uid);
+        registries.footnote_refs.push(&footnote_name, uid);
+        registries.refnames.push(&footnote_name, uid);
+        let space = new_text(cx.tree, " ");
+        let space = if classes.is_empty() {
+            space
+        } else {
+            let inline = cx.tree.new_node("inline");
+            cx.tree.node_mut(inline).attrs.classes = classes.to_vec();
+            cx.tree.append(inline, space);
+            inline
+        };
+        let Some(parent) = cx.tree.parent(reference) else {
+            continue;
+        };
+        let index = cx
+            .tree
+            .node(parent)
+            .children
+            .iter()
+            .position(|&child| child == reference);
+        // docutils' `ref.parent.index(ref)` raises for a node out of its
+        // parent, which no referring node is by 540: the transforms that
+        // replace one (Footnotes, 620; the citation transforms, 619) run
+        // later.
+        debug_assert!(index.is_some(), "a referring node out of its parent");
+        if let Some(index) = index {
+            cx.tree.insert(parent, index + 1, space);
+            cx.tree.insert(parent, index + 2, refnode);
+        }
+    }
+    footnote
+}
+
+/// `nodes.Text(text)`, in no parent.
+fn new_text(tree: &mut TxTree, text: &str) -> TxId {
+    let node = tree.new_node(kinds::TEXT);
+    tree.node_mut(node).text = Some(text.to_string());
+    node
 }
 
 /// 640-012 `ExternalTargets` (`references.py:340-373`): every unresolved
@@ -2462,6 +2687,319 @@ mod tests {
                 ("IndirectHyperlinks", "problematic", "id4", true),
             ],
         }];
+        let differences = differences(&rows);
+        assert!(differences.is_empty(), "{}", differences.join("\n\n"));
+    }
+
+    /// `TargetNotes` (540, `SP/docutils/transforms/references.py:767-847`)
+    /// gives each external target some node refers to by name a footnote,
+    /// in document order, then each anonymous reference to a `refuri`;
+    /// one `refuri` is one footnote, whose name is `TARGET_NOTE: idN`, its
+    /// own id taken before its references' (`target_notes_basic`: the
+    /// embedded URI and the unreferenced `alias` get none). A space and a
+    /// `footnote_reference` follow each referring node that is not a
+    /// target, with `:class:` on both, the space then in an `inline`. The
+    /// footnotes take the pending node's place and Footnotes (620) numbers
+    /// them after the parse's auto-numbered ones. A footnote only a target
+    /// refers to has no reference, and 622 reports it
+    /// (`tn_only_indirect`); a second directive makes footnotes of its
+    /// own, whose references go in first (`tn_two`); the reference in a
+    /// substitution definition and its copy each get one (`tn_subst`).
+    //
+    // oracle (Sphinx 9.1.0, docutils 0.22.4): each input read as
+    //   `index.rst` through tools/gen_read_state_fixture.py's harness
+    //   (`keep_warnings = True`; scratchpad/t18b/probes, rows named after
+    //   their case in fixture_cases.json and edge_cases.json).
+    #[test]
+    fn target_notes_footnotes() {
+        let rows = [
+            // target_notes_basic
+            SphinxRead {
+                rst: "Title\n=====\n\nSee Python_ and Docutils_ and Python_ again, and an \
+                         anonymous__ link and\nan `embedded <https://embedded.example/>`_ \
+                         one; unused_ is not referenced.\n\n.. _Python: \
+                         https://www.python.org/\n.. _Docutils: \
+                         https://docutils.sourceforge.io/\n.. _unused: \
+                         https://unused.example/\n.. __: https://anon.example/\n.. _alias: \
+                         Python_\n\nNotes\n-----\n\n.. target-notes::\n",
+                body: "    <section ids=\"title\" names=\"title\">\n        \
+                          <title>\n            Title\n        <paragraph>\n            See \
+                          \n            <reference name=\"Python\" \
+                          refuri=\"https://www.python.org/\">\n                \
+                          Python\n             \n            <footnote_reference auto=\"1\" \
+                          docname=\"index\" ids=\"id3\" refid=\"id2\">\n                \
+                          1\n             and \n            <reference name=\"Docutils\" \
+                          refuri=\"https://docutils.sourceforge.io/\">\n                \
+                          Docutils\n             \n            <footnote_reference \
+                          auto=\"1\" docname=\"index\" ids=\"id6\" \
+                          refid=\"id5\">\n                2\n             and \n            \
+                          <reference name=\"Python\" \
+                          refuri=\"https://www.python.org/\">\n                \
+                          Python\n             \n            <footnote_reference auto=\"1\" \
+                          docname=\"index\" ids=\"id4\" refid=\"id2\">\n                \
+                          1\n             again, and an \n            <reference \
+                          anonymous=\"1\" name=\"anonymous\" \
+                          refuri=\"https://anon.example/\">\n                \
+                          anonymous\n             \n            <footnote_reference \
+                          auto=\"1\" docname=\"index\" ids=\"id10\" \
+                          refid=\"id9\">\n                4\n             link \
+                          and\n            an \n            <reference name=\"embedded\" \
+                          refuri=\"https://embedded.example/\">\n                \
+                          embedded\n            <target ids=\"embedded\" names=\"embedded\" \
+                          refuri=\"https://embedded.example/\">\n             one; \
+                          \n            <reference name=\"unused\" \
+                          refuri=\"https://unused.example/\">\n                \
+                          unused\n             \n            <footnote_reference auto=\"1\" \
+                          docname=\"index\" ids=\"id8\" refid=\"id7\">\n                \
+                          3\n             is not referenced.\n        <target \
+                          ids=\"python\" names=\"python\" \
+                          refuri=\"https://www.python.org/\">\n        <target \
+                          ids=\"docutils\" names=\"docutils\" \
+                          refuri=\"https://docutils.sourceforge.io/\">\n        <target \
+                          ids=\"unused\" names=\"unused\" \
+                          refuri=\"https://unused.example/\">\n        <target \
+                          anonymous=\"1\" ids=\"id1\" \
+                          refuri=\"https://anon.example/\">\n        <target ids=\"alias\" \
+                          names=\"alias\" refuri=\"https://www.python.org/\">\n        \
+                          <section ids=\"notes\" names=\"notes\">\n            \
+                          <title>\n                Notes\n            <footnote auto=\"1\" \
+                          backrefs=\"id3 id4\" docname=\"index\" ids=\"id2\" \
+                          names=\"TARGET_NOTE:\\ id2\">\n                \
+                          <label>\n                    1\n                \
+                          <paragraph>\n                    <reference \
+                          refuri=\"https://www.python.org/\">\n                        \
+                          https://www.python.org/\n            <footnote auto=\"1\" \
+                          backrefs=\"id6\" docname=\"index\" ids=\"id5\" \
+                          names=\"TARGET_NOTE:\\ id5\">\n                \
+                          <label>\n                    2\n                \
+                          <paragraph>\n                    <reference \
+                          refuri=\"https://docutils.sourceforge.io/\">\n                        \
+                          https://docutils.sourceforge.io/\n            <footnote \
+                          auto=\"1\" backrefs=\"id8\" docname=\"index\" ids=\"id7\" \
+                          names=\"TARGET_NOTE:\\ id7\">\n                \
+                          <label>\n                    3\n                \
+                          <paragraph>\n                    <reference \
+                          refuri=\"https://unused.example/\">\n                        \
+                          https://unused.example/\n            <footnote auto=\"1\" \
+                          backrefs=\"id10\" docname=\"index\" ids=\"id9\" \
+                          names=\"TARGET_NOTE:\\ id9\">\n                \
+                          <label>\n                    4\n                \
+                          <paragraph>\n                    <reference \
+                          refuri=\"https://anon.example/\">\n                        \
+                          https://anon.example/\n",
+                warnings: &[],
+                trace: &[
+                    ("parse", "section", "title", true),
+                    ("parse", "target", "embedded", true),
+                    ("parse", "target", "python", true),
+                    ("parse", "target", "docutils", true),
+                    ("parse", "target", "unused", true),
+                    ("parse", "target", "id1", true),
+                    ("parse", "target", "alias", true),
+                    ("parse", "section", "notes", true),
+                    ("TargetNotes", "footnote", "id2", true),
+                    ("TargetNotes", "footnote_reference", "id3", true),
+                    ("TargetNotes", "footnote_reference", "id4", true),
+                    ("TargetNotes", "footnote", "id5", true),
+                    ("TargetNotes", "footnote_reference", "id6", true),
+                    ("TargetNotes", "footnote", "id7", true),
+                    ("TargetNotes", "footnote_reference", "id8", true),
+                    ("TargetNotes", "footnote", "id9", true),
+                    ("TargetNotes", "footnote_reference", "id10", true),
+                ],
+            },
+            // target_notes_class
+            SphinxRead {
+                rst: "Title\n=====\n\nSee Python_ here.\n\n.. _Python: \
+                         https://www.python.org/\n\n.. target-notes::\n   :class: custom\n",
+                body: "    <section ids=\"title\" names=\"title\">\n        \
+                          <title>\n            Title\n        <paragraph>\n            See \
+                          \n            <reference name=\"Python\" \
+                          refuri=\"https://www.python.org/\">\n                \
+                          Python\n            <inline classes=\"custom\">\n                 \
+                          \n            <footnote_reference auto=\"1\" classes=\"custom\" \
+                          docname=\"index\" ids=\"id2\" refid=\"id1\">\n                \
+                          1\n             here.\n        <target ids=\"python\" \
+                          names=\"python\" refuri=\"https://www.python.org/\">\n        \
+                          <footnote auto=\"1\" backrefs=\"id2\" docname=\"index\" \
+                          ids=\"id1\" names=\"TARGET_NOTE:\\ id1\">\n            \
+                          <label>\n                1\n            \
+                          <paragraph>\n                <reference \
+                          refuri=\"https://www.python.org/\">\n                    \
+                          https://www.python.org/\n",
+                warnings: &[],
+                trace: &[
+                    ("parse", "section", "title", true),
+                    ("parse", "target", "python", true),
+                    ("TargetNotes", "footnote", "id1", true),
+                    ("TargetNotes", "footnote_reference", "id2", true),
+                ],
+            },
+            // target_notes_dup_uri
+            SphinxRead {
+                rst: "Title\n=====\n\nSee one_ and two_ and `three \
+                         <https://same.example/>`__.\n\n.. _one: https://same.example/\n.. \
+                         _two: https://same.example/\n\n.. target-notes::\n",
+                body: "    <section ids=\"title\" names=\"title\">\n        \
+                          <title>\n            Title\n        <paragraph>\n            See \
+                          \n            <reference name=\"one\" \
+                          refuri=\"https://same.example/\">\n                \
+                          one\n             \n            <footnote_reference auto=\"1\" \
+                          docname=\"index\" ids=\"id2\" refid=\"id1\">\n                \
+                          1\n             and \n            <reference name=\"two\" \
+                          refuri=\"https://same.example/\">\n                \
+                          two\n             \n            <footnote_reference auto=\"1\" \
+                          docname=\"index\" ids=\"id3\" refid=\"id1\">\n                \
+                          1\n             and \n            <reference name=\"three\" \
+                          refuri=\"https://same.example/\">\n                \
+                          three\n            .\n        <target ids=\"one\" names=\"one\" \
+                          refuri=\"https://same.example/\">\n        <target ids=\"two\" \
+                          names=\"two\" refuri=\"https://same.example/\">\n        \
+                          <footnote auto=\"1\" backrefs=\"id2 id3\" docname=\"index\" \
+                          ids=\"id1\" names=\"TARGET_NOTE:\\ id1\">\n            \
+                          <label>\n                1\n            \
+                          <paragraph>\n                <reference \
+                          refuri=\"https://same.example/\">\n                    \
+                          https://same.example/\n",
+                warnings: &[],
+                trace: &[
+                    ("parse", "section", "title", true),
+                    ("parse", "target", "one", true),
+                    ("parse", "target", "two", true),
+                    ("TargetNotes", "footnote", "id1", true),
+                    ("TargetNotes", "footnote_reference", "id2", true),
+                    ("TargetNotes", "footnote_reference", "id3", true),
+                ],
+            },
+            // target_notes_with_footnotes
+            SphinxRead {
+                rst: "Title\n=====\n\nManual [#a]_ and Python_.\n\n.. [#a] Auto \
+                         footnote.\n\n.. _Python: https://www.python.org/\n\n.. \
+                         target-notes::\n",
+                body: "    <section ids=\"title\" names=\"title\">\n        \
+                          <title>\n            Title\n        <paragraph>\n            \
+                          Manual \n            <footnote_reference auto=\"1\" \
+                          docname=\"index\" ids=\"id1\" refid=\"a\">\n                \
+                          1\n             and \n            <reference name=\"Python\" \
+                          refuri=\"https://www.python.org/\">\n                \
+                          Python\n             \n            <footnote_reference auto=\"1\" \
+                          docname=\"index\" ids=\"id3\" refid=\"id2\">\n                \
+                          2\n            .\n        <footnote auto=\"1\" backrefs=\"id1\" \
+                          docname=\"index\" ids=\"a\" names=\"a\">\n            \
+                          <label>\n                1\n            \
+                          <paragraph>\n                Auto footnote.\n        <target \
+                          ids=\"python\" names=\"python\" \
+                          refuri=\"https://www.python.org/\">\n        <footnote auto=\"1\" \
+                          backrefs=\"id3\" docname=\"index\" ids=\"id2\" \
+                          names=\"TARGET_NOTE:\\ id2\">\n            \
+                          <label>\n                2\n            \
+                          <paragraph>\n                <reference \
+                          refuri=\"https://www.python.org/\">\n                    \
+                          https://www.python.org/\n",
+                warnings: &[],
+                trace: &[
+                    ("parse", "section", "title", true),
+                    ("parse", "footnote_reference", "id1", true),
+                    ("parse", "footnote", "a", true),
+                    ("parse", "target", "python", true),
+                    ("TargetNotes", "footnote", "id2", true),
+                    ("TargetNotes", "footnote_reference", "id3", true),
+                ],
+            },
+            // tn_only_indirect
+            SphinxRead {
+                rst: "Title\n=====\n\n.. _Python: https://www.python.org/\n.. _alias: \
+                         Python_\n\n.. target-notes::\n",
+                body: "    <section ids=\"title\" names=\"title\">\n        \
+                          <title>\n            Title\n        <target ids=\"python\" \
+                          names=\"python\" refuri=\"https://www.python.org/\">\n        \
+                          <target ids=\"alias\" names=\"alias\" \
+                          refuri=\"https://www.python.org/\">\n        <footnote auto=\"1\" \
+                          docname=\"index\" ids=\"id1\" names=\"TARGET_NOTE:\\ \
+                          id1\">\n            <label>\n                1\n            \
+                          <paragraph>\n                <reference \
+                          refuri=\"https://www.python.org/\">\n                    \
+                          https://www.python.org/\n",
+                warnings: &[
+                    "<SRCDIR>/index.rst:2: WARNING: Footnote [#] is not referenced. \
+                        [ref.footnote]",
+                ],
+                trace: &[
+                    ("parse", "section", "title", true),
+                    ("parse", "target", "python", true),
+                    ("parse", "target", "alias", true),
+                    ("TargetNotes", "footnote", "id1", true),
+                ],
+            },
+            // tn_two
+            SphinxRead {
+                rst: "Title\n=====\n\nSee Python_.\n\n.. _Python: \
+                         https://www.python.org/\n\n.. target-notes::\n\n.. target-notes::\n",
+                body: "    <section ids=\"title\" names=\"title\">\n        \
+                          <title>\n            Title\n        <paragraph>\n            See \
+                          \n            <reference name=\"Python\" \
+                          refuri=\"https://www.python.org/\">\n                \
+                          Python\n             \n            <footnote_reference auto=\"1\" \
+                          docname=\"index\" ids=\"id4\" refid=\"id3\">\n                \
+                          2\n             \n            <footnote_reference auto=\"1\" \
+                          docname=\"index\" ids=\"id2\" refid=\"id1\">\n                \
+                          1\n            .\n        <target ids=\"python\" names=\"python\" \
+                          refuri=\"https://www.python.org/\">\n        <footnote auto=\"1\" \
+                          backrefs=\"id2\" docname=\"index\" ids=\"id1\" \
+                          names=\"TARGET_NOTE:\\ id1\">\n            \
+                          <label>\n                1\n            \
+                          <paragraph>\n                <reference \
+                          refuri=\"https://www.python.org/\">\n                    \
+                          https://www.python.org/\n        <footnote auto=\"1\" \
+                          backrefs=\"id4\" docname=\"index\" ids=\"id3\" \
+                          names=\"TARGET_NOTE:\\ id3\">\n            \
+                          <label>\n                2\n            \
+                          <paragraph>\n                <reference \
+                          refuri=\"https://www.python.org/\">\n                    \
+                          https://www.python.org/\n",
+                warnings: &[],
+                trace: &[
+                    ("parse", "section", "title", true),
+                    ("parse", "target", "python", true),
+                    ("TargetNotes", "footnote", "id1", true),
+                    ("TargetNotes", "footnote_reference", "id2", true),
+                    ("TargetNotes", "footnote", "id3", true),
+                    ("TargetNotes", "footnote_reference", "id4", true),
+                ],
+            },
+            // tn_subst
+            SphinxRead {
+                rst: "Title\n=====\n\nSee |s|.\n\n.. |s| replace:: Python_\n\n.. _Python: \
+                         https://www.python.org/\n\n.. target-notes::\n",
+                body: "    <section ids=\"title\" names=\"title\">\n        \
+                          <title>\n            Title\n        <paragraph>\n            See \
+                          \n            <reference name=\"Python\" \
+                          refuri=\"https://www.python.org/\">\n                \
+                          Python\n             \n            <footnote_reference auto=\"1\" \
+                          docname=\"index\" ids=\"id3\" refid=\"id1\">\n                \
+                          1\n            .\n        <substitution_definition \
+                          names=\"s\">\n            <reference name=\"Python\" \
+                          refuri=\"https://www.python.org/\">\n                \
+                          Python\n             \n            <footnote_reference auto=\"1\" \
+                          docname=\"index\" ids=\"id2\" refid=\"id1\">\n                \
+                          1\n        <target ids=\"python\" names=\"python\" \
+                          refuri=\"https://www.python.org/\">\n        <footnote auto=\"1\" \
+                          backrefs=\"id2 id3\" docname=\"index\" ids=\"id1\" \
+                          names=\"TARGET_NOTE:\\ id1\">\n            \
+                          <label>\n                1\n            \
+                          <paragraph>\n                <reference \
+                          refuri=\"https://www.python.org/\">\n                    \
+                          https://www.python.org/\n",
+                warnings: &[],
+                trace: &[
+                    ("parse", "section", "title", true),
+                    ("parse", "target", "python", true),
+                    ("TargetNotes", "footnote", "id1", true),
+                    ("TargetNotes", "footnote_reference", "id2", true),
+                    ("TargetNotes", "footnote_reference", "id3", true),
+                ],
+            },
+        ];
         let differences = differences(&rows);
         assert!(differences.is_empty(), "{}", differences.join("\n\n"));
     }

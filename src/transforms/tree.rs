@@ -696,25 +696,36 @@ impl TxTree {
     }
 
     /// Python's `node.deepcopy()`: a copy of the subtree at `id`, in no
-    /// parent. Each node keeps its kind, span, text and attributes, its
-    /// ids verbatim (no id is allocated), and its side-car's `rawsource`,
-    /// Text data and pending transform; `Element.copy` takes `source` and
-    /// `line` along, so a copied node's location override is the
-    /// original's. Only a node that had an identity gets one, minted from
-    /// `state` in pre-order, which [`Self::by_uid`] resolves to the copy.
-    /// Neither a registry nor the ids map learns of the copies; a
-    /// transform that needs them noted notes them (Substitutions'
-    /// `note_refname`).
+    /// parent, made of a [`Self::copy`] of each of its nodes in pre-order,
+    /// so the identities of the copies are minted in pre-order. Neither a
+    /// registry nor the ids map learns of the copies; a transform that
+    /// needs them noted notes them (Substitutions' `note_refname`).
     pub fn deepcopy(&mut self, id: TxId, state: &mut DocumentState) -> TxId {
+        let copy = self.copy(id, state);
+        for child in self.node(id).children.clone() {
+            let child = self.deepcopy(child, state);
+            self.append(copy, child);
+        }
+        copy
+    }
+
+    /// Python's `node.copy()`: the node at `id` alone, without its
+    /// children, in no parent. It keeps its kind, span, text and
+    /// attributes, its ids verbatim (no id is allocated), and its
+    /// side-car's `rawsource`, Text data and pending transform; `copy`
+    /// takes `source` and `line` along, so the copy's location override is
+    /// the original's. Only a node that had an identity gets one, minted
+    /// from `state`, which [`Self::by_uid`] resolves to the copy. Neither a
+    /// registry nor the ids map learns of it.
+    pub fn copy(&mut self, id: TxId, state: &mut DocumentState) -> TxId {
         let original = self.node(id);
         let identity = original.uid();
-        let children = original.children.clone();
         let copy = TxNode {
             kind: original.kind,
             span: original.span,
             text: original.text.clone(),
             attrs: original.attrs.clone(),
-            children: Vec::with_capacity(children.len()),
+            children: Vec::new(),
             parent: None,
             ext: original.ext.as_deref().map(|ext| {
                 Box::new(NodeExt {
@@ -730,10 +741,6 @@ impl TxTree {
             if let Some(&loc) = state.loc_overrides.get(&original) {
                 state.loc_overrides.insert(uid, loc);
             }
-        }
-        for child in children {
-            let child = self.deepcopy(child, state);
-            self.append(copy, child);
         }
         copy
     }

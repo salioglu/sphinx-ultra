@@ -212,10 +212,7 @@ fn mismatches(fixture: &Fixture) -> BTreeMap<(String, &'static str), (Value, Val
 /// deletes or re-attributes a row by editing one line and a grep for an
 /// owner shows whole rows.
 #[rustfmt::skip]
-const KNOWN_READ_STATE_GAPS: &[(&str, &str, &str)] = &[
-    ("state.pending_serials", "id_trace", "pending: 5a-T18b"),
-    ("state.pending_serials", "pseudo_xml", "pending: 5a-T18b"),
-];
+const KNOWN_READ_STATE_GAPS: &[(&str, &str, &str)] = &[];
 
 /// Holds every key of every read-state case to the oracle, strictly, against
 /// [`KNOWN_READ_STATE_GAPS`].
@@ -383,13 +380,15 @@ fn warning_census(expected: &Value, actual: &Value) -> Census {
     census
 }
 
-/// Substitutions' (220) and Footnotes' (620) families, ported in T11, and
-/// AutoNumbering's (210), ported in T12. Like T10's (`dangling refs`,
-/// `indirect targets`), they stay for the ids those transforms allocate,
-/// which later tasks' rows can shift.
+/// Substitutions' (220) and Footnotes' (620) families, ported in T11,
+/// AutoNumbering's (210), ported in T12, and the pending transforms' that
+/// allocate ids, TargetNotes (540) and Contents (720), ported in T18b.
+/// Like T10's (`dangling refs`, `indirect targets`), they stay for the ids
+/// those transforms allocate, which later tasks' rows can shift.
 const SUBSTITUTIONS: GapFix = read_gaps::gap_fix("substitutions", "5a-T11");
 const FOOTNOTES: GapFix = read_gaps::gap_fix("footnotes", "5a-T11");
 const AUTONUMBER_IDS: GapFix = read_gaps::gap_fix("autonumber ids", "5a-T12");
+const PENDING: GapFix = read_gaps::gap_fix("pending", "5a-T18b");
 
 /// The transforms that allocate ids in the corpus, by `python_name`, with
 /// the task that ports each [DS §5.2].
@@ -411,14 +410,8 @@ const ALLOCATING_TRANSFORMS: &[(&str, GapFix)] = &[
         read_gaps::DANGLING_REFS,
     ),
     ("docutils.transforms.references.Footnotes", FOOTNOTES),
-    (
-        "docutils.transforms.references.TargetNotes",
-        read_gaps::PENDING_TRANSFORMS,
-    ),
-    (
-        "docutils.transforms.parts.Contents",
-        read_gaps::PENDING_TRANSFORMS,
-    ),
+    ("docutils.transforms.references.TargetNotes", PENDING),
+    ("docutils.transforms.parts.Contents", PENDING),
     ("sphinx.transforms.AutoNumbering", AUTONUMBER_IDS),
 ];
 

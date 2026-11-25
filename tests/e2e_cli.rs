@@ -5262,6 +5262,49 @@ fn meta_field_named_by_whitespace_exits_two() {
     );
 }
 
+/// Decision 13: a `:local:` contents directive in content the parse
+/// discards (a `replace` directive's, which may hold a single paragraph
+/// only) still leaves its pending node to Contents (720), whose walk up
+/// from the topic to a section or the document runs out of parents:
+/// `AttributeError` at `docutils/transforms/parts.py:100`, after the two
+/// records the parse logged. The report locates it at the directive.
+//
+// oracle: Sphinx 9.1.0, `sphinx-build -b html -q -w` over this index.rst:
+//   exit 2, the two records, then the exception
+//   (scratchpad/rereview-t18a-r3/e2e/projC).
+#[test]
+fn contents_local_in_replace_content_exits_two() {
+    assert_eq!(
+        crash_stream(
+            "t18b-crash-contents",
+            &[(
+                "index.rst",
+                "Title\n=====\n\n.. |x| replace::\n\n   .. contents::\n      :local:\n\nSec\n---\n\n\
+                 Body.\n",
+            )],
+            &[],
+            &[],
+        ),
+        format!(
+            "\
+<SRCDIR>/index.rst:4: ERROR: Error in \"replace\" directive: may contain a single paragraph only. \
+             [docutils]
+<SRCDIR>/index.rst:4: WARNING: Substitution definition \"x\" empty or invalid.
+
+.. |x| replace::
+
+   .. contents::
+      :local: [docutils]
+{}",
+            crash_report(
+                None,
+                "AttributeError: 'NoneType' object has no attribute 'parent'",
+                Some("<SRCDIR>/index.rst:6")
+            )
+        )
+    );
+}
+
 /// Decision 13: `MenuSelection` is `GUILabel` after its `-->`s: the same
 /// `IndexError`.
 #[test]

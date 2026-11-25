@@ -18,7 +18,8 @@
 //!   which merge the document into the build environment, one document at
 //!   a time in sorted docname order.
 //!
-//! A row nothing ports yet runs as an explicit no-op
+//! A row that is inert in a default build, or that stage M runs against
+//! the environment itself, runs as an explicit no-op
 //! ([`TransformId::transform`]).
 //!
 //! The post-transforms a builder applies as it writes a document, after
@@ -28,6 +29,7 @@
 pub mod footnotes;
 pub mod location;
 pub mod misc;
+pub mod parts;
 pub mod post;
 pub mod references;
 pub mod reporter;
@@ -236,8 +238,7 @@ impl TransformId {
     }
 
     /// The transform the read runs for this row: its port, or an explicit
-    /// no-op for a row that is inert in a default build, not ported yet
-    /// (the comment names the task that ports it), or run against the
+    /// no-op for a row that is inert in a default build or run against the
     /// environment by stage M itself ([`run_merge_transforms`]).
     pub(crate) fn transform(self) -> &'static dyn Transform {
         match self {
@@ -260,6 +261,7 @@ impl TransformId {
             TransformId::IndirectHyperlinks => &references::IndirectHyperlinks,
             TransformId::DoctestTransform => &sphinx::DoctestTransform,
             TransformId::GlossarySorter => &sphinx::GlossarySorter,
+            TransformId::TargetNotes => &references::TargetNotes,
             // The 619 rows' tree halves; stage M runs their environment
             // halves ([`run_merge_transforms`]).
             TransformId::CitationDefinitionTransform => &footnotes::CitationDefinitionTransform,
@@ -269,6 +271,8 @@ impl TransformId {
             TransformId::ExternalTargets => &references::ExternalTargets,
             TransformId::InternalTargets => &references::InternalTargets,
             TransformId::FootnoteDocnameUpdater => &footnotes::FootnoteDocnameUpdater,
+            TransformId::SectNum => &parts::SectNum,
+            TransformId::Contents => &parts::Contents,
             TransformId::SphinxSmartQuotes => &smartquotes::SphinxSmartQuotes,
             TransformId::Transitions => &misc::Transitions,
             TransformId::SphinxDanglingReferences => &references::SphinxDanglingReferences,
@@ -294,9 +298,6 @@ impl TransformId {
             | TransformId::UIDTransform
             | TransformId::AddTranslationClasses
             | TransformId::RemoveTranslatableInline => &NoOp,
-
-            // T18b.
-            TransformId::TargetNotes | TransformId::SectNum | TransformId::Contents => &NoOp,
 
             // Stage M runs these two against the environment itself.
             TransformId::SphinxDomains | TransformId::DoctreeReadEvent => &NoOp,
@@ -1233,6 +1234,7 @@ fn sphinx_domains(
 mod tests {
     use super::*;
     use crate::doctree::pending::PendingTransform;
+    use crate::transforms::test_support::{differences, SphinxRead};
     use state::PendingRecord;
 
     /// `"<priority>-<serial> <python name>"`, as docutils spells a
@@ -1465,5 +1467,114 @@ mod tests {
                 "999-038 sphinx.transforms.i18n.RemoveTranslatableInline",
             ]
         );
+    }
+
+    /// The read-state fixture's `state.pending_serials`: a document whose
+    /// `.. contents::`, `.. sectnum::`, `.. rst-class::` and
+    /// `.. target-notes::` defer to pending nodes. Each runs at its
+    /// priority after the statics of that priority, so TargetNotes (540)
+    /// takes `id3` and `id4` before Contents (720) takes `id5` to `id7`,
+    /// and SectNum (710) numbers the titles before Contents copies them
+    /// into its entries, whose lists are therefore `auto-toc`. The
+    /// anonymous reference with an embedded URI is no anonymous reference
+    /// to TargetNotes (it has a `refuri` and no `anonymous`), and the
+    /// footnote reference in a title is no part of its entry.
+    //
+    // oracle: tests/fixtures/read_state_differential.json, case
+    //   `state.pending_serials` (Sphinx 9.1.0, docutils 0.22.4).
+    #[test]
+    fn pending_serials() {
+        let rows = [
+            // pending_serials
+            SphinxRead {
+                rst: "Doc\n===\n\n.. contents::\n\n.. sectnum::\n\n.. rst-class:: \
+                         special\n\nSec A [#]_\n----------\n\nSee `Python \
+                         <https://python.org>`_ and Docs_ and `anon \
+                         <https://anon.example>`__.\n\n.. _Docs: \
+                         https://docs.example\n\nSec B\n-----\n\n.. [#] note\n\n.. \
+                         target-notes::\n",
+                body: "    <section ids=\"doc\" names=\"doc\">\n        <title auto=\"1\" \
+                          refid=\"id5\">\n            <generated \
+                          classes=\"sectnum\">\n                \
+                          1\u{a0}\u{a0}\u{a0}\n            Doc\n        <topic \
+                          classes=\"contents\" ids=\"contents\" \
+                          names=\"contents\">\n            <title>\n                \
+                          Contents\n            <bullet_list \
+                          classes=\"auto-toc\">\n                \
+                          <list_item>\n                    \
+                          <paragraph>\n                        <reference ids=\"id5\" \
+                          refid=\"doc\">\n                            <generated \
+                          classes=\"sectnum\">\n                                \
+                          1\u{a0}\u{a0}\u{a0}\n                            \
+                          Doc\n                    <bullet_list \
+                          classes=\"auto-toc\">\n                        \
+                          <list_item>\n                            \
+                          <paragraph>\n                                <reference \
+                          ids=\"id6\" refid=\"sec-a\">\n                                    \
+                          <generated \
+                          classes=\"sectnum\">\n                                        \
+                          1.1\u{a0}\u{a0}\u{a0}\n                                    Sec A \
+                          \n                        \
+                          <list_item>\n                            \
+                          <paragraph>\n                                <reference \
+                          ids=\"id7\" refid=\"sec-b\">\n                                    \
+                          <generated \
+                          classes=\"sectnum\">\n                                        \
+                          1.2\u{a0}\u{a0}\u{a0}\n                                    Sec \
+                          B\n        <section classes=\"special\" ids=\"sec-a\" \
+                          names=\"sec\\ a\">\n            <title auto=\"1\" \
+                          refid=\"id6\">\n                <generated \
+                          classes=\"sectnum\">\n                    \
+                          1.1\u{a0}\u{a0}\u{a0}\n                Sec A \n                \
+                          <footnote_reference auto=\"1\" docname=\"index\" ids=\"id1\" \
+                          refid=\"id2\">\n                    1\n            \
+                          <paragraph>\n                See \n                <reference \
+                          name=\"Python\" \
+                          refuri=\"https://python.org\">\n                    \
+                          Python\n                <target ids=\"python\" names=\"python\" \
+                          refuri=\"https://python.org\">\n                 and \
+                          \n                <reference name=\"Docs\" \
+                          refuri=\"https://docs.example\">\n                    \
+                          Docs\n                 \n                <footnote_reference \
+                          auto=\"1\" docname=\"index\" ids=\"id4\" \
+                          refid=\"id3\">\n                    2\n                 and \
+                          \n                <reference name=\"anon\" \
+                          refuri=\"https://anon.example\">\n                    \
+                          anon\n                .\n            <target ids=\"docs\" \
+                          names=\"docs\" refuri=\"https://docs.example\">\n        <section \
+                          ids=\"sec-b\" names=\"sec\\ b\">\n            <title auto=\"1\" \
+                          refid=\"id7\">\n                <generated \
+                          classes=\"sectnum\">\n                    \
+                          1.2\u{a0}\u{a0}\u{a0}\n                Sec B\n            \
+                          <footnote auto=\"1\" backrefs=\"id1\" docname=\"index\" \
+                          ids=\"id2\" names=\"1\">\n                \
+                          <label>\n                    1\n                \
+                          <paragraph>\n                    note\n            <footnote \
+                          auto=\"1\" backrefs=\"id4\" docname=\"index\" ids=\"id3\" \
+                          names=\"TARGET_NOTE:\\ id3\">\n                \
+                          <label>\n                    2\n                \
+                          <paragraph>\n                    <reference \
+                          refuri=\"https://docs.example\">\n                        \
+                          https://docs.example\n",
+                warnings: &[],
+                trace: &[
+                    ("parse", "section", "doc", true),
+                    ("parse", "topic", "contents", true),
+                    ("parse", "footnote_reference", "id1", true),
+                    ("parse", "section", "sec-a", true),
+                    ("parse", "target", "python", true),
+                    ("parse", "target", "docs", true),
+                    ("parse", "section", "sec-b", true),
+                    ("parse", "footnote", "id2", true),
+                    ("TargetNotes", "footnote", "id3", true),
+                    ("TargetNotes", "footnote_reference", "id4", true),
+                    ("Contents", "reference", "id5", true),
+                    ("Contents", "reference", "id6", true),
+                    ("Contents", "reference", "id7", true),
+                ],
+            },
+        ];
+        let differences = differences(&rows);
+        assert!(differences.is_empty(), "{}", differences.join("\n\n"));
     }
 }
