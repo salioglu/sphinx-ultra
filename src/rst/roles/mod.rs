@@ -412,6 +412,10 @@ impl RoleTable {
 /// One outcome for every crash kind: the exception's class as Sphinx's
 /// traceback names it and its message, never Sphinx's whole report (its
 /// version table and traceback cannot be reproduced).
+///
+/// The same outcome carries the `SphinxError` Sphinx raises on purpose to
+/// stop a build whose input it rejects, which is no crash
+/// ([`Self::deliberate`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SphinxCrash {
     /// The exception's class as the last line of Sphinx's traceback names
@@ -438,6 +442,11 @@ pub struct SphinxCrash {
     /// have drawn. Sphinx logged the records keyed before it, and none
     /// after.
     pub at: crate::diagnostics::OrderKey,
+    /// Whether Sphinx raises the error on purpose, to stop a build whose
+    /// input it rejects (the root-document check's `SphinxError`,
+    /// `SP/sphinx/builders/__init__.py:527-567`), rather than crashing on
+    /// the input: its report does not say Sphinx crashes ([`Self::report`]).
+    pub deliberate: bool,
 }
 
 impl SphinxCrash {
@@ -450,6 +459,7 @@ impl SphinxCrash {
             location,
             rendered_location: None,
             at: crate::diagnostics::OrderKey::default(),
+            deliberate: false,
         }
     }
 
@@ -458,6 +468,16 @@ impl SphinxCrash {
         SphinxCrash {
             category: Some("Sphinx error"),
             ..SphinxCrash::python("sphinx.errors.SphinxError", message.to_string(), location)
+        }
+    }
+
+    /// `SphinxError(message)` raised on purpose ([`Self::deliberate`]):
+    /// Sphinx's report of an input it rejects, which names no place in a
+    /// document.
+    pub(crate) fn deliberate_sphinx_error(message: &str) -> Self {
+        SphinxCrash {
+            deliberate: true,
+            ..SphinxCrash::sphinx_error(message, LogLocation::None)
         }
     }
 
@@ -527,12 +547,22 @@ impl SphinxCrash {
     /// `SP/sphinx/_cli/util/errors.py:162-245`) opens with, the category
     /// line of a `SphinxError`, then the last line of its traceback, the
     /// exception and its message (the bare exception for one without a
-    /// message), indented as Sphinx indents it; then where the input is.
+    /// message), indented as Sphinx indents it; then where the input is,
+    /// and that Sphinx crashes on it.
+    ///
+    /// An error Sphinx raises on purpose ([`Self::deliberate`]) ends with
+    /// the exception, in the form of the `Configuration error!` report:
+    /// that is all of Sphinx's report the HTML oracle keeps
+    /// (`reduce_sphinx_error_report`, `tools/gen_html_oracle.py`), and
+    /// Sphinx does not crash.
     pub fn report(&self) -> String {
         let category = self
             .category
             .map(|category| format!("{category}!\n"))
             .unwrap_or_default();
+        if self.deliberate {
+            return format!("\n{category}\n    {self}\n");
+        }
         let location = self
             .rendered_location
             .as_deref()

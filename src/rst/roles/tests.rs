@@ -557,3 +557,26 @@ fn index_role_matches_sphinx() {
         assert_eq!(read_tree(source, ReadConfig::default()), expected, "{source}");
     }
 }
+
+/// The `SphinxError` Sphinx 9.1.0 raises on purpose, the root-document
+/// check's (`SP/sphinx/builders/__init__.py:527-567`), reports its
+/// category and the exception and nothing after, the form of the
+/// `Configuration error!` report: Sphinx does not crash. A crash's report
+/// goes on to say Sphinx crashes on the input, `cannot determine default
+/// role!` included: that `SphinxError` is Sphinx's guard against its own
+/// default-role leak across documents, which decision 13 counts among the
+/// crashes.
+#[test]
+fn a_deliberate_sphinx_error_reports_no_crash() {
+    let message = "Sphinx is unable to load the master document (/s/index.rst). The master \
+                   document must be within the source directory or a subdirectory of it.";
+    assert_eq!(
+        SphinxCrash::deliberate_sphinx_error(message).report(),
+        format!("\nSphinx error!\n\n    sphinx.errors.SphinxError: {message}\n")
+    );
+    assert_eq!(
+        SphinxCrash::sphinx_error("cannot determine default role!", LogLocation::None).report(),
+        "\nSphinx error!\n\n    sphinx.errors.SphinxError: cannot determine default role!\n\n\
+         Sphinx 9.1.0 crashes on this input; sphinx-ultra stops the build as it does.\n"
+    );
+}

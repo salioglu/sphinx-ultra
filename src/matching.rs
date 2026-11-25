@@ -150,25 +150,21 @@ pub fn normalize_path(path: &Path) -> String {
 /// Gets matching files from a directory using include and exclude patterns.
 ///
 /// This function implements the same logic as Sphinx's get_matching_files:
-/// - Only files matching some pattern in include_patterns are included
+/// - Only files matching some pattern in include_patterns are included, so
+///   an empty include_patterns matches no file (Sphinx's default argument,
+///   `("**",)`, is the caller's to pass)
 /// - Exclusions from exclude_patterns take priority over inclusions
-/// - The default include pattern is "**" (all files)
-/// - The default exclude pattern is empty (exclude nothing)
+/// - An empty exclude_patterns excludes nothing
 pub fn get_matching_files<P: AsRef<Path>>(
     dirname: P,
     include_patterns: &[String],
     exclude_patterns: &[String],
 ) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
     let dirname = crate::utils::canonicalize_simplified(dirname.as_ref())?;
-    let include_patterns = if include_patterns.is_empty() {
-        vec!["**".to_string()]
-    } else {
-        include_patterns.to_vec()
-    };
 
     // Compile all patterns
     let mut include_regexes = Vec::new();
-    for pattern in &include_patterns {
+    for pattern in include_patterns {
         include_regexes.push(compile_pattern(pattern)?);
     }
 
@@ -441,5 +437,23 @@ mod tests {
         )
         .unwrap();
         assert!(files.is_empty());
+    }
+
+    /// Sphinx keeps a file only when some include pattern matches it
+    /// (`SP/sphinx/util/matching.py:115-160`), so `include_patterns = []`
+    /// keeps none.
+    #[test]
+    fn an_empty_include_list_matches_no_file() {
+        let temp_dir = TempDir::new().unwrap();
+        fs::write(temp_dir.path().join("index.rst"), "content").unwrap();
+        assert!(get_matching_files(temp_dir.path(), &[], &[])
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            get_matching_files(temp_dir.path(), &["**".to_string()], &[])
+                .unwrap()
+                .len(),
+            1
+        );
     }
 }

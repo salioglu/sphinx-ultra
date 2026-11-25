@@ -699,9 +699,12 @@ async fn run_build(args: RunArgs) -> Result<i32> {
 
     // Sphinx's read falls back from an `index` root document to `contents`
     // and stops when it did not find the root document; the native
-    // subcommand builds the documents it has.
+    // subcommand builds the documents it has. Sphinx's discovery walks
+    // `_build/` and hidden directories, which the native subcommand's
+    // leaves out.
     if sphinx_mode {
         builder.require_root_document();
+        builder.discover_as_sphinx();
     }
 
     let stats = match builder.build().await {
@@ -722,6 +725,9 @@ async fn run_build(args: RunArgs) -> Result<i32> {
         // crash does (decision 13), in both modes: the records Sphinx
         // prints before the crash — the configuration's, then the build's
         // so far — then a report naming the exception, and exit status 2.
+        // The `SphinxError` Sphinx raises on purpose when its read did not
+        // find the root document ends the build the same way, with a report
+        // that says no crash (`SphinxCrash::deliberate`).
         Err(error) if error.downcast_ref::<SphinxCrash>().is_some() => {
             let crash = error.downcast_ref::<SphinxCrash>().expect("matched above");
             if !sphinx_mode {

@@ -76,6 +76,13 @@ pub struct BuildConfig {
     /// HTML static paths
     pub html_static_path: Vec<PathBuf>,
 
+    /// `html_extra_path`, default `[]` (`SP/sphinx/builders/html/__init__.py`,
+    /// a list): directories, relative to the configuration directory, whose
+    /// files the HTML builder copies to the output root. Like
+    /// `html_static_path`, it is one of the HTML builder's asset paths,
+    /// which discovery leaves out (`get_asset_paths`, `:406-407`).
+    pub html_extra_path: Vec<PathBuf>,
+
     /// HTML logo file
     pub html_logo: Option<String>,
 
@@ -1046,6 +1053,7 @@ impl Default for BuildConfig {
             html_css_files: vec![],
             html_js_files: vec![],
             html_static_path: vec![PathBuf::from("_static")],
+            html_extra_path: vec![],
             html_logo: None,
             html_favicon: None,
             html_title: None,
@@ -1586,6 +1594,25 @@ impl BuildConfig {
             self.override_smartquotes_excludes(entry, value);
             return Ok(None);
         }
+        // `master_doc` and `root_doc` are one setting (`Config.__setattr__`
+        // copies either into the other, `config.py:434-439`), which
+        // `check_confval_types` reads as `master_doc` first (`:239-240`),
+        // an override before conf.py's value (`Config.__getattr__`): the
+        // root is the first of an override of `master_doc`, conf.py's
+        // `master_doc`, an override of `root_doc` and conf.py's `root_doc`,
+        // whatever order the overrides come in. An override of `root_doc`
+        // yields to a `master_doc` conf.py or an override set, without a
+        // word, as in Sphinx.
+        if matches!(key, "master_doc" | "root_doc") {
+            if key == "master_doc" || !self.conf_values.contains_key("master_doc") {
+                self.root_doc = Some(value.to_string());
+            }
+            self.conf_values.insert(
+                key.to_string(),
+                serde_json::Value::String(value.to_string()),
+            );
+            return Ok(None);
+        }
         // `source_suffix` is typed `Any`: the override is the text as given,
         // which `convert_source_suffix` makes the one suffix it names
         // ([`SourceSuffix::from_override`]), whatever `conf.py` said.
@@ -1933,6 +1960,41 @@ output:
             .unwrap();
         assert_eq!(config.templates_path, vec![PathBuf::from("_mytemplates")]);
         assert_eq!(config.template_dirs, vec![PathBuf::from("_mytemplates")]);
+    }
+
+    /// `-D master_doc` and `-D root_doc` set the one root Sphinx reads as
+    /// `master_doc` first: an override of `master_doc` wins whatever came
+    /// before or after it, and one of `root_doc` yields to a `master_doc`
+    /// that conf.py or an override set (probe
+    /// `scratchpad/t17c-fix3/p2_root_alias.py`).
+    #[test]
+    fn master_doc_and_root_doc_overrides_set_one_root() {
+        let root_after = |conf_master: Option<&str>, overrides: &[(&str, &str)]| {
+            let mut config = BuildConfig::default();
+            if let Some(master) = conf_master {
+                config.root_doc = Some(master.to_string());
+                config
+                    .conf_values
+                    .insert("master_doc".to_string(), serde_json::json!(master));
+            }
+            for (key, value) in overrides {
+                assert_eq!(config.apply_override(key, value).unwrap(), None, "{key}");
+            }
+            config.root_doc
+        };
+        let root = |name: &str| Some(name.to_string());
+        assert_eq!(root_after(None, &[("master_doc", "c")]), root("c"));
+        assert_eq!(root_after(None, &[("root_doc", "d")]), root("d"));
+        assert_eq!(
+            root_after(None, &[("master_doc", "c"), ("root_doc", "d")]),
+            root("c")
+        );
+        assert_eq!(
+            root_after(None, &[("root_doc", "d"), ("master_doc", "c")]),
+            root("c")
+        );
+        assert_eq!(root_after(Some("a"), &[("root_doc", "d")]), root("a"));
+        assert_eq!(root_after(Some("a"), &[("master_doc", "c")]), root("c"));
     }
 
     #[test]

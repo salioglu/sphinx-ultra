@@ -9,11 +9,12 @@
 //! the same config [`crate::doctree::to_bincode`]/`from_bincode` use) to
 //! `<cache_dir>/env.bin`. That file lives inside the cache directory
 //! governed by the `.config-fingerprint` wipe protocol in `src/cache.rs`: a
-//! change to a content-bearing configuration value nukes the whole cache
-//! dir, `env.bin` included — which is the desired behavior, since the
-//! environment was built under the old configuration. Note that this is
-//! *broader* than Sphinx, which only invalidates its environment for config
-//! values with rebuild class `'env'` and never deletes its doctrees; the
+//! change to a content-bearing configuration value empties the cache dir,
+//! `env.bin` included, of everything but intersphinx's inventory cache —
+//! which is the desired behavior, since the environment was built under
+//! the old configuration. Note that this is *broader* than Sphinx, which
+//! only invalidates its environment for config values with rebuild class
+//! `'env'` and never deletes its doctrees; the
 //! filter in `builder::EXCLUDED_FROM_FINGERPRINT` keeps at least the purely
 //! operational flags (`-W`, `-n`) from triggering it.
 //!

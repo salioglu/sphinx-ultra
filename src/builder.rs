@@ -94,11 +94,27 @@ const DEFAULT_ROOT_DOC: &str = "index";
 /// `check_master_doc` falls back to ([`SphinxBuilder::check_master_doc`]).
 const PRE_2_0_ROOT_DOC: &str = "contents";
 
-/// `sphinx.project.EXCLUDE_PATHS` (`SP/sphinx/project.py:20`), the patterns
-/// the root document check names as built in
-/// ([`SphinxBuilder::check_root_document`]). Discovery itself excludes its
-/// own built-in patterns ([`SphinxBuilder::discover_source_files`]).
+/// `sphinx.project.EXCLUDE_PATHS` (`SP/sphinx/project.py:20`): the patterns
+/// discovery excludes after the configured ones
+/// ([`SphinxBuilder::discovery_excludes`]), and the ones the root document
+/// check names as built in ([`SphinxBuilder::check_root_document`]).
 const SPHINX_EXCLUDE_PATHS: [&str; 4] = ["**/_sources", ".#*", "**/.#*", "*.lproj/**"];
+
+/// The patterns the native `build` subcommand's discovery excludes on top
+/// of Sphinx's ([`SphinxBuilder::discovery_excludes`]): build output,
+/// caches, version-control and other hidden directories, and two operating
+/// system files. Sphinx walks all of them; sphinx-build mode does too
+/// ([`SphinxBuilder::discover_as_sphinx`]).
+const NATIVE_EXCLUDE_PATHS: [&str; 8] = [
+    "_build/**",
+    "__pycache__/**",
+    ".git/**",
+    ".svn/**",
+    ".hg/**",
+    ".*/**",
+    "Thumbs.db",
+    ".DS_Store",
+];
 
 /// The Sphinx builder a build's resolve pass stands for. In wave 5a it
 /// only picks the tags `.. only::` is evaluated against ([`Self::tags`],
@@ -289,6 +305,9 @@ pub struct SphinxBuilder {
     /// `contents` ([`Self::check_master_doc`]) and stops when its documents
     /// do not include the root ([`Self::check_root_document`]).
     require_root_document: bool,
+    /// Whether discovery excludes exactly what Sphinx's does
+    /// ([`Self::discover_as_sphinx`]), without [`NATIVE_EXCLUDE_PATHS`].
+    sphinx_discovery: bool,
 }
 
 /// [`BuildConfig`] fields deliberately kept *out* of the cache fingerprint.
@@ -307,8 +326,8 @@ pub struct SphinxBuilder {
 ///   in a config comparison.
 ///
 /// Including them here would be worse than a spurious full rebuild. A
-/// fingerprint mismatch wipes the whole cache directory (documents,
-/// `doctrees/`, `env.bin`, `__intersphinx_cache__`), and read-phase
+/// fingerprint mismatch empties the cache directory (documents,
+/// `doctrees/`, `env.bin`; all but `__intersphinx_cache__`), and read-phase
 /// diagnostics are only emitted for documents a build actually reads — so
 /// merely adding `-W` would force a cold read that re-emits every
 /// read-phase warning and fails, while the *next* identical `-W` run would
@@ -718,6 +737,7 @@ impl SphinxBuilder {
             intersphinx: Intersphinx::default(),
             reparsed: std::sync::atomic::AtomicUsize::new(0),
             require_root_document: false,
+            sphinx_discovery: false,
         })
     }
 
@@ -737,8 +757,9 @@ impl SphinxBuilder {
     ///
     /// Local inventory locations are resolved against the source directory
     /// and re-read on every build; remote ones go through [`UreqFetcher`]
-    /// and are cached under the (fingerprint-wiped) cache directory, so a
-    /// configuration change discards them along with everything else.
+    /// and are cached in the cache directory's `__intersphinx_cache__`,
+    /// which survives a configuration change and a fresh environment, as
+    /// Sphinx's does in its doctree directory ([`BuildCache::clear`]).
     /// Fails where Sphinx raises `ConfigError` from `load_mappings` — an
     /// entry that survived normalisation but violates
     /// `_IntersphinxProject`'s invariants — with a
@@ -820,6 +841,15 @@ impl SphinxBuilder {
         self.require_root_document = true;
     }
 
+    /// Discover the documents Sphinx does, sphinx-build mode's rule: leave
+    /// out what Sphinx's `find_files` leaves out and nothing else
+    /// ([`Self::discovery_excludes`]), so a `_build/`, a hidden directory or
+    /// `__pycache__` holds documents. Without it, as in the native
+    /// subcommand, discovery leaves those out too ([`NATIVE_EXCLUDE_PATHS`]).
+    pub fn discover_as_sphinx(&mut self) {
+        self.sphinx_discovery = true;
+    }
+
     /// Read and resolve as `kind` builds ([`BuilderKind`]); `html` unless
     /// set. The read takes the builder from here too: it decides whether
     /// `smartquotes_excludes` turns smart quotes off.
@@ -835,7 +865,9 @@ impl SphinxBuilder {
     /// document as new. Emptying the cache directory is the same statement
     /// about the *other* half of the persisted state (documents and
     /// doctrees), and dropping the already-loaded environment here is what
-    /// keeps the two halves saying the same thing.
+    /// keeps the two halves saying the same thing. The inventories
+    /// intersphinx fetched stay, as they stay in Sphinx's doctree
+    /// directory ([`BuildCache::clear`]).
     pub fn fresh_env(&mut self) -> Result<()> {
         self.cache.clear()?;
         self.env = BuildEnvironment::default();
@@ -1118,20 +1150,25 @@ impl SphinxBuilder {
     /// read and before `env-updated`, when [`Self::require_root_document`]
     /// asks for it: the `SphinxError` that stops the build when `root_doc`,
     /// after [`Self::check_master_doc`]'s fallback, is none of the
-    /// documents, reported as T17a2 reports an error Sphinx raises in its
-    /// read, after the read's records. Sphinx tests the documents its
-    /// environment holds once the read is done, which are the ones
-    /// discovery found; this crate tests those, so a root document it fails
-    /// to read (a per-file failure, decision 4) still counts.
+    /// documents, after the read's records. Sphinx raises it on purpose, so
+    /// its report says no crash ([`SphinxCrash::deliberate`]); the
+    /// environment is not saved, as after a crash. Sphinx tests the
+    /// documents its environment holds once the read is done, which are the
+    /// ones discovery found; this crate tests those, so a root document it
+    /// fails to read (a per-file failure, decision 4) still counts.
     ///
     /// The root's path is `doc2path(root_doc)`, which for a document the
     /// project has no file for is `<srcdir>/<root_doc><source_suffix[0]>`,
     /// and the message's variant is the first that holds, each pattern
     /// matched against that path, absolute, with `/` separators: a built-in
     /// exclude pattern of `sphinx.project.EXCLUDE_PATHS`, a conf.py
-    /// exclude pattern, custom include patterns none of which matches,
-    /// otherwise the generic one. A pattern only a relative path matches
-    /// (`index.rst`) leads to the generic message, as in Sphinx.
+    /// exclude pattern, custom include patterns none of which matches (an
+    /// empty list included), otherwise the generic one. Of discovery's
+    /// exclude patterns, only those two lists are named: a root that
+    /// discovery leaves out because it lies under `templates_path` or an
+    /// HTML asset path gets the generic message, as in Sphinx. A pattern
+    /// only a relative path matches (`index.rst`) leads to the generic
+    /// message, as in Sphinx.
     fn check_root_document(&self, files: &[PathBuf]) -> Result<(), SphinxCrash> {
         if !self.require_root_document {
             return Ok(());
@@ -1179,38 +1216,41 @@ impl SphinxBuilder {
                              subdirectory of it."
                 .to_string(),
         };
-        Err(SphinxCrash::sphinx_error(
-            &format!(
-                "Sphinx is unable to load the master document ({}){reason}",
-                path.display()
-            ),
-            crate::rst::LogLocation::None,
-        ))
+        Err(SphinxCrash::deliberate_sphinx_error(&format!(
+            "Sphinx is unable to load the master document ({}){reason}",
+            path.display()
+        )))
+    }
+
+    /// The exclude patterns of discovery, in the order Sphinx's
+    /// `env.find_files` passes them (`SP/sphinx/environment/__init__.py:
+    /// 485-495`): `exclude_patterns`, `templates_path`, then the HTML
+    /// builder's asset paths, `html_extra_path` and `html_static_path`
+    /// (`get_asset_paths`, `SP/sphinx/builders/html/__init__.py:406-407`),
+    /// each entry as written, a pattern matched against the srcdir-relative
+    /// path; then `Project.discover`'s [`SPHINX_EXCLUDE_PATHS`]. That is
+    /// all of Sphinx's, and all of sphinx-build mode's
+    /// ([`Self::discover_as_sphinx`]); the native subcommand adds
+    /// [`NATIVE_EXCLUDE_PATHS`].
+    fn discovery_excludes(&self) -> Vec<String> {
+        let as_pattern = |path: &PathBuf| path.to_string_lossy().into_owned();
+        let mut patterns = self.config.exclude_patterns.clone();
+        patterns.extend(self.config.templates_path.iter().map(as_pattern));
+        patterns.extend(self.config.html_extra_path.iter().map(as_pattern));
+        patterns.extend(self.config.html_static_path.iter().map(as_pattern));
+        patterns.extend(SPHINX_EXCLUDE_PATHS.map(str::to_string));
+        if !self.sphinx_discovery {
+            patterns.extend(NATIVE_EXCLUDE_PATHS.map(str::to_string));
+        }
+        patterns
     }
 
     async fn discover_source_files(&self, sink: &mut DiagnosticSink) -> Result<Vec<PathBuf>> {
         // Use pattern-based file discovery like Sphinx
         let include_patterns = &self.config.include_patterns;
-        let exclude_patterns = &self.config.exclude_patterns;
+        let exclude_patterns = self.discovery_excludes();
 
-        // Add built-in exclude patterns for common build artifacts and hidden files
-        let mut all_exclude_patterns = exclude_patterns.clone();
-        all_exclude_patterns.extend_from_slice(&[
-            "_build/**".to_string(),
-            "__pycache__/**".to_string(),
-            ".git/**".to_string(),
-            ".svn/**".to_string(),
-            ".hg/**".to_string(),
-            ".*/**".to_string(), // Skip all hidden directories
-            "Thumbs.db".to_string(),
-            ".DS_Store".to_string(),
-        ]);
-
-        match matching::get_matching_files(
-            &self.source_dir,
-            include_patterns,
-            &all_exclude_patterns,
-        ) {
+        match matching::get_matching_files(&self.source_dir, include_patterns, &exclude_patterns) {
             // Sphinx's Project.discover keeps only files with a configured
             // source suffix, regardless of include_patterns
             Ok(files) => Ok(self.dedup_by_docname(
@@ -1372,9 +1412,10 @@ impl SphinxBuilder {
 
         let outdated = env.get_outdated_files(
             &found,
-            // A content-bearing configuration change wipes the cache
-            // directory whole (`.config-fingerprint`), so it reaches this
-            // point as an empty environment as well; saying it out loud
+            // A content-bearing configuration change empties the cache
+            // directory (`.config-fingerprint`; only intersphinx's
+            // inventories stay), so it reaches this point as an empty
+            // environment as well; saying it out loud
             // keeps the two statements from drifting apart. Operational
             // flags (`-W`, `-n`) are excluded from the fingerprint
             // (`EXCLUDED_FROM_FINGERPRINT`) and therefore never land here.

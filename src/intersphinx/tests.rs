@@ -491,6 +491,61 @@ fn the_disk_cache_short_circuits_a_remote_fetch_until_it_expires() {
     assert!(outcome.data.inventory_exists("remote"));
 }
 
+/// The disk file is keyed by project name alone: after the project's target
+/// URI changes, Sphinx reads it while it is fresh (its memory, pruned of
+/// the old URI, holds nothing for the new one, `_load.py:164-173`,
+/// `:264-280`), and links the bytes fetched from the old URI against the
+/// new one; nothing is fetched (probe
+/// `scratchpad/t17c-fix3/p5_intersphinx_cache.py`, `target_uri_change`).
+#[test]
+fn a_moved_target_uri_links_the_cached_inventory_against_the_new_uri() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let cache_dir = tmp.path().join(CACHE_DIR_NAME);
+    let http = HttpConfig::default();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let load = |target: &str, fetcher: &dyn InventoryFetcher| {
+        let mapping = mapping(&[("remote", target, &[None])]);
+        let request = LoadRequest {
+            mapping: &mapping,
+            srcdir: tmp.path(),
+            cache_dir: Some(cache_dir.clone()),
+            cache_limit: 5,
+            now,
+            http: &http,
+        };
+        load_mappings(&request, fetcher).unwrap()
+    };
+    let uris = |outcome: &LoadOutcome| -> Vec<String> {
+        outcome.data.named["remote"]
+            .data
+            .values()
+            .flat_map(|objects| objects.values().map(|item| item.uri.clone()))
+            .collect()
+    };
+
+    let fetcher = MockFetcher::with(
+        "https://example.org/v1/objects.inv",
+        fixture_bytes("std_objects_and_docs.inv"),
+    );
+    let cold = load("https://example.org/v1/", &fetcher);
+    assert!(!uris(&cold).is_empty());
+    assert!(uris(&cold)
+        .iter()
+        .all(|uri| uri.starts_with("https://example.org/v1/")));
+
+    let moved = load("https://example.org/v2/", &NoNetwork);
+    assert_eq!(
+        uris(&moved),
+        uris(&cold)
+            .iter()
+            .map(|uri| uri.replacen("/v1/", "/v2/", 1))
+            .collect::<Vec<_>>()
+    );
+}
+
 #[test]
 fn a_local_location_is_re_read_even_when_a_disk_cache_exists() {
     let tmp = tempfile::TempDir::new().unwrap();

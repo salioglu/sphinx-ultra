@@ -1112,6 +1112,187 @@ fn source_suffix_gates_discovery() {
     }
 }
 
+/// Discovery leaves out exactly what Sphinx's `env.find_files` does
+/// (`SP/sphinx/environment/__init__.py:485-495`): `exclude_patterns`,
+/// `templates_path`, `html_extra_path` and `html_static_path`, each entry
+/// an exclude pattern as written, matched against the srcdir-relative path
+/// (a directory it matches is not walked), then `Project.discover`'s
+/// `EXCLUDE_PATHS` (`**/_sources`, `.#*`, `**/.#*`, `*.lproj/**`,
+/// `SP/sphinx/project.py:20`). Nothing else: a `_build/`, a hidden
+/// directory, `__pycache__` and `.git` are walked like any other. So an
+/// autosummary template (Jinja text) under `templates_path`, an `.rst` under
+/// an asset path and a markdown file under `html_static_path` are no
+/// documents, while a top-level `_sources/` or a nested `en.lproj/`, which
+/// no pattern matches, holds documents. `-D` sets the three settings as
+/// lists. Sphinx 9.1.0 builds each project with an empty warning stream and
+/// these pages (`scratchpad/t17c-fix3/p1b_pins.py`). The native subcommand
+/// leaves out the same paths and its own: `_build/`, hidden directories,
+/// `__pycache__`.
+#[test]
+fn discovery_excludes_what_sphinx_excludes() {
+    let index = |entries: &[&str]| {
+        let mut text = "Index\n=====\n\n.. toctree::\n\n".to_string();
+        for entry in entries {
+            text.push_str(&format!("   {entry}\n"));
+        }
+        text
+    };
+    let page = |title: &str| format!("{title}\n{}\n\nText.\n", "=".repeat(title.len()));
+    let only_a = index(&["a"]);
+    let a = page("A");
+    // `<out>/<docname>.html`, built a component at a time.
+    let page_path = |out: &Path, docname: &str| {
+        let mut path = out.join(docname.split('/').collect::<PathBuf>());
+        let name = format!("{}.html", path.file_name().unwrap().to_string_lossy());
+        path.set_file_name(name);
+        path
+    };
+    let documents = |out: &Path, pages: &[&str], not: &[&str]| {
+        for page in pages {
+            let path = page_path(out, page);
+            assert!(path.is_file(), "{} is written", path.display());
+        }
+        for page in not {
+            assert!(!page_path(out, page).exists(), "{page} is no document");
+        }
+    };
+
+    let assets = [
+        (
+            "conf.py",
+            "project = 'p'\ntemplates_path = ['_templates']\nhtml_static_path = ['_static']\n\
+             html_extra_path = ['_extra']\n"
+                .to_string(),
+        ),
+        ("index.rst", only_a.clone()),
+        ("a.rst", a.clone()),
+        (
+            "_templates/autosummary/class.rst",
+            "{{ fullname | escape | underline}}\n\n.. currentmodule:: {{ module }}\n\n\
+             .. autoclass:: {{ objname }}\n   :members:\n"
+                .to_string(),
+        ),
+        ("_static/s.rst", page("S")),
+        ("_extra/e.rst", page("E")),
+    ];
+    let assets: Vec<(&str, &str)> = assets.iter().map(|(p, t)| (*p, t.as_str())).collect();
+    let src = temp_source("t17c-discovery-assets", &assets);
+    let out = out_dir("t17c-discovery-assets");
+    let (result, written) = warning_stream(&src, &out, &[]);
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert_eq!(written, "");
+    assert_eq!(stderr_of(&result), "");
+    documents(
+        &out,
+        &["index", "a"],
+        &["_templates/autosummary/class", "_static/s", "_extra/e"],
+    );
+    // The native subcommand leaves them out too.
+    let native = out_dir("t17c-discovery-assets-native");
+    let result = build(&src, &native, &[]);
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    documents(
+        &native,
+        &["index", "a"],
+        &["_templates/autosummary/class", "_static/s", "_extra/e"],
+    );
+
+    let overridden = [
+        ("index.rst", only_a.clone()),
+        ("a.rst", a.clone()),
+        ("_t/t.rst", page("T")),
+        ("_s/s.rst", page("S")),
+        ("_s2/s2.rst", page("S2")),
+        ("_e/e.rst", page("E")),
+    ];
+    let overridden: Vec<(&str, &str)> = overridden.iter().map(|(p, t)| (*p, t.as_str())).collect();
+    let src = temp_source("t17c-discovery-assets-d", &overridden);
+    let out = out_dir("t17c-discovery-assets-d");
+    let (result, written) = warning_stream(
+        &src,
+        &out,
+        &[
+            "-D",
+            "templates_path=_t",
+            "-D",
+            "html_static_path=_s,_s2",
+            "-D",
+            "html_extra_path=_e",
+        ],
+    );
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert_eq!(written, "");
+    assert_eq!(stderr_of(&result), "");
+    documents(&out, &["index", "a"], &["_t/t", "_s/s", "_s2/s2", "_e/e"]);
+
+    // A markdown file under `html_static_path` is no document, so its file
+    // type stops nothing.
+    let markdown = [
+        (
+            "conf.py",
+            "project = 'p'\nhtml_static_path = ['_static']\n\
+             source_suffix = {'.rst': 'restructuredtext', '.md': 'markdown'}\n"
+                .to_string(),
+        ),
+        ("index.rst", only_a.clone()),
+        ("a.rst", a.clone()),
+        ("_static/readme.md", "# R\n".to_string()),
+    ];
+    let markdown: Vec<(&str, &str)> = markdown.iter().map(|(p, t)| (*p, t.as_str())).collect();
+    let src = temp_source("t17c-discovery-static-markdown", &markdown);
+    let out = out_dir("t17c-discovery-static-markdown");
+    let (result, written) = warning_stream(&src, &out, &[]);
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert_eq!(written, "");
+    assert_eq!(stderr_of(&result), "");
+    documents(&out, &["index", "a"], &[]);
+
+    // Sphinx walks what this crate's native subcommand leaves out, and
+    // `EXCLUDE_PATHS` reaches only what its patterns match.
+    let walked = [
+        "_build/b",
+        ".hidden/h",
+        "__pycache__/p",
+        ".git/g",
+        "_sources/s",
+        "sub/en.lproj/m",
+    ];
+    let excluded = ["sub/_sources/t", "en.lproj/l", ".#b", "sub/.#c"];
+    let mut entries = vec!["a"];
+    entries.extend_from_slice(&walked);
+    let built_ins_index = index(&entries);
+    let mut built_ins = vec![
+        ("conf.py".to_string(), "project = 'p'\n".to_string()),
+        ("index.rst".to_string(), built_ins_index),
+        ("a.rst".to_string(), a.clone()),
+    ];
+    for docname in walked.iter().chain(&excluded) {
+        built_ins.push((format!("{docname}.rst"), page("Page")));
+    }
+    let built_ins: Vec<(&str, &str)> = built_ins
+        .iter()
+        .map(|(p, t)| (p.as_str(), t.as_str()))
+        .collect();
+    let src = temp_source("t17c-discovery-built-ins", &built_ins);
+    let out = out_dir("t17c-discovery-built-ins");
+    let (result, written) = warning_stream(&src, &out, &[]);
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert_eq!(written, "");
+    assert_eq!(stderr_of(&result), "");
+    documents(&out, &walked, &excluded);
+    documents(&out, &["index", "a"], &[]);
+    // The native subcommand keeps its own exclusions on top of Sphinx's.
+    let native = out_dir("t17c-discovery-built-ins-native");
+    let result = build(&src, &native, &[]);
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    documents(
+        &native,
+        &["index", "a", "_sources/s", "sub/en.lproj/m"],
+        &["_build/b", ".hidden/h", "__pycache__/p", ".git/g"],
+    );
+    documents(&native, &[], &excluded);
+}
+
 /// A logger warning's location goes through Sphinx's `doc2path`
 /// (`SphinxLogRecordTranslator`, `SP/sphinx/util/logging.py:500-525`;
 /// `Project.doc2path`, `SP/sphinx/project.py:114-128`): `location=docname`
@@ -1223,26 +1404,25 @@ fn a_source_suffix_override_names_the_suffix_documents_end_with() {
 /// pattern matched against that path, absolute: a built-in exclude pattern,
 /// a conf.py exclude pattern (`**index.rst`; `index.rst`, which matches
 /// only the relative path, leads to the generic message), custom
-/// include patterns none of which matches, otherwise the generic one, as
-/// for `-D source_suffix=.txt` on a project of `.rst` files. Probed on
-/// Sphinx 9.1.0 (`scratchpad/t17c-fix1/p4_root.py`: `D_txt_records`,
-/// `exclude_starstar`, `exclude_relative`, `include_custom`,
-/// `builtin_dot_hash`). The native subcommand has no such rule.
+/// include patterns none of which matches (`[]`, which matches no file,
+/// included), otherwise the generic one, as for `-D source_suffix=.txt` on
+/// a project of `.rst` files. A `.#index.rst` root is a file discovery
+/// leaves out, by the built-in pattern `.#*`; a root under
+/// `html_static_path` is one too, which the message does not name. Sphinx
+/// raises the error on purpose, so the report ends with it
+/// ([`root_document_error`]). Probed on Sphinx 9.1.0
+/// (`scratchpad/t17c-fix1/p4_root.py`: `D_txt_records`, `exclude_starstar`,
+/// `exclude_relative`, `include_custom`, `builtin_dot_hash`,
+/// `builtin_dot_hash_file`; `scratchpad/t17c-fix3/p3_include_empty.py`:
+/// `include_empty`; `scratchpad/t17c-fix3/p1c_root_variants.py`:
+/// `root_under_static`). The native subcommand has no such rule; with
+/// `include_patterns = []` it finds no document either.
 #[test]
 fn a_read_that_did_not_find_the_root_document_exits_two() {
     let index = ("index.rst", "Index\n=====\n\n.. toctree::\n\n   a\n");
     let a = ("a.rst", "A\n=\n\nSee :nope:`x` here.\n");
     let a_record = "<SRCDIR>/a.rst:4: ERROR: Unknown interpreted text role \"nope\". [docutils]\n";
-    let unable = |message: &str| {
-        crash_report(
-            Some("Sphinx error"),
-            &format!(
-                "sphinx.errors.SphinxError: Sphinx is unable to load the master document \
-                 {message}"
-            ),
-            None,
-        )
-    };
+    let unable = |message: &str| root_document_error(message);
     let generic = |path: &str| {
         unable(&format!(
             "({path}). The master document must be within the source directory or a \
@@ -1332,6 +1512,10 @@ fn a_read_that_did_not_find_the_root_document_exits_two() {
         )
     );
 
+    let built_in = unable(
+        "(<SRCDIR>/.#index.rst) because it matches a built-in exclude pattern '**/.#*'. \
+         Please move your master document to a different location.",
+    );
     let stream = crash_stream(
         "t17c-root-built-in",
         &[
@@ -1342,16 +1526,59 @@ fn a_read_that_did_not_find_the_root_document_exits_two() {
         &[],
         &[],
     );
+    assert_eq!(stream, format!("{a_record}{built_in}"));
+    let stream = crash_stream(
+        "t17c-root-built-in-file",
+        &[
+            ("conf.py", "project = 'p'\nroot_doc = '.#index'\n"),
+            index,
+            a,
+            (".#index.rst", "X\n=\n"),
+        ],
+        &[],
+        &[],
+    );
+    assert_eq!(stream, format!("{a_record}{built_in}"));
+    // A root discovery leaves out because it lies under an asset path is
+    // named by neither variant: the check names only the built-in patterns
+    // and conf.py's `exclude_patterns`.
+    let stream = crash_stream(
+        "t17c-root-under-static",
+        &[
+            (
+                "conf.py",
+                "project = 'p'\nroot_doc = '_static/index'\nhtml_static_path = ['_static']\n",
+            ),
+            index,
+            a,
+            ("_static/index.rst", index.1),
+        ],
+        &[],
+        &[],
+    );
     assert_eq!(
         stream,
-        format!(
-            "{a_record}{}",
-            unable(
-                "(<SRCDIR>/.#index.rst) because it matches a built-in exclude pattern \
-                 '**/.#*'. Please move your master document to a different location."
-            )
+        format!("{a_record}{}", generic("<SRCDIR>/_static/index.rst"))
+    );
+
+    let include_empty = [
+        ("conf.py", "project = 'p'\ninclude_patterns = []\n"),
+        index,
+        a,
+    ];
+    let stream = crash_stream("t17c-root-include-empty", &include_empty, &[], &[]);
+    assert_eq!(
+        stream,
+        unable(
+            "(<SRCDIR>/index.rst) because it is not included in the custom include_patterns \
+             = []. Ensure that a pattern in include_patterns matches the master document."
         )
     );
+    let src = temp_source("t17c-root-include-empty-native", &include_empty);
+    let out = out_dir("t17c-root-include-empty-native");
+    let result = build(&src, &out, &[]);
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert!(!out.join("index.html").exists() && !out.join("a.html").exists());
 
     // The native subcommand builds the documents it has, root or none.
     let src = temp_source(
@@ -1527,15 +1754,10 @@ fn a_missing_index_falls_back_to_a_contents_root_document() {
     // With `contents` no document, or another root, the root check stops
     // the build.
     let unable = |path: &str| {
-        crash_report(
-            Some("Sphinx error"),
-            &format!(
-                "sphinx.errors.SphinxError: Sphinx is unable to load the master document \
-                 ({path}). The master document must be within the source directory or a \
-                 subdirectory of it."
-            ),
-            None,
-        )
+        root_document_error(&format!(
+            "({path}). The master document must be within the source directory or a \
+             subdirectory of it."
+        ))
     };
     for (test, conf, files, path) in [
         (
@@ -1600,6 +1822,325 @@ fn a_missing_index_falls_back_to_a_contents_root_document() {
              without editing conf.py\n"
         )
     );
+}
+
+/// `master_doc` and `root_doc` are one setting (`Config.__setattr__` copies
+/// either into the other, `SP/sphinx/config.py:434-439`), which
+/// `check_confval_types` reads as `master_doc` first (`:239-240`): the root
+/// is the first of a `-D master_doc`, conf.py's `master_doc`, a
+/// `-D root_doc` and conf.py's `root_doc`, whatever order conf.py assigns
+/// them in or the overrides come in, and `index` without any. The project's
+/// documents are all orphans but the root, so the orphan records name the
+/// root by its absence. On a `contents` project, `-D master_doc=contents`
+/// leaves nothing to fall back from, `-D master_doc=index` falls back over
+/// conf.py's `root_doc = 'contents'`, and conf.py's `master_doc =
+/// 'contents'` keeps `-D root_doc=index` from it. Sphinx 9.1.0 prints
+/// exactly these records (`scratchpad/t17c-fix3/p2_root_alias.py`).
+#[test]
+fn master_doc_and_root_doc_are_one_setting() {
+    const MASTER: &str = "master_doc = 'a'\n";
+    const ROOT: &str = "root_doc = 'b'\n";
+    const D_MASTER: [&str; 2] = ["-D", "master_doc=c"];
+    const D_ROOT: [&str; 2] = ["-D", "root_doc=d"];
+    let docs = ["index", "a", "b", "c", "d"];
+    let pages: Vec<(String, String)> = docs
+        .iter()
+        .map(|doc| {
+            let title = doc.to_uppercase();
+            (
+                format!("{doc}.rst"),
+                format!("{title}\n{}\n\nText.\n", "=".repeat(title.len())),
+            )
+        })
+        .collect();
+    let both = [D_MASTER, D_ROOT].concat();
+    let both_reversed = [D_ROOT, D_MASTER].concat();
+    for (test, conf, extra, root) in [
+        ("t17c-alias-none", String::new(), &[][..], "index"),
+        ("t17c-alias-master", MASTER.to_string(), &[][..], "a"),
+        ("t17c-alias-root", ROOT.to_string(), &[][..], "b"),
+        ("t17c-alias-d-master", String::new(), &D_MASTER[..], "c"),
+        ("t17c-alias-d-root", String::new(), &D_ROOT[..], "d"),
+        (
+            "t17c-alias-master-root",
+            format!("{MASTER}{ROOT}"),
+            &[][..],
+            "a",
+        ),
+        (
+            "t17c-alias-root-master",
+            format!("{ROOT}{MASTER}"),
+            &[][..],
+            "a",
+        ),
+        (
+            "t17c-alias-d-master-master",
+            MASTER.to_string(),
+            &D_MASTER[..],
+            "c",
+        ),
+        (
+            "t17c-alias-d-master-root",
+            ROOT.to_string(),
+            &D_MASTER[..],
+            "c",
+        ),
+        (
+            "t17c-alias-d-root-master",
+            MASTER.to_string(),
+            &D_ROOT[..],
+            "a",
+        ),
+        ("t17c-alias-d-root-root", ROOT.to_string(), &D_ROOT[..], "d"),
+        (
+            "t17c-alias-d-root-both",
+            format!("{MASTER}{ROOT}"),
+            &D_ROOT[..],
+            "a",
+        ),
+        (
+            "t17c-alias-d-master-both",
+            format!("{MASTER}{ROOT}"),
+            &D_MASTER[..],
+            "c",
+        ),
+        ("t17c-alias-d-both", String::new(), &both[..], "c"),
+        (
+            "t17c-alias-d-both-reversed",
+            String::new(),
+            &both_reversed[..],
+            "c",
+        ),
+        (
+            "t17c-alias-d-both-over-both",
+            format!("{ROOT}{MASTER}"),
+            &both_reversed[..],
+            "c",
+        ),
+    ] {
+        let conf = format!("project = 'p'\n{conf}");
+        let mut files = vec![("conf.py", conf.as_str())];
+        files.extend(
+            pages
+                .iter()
+                .map(|(path, text)| (path.as_str(), text.as_str())),
+        );
+        let src = temp_source(test, &files);
+        let out = out_dir(test);
+        let (result, written) = warning_stream(&src, &out, extra);
+        assert!(
+            result.status.success(),
+            "{test}: stderr: {}",
+            stderr_of(&result)
+        );
+        let mut orphans: Vec<&str> = docs.iter().copied().filter(|doc| *doc != root).collect();
+        orphans.sort();
+        let expected: String = orphans
+            .iter()
+            .map(|doc| {
+                format!(
+                    "<SRCDIR>/{doc}.rst: WARNING: document isn't included in any toctree \
+                     [toc.not_included]\n"
+                )
+            })
+            .collect();
+        assert_eq!(written, expected, "{test}");
+        assert_eq!(srcdir_spelled(&result.stderr, &src), written, "{test}");
+    }
+
+    const FALLBACK: &str = "WARNING: Sphinx now uses \"index\" as the master document by \
+                            default. To keep pre-2.0 behaviour, set \"master_doc = \
+                            'contents'\".\n";
+    let contents = (
+        "contents.rst",
+        "Contents\n========\n\n.. toctree::\n\n   a\n",
+    );
+    let a = ("a.rst", "A\n=\n\nText.\n");
+    for (test, conf, extra, expected) in [
+        (
+            "t17c-alias-contents-d-master",
+            "",
+            &["-D", "master_doc=contents"][..],
+            "",
+        ),
+        (
+            "t17c-alias-contents-d-master-index",
+            "",
+            &["-D", "master_doc=index"][..],
+            FALLBACK,
+        ),
+        (
+            "t17c-alias-contents-root-d-master-index",
+            "root_doc = 'contents'\n",
+            &["-D", "master_doc=index"][..],
+            FALLBACK,
+        ),
+        (
+            "t17c-alias-contents-master-d-root-index",
+            "master_doc = 'contents'\n",
+            &["-D", "root_doc=index"][..],
+            "",
+        ),
+    ] {
+        let conf = format!("project = 'p'\n{conf}");
+        let src = temp_source(test, &[("conf.py", conf.as_str()), contents, a]);
+        let out = out_dir(test);
+        let (result, written) = warning_stream(&src, &out, extra);
+        assert!(
+            result.status.success(),
+            "{test}: stderr: {}",
+            stderr_of(&result)
+        );
+        assert_eq!(written, expected, "{test}");
+        assert_eq!(srcdir_spelled(&result.stderr, &src), written, "{test}");
+        assert!(out.join("contents.html").is_file(), "{test}");
+    }
+}
+
+/// An HTTP server on 127.0.0.1 that answers every request with `body` and
+/// keeps the path of each `GET`: a remote intersphinx inventory, without
+/// the network. It serves until the test process ends.
+fn serve_inventory(body: Vec<u8>) -> (u16, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    use std::io::Write;
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let gets = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let seen = gets.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let mut request = Vec::new();
+            let mut byte = [0u8; 1];
+            while !request.ends_with(b"\r\n\r\n") {
+                match stream.read(&mut byte) {
+                    Ok(1) => request.push(byte[0]),
+                    _ => break,
+                }
+            }
+            let request = String::from_utf8_lossy(&request);
+            if let Some(path) = request.strip_prefix("GET ") {
+                let path = path.split(' ').next().unwrap_or_default();
+                seen.lock().unwrap().push(path.to_string());
+            }
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(head.as_bytes());
+            let _ = stream.write_all(&body);
+        }
+    });
+    (port, gets)
+}
+
+/// Sphinx keeps the inventories intersphinx fetched in its doctree
+/// directory (`__intersphinx_cache__`), which neither a configuration
+/// change nor `-E` deletes, and reads a project's file there whenever its
+/// memory holds no inventory for the target URI and the file is younger
+/// than `intersphinx_cache_limit` (`SP/sphinx/ext/intersphinx/_load.py:
+/// 264-280`). So a project fetches its inventory once: cold, then never on
+/// a warm build, a configuration change, `-E`, or a new target URI, whose
+/// links take the bytes already fetched. That holds for the `contents`
+/// fallback, whose every build is a configuration change too. Sphinx 9.1.0
+/// fetches exactly this often, and resolves the reference on every build
+/// (`scratchpad/t17c-fix3/p5_intersphinx_cache.py`): no record.
+#[test]
+fn the_inventory_cache_outlives_a_configuration_change() {
+    let (port, gets) =
+        serve_inventory(std::fs::read(fixture("intersphinx").join("local.inv")).unwrap());
+    let conf = |uri: &str, extra: &str| {
+        format!(
+            "project = 'p'\nextensions = ['sphinx.ext.intersphinx']\n\
+             intersphinx_mapping = {{'x': ('{uri}', None)}}\n{extra}"
+        )
+    };
+    let base = format!("http://127.0.0.1:{port}/");
+    // The build of `src` into `out`, `-q -w`, with no proxy between it and
+    // the server: the paths it fetched, and its warning stream.
+    let fetched = |src: &Path, out: &Path, extra: &[&str]| {
+        let log = out.with_extension("w");
+        let before = gets.lock().unwrap().len();
+        let mut command = bin();
+        command
+            .arg(src)
+            .arg(out)
+            .args(["-q", "-w"])
+            .arg(&log)
+            .args(extra);
+        for key in [
+            "http_proxy",
+            "HTTP_PROXY",
+            "https_proxy",
+            "HTTPS_PROXY",
+            "all_proxy",
+            "ALL_PROXY",
+        ] {
+            command.env_remove(key);
+        }
+        let result = command.output().expect("binary should run");
+        assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+        let written = srcdir_spelled(&std::fs::read(&log).unwrap(), src);
+        (gets.lock().unwrap()[before..].to_vec(), written)
+    };
+    let root = |name: &str| {
+        (
+            format!("{name}.rst"),
+            "Root\n====\n\n.. toctree::\n\n   a\n\nSee :ref:`x:example`.\n".to_string(),
+        )
+    };
+    let a = ("a.rst", "A\n=\n\nText.\n");
+
+    let (index, index_text) = root("index");
+    let control_conf = conf(&base, "");
+    let src = temp_source(
+        "t17c-inventory-cache",
+        &[
+            ("conf.py", control_conf.as_str()),
+            (index.as_str(), index_text.as_str()),
+            a,
+        ],
+    );
+    let out = out_dir("t17c-inventory-cache");
+    let inventory = vec!["/objects.inv".to_string()];
+    assert_eq!(
+        fetched(&src, &out, &[]),
+        (inventory.clone(), String::new()),
+        "cold"
+    );
+    assert_eq!(fetched(&src, &out, &[]), (vec![], String::new()), "warm");
+    std::fs::write(src.join("conf.py"), conf(&base, "html_title = 'T'\n")).unwrap();
+    assert_eq!(fetched(&src, &out, &[]), (vec![], String::new()), "changed");
+    assert_eq!(fetched(&src, &out, &["-E"]), (vec![], String::new()), "-E");
+    let moved = format!("{base}v2/");
+    std::fs::write(src.join("conf.py"), conf(&moved, "html_title = 'T'\n")).unwrap();
+    assert_eq!(fetched(&src, &out, &[]), (vec![], String::new()), "moved");
+
+    const FALLBACK: &str = "WARNING: Sphinx now uses \"index\" as the master document by \
+                            default. To keep pre-2.0 behaviour, set \"master_doc = \
+                            'contents'\".\n";
+    let (contents, contents_text) = root("contents");
+    let src = temp_source(
+        "t17c-inventory-cache-fallback",
+        &[
+            ("conf.py", control_conf.as_str()),
+            (contents.as_str(), contents_text.as_str()),
+            a,
+        ],
+    );
+    let out = out_dir("t17c-inventory-cache-fallback");
+    let fallback = FALLBACK.to_string();
+    assert_eq!(
+        fetched(&src, &out, &[]),
+        (inventory, fallback.clone()),
+        "cold"
+    );
+    for build in ["warm", "warm again"] {
+        assert_eq!(
+            fetched(&src, &out, &[]),
+            (vec![], fallback.clone()),
+            "{build}"
+        );
+    }
 }
 
 /// `-D source_suffix=.rst,.txt` is the one suffix `.rst,.txt`: no comma
@@ -4965,10 +5506,24 @@ fn crash_report(category: Option<&str>, exception: &str, location: Option<&str>)
     )
 }
 
+/// The report of the `SphinxError` Sphinx 9.1.0 raises on purpose when its
+/// read did not find the root document, `Sphinx is unable to load the
+/// master document <message>`: the category line and the exception, the
+/// form of the `Configuration error!` report and all of Sphinx's report the
+/// HTML oracle keeps (`reduce_sphinx_error_report`). It does not say
+/// Sphinx crashes, as [`crash_report`] does: Sphinx does not.
+fn root_document_error(message: &str) -> String {
+    format!(
+        "\nSphinx error!\n\n    sphinx.errors.SphinxError: Sphinx is unable to load the master \
+         document {message}\n"
+    )
+}
+
 /// The warning stream of a sphinx-build of `files` that Sphinx 9.1.0
-/// crashes on (decision 13), run with `env` set and `extra` arguments: the
-/// build exits 2, and stderr holds what the `-w` file does, which is
-/// returned with the source directory spelled `<SRCDIR>/`.
+/// crashes on (decision 13), or stops on purpose ([`root_document_error`]),
+/// run with `env` set and `extra` arguments: the build exits 2, and stderr
+/// holds what the `-w` file does, which is returned with the source
+/// directory spelled `<SRCDIR>/`.
 fn crash_stream(
     test: &str,
     files: &[(&str, &str)],

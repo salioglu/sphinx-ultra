@@ -741,7 +741,11 @@ impl PythonConfigParser {
                 None => source_suffix,
             })
         });
-        config.root_doc = extract_string("root_doc").or_else(|| extract_string("master_doc"));
+        // `master_doc` and `root_doc` are one setting (`Config.__setattr__`
+        // copies either into the other, `config.py:434-439`), and
+        // `check_confval_types` reads `master_doc` first (`:239-240`): its
+        // value is the root, in whichever order conf.py assigns the two.
+        config.root_doc = extract_string("master_doc").or_else(|| extract_string("root_doc"));
         config.language = extract_string("language");
         config.locale_dirs = extract_string_list("locale_dirs");
         config.gettext_compact = extract_bool("gettext_compact");
@@ -3033,6 +3037,7 @@ impl ConfPyConfig {
         // Map static paths
         config.static_dirs = self.html_static_path.iter().map(PathBuf::from).collect();
         config.html_static_path = self.html_static_path.iter().map(PathBuf::from).collect();
+        config.html_extra_path = self.html_extra_path.iter().map(PathBuf::from).collect();
 
         // Map HTML configuration
         if let Some(html_theme) = &self.html_theme {
@@ -3083,11 +3088,14 @@ impl ConfPyConfig {
         // Map templates path
         config.templates_path = self.templates_path.iter().map(PathBuf::from).collect();
 
-        // Map file patterns (Sphinx compatibility)
-        config.include_patterns = if self.include_patterns.is_empty() {
-            vec!["**".to_string()] // Sphinx default
-        } else {
-            self.include_patterns.clone()
+        // Map file patterns (Sphinx compatibility). `include_patterns`
+        // defaults to `['**']` only when conf.py leaves it unset: a list it
+        // assigns is taken as it is, and an empty one matches no file
+        // (`get_matching_files`), so Sphinx discovers no document.
+        config.include_patterns = match self.raw_values.get("include_patterns") {
+            Some(serde_json::Value::Array(_)) => self.include_patterns.clone(),
+            _ if self.include_patterns.is_empty() => vec!["**".to_string()],
+            _ => self.include_patterns.clone(),
         };
         config.exclude_patterns = self.exclude_patterns.clone();
 
@@ -3534,6 +3542,56 @@ mod tests {
              strings. Got `5' instead (type <class 'int'>)."
         );
         assert_eq!(config.source_suffix, crate::config::SourceSuffix::default());
+    }
+
+    /// `include_patterns` is `['**']` only while conf.py leaves it unset: an
+    /// empty list it assigns matches no file, so Sphinx discovers no
+    /// document (`get_matching_files`).
+    #[test]
+    fn an_empty_include_patterns_list_is_kept() {
+        let config_of = |source: &str| {
+            parse(source)
+                .extract_configuration()
+                .unwrap()
+                .to_build_config()
+                .unwrap()
+        };
+        assert!(config_of("include_patterns = []\n")
+            .include_patterns
+            .is_empty());
+        assert!(config_of("include_patterns = ()\n")
+            .include_patterns
+            .is_empty());
+        assert_eq!(config_of("project = 'p'\n").include_patterns, ["**"]);
+        assert_eq!(
+            config_of("include_patterns = ['a.rst']\n").include_patterns,
+            ["a.rst"]
+        );
+    }
+
+    /// `master_doc` and `root_doc` are one setting, which Sphinx reads as
+    /// `master_doc` first (`Config.__setattr__`, `check_confval_types`,
+    /// `SP/sphinx/config.py:239-240`, `:434-439`): conf.py's `master_doc`
+    /// is the root in either order of the two assignments.
+    #[test]
+    fn master_doc_names_the_root_before_root_doc() {
+        let root_of = |source: &str| {
+            parse(source)
+                .extract_configuration()
+                .unwrap()
+                .to_build_config()
+                .unwrap()
+                .root_doc
+        };
+        for (source, root) in [
+            ("master_doc = 'a'\nroot_doc = 'b'\n", "a"),
+            ("root_doc = 'b'\nmaster_doc = 'a'\n", "a"),
+            ("root_doc = 'b'\n", "b"),
+            ("master_doc = 'a'\n", "a"),
+            ("project = 'p'\n", "index"),
+        ] {
+            assert_eq!(root_of(source).as_deref(), Some(root), "{source}");
+        }
     }
 
     /// `suppress_warnings` is a list or a tuple of patterns and
