@@ -1335,8 +1335,16 @@ fn split_assignment(stmt: &str) -> Option<(&str, &str)> {
 }
 
 /// Where the annotation of `target`, an assignment's target text, starts:
-/// the index of its first `:` outside strings and brackets, which only an
-/// annotated assignment (`name: <annotation> = <value>`) writes there.
+/// the index of its first `:` outside strings and brackets, when the text
+/// before it reads as one target ([`reads_as_one_target`]), as an
+/// annotated assignment (`name: <annotation> = <value>`) writes it. After
+/// any other text, the colon ends a compound statement's header, whose
+/// one-line body the rest of the text is: a keyword's (`else: x = 1`), or
+/// a `case` clause's (`case 'a': rst_prolog = ...`), which
+/// [`compound_header`] does not see. There is no annotation then: the
+/// whole text is the target's, so [`target_bindings`] sees the body's
+/// binding of a key (Sphinx 9.1.0 reads it, scratch
+/// `t19b1-review/specs/case_oneline*`, `t19b1/fix1/specs/case_*`).
 fn annotation_colon(target: &str) -> Option<usize> {
     let bytes = target.as_bytes();
     let (mut depth, mut i) = (0i32, 0usize);
@@ -1348,12 +1356,109 @@ fn annotation_colon(target: &str) -> Option<usize> {
             }
             b'(' | b'[' | b'{' => depth += 1,
             b')' | b']' | b'}' => depth -= 1,
-            b':' if depth == 0 => return Some(i),
+            b':' if depth == 0 => return reads_as_one_target(&target[..i]).then_some(i),
             _ => {}
         }
         i += 1;
     }
     None
+}
+
+/// Whether `text` reads as one target an annotated assignment annotates
+/// (Python 3.12's `single_target`): a name; an attribute or an item of a
+/// name or of a bracketed expression, through any calls, attributes and
+/// items (`x.y[0]`, `f(x).y`, `[x][0]`); or one of these in parentheses. A
+/// keyword is no name, and two operands side by side (`case 'a'`) or an
+/// operator make no target (scratch `t19b1/fix1/out/grammar.out`).
+/// `case [x]` reads as none here either: outside a `match` block it is an
+/// item of the name `case`, but in one a `case` clause with a sequence
+/// pattern, and this reader, which does not tell the two apart
+/// ([`COMPOUND_KEYWORDS`]), reads the clause, whose body may bind a key.
+fn reads_as_one_target(text: &str) -> bool {
+    /// Past the bracket that opens at `open` in `bytes`, if it closes.
+    fn past_bracket(bytes: &[u8], open: usize) -> Option<usize> {
+        let (mut depth, mut i) = (0i32, open);
+        while i < bytes.len() {
+            match bytes[i] {
+                quote @ (b'\'' | b'"') => {
+                    i = skip_string(bytes, i, quote);
+                    continue;
+                }
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(i + 1);
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        None
+    }
+    let mut text = text.trim();
+    // A target in parentheses, which no `case` clause is.
+    let mut parenthesized = false;
+    while text.starts_with('(') && past_bracket(text.as_bytes(), 0) == Some(text.len()) {
+        text = text[1..text.len() - 1].trim();
+        parenthesized = true;
+    }
+    let bytes = text.as_bytes();
+    let past_name = |mut i: usize| {
+        while bytes.get(i).is_some_and(|byte| is_identifier_byte(*byte)) {
+            i += 1;
+        }
+        i
+    };
+    let past_spaces = |mut i: usize| {
+        while bytes.get(i).is_some_and(u8::is_ascii_whitespace) {
+            i += 1;
+        }
+        i
+    };
+    // The first operand, and whether the text so far is a target: a name
+    // is, a bracketed expression is not.
+    let (mut i, mut target) = match bytes.first() {
+        Some(b'(' | b'[' | b'{') => match past_bracket(bytes, 0) {
+            Some(past) => (past, false),
+            None => return false,
+        },
+        Some(&byte) if is_identifier_byte(byte) && !byte.is_ascii_digit() => {
+            let past = past_name(0);
+            let name = &text[..past];
+            if PYTHON_KEYWORDS.contains(&name) {
+                return false;
+            }
+            (past, true)
+        }
+        _ => return false,
+    };
+    let operand = &text[..i];
+    // What follows it: attributes and items, which are targets, and
+    // calls, which are not.
+    let mut trailers = Vec::new();
+    loop {
+        i = past_spaces(i);
+        let Some(&byte) = bytes.get(i) else {
+            break;
+        };
+        let past = match byte {
+            b'.' => {
+                let start = past_spaces(i + 1);
+                Some(past_name(start)).filter(|past| *past > start)
+            }
+            b'[' | b'(' => past_bracket(bytes, i),
+            _ => None,
+        };
+        let Some(past) = past else {
+            return false;
+        };
+        trailers.push(byte);
+        (i, target) = (past, byte != b'(');
+    }
+    // `case [x]`: the name `case` and one item.
+    target && (parenthesized || !(operand == "case" && trailers == b"["))
 }
 
 /// What `target`, an assignment's target text, binds, trimmed: all of it,
@@ -4132,11 +4237,12 @@ e = 'esc\n'
     /// the key, instead of being dropped (wave 5a T17b): an expression it
     /// cannot evaluate, an augmented assignment other than a top-level
     /// `+=` of a string literal to a string it holds, an assignment inside
-    /// a block, one it cannot split, an import of the name, a `for`'s, a
-    /// `with`'s or an `except`'s target, an assignment expression, a `def`
-    /// or a `class` of the name, a binding in a function that declares it
-    /// global, and an assignment to an attribute of that name, which
-    /// Sphinx 9.1.0 reads in `setup(app)` (scratch
+    /// a block (a `case` clause's one-line body among them), one it cannot
+    /// split, an import of the name, a `for`'s, a `with`'s or an
+    /// `except`'s target, an assignment expression, a `def` or a `class`
+    /// of the name, a binding in a function that declares it global, and
+    /// an assignment to an attribute of that name, which Sphinx 9.1.0
+    /// reads in `setup(app)` (scratch
     /// `t17b-fix1/specs/attr_*`, `def_*`, `del_prolog`), alone or beside
     /// the name in one statement (`t17b-fix3/specs/chain_local_attr*`;
     /// items and `setattr` calls are in
@@ -4144,9 +4250,10 @@ e = 'esc\n'
     /// top-level assignment it can evaluate is the value Python's last
     /// binding leaves, unless the earlier binding runs later, in a
     /// function; `del` of a bound name leaves Sphinx's `None`. Reading the
-    /// keys binds nothing, nor does a subscript's key, a lambda's
-    /// parameter, a call's keyword argument, or an assignment in a function
-    /// or a class body, which binds a local variable or a class attribute.
+    /// keys binds nothing, nor does a subscript's key, an annotation, a
+    /// lambda's parameter, a call's keyword argument, or an assignment in a
+    /// function or a class body, which binds a local variable or a class
+    /// attribute.
     ///
     /// The configuration error replaces the drop warning of a statement
     /// that binds the keys only. One that binds anything else as well gets
@@ -4155,12 +4262,14 @@ e = 'esc\n'
     /// `tuple_title*`).
     ///
     /// Python 3.12 runs each row's text, as Sphinx runs `conf.py`, and
-    /// Sphinx reads each `Ok` row's value (scratch `t19b1/rows/`), but where
-    /// the run's failure is what the row pins (`+=` to an unset name, to
-    /// `None`, of a number or a `bytes`; `del` of an unbound name; a short
-    /// `\x` escape; `bytes` mixed with `str`), and in the row with a
-    /// character that is no ASCII right before a name, which Python reads
-    /// nowhere outside a string.
+    /// Sphinx reads each `Ok` row's value (scratch `t19b1/rows/`,
+    /// `t19b1/fix1/rows/`), but where the run's failure is what the row
+    /// pins (`+=` to an unset name, to `None`, of a number or a `bytes`;
+    /// `del` of an unbound name; a short `\x` escape; `bytes` mixed with
+    /// `str`), and in the row with a character that is no ASCII right
+    /// before a name, which Python reads nowhere outside a string. A row
+    /// imports a standard-library module or one its text puts in
+    /// `sys.modules` (`shared`), so no row reads a file.
     #[test]
     fn unevaluable_prolog_or_epilog_fails_the_parse() {
         /// The pending binding, or what `rst_prolog` holds (`None`: unset
@@ -4168,7 +4277,7 @@ e = 'esc\n'
         type Expected = Result<Option<&'static str>, (&'static str, usize, &'static str)>;
         // The rows whose statement binds a name, attribute or item besides
         // the keys, which the drop warning names.
-        const OTHERS: [&str; 8] = [
+        const OTHERS: [&str; 11] = [
             "a parenthesized tuple target",
             "a starred target",
             "a chained assignment",
@@ -4177,8 +4286,13 @@ e = 'esc\n'
             "a for target in a tuple",
             "a parenthesized with target",
             "an assignment expression after a character that is no ASCII",
+            // The reader reads `case` as a name, and `case [y]` as an
+            // item of it.
+            "in a one-line case body",
+            "in a one-line case body after a sequence pattern",
+            "+= in a one-line case body",
         ];
-        let rows: [(&str, &str, Expected); 73] = [
+        let rows: [(&str, &str, Expected); 77] = [
             (
                 "f-string",
                 "version = '1'\nrst_prolog = f\"x {version}\"\n",
@@ -4248,6 +4362,26 @@ e = 'esc\n'
                 "+= in a with block",
                 "import io\nrst_epilog = ''\nwith io.StringIO('defs') as f:\n    \
                  rst_epilog += f.read()\n",
+                Err(("rst_epilog", 4, "an assignment inside a block")),
+            ),
+            // The colon after a `case` clause's pattern is no annotation's:
+            // the clause's one-line body binds the key, which Sphinx 9.1.0
+            // reads (scratch `t19b1-review/specs/case_oneline*`;
+            // `t19b1/fix1/specs/case_seq_oneline.json`,
+            // `case_seq_nospace_oneline.json`, `case_aug_oneline.json`).
+            (
+                "in a one-line case body",
+                "x = 'a'\nmatch x:\n    case 'a': rst_prolog = 'b'\n",
+                Err(("rst_prolog", 3, "an assignment inside a block")),
+            ),
+            (
+                "in a one-line case body after a sequence pattern",
+                "x = ['a']\nmatch x:\n    case [y]: rst_prolog = 'b'\n",
+                Err(("rst_prolog", 3, "an assignment inside a block")),
+            ),
+            (
+                "+= in a one-line case body",
+                "rst_epilog = 'a'\nx = 'a'\nmatch x:\n    case 'a': rst_epilog += 'b'\n",
                 Err(("rst_epilog", 4, "an assignment inside a block")),
             ),
             (
@@ -4338,6 +4472,12 @@ e = 'esc\n'
                 "rst_prolog = 'a'\nconfigure = dict\nconfigure(rst_prolog='x')\n\
                  html_context = dict(\n    rst_prolog='x',\n)\n",
                 Ok(Some("a")),
+            ),
+            // `t19b1/fix1/specs/ann_item_key.json`.
+            (
+                "an item's annotation",
+                "x = {}\nx['k']: rst_prolog = 'a'\n",
+                Ok(None),
             ),
             (
                 "a def body",
@@ -4492,8 +4632,9 @@ e = 'esc\n'
             ),
             (
                 "an import",
-                "rst_prolog = 'a'\nfrom string import ascii_letters as rst_prolog\n",
-                Err(("rst_prolog", 2, "an import")),
+                "import sys, types\nsys.modules['shared'] = types.SimpleNamespace(rst_prolog='x')\n\
+                 rst_prolog = 'a'\nfrom shared import rst_prolog\n",
+                Err(("rst_prolog", 4, "an import")),
             ),
             (
                 "an import's alias, parenthesized",
@@ -4502,24 +4643,28 @@ e = 'esc\n'
             ),
             (
                 "a parenthesized import with no space",
-                "from string import(ascii_letters as rst_prolog)\n",
-                Err(("rst_prolog", 1, "an import")),
+                "import sys, types\nsys.modules['shared'] = types.SimpleNamespace(rst_prolog='x')\n\
+                 from shared import(rst_prolog)\n",
+                Err(("rst_prolog", 3, "an import")),
             ),
             (
                 "an import in a function",
-                "rst_prolog = 'a'\ndef setup(app):\n    \
-                 from string import ascii_letters as rst_prolog\n",
+                "import sys, types\nsys.modules['shared'] = types.SimpleNamespace(rst_prolog='x')\n\
+                 rst_prolog = 'a'\ndef setup(app):\n    from shared import rst_prolog\n",
                 Ok(Some("a")),
             ),
             (
                 "an import before a literal",
-                "from string import ascii_letters as rst_prolog\nrst_prolog = 'plain'\n",
+                "import sys, types\nsys.modules['shared'] = types.SimpleNamespace(rst_prolog='x')\n\
+                 from shared import rst_prolog\nrst_prolog = 'plain'\n",
                 Ok(Some("plain")),
             ),
             (
                 "importing other names",
-                "import string as rst_prolog_tools\n\
-                 from string import ascii_letters as rst_prologue\nrst_prolog = 'a'\n",
+                "import sys, types\nsys.modules['rst_prolog_tools'] = types.SimpleNamespace()\n\
+                 sys.modules['shared'] = types.SimpleNamespace(rst_prologue='x')\n\
+                 import rst_prolog_tools as tools\nfrom shared import rst_prologue\n\
+                 rst_prolog = 'a'\n",
                 Ok(Some("a")),
             ),
             (
@@ -5115,7 +5260,8 @@ e = 'esc\n'
     /// `ann_unbound_generic.json`). A bare annotation binds nothing
     /// (`generic_ann_bare.json`, `ann_bare_prolog.json`) and keeps its
     /// notice, as a one-line compound statement whose keyword reads like a
-    /// name before a colon does: a keyword is no name Python binds.
+    /// name before a colon does: a keyword is no name Python binds, but a
+    /// soft keyword (`case`) is.
     #[test]
     fn an_annotated_assignment_binds_as_a_plain_one_does() {
         /// A `conf.py` text, the key, what the namespace holds for it, and
@@ -5126,7 +5272,7 @@ e = 'esc\n'
             Option<&'static str>,
             &'static [(usize, &'static str)],
         );
-        let rows: [Row; 11] = [
+        let rows: [Row; 12] = [
             (
                 "extensions = []\nrst_prolog: str = '.. |a| replace:: A\\n'\n",
                 "rst_prolog",
@@ -5210,6 +5356,9 @@ e = 'esc\n'
                     ),
                 ],
             ),
+            // A soft keyword is a name before an annotation: `case` starts
+            // a clause only in a `match` block (`t19b1/fix1/out/grammar.out`).
+            ("extensions = []\ncase: str = 'x'\n", "case", Some("x"), &[]),
         ];
         for (content, key, value, notices) in rows {
             let p = parse(content);
