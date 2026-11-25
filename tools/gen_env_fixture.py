@@ -1959,6 +1959,53 @@ See :external:py:func:`f`.
 """,
         },
     },
+    {
+        # Wave 5a T17b, review fix round 1 (decision 14 as refined): the
+        # first document Sphinx reads (`a`) starts from the registries no
+        # document has changed, so its leading field lines, which come
+        # before `rst_prolog`, miss the prolog's role and default role: an
+        # unknown-role error and `title_reference`. Every later document's
+        # (`b`, then `index`) see both, through the registries the prolog
+        # left: `inline` and `math`. DocInfo moves `:abstract:` and
+        # `:dedication:` into the body as topics, which MetadataCollector
+        # leaves in place.
+        "name": "rst_prolog_first_read_fields",
+        "conf": {
+            "rst_prolog": ".. role:: red\n\n.. default-role:: math\n",
+        },
+        "files": {
+            "index": """\
+:dedication: For :red:`you` and `x^2`.
+
+Index
+=====
+
+.. toctree::
+
+   a
+   b
+
+Index :red:`i` and `i^2`.
+""",
+            "a": """\
+:abstract: Uses :red:`r` and `a^2`.
+
+A
+=
+
+Early :red:`x` and `a^3`.
+""",
+            "b": """\
+:abstract: Uses :red:`s` and `b^2`.
+:dedication: To `b`.
+
+B
+=
+
+Later :red:`y` and `b^3`.
+""",
+        },
+    },
 ]
 
 

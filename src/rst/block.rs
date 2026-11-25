@@ -523,6 +523,25 @@ fn explicit_list_goes_on(explicit: bool, ending: Ending) -> Option<Ending> {
     (explicit && matches!(ending, Ending::OffEnd | Ending::BlankEnded)).then_some(ending)
 }
 
+/// docutils' `abs_line_number()` for the line `lineno` of a source, which
+/// the top-level input holds first at `offset` (`None` when it does not):
+/// the 1-based offset, or, counted in its own file (`own_line`, a glossary
+/// definition's machine, [`BlockParser::definition_bias_base`]), the line
+/// itself, plus the machine's count over it (`bias`). A line the input
+/// does not hold has no count here, glossary definition or not: it keeps
+/// its own line. The one rule for a node's location
+/// ([`BlockParser::resolve_absolute_lines`]) and a directive's
+/// `self.lineno` ([`BlockParser::abs_line_number`]).
+fn counted_line(offset: Option<usize>, lineno: u32, bias: u32, own_line: bool) -> Option<u32> {
+    let offset = offset?;
+    let counted = if own_line {
+        lineno
+    } else {
+        u32::try_from(offset).unwrap_or(u32::MAX).saturating_add(1)
+    };
+    Some(counted.saturating_add(bias))
+}
+
 /// docutils' `reporter.get_source_and_line(None)` after the parse: the
 /// top-level state machine's final `line_offset` read against its input
 /// (`SP/docutils/statemachine.py:358-383`), given the top-level input
@@ -578,7 +597,7 @@ impl super::prolog::Sources for BlockParser {
     }
 
     fn add_source(&mut self, path: &str, lines: &[&str]) -> Option<(u16, Vec<LineRec>)> {
-        self.push_lines(Arc::from(path), lines, 1)
+        self.push_raw_lines(Arc::from(path), lines, 1)
     }
 }
 
@@ -1025,6 +1044,39 @@ impl BlockParser {
             let end = self.sources.text(id).len() as u32;
             recs.push(LineRec::new(id, lineno, end, end, ""));
         }
+        Some((id, recs))
+    }
+
+    /// [`Self::push_lines`] without docutils' `string2lines`: `lines` as
+    /// they are, tabs and trailing whitespace kept, as Sphinx inserts the
+    /// lines of `rst_prolog` and `rst_epilog` (`str.splitlines()`,
+    /// `SP/sphinx/util/rst.py:98`, `:114`). A line of spaces alone reads as
+    /// a blank line: the state machine's `blank` pattern (` *$`) matches
+    /// it, and its block readers, which strip a line to test it, end a
+    /// block at it.
+    fn push_raw_lines(
+        &mut self,
+        path: Arc<str>,
+        lines: &[&str],
+        first_lineno: u32,
+    ) -> Option<(u16, Vec<LineRec>)> {
+        let id = u16::try_from(self.sources.len()).ok()?;
+        let text = lines.join("\n");
+        let mut recs = Vec::with_capacity(lines.len());
+        let mut start = 0u32;
+        for (lineno, line) in (first_lineno..).zip(lines) {
+            let end = start + line.len() as u32;
+            recs.push(if line.bytes().all(|byte| byte == b' ') {
+                LineRec::new(id, lineno, start, start, "")
+            } else {
+                LineRec::new(id, lineno, start, end, line)
+            });
+            start = end + 1;
+        }
+        self.sources.push(Arc::clone(&path), Arc::from(text))?;
+        // The reporter's copy of the paths (`ParseOnlyState::sources`).
+        self.state.parse.sources.push(path);
+        debug_assert_eq!(self.state.parse.sources.len(), self.sources.len());
         Some((id, recs))
     }
 
@@ -8554,46 +8606,50 @@ impl BlockParser {
         self.state
             .loc_overrides
             .insert(uid, DocLoc::at(line.source, line.lineno));
+        let (bias, own_line) = self.machine_count();
         self.state.parse.absolute_lines.push(super::AbsoluteLine {
             node: uid,
             source: line.source,
             lineno: line.lineno,
-            bias: self
-                .line_bias
-                .saturating_sub(self.definition_bias_base.unwrap_or(0)),
-            own_line: self.definition_bias_base.is_some(),
+            bias,
+            own_line,
             attached: self.attached,
         });
     }
 
+    /// What the state machine reading the current line adds to a line's
+    /// place when it counts it ([`counted_line`]): the bias that accrued
+    /// inside the innermost glossary definition, or the whole of
+    /// [`Self::line_bias`] outside one, and whether the line is counted in
+    /// its own file, as a glossary definition's machine counts it
+    /// ([`Self::definition_bias_base`]).
+    fn machine_count(&self) -> (u32, bool) {
+        (
+            self.line_bias
+                .saturating_sub(self.definition_bias_base.unwrap_or(0)),
+            self.definition_bias_base.is_some(),
+        )
+    }
+
     /// docutils' `abs_line_number()` while the parse is at the line
     /// `lineno` of `source`, as Sphinx's directives take it for
-    /// `self.lineno`: the 1-based index of the line in the top-level input
-    /// as it stands ([`Self::input`]: the document's lines decorated with
+    /// `self.lineno`: the line as the top-level input as it stands counts
+    /// it ([`Self::input`]: the document's lines decorated with
     /// `rst_prolog` and `rst_epilog`, every inclusion read so far spliced
-    /// in), plus a table cell's count ([`Self::line_bias`]); in a glossary
-    /// definition its line in its own file plus the count that accrued
-    /// inside the definition ([`Self::definition_bias_base`]); a line the
-    /// input does not hold, a detached parse's, keeps its own line — as
-    /// [`Self::resolve_absolute_lines`] counts. A few Sphinx warnings print
-    /// it as is, with `location=(docname, self.lineno)`, which no reporter
-    /// maps back to a line of its file: the raw-`lineno` sites of [RC §4.1]
-    /// (`hlist`; `acks` once it exists).
+    /// in), by the rule [`Self::resolve_absolute_lines`] counts a node's
+    /// line by ([`counted_line`]); a line the input does not hold, a
+    /// detached parse's or one an include in a glossary definition read,
+    /// keeps its own line. A few Sphinx warnings print it as is, with
+    /// `location=(docname, self.lineno)`, which no reporter maps back to a
+    /// line of its file: the raw-`lineno` sites of [RC §4.1] (`hlist`;
+    /// `acks` once it exists).
     fn abs_line_number(&self, source: u16, lineno: u32) -> u32 {
-        if let Some(base) = self.definition_bias_base {
-            return lineno.saturating_add(self.line_bias.saturating_sub(base));
-        }
-        match self
+        let offset = self
             .input
             .iter()
-            .position(|line| (line.source, line.lineno) == (source, lineno))
-        {
-            Some(offset) => u32::try_from(offset)
-                .unwrap_or(u32::MAX)
-                .saturating_add(1)
-                .saturating_add(self.line_bias),
-            None => lineno,
-        }
+            .position(|line| (line.source, line.lineno) == (source, lineno));
+        let (bias, own_line) = self.machine_count();
+        counted_line(offset, lineno, bias, own_line).unwrap_or(lineno)
     }
 
     /// Gives each node [`Self::note_absolute_line`] recorded its docutils
@@ -8656,15 +8712,10 @@ impl BlockParser {
             // there), the same divergence. The fix is a port of Sphinx's
             // per-definition nested parse (`nested_parse_to_nodes` with
             // `offset=definition.items[0][1]`).
-            let Some(&offset) = offsets.get(&(line.source, line.lineno)) else {
+            let offset = offsets.get(&(line.source, line.lineno)).copied();
+            let Some(absolute) = counted_line(offset, line.lineno, line.bias, line.own_line) else {
                 continue;
             };
-            let counted = if line.own_line {
-                line.lineno
-            } else {
-                u32::try_from(offset).unwrap_or(u32::MAX).saturating_add(1)
-            };
-            let absolute = counted.saturating_add(line.bias);
             if line.attached && absolute == line.lineno {
                 // The default rule's own: the span's.
                 self.state.loc_overrides.remove(&line.node);

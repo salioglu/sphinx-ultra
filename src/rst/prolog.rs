@@ -14,9 +14,9 @@
 //! ([`super::block`]'s `abs_line_number`), and a hyperlink target's line.
 //!
 //! Sphinx inserts the prolog's lines as `str.splitlines()` gives them,
-//! without docutils' `string2lines` (tab expansion, right-stripping);
-//! they are processed here like the document's lines, which differs only
-//! for a prolog or epilog line holding a tab or trailing whitespace.
+//! without docutils' `string2lines` (tab expansion, right-stripping), and
+//! so does this module ([`Sources::add_source`]): a tab stays a tab, which
+//! indents nothing, and trailing whitespace stays in the text.
 
 use super::lines::LineRec;
 
@@ -51,9 +51,10 @@ impl<'a> Decoration<'a> {
 pub(crate) trait Sources {
     /// The text of `line` in its source.
     fn line_text(&self, line: LineRec) -> &str;
-    /// Adds a source named `path` whose lines are `lines`, numbered from
-    /// 1: its id and one record per line, or `None` once the table cannot
-    /// take another source.
+    /// Adds a source named `path` whose lines are `lines`, as they are
+    /// (not processed as a document's lines are), numbered from 1: its id
+    /// and one record per line, or `None` once the table cannot take
+    /// another source.
     fn add_source(&mut self, path: &str, lines: &[&str]) -> Option<(u16, Vec<LineRec>)>;
 }
 
@@ -354,5 +355,59 @@ mod tests {
             [LogLocation::DocLine(15)],
             "after an inclusion"
         );
+    }
+
+    /// The raw line of a directive on a line the top-level input does not
+    /// hold is its own line, whether or not a glossary definition holds it:
+    /// the one rule a node's location is counted by too
+    /// (`block::counted_line`). Sphinx 9.1.0 counts such a line in the
+    /// definition's own list, inclusions spliced in, and prints `:11` for
+    /// both inputs here, an `hlist` in a table cell in a file an `include`
+    /// in a glossary definition reads, and one in a file an `include` in a
+    /// table cell in a definition reads (scratch
+    /// `t17b-fix1/specs/glossary_*.json`): the accepted divergence
+    /// "Glossary definitions, one class", which counts these lines by
+    /// their own line (`part.inc` 2 and 1).
+    #[test]
+    fn a_line_the_input_does_not_hold_keeps_its_own_line() {
+        let cell = |content: &str| {
+            format!(
+                "+-----------------+\n| {content:<15} |\n|                 |\n\
+                 |    not a list   |\n+-----------------+\n"
+            )
+        };
+        let hlist_in_a_cell = cell(".. hlist::");
+        for (name, index, part, line) in [
+            (
+                "a cell in an included file",
+                "T\n=\n\n.. glossary::\n\n   term\n      .. include:: part.inc\n".to_string(),
+                hlist_in_a_cell.as_str(),
+                2,
+            ),
+            (
+                "an included file in a cell",
+                "T\n=\n\n.. glossary::\n\n   term\n      \
+                 +--------------------------+\n      | .. include:: part.inc    |\n      \
+                 +--------------------------+\n"
+                    .to_string(),
+                ".. hlist::\n\n   not a list\n",
+                1,
+            ),
+        ] {
+            let dir = tempfile::TempDir::new().unwrap();
+            std::fs::write(dir.path().join("part.inc"), part).unwrap();
+            assert_eq!(
+                hlist_warning_lines(
+                    &index,
+                    ParseOptions {
+                        source_path: dir.path().join("index.rst").display().to_string(),
+                        srcdir: Some(dir.path().to_path_buf()),
+                        ..ParseOptions::default()
+                    }
+                ),
+                [LogLocation::DocLine(line)],
+                "{name}"
+            );
+        }
     }
 }

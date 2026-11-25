@@ -1195,6 +1195,25 @@ Term : "classifier" : 'c2'
     ('sx_config', 'rst_prolog_role', 'Title\n=====\n\n:python:`print(1)`\n', {'rst_prolog': '.. role:: python(code)\n   :language: python\n'}),
     ('sx_config', 'rst_epilog_joins_last_section', 'Title\n=====\n\nBody.\n\nSub\n---\n\nLast.\n', {'rst_epilog': '*unclosed epilog emphasis\n'}),
     ('sx_config', 'rst_prolog_after_docinfo', ':author: Me\n:date: 2020\n\nSecond\n======\n\ntext\n', {'rst_prolog': '*unclosed prolog emphasis\n'}),
+    # ===== sx_config, appended (wave 5a T17b, review fix round 1): the
+    # lines of rst_prolog and rst_epilog as str.splitlines() gives them,
+    # which Sphinx inserts without docutils' string2lines — a tab stays a
+    # tab (which indents nothing), trailing whitespace stays in a
+    # paragraph's inner line, a literal block and a line block, and \f
+    # and \v end a line =====
+    ('sx_config', 'rst_prolog_trailing_spaces_paragraph', 'T\n=\n\nText.\n', {'rst_prolog': 'Para one   \nline two\n'}),
+    ('sx_config', 'rst_prolog_trailing_spaces_literal', 'T\n=\n\nText.\n', {'rst_prolog': '::\n\n   code   \n   more\n'}),
+    ('sx_config', 'rst_prolog_tab_indented_line', 'T\n=\n\nText.\n', {'rst_prolog': '.. note::\n\tTabbed note.\n'}),
+    ('sx_config', 'rst_prolog_form_feed_vertical_tab', 'T\n=\n\nText.\n', {'rst_prolog': 'one\x0ctwo\x0bthree\n'}),
+    ('sx_config', 'rst_prolog_tab_inside_line', 'T\n=\n\nText.\n', {'rst_prolog': 'a\tb\n'}),
+    ('sx_config', 'rst_prolog_tab_continuation', 'T\n=\n\nText.\n', {'rst_prolog': 'Para\n\tindented\n'}),
+    ('sx_config', 'rst_prolog_tab_directive_content', 'T\n=\n\nText.\n', {'rst_prolog': '.. note::\n\n\tBody.\n'}),
+    ('sx_config', 'rst_prolog_tab_in_literal', 'T\n=\n\nText.\n', {'rst_prolog': '::\n\n   a\tb\n'}),
+    ('sx_config', 'rst_prolog_whitespace_mix', 'T\n=\n\nText |a|.\n', {'rst_prolog': 'Para one   \nline two\n   \n.. |a| replace:: A   \n\n::\n\n   code   \n   more\n'}),
+    ('sx_config', 'rst_prolog_trailing_spaces_definition_list', 'T\n=\n\nText.\n', {'rst_prolog': 'term   \n   definition   \n'}),
+    ('sx_config', 'rst_prolog_trailing_spaces_line_block', 'T\n=\n\nText.\n', {'rst_prolog': '| line one   \n| line two\n'}),
+    ('sx_config', 'rst_prolog_trailing_spaces_role_option', 'T\n=\n\nUse :py:`x`.\n', {'rst_prolog': '.. role:: py(code)   \n   :language: python   \n'}),
+    ('sx_config', 'rst_epilog_trailing_spaces', 'T\n=\n\nText.\n', {'rst_epilog': 'Last para   \nend   \n'}),
 ]
 
 

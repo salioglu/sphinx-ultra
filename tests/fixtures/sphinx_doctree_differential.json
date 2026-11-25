@@ -3618,6 +3618,123 @@
       "name": "sx_config.rst_prolog_after_docinfo",
       "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            *\n        unclosed prolog emphasis\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"1\" source=\"<rst_prologue>\" type=\"WARNING\">\n        <paragraph>\n            Inline emphasis start-string without end-string.\n    <section ids=\"second\" names=\"second\">\n        <title>\n            Second\n        <paragraph>\n            text\n",
       "rst": ":author: Me\n:date: 2020\n\nSecond\n======\n\ntext\n"
+    },
+    {
+      "conf": {
+        "rst_prolog": "Para one   \nline two\n"
+      },
+      "family": "sx_config",
+      "name": "sx_config.rst_prolog_trailing_spaces_paragraph",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para one   \n        line two\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <paragraph>\n            Text.\n",
+      "rst": "T\n=\n\nText.\n"
+    },
+    {
+      "conf": {
+        "rst_prolog": "::\n\n   code   \n   more\n"
+      },
+      "family": "sx_config",
+      "name": "sx_config.rst_prolog_trailing_spaces_literal",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <literal_block xml:space=\"preserve\">\n        code   \n        more\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <paragraph>\n            Text.\n",
+      "rst": "T\n=\n\nText.\n"
+    },
+    {
+      "conf": {
+        "rst_prolog": ".. note::\n\tTabbed note.\n"
+      },
+      "family": "sx_config",
+      "name": "sx_config.rst_prolog_tab_indented_line",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<rst_prologue>\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"note\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. note::\n    <system_message level=\"2\" line=\"2\" source=\"<rst_prologue>\" type=\"WARNING\">\n        <paragraph>\n            Explicit markup ends without a blank line; unexpected unindent.\n    <paragraph>\n        \tTabbed note.\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <paragraph>\n            Text.\n",
+      "rst": "T\n=\n\nText.\n"
+    },
+    {
+      "conf": {
+        "rst_prolog": "one\ftwo\u000bthree\n"
+      },
+      "family": "sx_config",
+      "name": "sx_config.rst_prolog_form_feed_vertical_tab",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        one\n        two\n        three\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <paragraph>\n            Text.\n",
+      "rst": "T\n=\n\nText.\n"
+    },
+    {
+      "conf": {
+        "rst_prolog": "a\tb\n"
+      },
+      "family": "sx_config",
+      "name": "sx_config.rst_prolog_tab_inside_line",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        a\tb\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <paragraph>\n            Text.\n",
+      "rst": "T\n=\n\nText.\n"
+    },
+    {
+      "conf": {
+        "rst_prolog": "Para\n\tindented\n"
+      },
+      "family": "sx_config",
+      "name": "sx_config.rst_prolog_tab_continuation",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para\n        \tindented\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <paragraph>\n            Text.\n",
+      "rst": "T\n=\n\nText.\n"
+    },
+    {
+      "conf": {
+        "rst_prolog": ".. note::\n\n\tBody.\n"
+      },
+      "family": "sx_config",
+      "name": "sx_config.rst_prolog_tab_directive_content",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<rst_prologue>\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"note\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. note::\n    <paragraph>\n        \tBody.\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <paragraph>\n            Text.\n",
+      "rst": "T\n=\n\nText.\n"
+    },
+    {
+      "conf": {
+        "rst_prolog": "::\n\n   a\tb\n"
+      },
+      "family": "sx_config",
+      "name": "sx_config.rst_prolog_tab_in_literal",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <literal_block xml:space=\"preserve\">\n        a\tb\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <paragraph>\n            Text.\n",
+      "rst": "T\n=\n\nText.\n"
+    },
+    {
+      "conf": {
+        "rst_prolog": "Para one   \nline two\n   \n.. |a| replace:: A   \n\n::\n\n   code   \n   more\n"
+      },
+      "family": "sx_config",
+      "name": "sx_config.rst_prolog_whitespace_mix",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        Para one   \n        line two\n    <substitution_definition names=\"a\">\n        A\n    <literal_block xml:space=\"preserve\">\n        code   \n        more\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <paragraph>\n            Text \n            A\n            .\n",
+      "rst": "T\n=\n\nText |a|.\n"
+    },
+    {
+      "conf": {
+        "rst_prolog": "term   \n   definition   \n"
+      },
+      "family": "sx_config",
+      "name": "sx_config.rst_prolog_trailing_spaces_definition_list",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <definition_list>\n        <definition_list_item>\n            <term>\n                term   \n            <definition>\n                <paragraph>\n                    definition\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <paragraph>\n            Text.\n",
+      "rst": "T\n=\n\nText.\n"
+    },
+    {
+      "conf": {
+        "rst_prolog": "| line one   \n| line two\n"
+      },
+      "family": "sx_config",
+      "name": "sx_config.rst_prolog_trailing_spaces_line_block",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <line_block>\n        <line>\n            line one   \n        <line>\n            line two\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <paragraph>\n            Text.\n",
+      "rst": "T\n=\n\nText.\n"
+    },
+    {
+      "conf": {
+        "rst_prolog": ".. role:: py(code)   \n   :language: python   \n"
+      },
+      "family": "sx_config",
+      "name": "sx_config.rst_prolog_trailing_spaces_role_option",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <paragraph>\n            Use \n            <literal classes=\"code highlight py python\\ \\ \\ \" language=\"python   \">\n                x\n            .\n",
+      "rst": "T\n=\n\nUse :py:`x`.\n"
+    },
+    {
+      "conf": {
+        "rst_epilog": "Last para   \nend   \n"
+      },
+      "family": "sx_config",
+      "name": "sx_config.rst_epilog_trailing_spaces",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <paragraph>\n            Text.\n        <paragraph>\n            Last para   \n            end\n",
+      "rst": "T\n=\n\nText.\n"
     }
   ],
   "conf_semantics": "a case's optional 'conf' dict is confoverrides applied on top of the base settings above; absent = defaults. The consumers map every key onto the parse options (ParseOptions.py or ParseOptions.read) and error on unmapped keys.",

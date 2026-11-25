@@ -7843,6 +7843,130 @@
         "orphan": ":orphan:\n\nT\n=\n\n.. hlist::\n\n   not a list\n\nSee :external:py:func:`f`.\n"
       },
       "name": "rst_prolog_raw_lineno"
+    },
+    {
+      "conf": {
+        "rst_prolog": ".. role:: red\n\n.. default-role:: math\n",
+        "smartquotes": false
+      },
+      "expect": {
+        "dependencies": {},
+        "files_to_rebuild": {
+          "a": [
+            "index"
+          ],
+          "b": [
+            "index"
+          ]
+        },
+        "genindex": [],
+        "included": {},
+        "index_entries": {
+          "a": [],
+          "b": [],
+          "index": []
+        },
+        "py_modindex": {
+          "collapse": false,
+          "groups": []
+        },
+        "py_modules": [],
+        "py_objects": [],
+        "relations": {
+          "a": [
+            "index",
+            "index",
+            "b"
+          ],
+          "b": [
+            "index",
+            "a",
+            null
+          ],
+          "index": [
+            null,
+            null,
+            "a"
+          ]
+        },
+        "resolved_pformat": {
+          "a": "<document source=\"<project>/a.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <topic classes=\"abstract\">\n        <title>\n            Abstract\n        <paragraph>\n            Uses \n            <problematic ids=\"id2\" refid=\"id1\">\n                :red:`r`\n             and \n            <title_reference>\n                a^2\n            .\n    <section ids=\"a\" names=\"a\">\n        <title>\n            A\n        <paragraph>\n            Early \n            <inline classes=\"red\">\n                x\n             and \n            <math>\n                a^3\n            .\n",
+          "b": "<document source=\"<project>/b.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <topic classes=\"dedication\">\n        <title>\n            Dedication\n        <paragraph>\n            To \n            <math>\n                b\n            .\n    <topic classes=\"abstract\">\n        <title>\n            Abstract\n        <paragraph>\n            Uses \n            <inline classes=\"red\">\n                s\n             and \n            <math>\n                b^2\n            .\n    <section ids=\"b\" names=\"b\">\n        <title>\n            B\n        <paragraph>\n            Later \n            <inline classes=\"red\">\n                y\n             and \n            <math>\n                b^3\n            .\n",
+          "index": "<document source=\"<project>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <topic classes=\"dedication\">\n        <title>\n            Dedication\n        <paragraph>\n            For \n            <inline classes=\"red\">\n                you\n             and \n            <math>\n                x^2\n            .\n    <section ids=\"index\" names=\"index\">\n        <title>\n            Index\n        <compound classes=\"toctree-wrapper\">\n            <compact_paragraph toctree=\"1\">\n                <bullet_list>\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                A\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                B\n        <paragraph>\n            Index \n            <inline classes=\"red\">\n                i\n             and \n            <math>\n                i^2\n            .\n"
+        },
+        "std": {
+          "anonlabels": {
+            "genindex": [
+              "genindex",
+              ""
+            ],
+            "modindex": [
+              "py-modindex",
+              ""
+            ],
+            "py-modindex": [
+              "py-modindex",
+              ""
+            ],
+            "search": [
+              "search",
+              ""
+            ]
+          },
+          "labels": {
+            "genindex": [
+              "genindex",
+              "",
+              "Index"
+            ],
+            "modindex": [
+              "py-modindex",
+              "",
+              "Module Index"
+            ],
+            "py-modindex": [
+              "py-modindex",
+              "",
+              "Python Module Index"
+            ],
+            "search": [
+              "search",
+              "",
+              "Search Page"
+            ]
+          },
+          "objects": [],
+          "progoptions": [],
+          "terms": {}
+        },
+        "toc_fignumbers": {},
+        "toc_num_entries": {
+          "a": 1,
+          "b": 1,
+          "index": 1
+        },
+        "toc_secnumbers": {},
+        "tocs_pformat": {
+          "a": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"a\">\n                A\n",
+          "b": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"b\">\n                B\n",
+          "index": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"index\">\n                Index\n        <bullet_list>\n            <toctree caption=\"True\" entries=\"(None,\\ 'a') (None,\\ 'b')\" glob=\"0\" hidden=\"0\" includefiles=\"a b\" includehidden=\"0\" maxdepth=\"-1\" numbered=\"0\" parent=\"index\" rawentries=\"\" titlesonly=\"0\">\n"
+        },
+        "toctree_includes": {
+          "index": [
+            "a",
+            "b"
+          ]
+        },
+        "warnings": [
+          "<project>/a.rst:1: ERROR: Unknown interpreted text role \"red\". [docutils]"
+        ]
+      },
+      "files": {
+        "a": ":abstract: Uses :red:`r` and `a^2`.\n\nA\n=\n\nEarly :red:`x` and `a^3`.\n",
+        "b": ":abstract: Uses :red:`s` and `b^2`.\n:dedication: To `b`.\n\nB\n=\n\nLater :red:`y` and `b^3`.\n",
+        "index": ":dedication: For :red:`you` and `x^2`.\n\nIndex\n=====\n\n.. toctree::\n\n   a\n   b\n\nIndex :red:`i` and `i^2`.\n"
+      },
+      "name": "rst_prolog_first_read_fields"
     }
   ],
   "sphinx_version": "9.1.0"

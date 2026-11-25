@@ -572,6 +572,26 @@
       "pseudo_xml_off": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <abbreviation explanation=\"explanation \"x\"\">\n            \"A\"\n         \n        <inline classes=\"guilabel\" rawtext=\":guilabel:`\"G\" --`\">\n            \"G\" --\n         \n        <inline classes=\"menuselection\" rawtext=\":menuselection:`\"A\" --> \"B\"`\">\n            \"A\" ‣ \"B\"\n         \n        <emphasis classes=\"dfn\">\n            \"d\"\n         \n        <literal classes=\"kbd\">\n            \"k\"\n         \n        <literal classes=\"file\" role=\"file\">\n            \"f\"\n         \n        <inline classes=\"guilabel\" rawtext=\":guilabel:`a\\\\\"b`\">\n            a\\\"b\n",
       "rst": ":abbr:`\"A\" (explanation \"x\")` :guilabel:`\"G\" --` :menuselection:`\"A\" --> \"B\"` :dfn:`\"d\"` :kbd:`\"k\"` :file:`\"f\"` :guilabel:`a\\\\\"b`\n",
       "smartquotes_warnings": ""
+    },
+    {
+      "conf": {
+        "rst_prolog": ".. note::\n\tTabbed note.\n"
+      },
+      "name": "sx_config.rst_prolog_tab_indented_line",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<rst_prologue>\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the “note” directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. note::\n    <system_message level=\"2\" line=\"2\" source=\"<rst_prologue>\" type=\"WARNING\">\n        <paragraph>\n            Explicit markup ends without a blank line; unexpected unindent.\n    <paragraph>\n        \tTabbed note.\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <paragraph>\n            Text.\n",
+      "pseudo_xml_off": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<rst_prologue>\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"note\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. note::\n    <system_message level=\"2\" line=\"2\" source=\"<rst_prologue>\" type=\"WARNING\">\n        <paragraph>\n            Explicit markup ends without a blank line; unexpected unindent.\n    <paragraph>\n        \tTabbed note.\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <paragraph>\n            Text.\n",
+      "rst": "T\n=\n\nText.\n",
+      "smartquotes_warnings": ""
+    },
+    {
+      "conf": {
+        "rst_prolog": ".. note::\n\n\tBody.\n"
+      },
+      "name": "sx_config.rst_prolog_tab_directive_content",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<rst_prologue>\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the “note” directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. note::\n    <paragraph>\n        \tBody.\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <paragraph>\n            Text.\n",
+      "pseudo_xml_off": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <system_message level=\"3\" line=\"1\" source=\"<rst_prologue>\" type=\"ERROR\">\n        <paragraph>\n            Content block expected for the \"note\" directive; none found.\n        <literal_block xml:space=\"preserve\">\n            .. note::\n    <paragraph>\n        \tBody.\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <paragraph>\n            Text.\n",
+      "rst": "T\n=\n\nText.\n",
+      "smartquotes_warnings": ""
     }
   ],
   "docutils_version": "0.22.4",
