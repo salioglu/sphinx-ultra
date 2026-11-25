@@ -507,8 +507,12 @@ fn filter_into(tree: &mut TxTree, state: &mut DocumentState, node: TxId, into: &
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use super::*;
-    use crate::transforms::test_support::{differences, merge_project, resolved, SphinxRead};
+    use crate::transforms::test_support::{
+        differences, event, merge_project, read_snippet, resolved, SphinxRead,
+    };
 
     // oracle (Sphinx 9.1.0, docutils 0.22.4, CPython 3.12.2) for every
     //   SphinxRead row of this module: the input read as `index.rst` through
@@ -980,50 +984,6 @@ mod tests {
                     ("Contents", "reference", "id4", true),
                 ],
             },
-            // co_download_title
-            SphinxRead {
-                rst: "Title\n=====\n\n.. contents::\n\nGet \
-                         :download:`f.txt`\n---------------------\n\nx\n",
-                body: "    <section ids=\"title\" names=\"title\">\n        <title \
-                          refid=\"id1\">\n            Title\n        <topic \
-                          classes=\"contents\" ids=\"contents\" \
-                          names=\"contents\">\n            <title>\n                \
-                          Contents\n            <bullet_list>\n                \
-                          <list_item>\n                    \
-                          <paragraph>\n                        <reference ids=\"id1\" \
-                          refid=\"title\">\n                            \
-                          Title\n                    <bullet_list>\n                        \
-                          <list_item>\n                            \
-                          <paragraph>\n                                <reference \
-                          ids=\"id2\" \
-                          refid=\"get-f-txt\">\n                                    Get \
-                          \n                                    <download_reference \
-                          refdoc=\"index\" refdomain=\"\" refexplicit=\"0\" \
-                          reftarget=\"f.txt\" reftype=\"download\" \
-                          refwarn=\"0\">\n                                        <literal \
-                          classes=\"xref \
-                          download\">\n                                            \
-                          f.txt\n        <section ids=\"get-f-txt\" names=\"get\\ \
-                          f.txt\">\n            <title>\n                Get \
-                          \n                <download_reference refdoc=\"index\" \
-                          refdomain=\"\" refexplicit=\"0\" reftarget=\"f.txt\" \
-                          reftype=\"download\" refwarn=\"0\">\n                    <literal \
-                          classes=\"xref download\">\n                        \
-                          f.txt\n            <paragraph>\n                x\n",
-                warnings: &[
-                    "<SRCDIR>/index.rst:6: WARNING: download file not readable: \
-                        <SRCDIR>/f.txt [download.not_readable]",
-                    "<SRCDIR>/index.rst:6: WARNING: download file not readable: \
-                        <SRCDIR>/f.txt [download.not_readable]",
-                ],
-                trace: &[
-                    ("parse", "section", "title", true),
-                    ("parse", "topic", "contents", true),
-                    ("parse", "section", "get-f-txt", true),
-                    ("Contents", "reference", "id1", true),
-                    ("Contents", "reference", "id2", true),
-                ],
-            },
             // co_problematic_title
             SphinxRead {
                 rst: "Title\n=====\n\n.. contents::\n\nBad `ref`_ \
@@ -1064,6 +1024,65 @@ mod tests {
         ];
         let differences = differences(&rows);
         assert!(differences.is_empty(), "{}", differences.join("\n\n"));
+
+        // co_download_title, compared on its own (same oracle as the rows):
+        // its warning names the file as the download collector resolves
+        // it, the source directory with the target pushed on
+        // (`relfn2path_io`), which Sphinx's POSIX stream spells
+        // `<SRCDIR>/f.txt` and this platform spells as `Path::join` does
+        // (`<SRCDIR>\f.txt` on Windows); the location, the parse's source
+        // path, keeps its `/`. It warns twice: the table's copy of the
+        // title holds the `download_reference` too.
+        let read = read_snippet(
+            "Title\n=====\n\n.. contents::\n\nGet \
+             :download:`f.txt`\n---------------------\n\nx\n",
+            true,
+        );
+        assert_eq!(
+            read.body,
+            "    <section ids=\"title\" names=\"title\">\n        <title \
+             refid=\"id1\">\n            Title\n        <topic \
+             classes=\"contents\" ids=\"contents\" \
+             names=\"contents\">\n            <title>\n                \
+             Contents\n            <bullet_list>\n                \
+             <list_item>\n                    \
+             <paragraph>\n                        <reference ids=\"id1\" \
+             refid=\"title\">\n                            \
+             Title\n                    <bullet_list>\n                        \
+             <list_item>\n                            \
+             <paragraph>\n                                <reference \
+             ids=\"id2\" \
+             refid=\"get-f-txt\">\n                                    Get \
+             \n                                    <download_reference \
+             refdoc=\"index\" refdomain=\"\" refexplicit=\"0\" \
+             reftarget=\"f.txt\" reftype=\"download\" \
+             refwarn=\"0\">\n                                        <literal \
+             classes=\"xref \
+             download\">\n                                            \
+             f.txt\n        <section ids=\"get-f-txt\" names=\"get\\ \
+             f.txt\">\n            <title>\n                Get \
+             \n                <download_reference refdoc=\"index\" \
+             refdomain=\"\" refexplicit=\"0\" reftarget=\"f.txt\" \
+             reftype=\"download\" refwarn=\"0\">\n                    <literal \
+             classes=\"xref download\">\n                        \
+             f.txt\n            <paragraph>\n                x\n"
+        );
+        let warning = format!(
+            "<SRCDIR>/index.rst:6: WARNING: download file not readable: {} \
+             [download.not_readable]",
+            Path::new("<SRCDIR>").join("f.txt").display()
+        );
+        assert_eq!(read.warnings, [warning.clone(), warning]);
+        assert_eq!(
+            read.trace,
+            [
+                event("parse", "section", "title", true),
+                event("parse", "topic", "contents", true),
+                event("parse", "section", "get-f-txt", true),
+                event("Contents", "reference", "id1", true),
+                event("Contents", "reference", "id2", true),
+            ]
+        );
 
         let project = merge_project(&[(
             "index",
