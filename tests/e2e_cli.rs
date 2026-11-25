@@ -1371,6 +1371,237 @@ fn a_read_that_did_not_find_the_root_document_exits_two() {
     assert!(out.join("a.html").is_file() && !out.join("index.html").exists());
 }
 
+/// Sphinx's `check_master_doc` (`SP/sphinx/config.py:861-883`), the
+/// `env-get-outdated` handler its read runs once discovery is done: when
+/// the root document is `index` (the default, or `index` set in conf.py or
+/// with `-D root_doc=index`), `index` is no document and `contents` is, it
+/// warns and makes `contents` the root. The root-document check then
+/// passes, the orphan check spares `contents`, and every page is written.
+/// The record prints after `builder-inited`'s (intersphinx's) and before
+/// the read's, on every build: Sphinx pickles the configuration it
+/// changed, so its next build finds `master_doc` changed and reads every
+/// document again (`[config changed ('master_doc')]`), which is why the
+/// warm builds print `contents`'s read record too. Nothing falls back when
+/// `index` is a document, when `contents` is none (excluded, or only a
+/// `sub/contents`), or when the root is another document. Probed on Sphinx
+/// 9.1.0 (`scratchpad/t17c-fix2/p1_contents.py`, `p2_records.py`).
+#[test]
+fn a_missing_index_falls_back_to_a_contents_root_document() {
+    const FALLBACK: &str = "WARNING: Sphinx now uses \"index\" as the master document by \
+                            default. To keep pre-2.0 behaviour, set \"master_doc = \
+                            'contents'\".\n";
+    let contents = (
+        "contents.rst",
+        "Contents\n========\n\n.. toctree::\n\n   a\n",
+    );
+    let a = ("a.rst", "A\n=\n\nText.\n");
+
+    let src = temp_source(
+        "t17c-contents-records",
+        &[
+            (
+                "conf.py",
+                "project = 'p'\nhtml_logo = 'missing.png'\n\
+                 extensions = ['sphinx.ext.intersphinx']\n\
+                 intersphinx_mapping = {'x': ('https://example.invalid/', 'bad.inv')}\n",
+            ),
+            (
+                "bad.inv",
+                "Not a Sphinx inventory header\nsome other content\n",
+            ),
+            (
+                "contents.rst",
+                "Contents\n========\n\n.. toctree::\n\n   a\n\nSee :nope:`x` here.\n",
+            ),
+            ("a.rst", "A\n=\n\nSee :ref:`nowhere`.\n"),
+            ("orphan.rst", "Orphan\n======\n\nNot in a toctree.\n"),
+        ],
+    );
+    let out = out_dir("t17c-contents-records");
+    let stream = format!(
+        "WARNING: logo file 'missing.png' does not exist\n\
+         WARNING: failed to reach any of the inventories with the following issues:\n\
+         unknown or unsupported inventory version: ValueError('invalid inventory header: Not \
+         a Sphinx inventory header')\n\
+         {FALLBACK}\
+         <SRCDIR>/contents.rst:8: ERROR: Unknown interpreted text role \"nope\". [docutils]\n\
+         <SRCDIR>/orphan.rst: WARNING: document isn't included in any toctree \
+         [toc.not_included]\n\
+         <SRCDIR>/a.rst:4: WARNING: undefined label: 'nowhere' [ref.ref]\n"
+    );
+    for build in ["cold", "warm", "warm again"] {
+        let (result, written) = warning_stream(&src, &out, &[]);
+        assert!(
+            result.status.success(),
+            "{build}: stderr: {}",
+            stderr_of(&result)
+        );
+        assert_eq!(written, stream, "{build}");
+    }
+    for page in ["a", "contents", "orphan"] {
+        assert!(out.join(format!("{page}.html")).is_file(), "{page}.html");
+    }
+    assert!(!out.join("index.html").exists());
+
+    // The root is `index` however it is set, and `index` is no document
+    // discovery found, an excluded `index.rst` included.
+    let index = ("index.rst", "Index\n=====\n");
+    for (test, conf, files, extra) in [
+        (
+            "t17c-contents-default",
+            "project = 'p'\n",
+            &[contents, a][..],
+            &[][..],
+        ),
+        (
+            "t17c-contents-root-doc",
+            "project = 'p'\nroot_doc = 'index'\n",
+            &[contents, a][..],
+            &[][..],
+        ),
+        (
+            "t17c-contents-master-doc",
+            "project = 'p'\nmaster_doc = 'index'\n",
+            &[contents, a][..],
+            &[][..],
+        ),
+        (
+            "t17c-contents-d-root-doc",
+            "project = 'p'\n",
+            &[contents, a][..],
+            &["-D", "root_doc=index"][..],
+        ),
+        (
+            "t17c-contents-index-excluded",
+            "project = 'p'\nexclude_patterns = ['index.rst']\n",
+            &[contents, a, index][..],
+            &[][..],
+        ),
+    ] {
+        let mut project = vec![("conf.py", conf)];
+        project.extend_from_slice(files);
+        let src = temp_source(test, &project);
+        let out = out_dir(test);
+        let (result, written) = warning_stream(&src, &out, extra);
+        assert!(
+            result.status.success(),
+            "{test}: stderr: {}",
+            stderr_of(&result)
+        );
+        assert_eq!(written, FALLBACK, "{test}");
+        assert!(
+            out.join("a.html").is_file() && out.join("contents.html").is_file(),
+            "{test}"
+        );
+    }
+
+    // The record counts toward `-W`.
+    let src = temp_source("t17c-contents-fail-on-warning", &[contents, a]);
+    let (result, written) =
+        warning_stream(&src, &out_dir("t17c-contents-fail-on-warning"), &["-W"]);
+    assert_eq!(
+        result.status.code(),
+        Some(1),
+        "stderr: {}",
+        stderr_of(&result)
+    );
+    assert_eq!(written, FALLBACK);
+
+    // With `index` a document nothing falls back: `contents` is an orphan.
+    let src = temp_source(
+        "t17c-contents-and-index",
+        &[
+            ("index.rst", "Index\n=====\n\n.. toctree::\n\n   a\n"),
+            contents,
+            a,
+        ],
+    );
+    let (result, written) = warning_stream(&src, &out_dir("t17c-contents-and-index"), &[]);
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert_eq!(
+        written,
+        "<SRCDIR>/contents.rst: WARNING: document isn't included in any toctree \
+         [toc.not_included]\n"
+    );
+
+    // With `contents` no document, or another root, the root check stops
+    // the build.
+    let unable = |path: &str| {
+        crash_report(
+            Some("Sphinx error"),
+            &format!(
+                "sphinx.errors.SphinxError: Sphinx is unable to load the master document \
+                 ({path}). The master document must be within the source directory or a \
+                 subdirectory of it."
+            ),
+            None,
+        )
+    };
+    for (test, conf, files, path) in [
+        (
+            "t17c-contents-other-root",
+            "project = 'p'\nroot_doc = 'other'\n",
+            &[contents, a][..],
+            "<SRCDIR>/other.rst",
+        ),
+        (
+            "t17c-contents-excluded",
+            "project = 'p'\nexclude_patterns = ['contents.rst']\n",
+            &[contents, a][..],
+            "<SRCDIR>/index.rst",
+        ),
+        (
+            "t17c-contents-in-sub",
+            "project = 'p'\n",
+            &[("sub/contents.rst", "Contents\n========\n"), a][..],
+            "<SRCDIR>/index.rst",
+        ),
+    ] {
+        let mut project = vec![("conf.py", conf)];
+        project.extend_from_slice(files);
+        assert_eq!(
+            crash_stream(test, &project, &[], &[]),
+            unable(path),
+            "{test}"
+        );
+    }
+
+    // A document this crate cannot read stops the build after the record:
+    // the configuration error of
+    // `a_source_suffix_this_crate_cannot_build_is_a_configuration_error`,
+    // where Sphinx reads `a` and `contents` first and stops at `readme`.
+    let src = temp_source(
+        "t17c-contents-markdown",
+        &[
+            (
+                "conf.py",
+                "project = 'p'\n\
+                 source_suffix = {'.rst': 'restructuredtext', '.md': 'markdown'}\n",
+            ),
+            contents,
+            a,
+            ("readme.md", "# Readme\n"),
+        ],
+    );
+    let (result, written) = warning_stream(&src, &out_dir("t17c-contents-markdown"), &[]);
+    assert_eq!(
+        result.status.code(),
+        Some(2),
+        "stderr: {}",
+        stderr_of(&result)
+    );
+    assert_eq!(
+        written,
+        format!(
+            "{FALLBACK}\nConfiguration error!\n\n    sphinx.errors.ConfigError: source_suffix \
+             maps '.md' to the file type markdown, and the document 'readme' \
+             (<SRCDIR>/readme.md) has that suffix: sphinx-ultra reads only reStructuredText \
+             documents; set -D source_suffix=<suffix> to build the documents of one suffix \
+             without editing conf.py\n"
+        )
+    );
+}
+
 /// `-D source_suffix=.rst,.txt` is the one suffix `.rst,.txt`: no comma
 /// splits it, as none splits Sphinx's (see the test above). The project's
 /// documents are the files whose name ends with it, `index.rst,.txt`

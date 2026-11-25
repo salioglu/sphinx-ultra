@@ -697,8 +697,9 @@ async fn run_build(args: RunArgs) -> Result<i32> {
         builder.enable_incremental();
     }
 
-    // Sphinx's read stops when it did not find the root document; the
-    // native subcommand builds the documents it has.
+    // Sphinx's read falls back from an `index` root document to `contents`
+    // and stops when it did not find the root document; the native
+    // subcommand builds the documents it has.
     if sphinx_mode {
         builder.require_root_document();
     }

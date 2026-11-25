@@ -90,6 +90,10 @@ const DOCTREE_HEADER_LEN: usize = DOCTREE_MAGIC.len() + std::mem::size_of::<u32>
 /// leaves it unset.
 const DEFAULT_ROOT_DOC: &str = "index";
 
+/// The root document Sphinx defaulted to before 2.0, which its
+/// `check_master_doc` falls back to ([`SphinxBuilder::check_master_doc`]).
+const PRE_2_0_ROOT_DOC: &str = "contents";
+
 /// `sphinx.project.EXCLUDE_PATHS` (`SP/sphinx/project.py:20`), the patterns
 /// the root document check names as built in
 /// ([`SphinxBuilder::check_root_document`]). Discovery itself excludes its
@@ -280,8 +284,10 @@ pub struct SphinxBuilder {
     /// sorted docname order, to follow decision 14's schedule: what the
     /// unit tests read to pin that the parallel parses stand.
     reparsed: std::sync::atomic::AtomicUsize,
-    /// Whether the build stops, as Sphinx's read does, when its documents
-    /// do not include the root document ([`Self::require_root_document`]).
+    /// Whether the build follows Sphinx's read on the root document
+    /// ([`Self::require_root_document`]): it falls back from `index` to
+    /// `contents` ([`Self::check_master_doc`]) and stops when its documents
+    /// do not include the root ([`Self::check_root_document`]).
     require_root_document: bool,
 }
 
@@ -804,10 +810,12 @@ impl SphinxBuilder {
         self.incremental = true;
     }
 
-    /// Stop the build, as Sphinx's read does, when the documents it read
-    /// do not include the root document ([`Self::check_root_document`]):
-    /// sphinx-build mode's rule. Without it, the native subcommand's, a
-    /// project with no root document builds the documents it has.
+    /// Follow Sphinx's read on the root document, sphinx-build mode's rule:
+    /// fall back from `index` to `contents` as Sphinx's `check_master_doc`
+    /// does ([`Self::check_master_doc`]), and stop the build when the
+    /// documents it read do not include the root
+    /// ([`Self::check_root_document`]). Without it, the native subcommand's,
+    /// a project with no root document builds the documents it has.
     pub fn require_root_document(&mut self) {
         self.require_root_document = true;
     }
@@ -911,11 +919,12 @@ impl SphinxBuilder {
     /// the sinks in the order Sphinx emits their records (`Builder.build`,
     /// `builders/__init__.py:389-466`; `read`, `:469-590`; `write`,
     /// `:705-778`): intersphinx's inventory loading at builder init,
-    /// discovery, the read sinks in sorted docname order, numbering
-    /// (`env-get-updated`, which `check_dependents` runs before
-    /// `check_consistency`), consistency, the resolve sinks in sorted
-    /// docname order, then the finishing steps (the general index). The
-    /// native subcommand's validation pass comes last.
+    /// discovery, the `contents` fallback (`env-get-outdated`,
+    /// [`Self::check_master_doc`]), the read sinks in sorted docname
+    /// order, numbering (`env-get-updated`, which `check_dependents` runs
+    /// before `check_consistency`), consistency, the resolve sinks in
+    /// sorted docname order, then the finishing steps (the general index).
+    /// The native subcommand's validation pass comes last.
     pub async fn build(&mut self) -> Result<BuildStats> {
         let start_time = Instant::now();
         info!("Starting build process...");
@@ -937,6 +946,7 @@ impl SphinxBuilder {
         let source_files = self.discover_source_files(&mut discovery).await?;
         self.flush(discovery);
         info!("Discovered {} source files", source_files.len());
+        self.check_master_doc(&source_files)?;
         self.check_source_filetypes(&source_files)?;
 
         let mut env = std::mem::take(&mut self.env);
@@ -1061,15 +1071,58 @@ impl SphinxBuilder {
         .into())
     }
 
+    /// Sphinx's `check_master_doc` (`SP/sphinx/config.py:861-883`), the
+    /// `env-get-outdated` handler its read runs once discovery is done and
+    /// before any document is read, when [`Self::require_root_document`]
+    /// asks for Sphinx's rules on the root document: when the root document
+    /// is `index`, `index` is none of the documents discovery found and
+    /// `contents` is one, it warns that Sphinx now uses `index` and makes
+    /// `contents` the root for the rest of the build, as Sphinx sets
+    /// `app.config.master_doc`: the root-document check, the orphan check
+    /// and every walk from the root take it.
+    ///
+    /// Sphinx pickles the configuration it changed with its environment, so
+    /// its next build finds `master_doc` changed (`[config changed
+    /// ('master_doc')]`) and reads every document again. The cache
+    /// directory is claimed for the changed configuration
+    /// ([`BuildCache::restamp`]) to the same effect.
+    fn check_master_doc(&mut self, files: &[PathBuf]) -> Result<()> {
+        if !self.require_root_document
+            || self.config.root_doc.as_deref().unwrap_or(DEFAULT_ROOT_DOC) != "index"
+        {
+            return Ok(());
+        }
+        let docnames: BTreeSet<String> = files
+            .iter()
+            .map(|path| self.docname_of_path(path))
+            .collect();
+        if docnames.contains("index") || !docnames.contains(PRE_2_0_ROOT_DOC) {
+            return Ok(());
+        }
+        // Logged with no `location` and no type, so it prints bare.
+        self.add_warning(BuildWarning::new(
+            PathBuf::new(),
+            None,
+            "Sphinx now uses \"index\" as the master document by default. To keep pre-2.0 \
+             behaviour, set \"master_doc = 'contents'\"."
+                .to_string(),
+            WarningType::Other,
+        ));
+        self.config.root_doc = Some(PRE_2_0_ROOT_DOC.to_string());
+        let fingerprint = config_fingerprint(&self.config)?;
+        self.cache.restamp(&fingerprint)
+    }
+
     /// Sphinx's check that its read found the root document
     /// (`SP/sphinx/builders/__init__.py:527-568`), once every document is
     /// read and before `env-updated`, when [`Self::require_root_document`]
-    /// asks for it: the `SphinxError` that stops the build when `root_doc`
-    /// is none of the documents, reported as T17a2 reports an error Sphinx
-    /// raises in its read, after the read's records. Sphinx tests the
-    /// documents its environment holds once the read is done, which are
-    /// the ones discovery found; this crate tests those, so a root document
-    /// it fails to read (a per-file failure, decision 4) still counts.
+    /// asks for it: the `SphinxError` that stops the build when `root_doc`,
+    /// after [`Self::check_master_doc`]'s fallback, is none of the
+    /// documents, reported as T17a2 reports an error Sphinx raises in its
+    /// read, after the read's records. Sphinx tests the documents its
+    /// environment holds once the read is done, which are the ones
+    /// discovery found; this crate tests those, so a root document it fails
+    /// to read (a per-file failure, decision 4) still counts.
     ///
     /// The root's path is `doc2path(root_doc)`, which for a document the
     /// project has no file for is `<srcdir>/<root_doc><source_suffix[0]>`,

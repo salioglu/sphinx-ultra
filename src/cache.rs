@@ -110,6 +110,21 @@ impl BuildCache {
         self.config_changed
     }
 
+    /// Claim the directory for the configuration whose fingerprint is
+    /// `config_fingerprint`, from now on: one the build changed as it ran
+    /// (Sphinx's `check_master_doc`), which the environment it saves
+    /// belongs to. The next build, opened with the configuration as written,
+    /// then finds it changed and reads every document again, as Sphinx does
+    /// when the configuration it pickled differs from `conf.py`'s.
+    pub fn restamp(&mut self, config_fingerprint: &str) -> Result<()> {
+        std::fs::write(
+            self.cache_dir.join(".config-fingerprint"),
+            config_fingerprint,
+        )?;
+        self.config_fingerprint = config_fingerprint.to_string();
+        Ok(())
+    }
+
     pub fn get_document(&self, file_path: &Path) -> Result<Document> {
         self.get_document_with(file_path, |_| Some(()))
             .map(|(document, ())| document)
@@ -571,6 +586,34 @@ mod tests {
             .unwrap()
             .config_changed());
         assert!(BuildCache::new(cache_dir, 500, 24, "fp-2")
+            .unwrap()
+            .config_changed());
+    }
+
+    #[test]
+    fn a_restamped_directory_belongs_to_the_configuration_the_build_changed_to() {
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("page.rst");
+        std::fs::write(&source, "Page\n----\n").unwrap();
+        let cache_dir = tmp.path().join("cache");
+
+        {
+            let mut cache = BuildCache::new(cache_dir.clone(), 500, 24, "as-written").unwrap();
+            cache.restamp("as-changed").unwrap();
+            cache
+                .store_document(&source, &make_document(&source))
+                .unwrap();
+        }
+        // The next build, opened with the configuration as written, starts
+        // over.
+        let mut cache = BuildCache::new(cache_dir.clone(), 500, 24, "as-written").unwrap();
+        assert!(cache.config_changed());
+        assert!(cache.get_document(&source).is_err());
+
+        // A clear after a restamp keeps the changed configuration's claim.
+        cache.restamp("as-changed").unwrap();
+        cache.clear().unwrap();
+        assert!(!BuildCache::new(cache_dir, 500, 24, "as-changed")
             .unwrap()
             .config_changed());
     }
