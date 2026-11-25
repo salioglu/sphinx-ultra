@@ -335,9 +335,11 @@ pub struct BuildConfig {
     /// The `conf.py` bindings of `rst_prolog` and `rst_epilog` this crate
     /// could not evaluate, the first by line first
     /// ([`crate::python_config::Unevaluable`]): a configuration error once
-    /// the `-D` overrides are in, for a key no override set
-    /// ([`Self::check_evaluated`]). Sphinx reads an override, never what
-    /// `conf.py` bound the key to. Diagnostic state like
+    /// the `-D` overrides are in, for a key no override set, and for a
+    /// binding Sphinx reads over any override
+    /// ([`crate::python_config::Unevaluable::overridable`],
+    /// [`Self::check_evaluated`]). Sphinx reads an override, never what
+    /// `conf.py` bound the module's name to. Diagnostic state like
     /// [`Self::confval_type_mismatches`]: skipped by serde.
     #[serde(skip)]
     pub unevaluable: Vec<crate::python_config::Unevaluable>,
@@ -1010,10 +1012,19 @@ impl BuildConfig {
     /// Fails with the configuration error of the first `conf.py` binding
     /// of `rst_prolog` or `rst_epilog` this crate could not evaluate and no
     /// `-D` override replaced ([`Self::unevaluable`]): run once the
-    /// overrides are in. The error names the key and the override that
-    /// builds without an edit to `conf.py`.
+    /// overrides are in. A binding Sphinx reads over any override comes
+    /// first, whatever its line
+    /// ([`crate::python_config::Unevaluable::overridable`]): no override
+    /// builds while one stands, so no error that offers one is shown
+    /// before it. The error names the key and, for a binding an override
+    /// replaces, the override that builds without an edit to `conf.py`.
     pub fn check_evaluated(&self) -> Result<()> {
-        match self.unevaluable.first() {
+        let first = self
+            .unevaluable
+            .iter()
+            .find(|binding| !binding.overridable)
+            .or(self.unevaluable.first());
+        match first {
             Some(binding) => Err(anyhow::anyhow!("{binding}")),
             None => Ok(()),
         }
@@ -1268,11 +1279,16 @@ impl BuildConfig {
                 .confval_type_mismatches
                 .retain(|(mismatched, _)| mismatched != key);
         }
-        // Nor does Sphinx read the prolog or epilog `conf.py` bound, which
-        // this crate may not have evaluated, or on which Sphinx's reader
-        // would crash: an override of the key replaces it.
+        // Nor does Sphinx read the prolog or epilog `conf.py` bound the
+        // module's name to, which this crate may not have evaluated, or on
+        // which Sphinx's reader would crash: an override of the key
+        // replaces it. An assignment to an attribute of that name it reads
+        // over the override (`Unevaluable::overridable`): that binding
+        // stays.
         if matches!(key, "rst_prolog" | "rst_epilog") {
-            applied.unevaluable.retain(|binding| binding.key != key);
+            applied
+                .unevaluable
+                .retain(|binding| binding.key != key || !binding.overridable);
             applied
                 .decoration_crashes
                 .retain(|(crashing, _)| crashing != key);
@@ -1771,6 +1787,7 @@ output:
             line: 3,
             reason: "unsupported expression".to_string(),
             file: "conf.py".to_string(),
+            overridable: true,
         }];
         for (key, value) in [("rst_prolog", ".. |a| replace:: A"), ("rst_epilog", "1")] {
             assert_eq!(config.apply_override(key, value).unwrap(), None, "{key}");
@@ -1806,6 +1823,7 @@ output:
             line: 2,
             reason: "an import".to_string(),
             file: "conf.py".to_string(),
+            overridable: true,
         };
         let mut config = BuildConfig {
             unevaluable: vec![binding("rst_epilog")],
@@ -1836,6 +1854,51 @@ output:
                 .as_deref(),
             Some("dict")
         );
+    }
+
+    /// An override of a key keeps the key's bindings Sphinx reads over
+    /// any override, assignments to an attribute
+    /// ([`crate::python_config::Unevaluable::overridable`]), and the
+    /// configuration error reports such a binding before any other,
+    /// whatever its line: no override builds while one stands, so its
+    /// message offers none, and no message that offers one is shown
+    /// while one stands.
+    #[test]
+    fn an_override_keeps_a_binding_sphinx_reads_over_it() {
+        let binding = |key, line, overridable| crate::python_config::Unevaluable {
+            key,
+            line,
+            reason: if overridable {
+                "unsupported expression".to_string()
+            } else {
+                "an assignment to an attribute of that name".to_string()
+            },
+            file: "conf.py".to_string(),
+            overridable,
+        };
+        let mut config = BuildConfig {
+            unevaluable: vec![
+                binding("rst_prolog", 1, true),
+                binding("rst_epilog", 2, true),
+                binding("rst_prolog", 5, false),
+            ],
+            ..BuildConfig::default()
+        };
+        let attribute = "cannot evaluate rst_prolog (conf.py, line 5: an assignment to an \
+                         attribute of that name): sphinx-ultra reads conf.py without running \
+                         it, so rst_prolog and rst_epilog must be string literals; Sphinx reads \
+                         this binding over any -D rst_prolog=... override, so edit conf.py";
+        assert_eq!(config.check_evaluated().unwrap_err().to_string(), attribute);
+        assert_eq!(config.apply_override("rst_prolog", "x").unwrap(), None);
+        let left: Vec<(&str, usize)> = config
+            .unevaluable
+            .iter()
+            .map(|binding| (binding.key, binding.line))
+            .collect();
+        assert_eq!(left, [("rst_epilog", 2), ("rst_prolog", 5)]);
+        assert_eq!(config.check_evaluated().unwrap_err().to_string(), attribute);
+        assert_eq!(config.apply_override("rst_epilog", "y").unwrap(), None);
+        assert_eq!(config.check_evaluated().unwrap_err().to_string(), attribute);
     }
 
     /// The read-side keys of wave 5a T17a take a `-D` override as Sphinx's

@@ -18,8 +18,9 @@ pub struct PythonConfigParser {
     warnings: Vec<ConfigWarning>,
     /// For a key of [`MUST_EVALUATE`], the first statement since the last
     /// one this reader evaluated for it that binds it to something it
-    /// cannot evaluate, and the first such deferred one ([`Pending`]): at
-    /// most two per key.
+    /// cannot evaluate, the first such deferred one ([`Pending`]) a `-D`
+    /// override replaces, and the first one none does
+    /// ([`Unevaluable::overridable`]): at most three per key.
     unevaluable: Vec<Pending>,
     /// For a key of [`MUST_EVALUATE`] the namespace holds, the Python type
     /// of the literal it holds (`type(value).__name__`), which its JSON
@@ -44,7 +45,8 @@ struct Pending {
 }
 
 /// The keys whose `conf.py` value this reader must evaluate or fail the
-/// configuration with, unless a `-D` override sets them (wave 5a T17b):
+/// configuration with, unless a `-D` override sets them and replaces what
+/// `conf.py` binds them to (wave 5a T17b; [`Unevaluable::overridable`]):
 /// Sphinx reads `rst_prolog` and `rst_epilog` around every document, so a
 /// value dropped would read every document differently.
 const MUST_EVALUATE: [&str; 2] = ["rst_prolog", "rst_epilog"];
@@ -58,8 +60,9 @@ pub struct ConfigWarning {
 }
 
 /// A statement binding `rst_prolog` or `rst_epilog` that this reader
-/// cannot evaluate: a configuration error, unless a `-D` override sets the
-/// key ([`crate::config::BuildConfig::check_evaluated`]), as Sphinx then
+/// cannot evaluate: a configuration error, unless it is
+/// [`Self::overridable`] and a `-D` override sets the key
+/// ([`crate::config::BuildConfig::check_evaluated`]), as Sphinx then
 /// never reads what `conf.py` bound it to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Unevaluable {
@@ -72,26 +75,49 @@ pub struct Unevaluable {
     /// The configuration file's name, as the message names it
     /// (`conf.py`); empty for a parse of a text with no file.
     pub file: String,
+    /// Whether a `-D` override of the key replaces the binding, as it
+    /// replaces any binding of the module's name: Sphinx 9.1.0's
+    /// `Config.__getattr__` takes the override before `conf.py`'s
+    /// namespace (`config.py:446-465`). An assignment to an attribute
+    /// (`app.config.rst_prolog = ...` in `setup(app)`, `config.rst_epilog
+    /// += ...` in a `config-inited` handler) is not replaced:
+    /// `Config.__setattr__` (`:434-444`) stores it in the instance's
+    /// `__dict__`, which Python reads before it ever calls `__getattr__`,
+    /// so Sphinx reads it over any override (scratch
+    /// `t17b-fix2/specs/attr_*`).
+    pub overridable: bool,
 }
 
 impl std::fmt::Display for Unevaluable {
     /// The configuration error: Sphinx names its configuration file the
-    /// same way when it cannot compile it, `(conf.py, line N)`.
+    /// same way when it cannot compile it, `(conf.py, line N)`. It offers
+    /// the `-D` override that builds without an edit to `conf.py` only for
+    /// a binding the override replaces.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let file = if self.file.is_empty() {
             "conf.py"
         } else {
             &self.file
         };
+        let key = self.key;
         write!(
             f,
             "cannot evaluate {key} ({file}, line {line}: {reason}): sphinx-ultra reads conf.py \
-             without running it, so rst_prolog and rst_epilog must be string literals; set it \
-             with -D {key}=... to build without editing conf.py",
-            key = self.key,
+             without running it, so rst_prolog and rst_epilog must be string literals; ",
             line = self.line,
             reason = self.reason,
-        )
+        )?;
+        if self.overridable {
+            write!(
+                f,
+                "set it with -D {key}=... to build without editing conf.py"
+            )
+        } else {
+            write!(
+                f,
+                "Sphinx reads this binding over any -D {key}=... override, so edit conf.py"
+            )
+        }
     }
 }
 
@@ -258,7 +284,7 @@ pub struct ConfPyConfig {
     pub rst_epilog: Option<String>,
     /// The bindings of `rst_prolog` and `rst_epilog` this reader could not
     /// evaluate ([`PythonConfigParser::unevaluable_bindings`]): a
-    /// configuration error unless a `-D` override sets the key
+    /// configuration error unless a `-D` override of the key replaces them
     /// ([`crate::config::BuildConfig::check_evaluated`]).
     #[serde(skip)]
     pub unevaluable: Vec<Unevaluable>,
@@ -341,7 +367,10 @@ impl PythonConfigParser {
     }
 
     /// Every such binding, the first by line first (at one line,
-    /// `rst_prolog` first), one per key: a key's first.
+    /// `rst_prolog` first), at most two per key: a key's first that a `-D`
+    /// override replaces, and its first that none does
+    /// ([`Unevaluable::overridable`]), which an earlier binding of the key
+    /// must not hide.
     pub fn unevaluable_bindings(&self) -> Vec<&Unevaluable> {
         let mut bindings: Vec<&Unevaluable> = self
             .unevaluable
@@ -349,10 +378,11 @@ impl PythonConfigParser {
             .map(|pending| &pending.binding)
             .collect();
         bindings.sort_by_key(|binding| (binding.line, binding.key != "rst_prolog"));
-        let mut keys = Vec::new();
+        let mut kinds = Vec::new();
         bindings.retain(|binding| {
-            let first = !keys.contains(&binding.key);
-            keys.push(binding.key);
+            let kind = (binding.key, binding.overridable);
+            let first = !kinds.contains(&kind);
+            kinds.push(kind);
             first
         });
         bindings
@@ -361,8 +391,9 @@ impl PythonConfigParser {
     /// Parse a conf.py file and extract configuration. A value of
     /// `rst_prolog` or `rst_epilog` it cannot evaluate is carried, naming
     /// the key ([`ConfPyConfig::unevaluable`]), into the build
-    /// configuration, which fails once the `-D` overrides are in unless one
-    /// sets the key ([`crate::config::BuildConfig::check_evaluated`]);
+    /// configuration, which fails once the `-D` overrides are in unless
+    /// one of the key replaces it
+    /// ([`crate::config::BuildConfig::check_evaluated`]);
     /// [`Self::warnings`] holds what the parse dropped.
     pub fn parse_conf_py<P: AsRef<Path>>(&mut self, conf_py_path: P) -> Result<ConfPyConfig> {
         let conf_py_path = conf_py_path.as_ref();
@@ -463,7 +494,7 @@ impl PythonConfigParser {
                 // records the parse makes before it, which this reader cannot
                 // place among them.
                 Ok((value, "bytes")) if is_true(&value) => {
-                    self.opaque(key, line, "a bytes literal".to_string(), true, false);
+                    self.opaque(key, line, "a bytes literal".to_string(), true, false, true);
                 }
                 Ok((value, type_name)) => {
                     let value = if type_name == "bytes" {
@@ -473,7 +504,7 @@ impl PythonConfigParser {
                     };
                     self.evaluated(key, value, type_name);
                 }
-                Err(reason) => self.opaque(key, line, reason, true, false),
+                Err(reason) => self.opaque(key, line, reason, true, false, true),
             },
             Binding::Augment { plus, value_src } => {
                 // What the key holds, unless a binding since the last value
@@ -497,6 +528,7 @@ impl PythonConfigParser {
                         "an augmented assignment".to_string(),
                         true,
                         false,
+                        true,
                     ),
                 }
             }
@@ -514,14 +546,22 @@ impl PythonConfigParser {
                         .retain(|pending| pending.binding.key != key || pending.deferred);
                 } else {
                     let reason = "a del of a name that may not be bound".to_string();
-                    self.opaque(key, line, reason, false, false);
+                    self.opaque(key, line, reason, false, false, true);
                 }
             }
             Binding::Opaque {
                 reason,
                 definite,
                 deferred,
-            } => self.opaque(key, line, reason.to_string(), definite, deferred),
+                overridable,
+            } => self.opaque(
+                key,
+                line,
+                reason.to_string(),
+                definite,
+                deferred,
+                overridable,
+            ),
         }
     }
 
@@ -544,8 +584,12 @@ impl PythonConfigParser {
     }
 
     /// Records a binding of `key` on `line` this reader cannot evaluate,
-    /// unless an earlier one since the last value it evaluated stands: the
-    /// first is the one reported.
+    /// unless an earlier one of its kind since the last value it evaluated
+    /// stands: the first is the one reported. Its kind is whether it is
+    /// `deferred` ([`Pending`]) and whether a `-D` override replaces it
+    /// (`overridable`, [`Unevaluable::overridable`]; a top-level binding
+    /// always is), so a binding Sphinx reads over an override never hides
+    /// behind one it does not, nor the reverse.
     fn opaque(
         &mut self,
         key: &'static str,
@@ -553,12 +597,13 @@ impl PythonConfigParser {
         reason: String,
         definite: bool,
         deferred: bool,
+        overridable: bool,
     ) {
-        if let Some(pending) = self
-            .unevaluable
-            .iter_mut()
-            .find(|pending| pending.binding.key == key && pending.deferred == deferred)
-        {
+        if let Some(pending) = self.unevaluable.iter_mut().find(|pending| {
+            pending.binding.key == key
+                && pending.deferred == deferred
+                && pending.binding.overridable == overridable
+        }) {
             pending.definite |= definite;
             return;
         }
@@ -568,6 +613,7 @@ impl PythonConfigParser {
                 line,
                 reason,
                 file: String::new(),
+                overridable,
             },
             definite,
             deferred,
@@ -1234,12 +1280,14 @@ enum Binding<'s> {
     /// `del key` at the top level.
     Delete,
     /// Any other binding: why this reader cannot evaluate it, whether it
-    /// binds the module's name whenever `conf.py` runs, and whether it runs
-    /// after every top-level statement ([`Pending`]).
+    /// binds the module's name whenever `conf.py` runs, whether it runs
+    /// after every top-level statement ([`Pending`]), and whether a `-D`
+    /// override replaces it ([`Unevaluable::overridable`]).
     Opaque {
         reason: &'static str,
         definite: bool,
         deferred: bool,
+        overridable: bool,
     },
 }
 
@@ -1261,7 +1309,8 @@ enum Bound<'s> {
     },
     /// A target that is an attribute named like the key: Sphinx 9.1.0 reads
     /// `app.config.rst_prolog = ...` in `setup(app)`, and `config.rst_epilog
-    /// = ...` in a `config-inited` handler (scratch `t17b-fix1/specs/attr_*`).
+    /// = ...` in a `config-inited` handler (scratch `t17b-fix1/specs/attr_*`),
+    /// over any `-D` override (`t17b-fix2/specs/attr_*`).
     Attribute,
 }
 
@@ -1341,10 +1390,11 @@ fn simple_bindings<'s>(
 
 /// What `bound`, a statement's binding of `key`, binds in the scope it
 /// runs in. An attribute's runs after every top-level statement (in a
-/// function Sphinx calls); so does a function's own binding of the module's
-/// name, which a `global` statement makes; in a function or a class body
-/// otherwise, a name is the scope's own. At the top level, in a block, a
-/// statement may run once, many times or not at all.
+/// function Sphinx calls), and Sphinx reads it over any `-D` override; so
+/// does a function's own binding of the module's name, which a `global`
+/// statement makes, but an override replaces it; in a function or a class
+/// body otherwise, a name is the scope's own. At the top level, in a
+/// block, a statement may run once, many times or not at all.
 fn resolve<'s>(
     bound: Bound<'s>,
     key: &'static str,
@@ -1356,6 +1406,7 @@ fn resolve<'s>(
             reason: "an assignment to an attribute of that name",
             definite: false,
             deferred: true,
+            overridable: false,
         };
     }
     match scopes.last() {
@@ -1364,6 +1415,7 @@ fn resolve<'s>(
             reason: "a binding in a function or class body that declares it global",
             definite: false,
             deferred: true,
+            overridable: true,
         },
         None if in_block => Binding::Opaque {
             reason: match bound {
@@ -1372,6 +1424,7 @@ fn resolve<'s>(
             },
             definite: false,
             deferred: false,
+            overridable: true,
         },
         None => match bound {
             Bound::Assign(value_src) => Binding::Assign(value_src),
@@ -1381,6 +1434,7 @@ fn resolve<'s>(
                 reason,
                 definite,
                 deferred: false,
+                overridable: true,
             },
             Bound::Attribute => unreachable!("handled above"),
         },
@@ -4012,6 +4066,56 @@ e = 'esc\n'
             "cannot evaluate rst_epilog (conf.py, line 1: unsupported expression): sphinx-ultra \
              reads conf.py without running it, so rst_prolog and rst_epilog must be string \
              literals; set it with -D rst_epilog=... to build without editing conf.py"
+        );
+    }
+
+    /// An assignment to an attribute of that name is a binding no `-D`
+    /// override replaces ([`Unevaluable::overridable`]): Sphinx 9.1.0
+    /// reads it over the override, whether the key's other binding comes
+    /// before or after it, at the top level or in a function that declares
+    /// the name global (scratch `t17b-fix2/specs/mixed_top_attr_D.json`,
+    /// `global_then_attr_D.json`, `attr_then_global_D.json`). So it stands
+    /// beside the key's first binding an override replaces, never merged
+    /// into it, and a key keeps its first binding of each kind. Its message
+    /// offers no `-D`.
+    #[test]
+    fn an_attribute_binding_stands_beside_the_keys_other_bindings() {
+        for (content, expected) in [
+            (
+                "rst_prolog = f'{x}'\ndef setup(app):\n    app.config.rst_prolog = 'b'\n",
+                [("rst_prolog", 1, true), ("rst_prolog", 3, false)],
+            ),
+            (
+                "def setup(app):\n    global rst_prolog\n    rst_prolog = 'c'\n    \
+                 app.config.rst_prolog = 'b'\n",
+                [("rst_prolog", 3, true), ("rst_prolog", 4, false)],
+            ),
+            (
+                "def setup(app):\n    app.config.rst_prolog = 'b'\n    global rst_prolog\n    \
+                 rst_prolog = 'c'\n",
+                [("rst_prolog", 2, false), ("rst_prolog", 4, true)],
+            ),
+            (
+                "def inited(app, config):\n    config.rst_epilog = 'a'\n    \
+                 config.rst_epilog += 'b'\nrst_epilog = f'{x}'\nrst_epilog += 'c'\n",
+                [("rst_epilog", 2, false), ("rst_epilog", 4, true)],
+            ),
+        ] {
+            let p = parse(content);
+            let bindings: Vec<(&str, usize, bool)> = p
+                .unevaluable_bindings()
+                .into_iter()
+                .map(|binding| (binding.key, binding.line, binding.overridable))
+                .collect();
+            assert_eq!(bindings, expected, "{content}");
+        }
+        let p = parse("def setup(app):\n    app.config.rst_prolog = 'b'\n");
+        assert_eq!(
+            p.unevaluable().unwrap().to_string(),
+            "cannot evaluate rst_prolog (conf.py, line 2: an assignment to an attribute of that \
+             name): sphinx-ultra reads conf.py without running it, so rst_prolog and rst_epilog \
+             must be string literals; Sphinx reads this binding over any -D rst_prolog=... \
+             override, so edit conf.py"
         );
     }
 

@@ -5775,6 +5775,101 @@ fn a_d_override_rescues_an_unevaluable_rst_epilog() {
     }
 }
 
+/// An assignment to an attribute of Sphinx's configuration goes through
+/// `Config.__setattr__` into the instance's `__dict__`, which Python reads
+/// before `Config.__getattr__` ever takes a `-D` override: Sphinx 9.1.0
+/// reads `app.config.rst_prolog = ...` in `setup(app)` over `-D
+/// rst_prolog=...`, and `config.rst_epilog += ...` in a `config-inited`
+/// handler extends the override as it extends `conf.py`'s value, exit 0
+/// with and without the override (scratch `t17b-fix2/specs/attr_setup*`,
+/// `attr_inited_lit*`). This crate evaluates neither, so each is the
+/// configuration error with the override as without it, and the error
+/// offers no `-D`. A function's `global` binding of the module's name is
+/// not such a binding: `Config.__getattr__` takes the override before the
+/// namespace that binding changes, and the override builds as Sphinx
+/// does (`global_setup_D.json`).
+#[test]
+fn an_attribute_binding_is_fatal_even_with_a_d_override() {
+    let index = ("index.rst", "T\n=\n\nText |a| |b|.\n");
+    let cases = [
+        (
+            "t17b-attr-setup",
+            "extensions = []\ndef setup(app):\n    \
+             app.config.rst_prolog = '.. |a| replace:: A\\n'\n",
+            "rst_prolog",
+            3,
+        ),
+        (
+            "t17b-attr-inited",
+            "extensions = []\nrst_epilog = '.. |c| replace:: C\\n'\n\
+             def f(app, config):\n    config.rst_epilog += '.. |a| replace:: A\\n'\n\
+             def setup(app):\n    app.connect('config-inited', f)\n",
+            "rst_epilog",
+            4,
+        ),
+        // After a binding of the key an override replaces, which neither
+        // hides the attribute's nor is reported before it
+        // (`mixed_top_attr*.json`: Sphinx reads the attribute's, exit 0).
+        (
+            "t17b-attr-after-top",
+            "extensions = []\nx = 'C'\nrst_prolog = f'.. |c| replace:: {x}\\n'\n\
+             def setup(app):\n    app.config.rst_prolog = '.. |a| replace:: A\\n'\n",
+            "rst_prolog",
+            5,
+        ),
+    ];
+    for (name, conf, key, line) in cases {
+        let src = temp_source(name, &[("conf.py", conf), index]);
+        let out = out_dir(name);
+        let error = format!(
+            "\nConfiguration error!\n\n    sphinx.errors.ConfigError: cannot evaluate {key} \
+             (conf.py, line {line}: an assignment to an attribute of that name): sphinx-ultra \
+             reads conf.py without running it, so rst_prolog and rst_epilog must be string \
+             literals; Sphinx reads this binding over any -D {key}=... override, so edit \
+             conf.py\n"
+        );
+        let override_ = format!("{key}=.. |b| replace:: B\n");
+        for extra in [&["-D", override_.as_str()][..], &[][..]] {
+            let (result, written) = warning_stream(&src, &out, extra);
+            assert_eq!(
+                result.status.code(),
+                Some(2),
+                "{name} {extra:?}: {}",
+                stderr_of(&result)
+            );
+            assert_eq!(written, error, "{name} {extra:?}");
+            // After the reader's notices of the statements it dropped.
+            assert!(
+                srcdir_spelled(&result.stderr, &src).ends_with(&error),
+                "{name} {extra:?}: {}",
+                stderr_of(&result)
+            );
+        }
+    }
+
+    let src = temp_source(
+        "t17b-global-setup",
+        &[
+            (
+                "conf.py",
+                "extensions = []\ndef setup(app):\n    global rst_prolog\n    \
+                 rst_prolog = '.. |a| replace:: A\\n'\n",
+            ),
+            index,
+        ],
+    );
+    let (result, written) = warning_stream(
+        &src,
+        &out_dir("t17b-global-setup"),
+        &["-D", "rst_prolog=.. |b| replace:: B\n"],
+    );
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert_eq!(
+        written,
+        "<SRCDIR>/index.rst:4: ERROR: Undefined substitution referenced: \"a\". [docutils]\n"
+    );
+}
+
 /// A backslash that ends a line of a string literal removes the line
 /// break, as Python reads it: the epilog opens with its substitution
 /// definition, and Sphinx 9.1.0 prints nothing (scratch `t17b/esc`).
