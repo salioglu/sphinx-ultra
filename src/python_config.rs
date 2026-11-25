@@ -159,10 +159,11 @@ pub struct ConfPyConfig {
     pub templates_path: Vec<String>,
     pub exclude_patterns: Vec<String>,
     pub include_patterns: Vec<String>,
-    /// `source_suffix` as `convert_source_suffix` normalizes it, or the
-    /// `ConfigError` it raises for a value it cannot read; `None` when
-    /// conf.py said nothing.
-    pub source_suffix: Option<std::result::Result<crate::config::SourceSuffix, String>>,
+    /// `source_suffix` as `convert_source_suffix` normalizes it, or what
+    /// Sphinx makes of a value it cannot use; `None` when conf.py said
+    /// nothing.
+    pub source_suffix:
+        Option<std::result::Result<crate::config::SourceSuffix, crate::config::SourceSuffixError>>,
     pub root_doc: Option<String>,
     pub language: Option<String>,
     pub locale_dirs: Vec<String>,

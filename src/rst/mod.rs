@@ -194,7 +194,9 @@ impl ReadConfig {
     /// is not, and an error naming the key for a value of the wrong shape.
     /// `primary_domain`, `default_role`, `manpages_url`, `rst_prolog` and
     /// `rst_epilog` may be JSON `null`, Python's `None`; `source_suffix` is
-    /// read as `conf.py`'s is ([`crate::config::SourceSuffix::from_conf_value`]).
+    /// read as `conf.py`'s is, unless it is a dict of several suffixes,
+    /// whose order the fixture's sorted keys lost
+    /// ([`crate::config::SourceSuffix::from_fixture_conf`]).
     pub fn apply_conf_key(&mut self, key: &str, value: &serde_json::Value) -> Result<bool, String> {
         let string = || {
             value
@@ -214,7 +216,7 @@ impl ReadConfig {
             "rst_prolog" => self.rst_prolog = optional()?,
             "rst_epilog" => self.rst_epilog = optional()?,
             "source_suffix" => {
-                self.source_suffix = crate::config::SourceSuffix::from_conf_value(value)
+                self.source_suffix = crate::config::SourceSuffix::from_fixture_conf(value)
                     .map_err(|error| format!("conf key {key}: {error}"))?
                     .suffixes()
                     .map(str::to_string)
@@ -3458,6 +3460,39 @@ pub(crate) mod tests {
                  Text after.\n"
             ),
             [at(5, "ERROR: Malformed table."), at(7, blank)]
+        );
+    }
+
+    /// A fixture's `source_suffix` reads as `conf.py`'s does when it is a
+    /// string, a list or a dict of one suffix. A dict of several is
+    /// refused: the generators write the fixtures with sorted keys
+    /// (`sort_keys=True`), which loses the order Sphinx read the dict in,
+    /// and so its first suffix.
+    #[test]
+    fn a_fixture_source_suffix_dict_of_several_suffixes_is_refused() {
+        let suffixes = |value: Value| {
+            let mut read = ReadConfig::default();
+            read.apply_conf_key("source_suffix", &value)
+                .map(|mapped| (mapped, read.source_suffix))
+        };
+        let owned = |suffixes: &[&str]| suffixes.iter().map(|s| s.to_string()).collect();
+        assert_eq!(suffixes(json!(".txt")), Ok((true, owned(&[".txt"]))));
+        assert_eq!(
+            suffixes(json!([".txt", ".rst"])),
+            Ok((true, owned(&[".txt", ".rst"])))
+        );
+        assert_eq!(
+            suffixes(json!({".txt": "restructuredtext"})),
+            Ok((true, owned(&[".txt"])))
+        );
+        assert_eq!(
+            suffixes(json!({".txt": "restructuredtext", ".rst": null})),
+            Err(
+                "conf key source_suffix: a dict of 2 suffixes cannot be read from an oracle \
+                 fixture: its keys are sorted, which loses the order Sphinx read them in, and \
+                 with it the first suffix"
+                    .to_string()
+            )
         );
     }
 

@@ -199,8 +199,9 @@ impl Parser {
         document.source_mtime = utils::get_file_mtime(file_path)?;
 
         // A file whose name ends with a `source_suffix` is a document, and
-        // every one of its file types is `restructuredtext`
-        // ([`BuildConfig::check_source_suffix`]): `get_filetype`
+        // the build reads only documents of the file type
+        // `restructuredtext`, stopping before its read at any other
+        // (`SphinxBuilder::build`): `get_filetype`
         // (`SP/sphinx/util/__init__.py:27-36`) reads it as
         // reStructuredText, whatever its extension. Only a caller handing
         // over some other file gets the Markdown or plain-text stand-in.

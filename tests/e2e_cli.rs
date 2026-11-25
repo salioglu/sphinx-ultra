@@ -1215,6 +1215,162 @@ fn a_source_suffix_override_names_the_suffix_documents_end_with() {
     assert!(!out.join("other.html").exists(), "other.rst is no document");
 }
 
+/// Sphinx's read stops when the documents it read do not include the root
+/// document (`SP/sphinx/builders/__init__.py:527-568`): a `SphinxError`,
+/// after the read's records, exit 2. Its path is `doc2path(root_doc)`,
+/// `<srcdir>/<root_doc><source_suffix[0]>` for a document the project has
+/// no file for, and its message names the first reason that holds, each
+/// pattern matched against that path, absolute: a built-in exclude pattern,
+/// a conf.py exclude pattern (`**index.rst`; `index.rst`, which matches
+/// only the relative path, leads to the generic message), custom
+/// include patterns none of which matches, otherwise the generic one, as
+/// for `-D source_suffix=.txt` on a project of `.rst` files. Probed on
+/// Sphinx 9.1.0 (`scratchpad/t17c-fix1/p4_root.py`: `D_txt_records`,
+/// `exclude_starstar`, `exclude_relative`, `include_custom`,
+/// `builtin_dot_hash`). The native subcommand has no such rule.
+#[test]
+fn a_read_that_did_not_find_the_root_document_exits_two() {
+    let index = ("index.rst", "Index\n=====\n\n.. toctree::\n\n   a\n");
+    let a = ("a.rst", "A\n=\n\nSee :nope:`x` here.\n");
+    let a_record = "<SRCDIR>/a.rst:4: ERROR: Unknown interpreted text role \"nope\". [docutils]\n";
+    let unable = |message: &str| {
+        crash_report(
+            Some("Sphinx error"),
+            &format!(
+                "sphinx.errors.SphinxError: Sphinx is unable to load the master document \
+                 {message}"
+            ),
+            None,
+        )
+    };
+    let generic = |path: &str| {
+        unable(&format!(
+            "({path}). The master document must be within the source directory or a \
+             subdirectory of it."
+        ))
+    };
+
+    let stream = crash_stream(
+        "t17c-root-d-txt",
+        &[
+            index,
+            a,
+            ("other.txt", "Other\n=====\n\nSee :nope:`y` here.\n"),
+        ],
+        &[],
+        &["-D", "source_suffix=.txt"],
+    );
+    assert_eq!(
+        stream,
+        format!(
+            "<SRCDIR>/other.txt:4: ERROR: Unknown interpreted text role \"nope\". [docutils]\n{}",
+            generic("<SRCDIR>/index.txt")
+        )
+    );
+
+    let stream = crash_stream(
+        "t17c-root-excluded",
+        &[
+            (
+                "conf.py",
+                "project = 'p'\nexclude_patterns = ['_build', '**index.rst']\n",
+            ),
+            index,
+            a,
+        ],
+        &[],
+        &[],
+    );
+    assert_eq!(
+        stream,
+        format!(
+            "{a_record}{}",
+            unable(
+                "(<SRCDIR>/index.rst) because it matches an exclude pattern specified in \
+                 conf.py, '**index.rst'. Please remove this pattern from conf.py."
+            )
+        )
+    );
+
+    let stream = crash_stream(
+        "t17c-root-excluded-relative",
+        &[
+            (
+                "conf.py",
+                "project = 'p'\nexclude_patterns = ['index.rst']\n",
+            ),
+            index,
+            a,
+        ],
+        &[],
+        &[],
+    );
+    assert_eq!(
+        stream,
+        format!("{a_record}{}", generic("<SRCDIR>/index.rst"))
+    );
+
+    let stream = crash_stream(
+        "t17c-root-not-included",
+        &[
+            ("conf.py", "project = 'p'\ninclude_patterns = ['a.rst']\n"),
+            index,
+            a,
+        ],
+        &[],
+        &[],
+    );
+    assert_eq!(
+        stream,
+        format!(
+            "{a_record}{}",
+            unable(
+                "(<SRCDIR>/index.rst) because it is not included in the custom \
+                 include_patterns = ['a.rst']. Ensure that a pattern in include_patterns \
+                 matches the master document."
+            )
+        )
+    );
+
+    let stream = crash_stream(
+        "t17c-root-built-in",
+        &[
+            ("conf.py", "project = 'p'\nroot_doc = '.#index'\n"),
+            index,
+            a,
+        ],
+        &[],
+        &[],
+    );
+    assert_eq!(
+        stream,
+        format!(
+            "{a_record}{}",
+            unable(
+                "(<SRCDIR>/.#index.rst) because it matches a built-in exclude pattern \
+                 '**/.#*'. Please move your master document to a different location."
+            )
+        )
+    );
+
+    // The native subcommand builds the documents it has, root or none.
+    let src = temp_source(
+        "t17c-root-excluded-native",
+        &[
+            (
+                "conf.py",
+                "project = 'p'\nexclude_patterns = ['_build', '**index.rst']\n",
+            ),
+            index,
+            a,
+        ],
+    );
+    let out = out_dir("t17c-root-excluded-native");
+    let result = build(&src, &out, &[]);
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert!(out.join("a.html").is_file() && !out.join("index.html").exists());
+}
+
 /// `-D source_suffix=.rst,.txt` is the one suffix `.rst,.txt`: no comma
 /// splits it, as none splits Sphinx's (see the test above). The project's
 /// documents are the files whose name ends with it, `index.rst,.txt`
@@ -1258,15 +1414,23 @@ fn a_source_suffix_override_is_not_split_on_commas() {
     );
 }
 
-/// A `source_suffix` this crate cannot build is a configuration error,
-/// raised where `convert_source_suffix` runs (`config-inited` @800,
-/// `SP/sphinx/config.py:636-667`), after the records logged before it
-/// (`deprecate_source_encoding` @790): a value that is no string, list or
-/// dict is Sphinx's own `ConfigError` (probe `scratchpad/t17c/
-/// p7_config_error.py`), and a file type other than `restructuredtext` is
-/// this crate's, as it has no parser for one, where Sphinx reads such a
-/// document through an extension's parser and stops without one (`Source
-/// parser for markdown not registered`, exit 2, P08). `-D source_suffix`
+/// A `source_suffix` value that is no string, list or dict is Sphinx's own
+/// `ConfigError`, raised where `convert_source_suffix` runs (`config-inited`
+/// @800, `SP/sphinx/config.py:636-667`), after the records logged before it
+/// (`deprecate_source_encoding` @790; probe `scratchpad/t17c/
+/// p7_config_error.py`).
+///
+/// A file type other than `restructuredtext` is no error while no document
+/// has it, in this crate as in Sphinx, which builds such a project as if the
+/// suffix were not there (probe `scratchpad/t17c-fix1/p1_filetype.py`:
+/// `md_type_no_md_file`, `md_type_md_excluded`, Sphinx 9.1.0's whole `-w`).
+/// A document of that type that discovery finds, after `exclude_patterns`
+/// apply, stops the build before any document is read, with a
+/// configuration error naming it: this crate has no parser for it. Sphinx
+/// reads such a document through the parser an extension registers for it,
+/// and stops at it without one (`Source parser for markdown not
+/// registered`, after the records of the documents read before it:
+/// `md_type_md_file`), a deliberate divergence. `-D source_suffix`
 /// replaces what `conf.py` says, as Sphinx's does: the project then builds
 /// with the records Sphinx prints for it (probe `scratchpad/t17c/
 /// p1_suffix.py`, `dict_md_D`).
@@ -1299,50 +1463,22 @@ fn a_source_suffix_this_crate_cannot_build_is_a_configuration_error() {
          (type <class 'int'>).\n"
     );
 
-    let src = temp_source(
-        "source-suffix-markdown",
-        &[
-            (
-                "conf.py",
-                "project = 'p'\n\
-                 source_suffix = {'.rst': 'restructuredtext', '.md': 'markdown'}\n",
-            ),
-            (
-                "index.rst",
-                "Index\n=====\n\n.. toctree::\n\n   notes\n   readme\n   notes.txt\n\n\
-                 :doc:`notes` :doc:`readme`\n",
-            ),
-            ("notes.txt", "Notes\n=====\n\nPlain *text* file.\n"),
-            ("readme.md", "# Readme\n\nSome *markdown*.\n"),
-        ],
+    let markdown = "project = 'p'\n\
+                    source_suffix = {'.rst': 'restructuredtext', '.md': 'markdown'}\n";
+    let index = (
+        "index.rst",
+        "Index\n=====\n\n.. toctree::\n\n   notes\n   readme\n   notes.txt\n\n\
+         :doc:`notes` :doc:`readme`\n",
     );
-    let (result, written, _) = sphinx_build_warnings("source-suffix-markdown", &src, &[]);
-    assert_eq!(
-        result.status.code(),
-        Some(2),
-        "stderr: {}",
-        stderr_of(&result)
-    );
-    assert_eq!(
-        written,
-        "\nConfiguration error!\n\n    sphinx.errors.ConfigError: source_suffix maps '.md' to \
-         the file type markdown, which sphinx-ultra cannot read: its one parser is \
-         reStructuredText's; set -D source_suffix=<suffix> to build the documents of one \
-         suffix without editing conf.py\n"
-    );
-
-    let (result, written, out) = sphinx_build_warnings(
-        "source-suffix-markdown-override",
-        &src,
-        &["-D", "source_suffix=.rst"],
-    );
-    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
-    let index = sphinx_ultra::utils::canonicalize_simplified(&src)
-        .unwrap()
-        .join("index.rst");
-    let index = index.display();
-    assert_eq!(
-        written,
+    let notes = ("notes.txt", "Notes\n=====\n\nPlain *text* file.\n");
+    let readme = ("readme.md", "# Readme\n\nSome *markdown*.\n");
+    // What Sphinx 9.1.0 prints for the project once `readme.md` is no
+    // document, whichever way it is not.
+    let records = |src: &Path| {
+        let index = sphinx_ultra::utils::canonicalize_simplified(src)
+            .unwrap()
+            .join("index.rst");
+        let index = index.display();
         format!(
             "{index}:4: WARNING: toctree contains reference to nonexisting document 'notes' \
              [toc.not_readable]\n\
@@ -1353,8 +1489,193 @@ fn a_source_suffix_this_crate_cannot_build_is_a_configuration_error() {
              {index}:10: WARNING: unknown document: 'notes' [ref.doc]\n\
              {index}:10: WARNING: unknown document: 'readme' [ref.doc]\n"
         )
+    };
+
+    let src = temp_source(
+        "source-suffix-markdown-unused",
+        &[("conf.py", markdown), index, notes],
     );
+    let (result, written, _) = sphinx_build_warnings("source-suffix-markdown-unused", &src, &[]);
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert_eq!(written, records(&src));
+
+    let src = temp_source(
+        "source-suffix-markdown-excluded",
+        &[
+            (
+                "conf.py",
+                &format!("{markdown}exclude_patterns = ['readme.md']\n"),
+            ),
+            index,
+            notes,
+            readme,
+        ],
+    );
+    let (result, written, _) = sphinx_build_warnings("source-suffix-markdown-excluded", &src, &[]);
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert_eq!(written, records(&src));
+
+    // The report of the project at `src` holding `readme.md`.
+    let report = |src: &Path| {
+        format!(
+            "\nConfiguration error!\n\n    sphinx.errors.ConfigError: source_suffix maps '.md' \
+             to the file type markdown, and the document 'readme' ({}) has that suffix: \
+             sphinx-ultra reads only reStructuredText documents; set -D source_suffix=<suffix> \
+             to build the documents of one suffix without editing conf.py\n",
+            sphinx_ultra::utils::canonicalize_simplified(src)
+                .unwrap()
+                .join("readme.md")
+                .display()
+        )
+    };
+    let src = temp_source(
+        "source-suffix-markdown",
+        &[("conf.py", markdown), index, notes, readme],
+    );
+    let (result, written, _) = sphinx_build_warnings("source-suffix-markdown", &src, &[]);
+    assert_eq!(
+        result.status.code(),
+        Some(2),
+        "stderr: {}",
+        stderr_of(&result)
+    );
+    let report_here = report(&src);
+    assert_eq!(written, report_here);
+    assert!(
+        stderr_of(&result).ends_with(&report_here),
+        "stderr: {}",
+        stderr_of(&result)
+    );
+
+    let (result, written, out) = sphinx_build_warnings(
+        "source-suffix-markdown-override",
+        &src,
+        &["-D", "source_suffix=.rst"],
+    );
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert_eq!(written, records(&src));
     assert!(!out.join("readme.html").exists());
+
+    // The records the build prints before discovery print first.
+    let src = temp_source(
+        "source-suffix-markdown-records",
+        &[
+            (
+                "conf.py",
+                &format!("{markdown}source_encoding = 'latin-1'\n"),
+            ),
+            index,
+            notes,
+            readme,
+        ],
+    );
+    let (result, written, _) = sphinx_build_warnings("source-suffix-markdown-records", &src, &[]);
+    assert_eq!(
+        result.status.code(),
+        Some(2),
+        "stderr: {}",
+        stderr_of(&result)
+    );
+    assert_eq!(
+        written,
+        format!(
+            "WARNING: Support for source encodings other than UTF-8 is deprecated and will be \
+             removed in Sphinx 10. Please comment at \
+             https://github.com/sphinx-doc/sphinx/issues/13665 if this causes a problem.\n\
+             {}",
+            report(&src)
+        )
+    );
+}
+
+/// Decision 13: a `source_suffix` list holding an item that is no string
+/// is one Sphinx 9.1.0 keeps (`dict.fromkeys`) and crashes on when its
+/// discovery first tests a file name against it (`TypeError`,
+/// `Project.path2doc`), which with a fresh environment it does while it
+/// sets its application up: after every `config-inited` record (the type
+/// check and `check_primary_domain` among them), before `builder-inited`
+/// loads the inventories, whose record it never prints. An item Python
+/// cannot hash crashes `convert_source_suffix` itself, a `config-inited`
+/// handler, before the records of the handlers after it. `-D
+/// source_suffix` replaces either. Probes `scratchpad/t17c/p1_suffix.py`
+/// (`list_nonstr`), `scratchpad/t17c-fix1/p5c_nonstr_records.py`.
+#[test]
+fn a_source_suffix_item_sphinx_crashes_on_exits_two() {
+    const ENCODING: &str = "WARNING: Support for source encodings other than UTF-8 is \
+                            deprecated and will be removed in Sphinx 10. Please comment at \
+                            https://github.com/sphinx-doc/sphinx/issues/13665 if this causes a \
+                            problem.\n";
+    const CHECKS: &str = "WARNING: The config value `maximum_signature_line_length' has type \
+                          `str'; expected `NoneType' or `int'.\n\
+                          WARNING: primary_domain 'nope' not found, ignored.\n";
+    let conf = |source_suffix: &str| {
+        format!(
+            "project = 'p'\nsource_encoding = 'latin-1'\nmaximum_signature_line_length = 'x'\n\
+             primary_domain = 'nope'\nextensions = ['sphinx.ext.intersphinx']\n\
+             intersphinx_mapping = {{'x': ('https://example.invalid/', 'missing.inv')}}\n\
+             source_suffix = {source_suffix}\n"
+        )
+    };
+
+    let conf_int = conf("['.rst', 1]");
+    let stream = crash_stream(
+        "t17c-suffix-int-item",
+        &[("conf.py", &conf_int), ("index.rst", "Index\n=====\n")],
+        &[],
+        &[],
+    );
+    assert_eq!(
+        stream,
+        format!(
+            "{ENCODING}{CHECKS}{}",
+            crash_report(
+                None,
+                "TypeError: endswith first arg must be str or a tuple of str, not int",
+                None
+            )
+        )
+    );
+
+    let conf_list = conf("['.rst', ['.txt']]");
+    let stream = crash_stream(
+        "t17c-suffix-list-item",
+        &[("conf.py", &conf_list), ("index.rst", "Index\n=====\n")],
+        &[],
+        &[],
+    );
+    assert_eq!(
+        stream,
+        format!(
+            "{ENCODING}{}",
+            crash_report(
+                Some("Extension error (sphinx.config)"),
+                "sphinx.errors.ExtensionError: Handler <function convert_source_suffix at \
+                 0x...> for event 'config-inited' threw an exception (exception: unhashable \
+                 type: 'list')",
+                None
+            )
+        )
+    );
+
+    let src = temp_source(
+        "t17c-suffix-int-item-override",
+        &[
+            (
+                "conf.py",
+                "project = 'p'\nsource_encoding = 'latin-1'\nmaximum_signature_line_length = \
+                 'x'\nprimary_domain = 'nope'\nsource_suffix = ['.rst', 1]\n",
+            ),
+            ("index.rst", "Index\n=====\n"),
+        ],
+    );
+    let (result, written, out) = sphinx_build_warnings(
+        "t17c-suffix-int-item-override",
+        &src,
+        &["-D", "source_suffix=.rst"],
+    );
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert_eq!(written, format!("{ENCODING}{CHECKS}"));
+    assert!(out.join("index.html").is_file());
 }
 
 /// `TocTree.parse_content` tells an excluded entry from a nonexisting one

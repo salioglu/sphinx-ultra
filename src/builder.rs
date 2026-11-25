@@ -90,6 +90,12 @@ const DOCTREE_HEADER_LEN: usize = DOCTREE_MAGIC.len() + std::mem::size_of::<u32>
 /// leaves it unset.
 const DEFAULT_ROOT_DOC: &str = "index";
 
+/// `sphinx.project.EXCLUDE_PATHS` (`SP/sphinx/project.py:20`), the patterns
+/// the root document check names as built in
+/// ([`SphinxBuilder::check_root_document`]). Discovery itself excludes its
+/// own built-in patterns ([`SphinxBuilder::discover_source_files`]).
+const SPHINX_EXCLUDE_PATHS: [&str; 4] = ["**/_sources", ".#*", "**/.#*", "*.lproj/**"];
+
 /// The Sphinx builder a build's resolve pass stands for. In wave 5a it
 /// only picks the tags `.. only::` is evaluated against ([`Self::tags`],
 /// decision 12): every resolve pass gives the dummy builder's `''` URIs,
@@ -274,6 +280,9 @@ pub struct SphinxBuilder {
     /// sorted docname order, to follow decision 14's schedule: what the
     /// unit tests read to pin that the parallel parses stand.
     reparsed: std::sync::atomic::AtomicUsize,
+    /// Whether the build stops, as Sphinx's read does, when its documents
+    /// do not include the root document ([`Self::require_root_document`]).
+    require_root_document: bool,
 }
 
 /// [`BuildConfig`] fields deliberately kept *out* of the cache fingerprint.
@@ -619,9 +628,12 @@ impl SphinxBuilder {
         // A `conf.py` prolog or epilog this crate could not evaluate, which
         // no override replaced, for a caller that has not checked: the CLI
         // has, once its `-D` overrides were in. The same for a
-        // `source_suffix` this crate cannot read.
+        // `source_suffix` Sphinx stops at as its configuration is set up.
         config.check_evaluated()?;
         config.check_source_suffix()?;
+        if let Some(crash) = config.source_suffix_config_crash() {
+            return Err(crash.into());
+        }
         // -d/doctree_dir relocates the cache (sphinx-build's doctree dir).
         let cache_dir = config
             .doctree_dir
@@ -699,6 +711,7 @@ impl SphinxBuilder {
             py_modindex: Mutex::new(env_py_domain::PyModindex::default()),
             intersphinx: Intersphinx::default(),
             reparsed: std::sync::atomic::AtomicUsize::new(0),
+            require_root_document: false,
         })
     }
 
@@ -789,6 +802,14 @@ impl SphinxBuilder {
 
     pub fn enable_incremental(&mut self) {
         self.incremental = true;
+    }
+
+    /// Stop the build, as Sphinx's read does, when the documents it read
+    /// do not include the root document ([`Self::check_root_document`]):
+    /// sphinx-build mode's rule. Without it, the native subcommand's, a
+    /// project with no root document builds the documents it has.
+    pub fn require_root_document(&mut self) {
+        self.require_root_document = true;
     }
 
     /// Read and resolve as `kind` builds ([`BuilderKind`]); `html` unless
@@ -902,6 +923,13 @@ impl SphinxBuilder {
         // Ensure output directory exists
         tokio::fs::create_dir_all(&self.output_dir).await?;
 
+        // A `source_suffix` item that is no string crashes Sphinx's first
+        // discovery, which it runs while it sets its application up, before
+        // `builder-inited` loads the inventories (decision 13).
+        if let Some(crash) = self.config.source_suffix_discovery_crash() {
+            return Err(crash.into());
+        }
+
         self.load_intersphinx_inventories()?;
 
         // Discover all source files
@@ -909,6 +937,7 @@ impl SphinxBuilder {
         let source_files = self.discover_source_files(&mut discovery).await?;
         self.flush(discovery);
         info!("Discovered {} source files", source_files.len());
+        self.check_source_filetypes(&source_files)?;
 
         let mut env = std::mem::take(&mut self.env);
         let to_read = self.plan_read(&env, &source_files);
@@ -927,6 +956,7 @@ impl SphinxBuilder {
         // keeps what the documents merged before it left, and is not saved.
         let crashed = self
             .merge_phase(&mut env, &mut read_results)
+            .and_then(|()| self.check_root_document(&source_files))
             .and_then(|()| self.resolve_phase(&mut env, &read_results));
         self.env = env;
         crashed?;
@@ -990,6 +1020,119 @@ impl SphinxBuilder {
 
         info!("Build completed in {:?}", build_time);
         Ok(stats)
+    }
+
+    /// Fails with a configuration error, before any document is read, when
+    /// a document discovery found has a file type other than
+    /// `restructuredtext` (the type of the first `source_suffix` its path
+    /// ends with, as `get_filetype` resolves it): this crate reads no other
+    /// type, and Sphinx reads one through the parser an extension registers
+    /// for it. It names the first such document in sorted docname order.
+    ///
+    /// Where no extension registers one, Sphinx reads the documents before
+    /// it and stops at it (`Source parser for markdown not registered`,
+    /// after their records); the build stops before reading anything
+    /// instead, as with an extension Sphinx reads the document and this
+    /// crate cannot. A file type no document has is never an error, in
+    /// this crate as in Sphinx.
+    fn check_source_filetypes(&self, files: &[PathBuf]) -> Result<()> {
+        let unreadable = files
+            .iter()
+            .filter_map(|path| {
+                let (suffix, filetype) = self
+                    .config
+                    .source_suffix
+                    .filetype(&path.to_string_lossy())?;
+                (!crate::config::SourceSuffix::is_restructuredtext(filetype))
+                    .then(|| (self.docname_of_path(path), path, suffix, filetype))
+            })
+            .min_by(|a, b| a.0.cmp(&b.0));
+        let Some((docname, path, suffix, filetype)) = unreadable else {
+            return Ok(());
+        };
+        Err(crate::error::ConfigError(format!(
+            "source_suffix maps {} to the file type {filetype}, and the document {} ({}) has \
+             that suffix: sphinx-ultra reads only reStructuredText documents; set -D \
+             source_suffix=<suffix> to build the documents of one suffix without editing conf.py",
+            py_repr_str(suffix),
+            py_repr_str(&docname),
+            path.display()
+        ))
+        .into())
+    }
+
+    /// Sphinx's check that its read found the root document
+    /// (`SP/sphinx/builders/__init__.py:527-568`), once every document is
+    /// read and before `env-updated`, when [`Self::require_root_document`]
+    /// asks for it: the `SphinxError` that stops the build when `root_doc`
+    /// is none of the documents, reported as T17a2 reports an error Sphinx
+    /// raises in its read, after the read's records. Sphinx tests the
+    /// documents its environment holds once the read is done, which are
+    /// the ones discovery found; this crate tests those, so a root document
+    /// it fails to read (a per-file failure, decision 4) still counts.
+    ///
+    /// The root's path is `doc2path(root_doc)`, which for a document the
+    /// project has no file for is `<srcdir>/<root_doc><source_suffix[0]>`,
+    /// and the message's variant is the first that holds, each pattern
+    /// matched against that path, absolute, with `/` separators: a built-in
+    /// exclude pattern of `sphinx.project.EXCLUDE_PATHS`, a conf.py
+    /// exclude pattern, custom include patterns none of which matches,
+    /// otherwise the generic one. A pattern only a relative path matches
+    /// (`index.rst`) leads to the generic message, as in Sphinx.
+    fn check_root_document(&self, files: &[PathBuf]) -> Result<(), SphinxCrash> {
+        if !self.require_root_document {
+            return Ok(());
+        }
+        let root = self.config.root_doc.as_deref().unwrap_or(DEFAULT_ROOT_DOC);
+        if files.iter().any(|path| self.docname_of_path(path) == root) {
+            return Ok(());
+        }
+        let path = self.undiscovered_path(root);
+        let canonical = path.to_string_lossy().replace('\\', "/");
+        let matches = |pattern: &str| matching::pattern_match(&canonical, pattern).unwrap_or(false);
+        let built_in = SPHINX_EXCLUDE_PATHS
+            .into_iter()
+            .find(|pattern| matches(pattern));
+        let excluded = self
+            .config
+            .exclude_patterns
+            .iter()
+            .find(|pattern| matches(pattern));
+        let include = &self.config.include_patterns;
+        // `set(include_patterns) != {'**'}`, and none of them matches.
+        let not_included = (include.is_empty() || include.iter().any(|pattern| pattern != "**"))
+            && !include.iter().any(|pattern| matches(pattern));
+        let reason = match (built_in, excluded) {
+            (Some(pattern), _) => format!(
+                " because it matches a built-in exclude pattern {}. Please move your master \
+                 document to a different location.",
+                py_repr_str(pattern)
+            ),
+            (None, Some(pattern)) => format!(
+                " because it matches an exclude pattern specified in conf.py, {}. Please \
+                 remove this pattern from conf.py.",
+                py_repr_str(pattern)
+            ),
+            (None, None) if not_included => format!(
+                " because it is not included in the custom include_patterns = [{}]. Ensure \
+                 that a pattern in include_patterns matches the master document.",
+                include
+                    .iter()
+                    .map(|pattern| py_repr_str(pattern))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            (None, None) => ". The master document must be within the source directory or a \
+                             subdirectory of it."
+                .to_string(),
+        };
+        Err(SphinxCrash::sphinx_error(
+            &format!(
+                "Sphinx is unable to load the master document ({}){reason}",
+                path.display()
+            ),
+            crate::rst::LogLocation::None,
+        ))
     }
 
     async fn discover_source_files(&self, sink: &mut DiagnosticSink) -> Result<Vec<PathBuf>> {

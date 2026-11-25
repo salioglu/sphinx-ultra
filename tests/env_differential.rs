@@ -452,9 +452,11 @@ fn config_of(project: &Project) -> BuildConfig {
         // text as given, where the generator hands Sphinx the fixture's
         // list or dict as the Python object it is (`confoverrides`): the
         // typed field takes such a value through the normalization a
-        // `conf.py` value gets.
+        // `conf.py` value gets. A dict of several suffixes cannot come from
+        // the fixture, whose sorted keys lost the order Sphinx read
+        // (`SourceSuffix::from_fixture_conf`).
         if key == "source_suffix" && (value.is_array() || value.is_object()) {
-            config.source_suffix = SourceSuffix::from_conf_value(value)
+            config.source_suffix = SourceSuffix::from_fixture_conf(value)
                 .unwrap_or_else(|e| panic!("project {}: source_suffix: {e}", project.name));
             continue;
         }
@@ -841,6 +843,43 @@ fn scalar_override_spells_booleans_like_sphinx() {
     }
     assert!(config.numfig && config.keep_warnings && !config.nitpicky);
     assert!(config.apply_override("keep_warnings", "true").is_err());
+}
+
+/// A dict-valued `source_suffix` of several suffixes cannot come from the
+/// fixture: `tools/gen_env_fixture.py` writes it with sorted keys
+/// (`sort_keys=True`), which loses the order Sphinx read the dict in, and
+/// so its first suffix. `config_of` refuses it, naming the reason.
+#[test]
+#[should_panic(
+    expected = "project p: source_suffix: a dict of 2 suffixes cannot be read from an oracle \
+                fixture: its keys are sorted, which loses the order Sphinx read them in, and \
+                with it the first suffix"
+)]
+fn a_source_suffix_dict_of_several_suffixes_is_refused() {
+    let mut project = load_fixture().projects.swap_remove(0);
+    project.name = "p".to_string();
+    // A string, a list and a dict of one suffix are read as conf.py's are.
+    for (value, suffixes) in [
+        (serde_json::json!(".txt"), vec![".txt"]),
+        (serde_json::json!([".txt", ".rst"]), vec![".txt", ".rst"]),
+        (
+            serde_json::json!({ ".txt": "restructuredtext" }),
+            vec![".txt"],
+        ),
+    ] {
+        project.conf = serde_json::json!({ "source_suffix": value });
+        assert_eq!(
+            config_of(&project)
+                .source_suffix
+                .suffixes()
+                .collect::<Vec<_>>(),
+            suffixes
+        );
+    }
+    project.conf = serde_json::json!({
+        "source_suffix": { ".txt": "restructuredtext", ".rst": "restructuredtext" },
+    });
+    config_of(&project);
 }
 
 #[test]

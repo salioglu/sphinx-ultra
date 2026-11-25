@@ -373,7 +373,9 @@ struct Configured {
     config: BuildConfig,
     confdir: PathBuf,
     records: Vec<Diagnostic>,
-    /// The crash of a `config-inited` handler, which ends the records.
+    /// The crash of a `config-inited` handler, which ends the records:
+    /// `convert_source_suffix`'s ([`BuildConfig::source_suffix_config_crash`])
+    /// or `correct_copyright_year`'s.
     crash: Option<SphinxCrash>,
     /// The `ConfigError` of a `config-inited` handler, which ends the
     /// records: `convert_source_suffix`'s
@@ -519,7 +521,7 @@ fn configure(args: &RunArgs) -> Result<Configured> {
             .map(config_record),
     );
     // ... then `convert_source_suffix`, `sphinx.config`'s first at 800,
-    // whose `ConfigError` ends them ...
+    // whose `ConfigError` ends them, or whose crash does ...
     if let Err(error) = config.check_source_suffix() {
         return Ok(Configured {
             config,
@@ -531,9 +533,11 @@ fn configure(args: &RunArgs) -> Result<Configured> {
     }
     // ... `correct_copyright_year`, which crashes on a `SOURCE_DATE_EPOCH`
     // `int()` cannot read, ending the records ...
-    let crash = source_date_epoch()
-        .as_deref()
-        .and_then(sphinx_ultra::read::source_date_epoch_config_crash);
+    let crash = config.source_suffix_config_crash().or_else(|| {
+        source_date_epoch()
+            .as_deref()
+            .and_then(sphinx_ultra::read::source_date_epoch_config_crash)
+    });
     // ... then the type checks and `check_primary_domain`.
     if crash.is_none() {
         records.extend(
@@ -693,13 +697,23 @@ async fn run_build(args: RunArgs) -> Result<i32> {
         builder.enable_incremental();
     }
 
+    // Sphinx's read stops when it did not find the root document; the
+    // native subcommand builds the documents it has.
+    if sphinx_mode {
+        builder.require_root_document();
+    }
+
     let stats = match builder.build().await {
         Ok(stats) => stats,
         // A `ConfigError` raised once the build has started (the intersphinx
-        // inventories' invariants, checked as they load) gets the same
+        // inventories' invariants, checked as they load; a discovered
+        // document of a file type this crate cannot read) gets the same
         // report as one raised while the configuration loads, after the
-        // configuration records, as in Sphinx.
+        // configuration records and the build's so far.
         Err(error) if sphinx_mode && error.downcast_ref::<ConfigError>().is_some() => {
+            for record in &builder.recorded_warnings() {
+                stream.record(record)?;
+            }
             stream.raw(&config_error_report(&error))?;
             return Ok(2);
         }

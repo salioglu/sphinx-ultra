@@ -45,12 +45,12 @@ fn on_this_platform(warning: &str) -> String {
     warning.replace("<SRCDIR>/index.rst: ", &format!("{}: ", doc.display()))
 }
 
-/// Every row of `rows` whose body differs from ours under `config`, as a
-/// report naming the input.
-fn mismatches(rows: &[(&str, &str)], config: &ReadConfig) -> Vec<String> {
+/// Every row of `rows` whose body differs from the one `reader` gives its
+/// input, as a report naming the input.
+fn mismatches(rows: &[(&str, &str)], reader: &dyn Fn(&str) -> String) -> Vec<String> {
     rows.iter()
         .filter_map(|(rst, expected)| {
-            let (body, _) = read(rst, config.clone());
+            let body = reader(rst);
             (body != *expected)
                 .then(|| format!("--- {rst:?}\n--- sphinx 9.1.0\n{expected}--- ours\n{body}"))
         })
@@ -70,7 +70,12 @@ fn read_before_stage_m(rst: &str) -> String {
 
 /// Asserts every row of `rows` reads as Sphinx's under `config`.
 fn check(rows: &[(&str, &str)], config: ReadConfig) {
-    let mismatches = mismatches(rows, &config);
+    check_with(rows, &|rst| read(rst, config.clone()).0);
+}
+
+/// Asserts every row of `rows` reads as Sphinx's through `reader`.
+fn check_with(rows: &[(&str, &str)], reader: &dyn Fn(&str) -> String) {
+    let mismatches = mismatches(rows, reader);
     assert!(
         mismatches.is_empty(),
         "{} of {} rows differ from Sphinx 9.1.0:\n{}",
@@ -564,15 +569,7 @@ fn manpage_matches_sphinx() {
 /// alone, before stage M ([`read_before_stage_m`]).
 #[test]
 fn download_role_matches_sphinx() {
-    let mismatches: Vec<String> = DOWNLOAD
-        .iter()
-        .filter_map(|(rst, expected)| {
-            let body = read_before_stage_m(rst);
-            (body != *expected)
-                .then(|| format!("--- {rst:?}\n--- sphinx 9.1.0\n{expected}--- ours\n{body}"))
-        })
-        .collect();
-    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+    check_with(DOWNLOAD, &read_before_stage_m);
 }
 
 /// [RC §3.9]: P02 and P11's `:index:` lines.

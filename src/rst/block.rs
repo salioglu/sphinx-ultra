@@ -11540,37 +11540,78 @@ fn capitalize_first(s: &str) -> String {
     }
 }
 
-/// docutils `nodes.Inline` membership for the kinds this parser emits,
-/// plus `Text` — the filter typed-field bodies pass through
-/// (`docfields.py:442`; block-level nodes would render invalid markup).
+/// The tagnames of every node class docutils 0.22.4 and Sphinx 9.1.0
+/// derive from `nodes.Inline`, subclasses included, with every module of
+/// both packages imported (probe `scratchpad/t17c-fix1/p3_inline_classes.py`,
+/// a recursive `__subclasses__` walk; a tagname is its class's name).
+/// Wider than [`is_inline_kind`] by five classes of modules a read never
+/// creates a node of: `Unknown` (the docutils XML parser), `footnotemark`
+/// and `math_reference` (the LaTeX builder), `graphviz` and
+/// `inheritance_diagram` (extensions this crate does not load).
+const INLINE_KINDS: [&str; 56] = [
+    "Unknown",
+    "abbreviation",
+    "acronym",
+    "citation_reference",
+    "desc_addname",
+    "desc_annotation",
+    "desc_inline",
+    "desc_name",
+    "desc_optional",
+    "desc_parameter",
+    "desc_parameterlist",
+    "desc_returns",
+    "desc_sig_element",
+    "desc_sig_keyword",
+    "desc_sig_keyword_type",
+    "desc_sig_literal_char",
+    "desc_sig_literal_number",
+    "desc_sig_literal_string",
+    "desc_sig_name",
+    "desc_sig_operator",
+    "desc_sig_punctuation",
+    "desc_sig_space",
+    "desc_signature",
+    "desc_signature_line",
+    "desc_type",
+    "desc_type_parameter",
+    "desc_type_parameter_list",
+    "download_reference",
+    "emphasis",
+    "footnote_reference",
+    "footnotemark",
+    "generated",
+    "graphviz",
+    "image",
+    "index",
+    "inheritance_diagram",
+    "inline",
+    "literal",
+    "literal_emphasis",
+    "literal_strong",
+    "manpage",
+    "math",
+    "math_reference",
+    "number_reference",
+    "pending_xref",
+    "pending_xref_condition",
+    "problematic",
+    "production",
+    "raw",
+    "reference",
+    "strong",
+    "subscript",
+    "substitution_reference",
+    "superscript",
+    "target",
+    "title_reference",
+];
+
+/// `isinstance(node, (nodes.Inline, nodes.Text))`, the filter a typed
+/// field's content passes through (`docfields.py:442`; block-level nodes
+/// would render invalid markup): `Text`, or one of [`INLINE_KINDS`].
 fn is_inline_or_text(node: &Node) -> bool {
-    matches!(
-        node.kind,
-        kinds::TEXT
-            | "abbreviation"
-            | "acronym"
-            | "citation_reference"
-            | "emphasis"
-            | "footnote_reference"
-            | "generated"
-            | "image"
-            | "index"
-            | "inline"
-            | "literal"
-            | "literal_emphasis"
-            | "literal_strong"
-            | "math"
-            | "pending_xref"
-            | "problematic"
-            | "raw"
-            | "reference"
-            | "strong"
-            | "subscript"
-            | "substitution_reference"
-            | "superscript"
-            | "target"
-            | "title_reference"
-    )
+    node.kind == kinds::TEXT || INLINE_KINDS.contains(&node.kind)
 }
 
 /// `PyXrefMixin._delimiters_re` split with the captured delimiters kept
@@ -19606,6 +19647,185 @@ mod py_docfield_tests {
             )),
             "{pf}"
         );
+    }
+
+    /// `rst` read as the document `index` of a temporary project holding
+    /// `files`, the way a build reads it: stage R, then stage M's
+    /// collectors. The post-read doctree's body (its document line left
+    /// out), the records the read logged, rendered, and the project's
+    /// source directory, canonical, as the download collector spells it.
+    fn read_in_project(
+        rst: &str,
+        files: &[(&str, &str)],
+    ) -> (String, Vec<String>, std::path::PathBuf) {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        for (path, text) in files {
+            std::fs::write(tmp.path().join(path), text).expect("write");
+        }
+        let srcdir = crate::utils::canonicalize_simplified(tmp.path()).expect("canonical");
+        let parse = ParseOptions {
+            source_path: srcdir.join("index.rst").display().to_string(),
+            sphinx: true,
+            docname: "index".to_string(),
+            srcdir: Some(srcdir.clone()),
+            ..ParseOptions::default()
+        };
+        let read = crate::read::read_standalone(
+            rst,
+            &parse,
+            &crate::read::ReadSettings::sphinx_defaults(),
+        );
+        let pformat = read.outcome.doctree().root.pformat();
+        let (_, body) = pformat.split_once('\n').expect("a document line");
+        let records = read
+            .diagnostics
+            .iter()
+            .map(|diagnostic| diagnostic.render(true))
+            .collect();
+        (body.to_string(), records, srcdir)
+    }
+
+    /// The post-read tree of `.. py:function:: f(<arg>)` under the title
+    /// `Index`, its one parameter `arg` described as `description`, whose
+    /// `:type <arg>:` content Sphinx 9.1.0 renders as the lines `inline`
+    /// (probe `scratchpad/t17c-fix1/p3_typefield.py`, the dummy builder's
+    /// post-read doctree, smart quotes on: ` -- ` reads ` – `).
+    fn typed_param_tree(arg: &str, inline: &[&str], description: &str) -> String {
+        let mut tree = String::new();
+        for line in [
+            "    <section ids=\"index\" names=\"index\">\n",
+            "        <title>\n",
+            "            Index\n",
+            "        <index entries=\"('pair',\\ 'built-in\\ function;\\ f()',\\ 'f',\\ '',\\ None)\">\n",
+            "        <desc classes=\"py function\" desctype=\"function\" domain=\"py\" no-contents-entry=\"0\" no-index=\"0\" no-index-entry=\"0\" no-typesetting=\"0\" nocontentsentry=\"0\" noindex=\"0\" noindexentry=\"0\" objtype=\"function\">\n",
+            "            <desc_signature _toc_name=\"f()\" _toc_parts=\"('f',)\" class=\"\" classes=\"sig sig-object\" fullname=\"f\" ids=\"f\" module=\"True\">\n",
+            "                <desc_name classes=\"sig-name descname\" xml:space=\"preserve\">\n",
+            "                    f\n",
+            "                <desc_parameterlist multi_line_parameter_list=\"0\" multi_line_trailing_comma=\"1\" xml:space=\"preserve\">\n",
+            "                    <desc_parameter xml:space=\"preserve\">\n",
+            "                        <desc_sig_name classes=\"n\">\n",
+        ] {
+            tree.push_str(line);
+        }
+        tree.push_str(&format!("                            {arg}\n"));
+        for line in [
+            "            <desc_content>\n",
+            "                <field_list>\n",
+            "                    <field>\n",
+            "                        <field_name>\n",
+            "                            Parameters\n",
+            "                        <field_body>\n",
+            "                            <paragraph>\n",
+            "                                <literal_strong>\n",
+        ] {
+            tree.push_str(line);
+        }
+        tree.push_str(&format!("                                    {arg}\n"));
+        tree.push_str("                                 (\n");
+        for line in inline {
+            tree.push_str(line);
+        }
+        tree.push_str("                                )\n");
+        tree.push_str("                                 – \n");
+        tree.push_str(&format!("                                {description}\n"));
+        tree
+    }
+
+    /// `DocFieldTransformer` keeps what of a `:type:` field's content is
+    /// `nodes.Inline` or `Text` (`docfields.py:442`). A
+    /// `download_reference` is `Inline` (a `reference`), so a `:type:` of
+    /// `:download:` keeps it, and the download collector (880) then gives
+    /// it its file's `filename`, or warns at it that the file is not
+    /// readable (probe `scratchpad/t17c-fix1/p3_typefield.py`).
+    #[test]
+    fn a_type_field_keeps_a_download_reference() {
+        let index = ".. py:function:: f(a)\n\n   :param a: first\n";
+        let (body, records, srcdir) = read_in_project(
+            &format!("Index\n=====\n\n{index}   :type a: :download:`ta.txt`\n"),
+            &[("f.txt", "f\n")],
+        );
+        assert_eq!(
+            body,
+            typed_param_tree(
+                "a",
+                &[
+                    "                                <download_reference refdoc=\"index\" refdomain=\"\" refexplicit=\"0\" reftarget=\"ta.txt\" reftype=\"download\" refwarn=\"0\">\n",
+                    "                                    <literal classes=\"xref download\">\n",
+                    "                                        ta.txt\n",
+                ],
+                "first"
+            )
+        );
+        assert_eq!(
+            records,
+            [format!(
+                "{}:7: WARNING: download file not readable: {} [download.not_readable]",
+                srcdir.join("index.rst").display(),
+                srcdir.join("ta.txt").display()
+            )]
+        );
+
+        let (body, records, _) = read_in_project(
+            &format!("Index\n=====\n\n{index}   :type a: :download:`f.txt`\n"),
+            &[("f.txt", "f\n")],
+        );
+        assert_eq!(
+            body,
+            typed_param_tree(
+                "a",
+                &[
+                    "                                <download_reference filename=\"8a7cbf1fec08be06692c97095048ab68/f.txt\" refdoc=\"index\" refdomain=\"\" refexplicit=\"0\" reftarget=\"f.txt\" reftype=\"download\" refwarn=\"0\">\n",
+                    "                                    <literal classes=\"xref download\">\n",
+                    "                                        f.txt\n",
+                ],
+                "first"
+            )
+        );
+        assert_eq!(records, Vec::<String>::new());
+    }
+
+    /// [`INLINE_KINDS`], sorted, holds every kind [`is_inline_kind`] keeps
+    /// in a substitution definition, and the five it adds.
+    #[test]
+    fn the_type_field_filter_keeps_every_inline_class() {
+        let added = [
+            "Unknown",
+            "footnotemark",
+            "graphviz",
+            "inheritance_diagram",
+            "math_reference",
+        ];
+        assert!(INLINE_KINDS.windows(2).all(|pair| pair[0] < pair[1]));
+        let shared: Vec<&str> = INLINE_KINDS
+            .into_iter()
+            .filter(|kind| !added.contains(kind))
+            .collect();
+        assert_eq!(shared.len(), 51);
+        assert!(shared.iter().all(|kind| is_inline_kind(kind)));
+        assert!(added.iter().all(|kind| !is_inline_kind(kind)));
+    }
+
+    /// The same for a `manpage`, a `literal` and so `Inline` (probe
+    /// `scratchpad/t17c-fix1/p3_typefield.py`).
+    #[test]
+    fn a_type_field_keeps_a_manpage() {
+        let (body, records, _) = read_in_project(
+            "Index\n=====\n\n.. py:function:: f(b)\n\n   :param b: second\n   \
+             :type b: :manpage:`ls(1)`\n",
+            &[],
+        );
+        assert_eq!(
+            body,
+            typed_param_tree(
+                "b",
+                &[
+                    "                                <manpage classes=\"manpage\" page=\"ls\" path=\"ls(1)\" section=\"1\" xml:space=\"preserve\">\n",
+                    "                                    ls(1)\n",
+                ],
+                "second"
+            )
+        );
+        assert_eq!(records, Vec::<String>::new());
     }
 }
 

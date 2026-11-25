@@ -321,18 +321,20 @@ pub struct BuildConfig {
     /// normalizes it ([`SourceSuffix`]): which files are documents, in the
     /// native subcommand as in sphinx-build mode, the suffix a toctree
     /// entry is stripped of, and the one `doc2path` appends to a name the
-    /// project has no file for. Every file type must be
-    /// `'restructuredtext'`, the one this crate reads
-    /// ([`Self::check_source_suffix`]).
+    /// project has no file for. A document whose file type is not
+    /// `'restructuredtext'`, the one this crate reads, stops the build
+    /// once discovery finds it (`SphinxBuilder::build`).
     pub source_suffix: SourceSuffix,
 
-    /// The `ConfigError` `convert_source_suffix` raises for a `conf.py`
-    /// value it cannot read ([`SourceSuffix::from_conf_value`]): a
-    /// configuration error once the `-D` overrides are in, unless one set
-    /// `source_suffix` ([`Self::check_source_suffix`]). Diagnostic state
-    /// like [`Self::confval_type_mismatches`]: skipped by serde.
+    /// What Sphinx makes of a `conf.py` value it cannot use
+    /// ([`SourceSuffix::from_conf_value`]): a `ConfigError` or a crash,
+    /// raised where Sphinx raises it once the `-D` overrides are in, unless
+    /// one set `source_suffix` ([`Self::check_source_suffix`],
+    /// [`Self::source_suffix_config_crash`],
+    /// [`Self::source_suffix_discovery_crash`]). Diagnostic state like
+    /// [`Self::confval_type_mismatches`]: skipped by serde.
     #[serde(skip)]
-    pub source_suffix_error: Option<String>,
+    pub source_suffix_error: Option<SourceSuffixError>,
 
     /// Type mismatches `check_confval_types` (`config.py:775-847`) will
     /// report — `(key, python type name)` for a key of
@@ -645,23 +647,29 @@ impl SourceSuffix {
     /// not always the order a dict was written in ([`Self::in_order`]).
     ///
     /// Any other value is the `ConfigError` Sphinx raises
-    /// (`config.py:662-667`). An item of a list that is not a string is a
-    /// configuration error too, which names Sphinx's crash: Sphinx keeps
-    /// it as a key and raises `TypeError` when it next tests a file name
-    /// against it, which is not modelled (decision 13).
-    pub fn from_conf_value(value: &serde_json::Value) -> Result<Self, String> {
+    /// (`config.py:662-667`). A list holding an item that is not a string
+    /// is one Sphinx crashes on (decision 13), where [`SourceSuffixError`]
+    /// says.
+    pub fn from_conf_value(value: &serde_json::Value) -> Result<Self, SourceSuffixError> {
         use serde_json::Value;
         let mut entries = Vec::new();
         match value {
             Value::String(suffix) => insert_suffix(&mut entries, suffix, RESTRUCTUREDTEXT),
             Value::Array(items) => {
+                // `dict.fromkeys` hashes every item first, then discovery
+                // tests file names against the keys in order.
+                if let Some(item) = items
+                    .iter()
+                    .find(|item| matches!(item, Value::Array(_) | Value::Object(_)))
+                {
+                    return Err(SourceSuffixError::Unhashable(
+                        crate::python_config::python_type_name(item).to_string(),
+                    ));
+                }
                 for item in items {
                     let Value::String(suffix) = item else {
-                        return Err(format!(
-                            "The config value `source_suffix' lists {}, which is not a \
-                             string: Sphinx 9.1.0 crashes on it (TypeError) as it looks for \
-                             the documents",
-                            python_literal(item)
+                        return Err(SourceSuffixError::NotAString(
+                            crate::python_config::python_type_name(item).to_string(),
                         ));
                     };
                     insert_suffix(&mut entries, suffix, RESTRUCTUREDTEXT);
@@ -685,15 +693,35 @@ impl SourceSuffix {
                 }
             }
             other => {
-                return Err(format!(
+                return Err(SourceSuffixError::Config(format!(
                     "The config value `source_suffix' expects a dictionary, a string, or a \
                      list of strings. Got `{}' instead (type <class '{}'>).",
                     python_literal(other),
                     crate::python_config::python_type_name(other)
-                ))
+                )))
             }
         }
         Ok(SourceSuffix(entries))
+    }
+
+    /// [`Self::from_conf_value`] over the `conf` of an oracle fixture, whose
+    /// generators write every JSON object with its keys sorted
+    /// (`sort_keys=True`): a dict of more than one suffix has lost the order
+    /// Sphinx read it in, and with it the first suffix, so it is refused
+    /// rather than read in an order Sphinx did not see. A string, a list
+    /// and a dict of one suffix read as `conf.py`'s do.
+    pub fn from_fixture_conf(value: &serde_json::Value) -> Result<Self, String> {
+        if let serde_json::Value::Object(map) = value {
+            if map.len() > 1 {
+                return Err(format!(
+                    "a dict of {} suffixes cannot be read from an oracle fixture: its keys are \
+                     sorted, which loses the order Sphinx read them in, and with it the first \
+                     suffix",
+                    map.len()
+                ));
+            }
+        }
+        Self::from_conf_value(value).map_err(|error| error.to_string())
     }
 
     /// The entries in the order `order` names their suffixes: the order a
@@ -733,13 +761,59 @@ impl SourceSuffix {
         (!docname.is_empty()).then(|| docname.to_string())
     }
 
-    /// The first suffix whose file type is not `'restructuredtext'`, and
-    /// that type.
-    pub fn unreadable(&self) -> Option<(&str, &str)> {
+    /// `get_filetype` (`SP/sphinx/util/__init__.py:27-36`) over the path
+    /// of a document's file: the first suffix the path ends with, and its
+    /// file type.
+    pub fn filetype(&self, path: &str) -> Option<(&str, &str)> {
         self.0
             .iter()
-            .find(|(_, filetype)| filetype != RESTRUCTUREDTEXT)
+            .find(|(suffix, _)| path.ends_with(suffix.as_str()))
             .map(|(suffix, filetype)| (suffix.as_str(), filetype.as_str()))
+    }
+
+    /// Whether `filetype` is `'restructuredtext'`, the one file type this
+    /// crate reads.
+    pub fn is_restructuredtext(filetype: &str) -> bool {
+        filetype == RESTRUCTUREDTEXT
+    }
+}
+
+/// A `conf.py` `source_suffix` Sphinx 9.1.0 cannot use, by where it fails
+/// ([`SourceSuffix::from_conf_value`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SourceSuffixError {
+    /// Neither a string, a list (or a tuple) nor a dict: the `ConfigError`
+    /// `convert_source_suffix` raises at `config-inited`
+    /// (`config.py:662-667`; [`BuildConfig::check_source_suffix`]).
+    Config(String),
+    /// A list holding an item Python cannot hash, of the Python type named
+    /// (`list`, `dict`): `dict.fromkeys` raises `TypeError` in
+    /// `convert_source_suffix`, which Sphinx reports as its `config-inited`
+    /// handler's `ExtensionError` (decision 13;
+    /// [`BuildConfig::source_suffix_config_crash`]). A tuple, which Python
+    /// hashes, reads as a list: its JSON form is an array too.
+    Unhashable(String),
+    /// A list holding an item that is no string, of the Python type named
+    /// (`int`, `float`, `bool`, `NoneType`): Sphinx keeps it as a suffix,
+    /// and its discovery raises `TypeError` once it tests a file name
+    /// against it (`Project.path2doc`, decision 13;
+    /// [`BuildConfig::source_suffix_discovery_crash`]).
+    NotAString(String),
+}
+
+impl std::fmt::Display for SourceSuffixError {
+    /// The `ConfigError`'s message, or the `TypeError`'s.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SourceSuffixError::Config(message) => f.write_str(message),
+            SourceSuffixError::Unhashable(type_name) => {
+                write!(f, "unhashable type: '{type_name}'")
+            }
+            SourceSuffixError::NotAString(type_name) => write!(
+                f,
+                "endswith first arg must be str or a tuple of str, not {type_name}"
+            ),
+        }
     }
 }
 
@@ -1315,26 +1389,55 @@ impl BuildConfig {
 
     /// `convert_source_suffix` (`config-inited` @800, `config.py:636-667`)
     /// over the finished configuration, the `-D` overrides in: the
-    /// `ConfigError` it raises for a `conf.py` value it cannot read
-    /// ([`Self::source_suffix_error`]), then this crate's own. A file type
-    /// other than `'restructuredtext'` is one Sphinx reads through the
-    /// parser an extension registers for it (and stops at the first such
-    /// document without one, `Source parser for markdown not registered`),
-    /// and one this crate cannot read at all: a configuration error,
-    /// never a document left out or misread.
+    /// `ConfigError` it raises for a `conf.py` value that is no string,
+    /// list or dict ([`SourceSuffixError::Config`]). A file type other
+    /// than `'restructuredtext'` is no error here: Sphinx fails only as it
+    /// reads a document of that type, and the build stops once discovery
+    /// finds one (`SphinxBuilder::build`).
     pub fn check_source_suffix(&self) -> Result<()> {
-        if let Some(error) = &self.source_suffix_error {
-            anyhow::bail!("{error}");
-        }
-        if let Some((suffix, filetype)) = self.source_suffix.unreadable() {
-            anyhow::bail!(
-                "source_suffix maps {} to the file type {filetype}, which sphinx-ultra cannot \
-                 read: its one parser is reStructuredText's; set -D source_suffix=<suffix> to \
-                 build the documents of one suffix without editing conf.py",
-                crate::utils::py_repr_str(suffix)
-            );
+        if let Some(SourceSuffixError::Config(message)) = &self.source_suffix_error {
+            anyhow::bail!("{message}");
         }
         Ok(())
+    }
+
+    /// The crash `convert_source_suffix` (`config-inited` @800) raises for
+    /// a list holding an item Python cannot hash
+    /// ([`SourceSuffixError::Unhashable`]): `dict.fromkeys`'s `TypeError`,
+    /// which Sphinx's event manager reports as the handler's
+    /// `ExtensionError` (decision 13).
+    pub fn source_suffix_config_crash(&self) -> Option<crate::rst::SphinxCrash> {
+        let Some(error @ SourceSuffixError::Unhashable(_)) = &self.source_suffix_error else {
+            return None;
+        };
+        Some(crate::rst::SphinxCrash::extension_error(
+            "Extension error (sphinx.config)",
+            "convert_source_suffix",
+            "config-inited",
+            &error.to_string(),
+        ))
+    }
+
+    /// The crash Sphinx's discovery raises for a list holding an item that
+    /// is no string ([`SourceSuffixError::NotAString`]): `path2doc` tests
+    /// each file name against the suffixes in order, and the item raises
+    /// `TypeError` for the first name no string before it ends
+    /// (`SP/sphinx/project.py:107-108`, decision 13). With a fresh
+    /// environment Sphinx discovers its documents while it sets its
+    /// application up (`_post_init_env`, `SP/sphinx/application.py:414`),
+    /// after `config-inited` and before `builder-inited`. A project whose
+    /// every file ends with an earlier suffix, `conf.py` kept elsewhere,
+    /// gets past discovery and crashes later in Sphinx, which is not
+    /// modelled: the build stops here.
+    pub fn source_suffix_discovery_crash(&self) -> Option<crate::rst::SphinxCrash> {
+        let Some(error @ SourceSuffixError::NotAString(_)) = &self.source_suffix_error else {
+            return None;
+        };
+        Some(crate::rst::SphinxCrash::python(
+            "TypeError",
+            error.to_string(),
+            crate::rst::LogLocation::None,
+        ))
     }
 
     /// Record that `key` (one of [`CONFVAL_TYPE_CHECKED_KEYS`]) received a
@@ -2862,10 +2965,15 @@ output:
     /// value takes: a string is one suffix, a list or a tuple one per
     /// distinct item, a dict its entries, a false file type reading as
     /// `'restructuredtext'` (`get_filetype`); anything else is its
-    /// `ConfigError`. Probed on Sphinx 9.1.0 (`scratchpad/t17c/p1_suffix.py`:
-    /// `str_txt`, `list_txt`, `tuple`, `dict_none`, `dict_empty_filetype`,
-    /// `dict_false_filetype`, `dict_md`, `dict_int_filetype`, `int_value`,
-    /// `empty_list`).
+    /// `ConfigError`. A list item Python cannot hash is `dict.fromkeys`'s
+    /// `TypeError`, and one that is no string the `TypeError` discovery
+    /// raises, whichever comes first in the list. Probed on Sphinx 9.1.0
+    /// (`scratchpad/t17c/p1_suffix.py`: `str_txt`, `list_txt`, `tuple`,
+    /// `dict_none`, `dict_empty_filetype`, `dict_false_filetype`,
+    /// `dict_md`, `dict_int_filetype`, `int_value`, `empty_list`,
+    /// `list_nonstr`; `scratchpad/t17c-fix1/p5_nonstr.py`: `int_item`,
+    /// `int_item_first`, `none_item`, `float_item`, `bool_item`,
+    /// `list_item`, `dict_item`).
     #[test]
     fn source_suffix_normalizes_like_convert_source_suffix() {
         use serde_json::json;
@@ -2901,17 +3009,88 @@ output:
         ] {
             assert_eq!(
                 error(value),
-                format!(
+                SourceSuffixError::Config(format!(
                     "The config value `source_suffix' expects a dictionary, a string, or a \
                      list of strings. Got `{shown}' instead (type <class '{type_name}'>)."
-                )
+                ))
             );
         }
+        for (value, type_name) in [
+            (json!([".rst", 1]), "int"),
+            (json!([1, ".rst"]), "int"),
+            (json!([".rst", null]), "NoneType"),
+            (json!([".rst", 1.5]), "float"),
+            (json!([".rst", true, 1]), "bool"),
+        ] {
+            let error = error(value);
+            assert_eq!(error, SourceSuffixError::NotAString(type_name.to_string()));
+            assert_eq!(
+                error.to_string(),
+                format!("endswith first arg must be str or a tuple of str, not {type_name}")
+            );
+        }
+        for (value, type_name) in [
+            (json!([".rst", [".txt"]]), "list"),
+            (json!([".rst", 1, {"a": 1}]), "dict"),
+        ] {
+            let error = error(value);
+            assert_eq!(error, SourceSuffixError::Unhashable(type_name.to_string()));
+            assert_eq!(error.to_string(), format!("unhashable type: '{type_name}'"));
+        }
+    }
+
+    /// Where each `source_suffix` Sphinx cannot use stops the build: the
+    /// `ConfigError` and an unhashable item's crash at `config-inited`, an
+    /// item that is no string as discovery tests file names against it
+    /// (decision 13), each named as Sphinx 9.1.0's report names it (probe
+    /// `scratchpad/t17c-fix1/p5_nonstr.py`).
+    #[test]
+    fn a_source_suffix_sphinx_cannot_use_stops_where_sphinx_does() {
+        let config = |error: SourceSuffixError| BuildConfig {
+            source_suffix_error: Some(error),
+            ..BuildConfig::default()
+        };
+        let reports = |config: &BuildConfig| {
+            (
+                config.check_source_suffix().err().map(|e| e.to_string()),
+                config.source_suffix_config_crash().map(|c| c.to_string()),
+                config.source_suffix_discovery_crash().map(|c| c.report()),
+            )
+        };
         assert_eq!(
-            error(json!([".rst", 1])),
-            "The config value `source_suffix' lists 1, which is not a string: Sphinx 9.1.0 \
-             crashes on it (TypeError) as it looks for the documents"
+            reports(&config(SourceSuffixError::Config("bad".to_string()))),
+            (Some("bad".to_string()), None, None)
         );
+        assert_eq!(
+            reports(&config(SourceSuffixError::Unhashable("list".to_string()))),
+            (
+                None,
+                Some(
+                    "sphinx.errors.ExtensionError: Handler <function convert_source_suffix at \
+                     0x...> for event 'config-inited' threw an exception (exception: \
+                     unhashable type: 'list')"
+                        .to_string()
+                ),
+                None
+            )
+        );
+        assert_eq!(
+            reports(&config(SourceSuffixError::NotAString("int".to_string()))),
+            (
+                None,
+                None,
+                Some(
+                    "\n\n    TypeError: endswith first arg must be str or a tuple of str, not int\n\n\
+                     Sphinx 9.1.0 crashes on this input; sphinx-ultra stops the build as it \
+                     does.\n"
+                        .to_string()
+                )
+            )
+        );
+        // `-D source_suffix` replaces the value, and with it what it fails.
+        let mut overridden = config(SourceSuffixError::NotAString("int".to_string()));
+        overridden.apply_override("source_suffix", ".rst").unwrap();
+        assert_eq!(reports(&overridden), (None, None, None));
     }
 
     /// The order of the suffixes is data: the first is what `doc2path`
@@ -2957,13 +3136,13 @@ output:
     /// all, as Sphinx's `convert_overrides` passes an `Any` option's text
     /// (`config.py:354-358`), whatever `conf.py` said: a value Sphinx could
     /// not read no longer stands, nor does a file type this crate cannot
-    /// read, the configuration error [`BuildConfig::check_source_suffix`]
-    /// makes of it. Probed on Sphinx 9.1.0 (`scratchpad/t17c/p1_suffix.py`,
-    /// `D_rst_txt`, `dict_md`, `dict_md_D`).
+    /// read, which is no error before discovery finds a document of it.
+    /// Probed on Sphinx 9.1.0 (`scratchpad/t17c/p1_suffix.py`, `D_rst_txt`,
+    /// `dict_md`, `dict_md_D`, `dict_md_no_md_files`).
     #[test]
     fn a_source_suffix_override_is_one_suffix_and_replaces_conf_py() {
         let mut config = BuildConfig {
-            source_suffix_error: Some("unreadable".to_string()),
+            source_suffix_error: Some(SourceSuffixError::Config("unreadable".to_string())),
             ..BuildConfig::default()
         };
         assert_eq!(
@@ -2992,14 +3171,18 @@ output:
             .in_order(&[".rst".into(), ".md".into()]),
             ..BuildConfig::default()
         };
-        assert_eq!(
-            config.check_source_suffix().unwrap_err().to_string(),
-            "source_suffix maps '.md' to the file type markdown, which sphinx-ultra cannot \
-             read: its one parser is reStructuredText's; set -D source_suffix=<suffix> to build \
-             the documents of one suffix without editing conf.py"
-        );
-        config.apply_override("source_suffix", ".rst").unwrap();
         assert!(config.check_source_suffix().is_ok());
+        assert_eq!(
+            config.source_suffix.filetype("/src/readme.md"),
+            Some((".md", "markdown"))
+        );
+        assert_eq!(
+            config.source_suffix.filetype("/src/index.rst"),
+            Some((".rst", RESTRUCTUREDTEXT))
+        );
+        assert_eq!(config.source_suffix.filetype("/src/conf.py"), None);
+        config.apply_override("source_suffix", ".rst").unwrap();
+        assert_eq!(config.source_suffix.filetype("/src/readme.md"), None);
     }
 
     /// The suffixes keep their order wherever the configuration goes: an
@@ -3013,7 +3196,7 @@ output:
         let mut config = BuildConfig {
             source_suffix: SourceSuffix::from_conf_value(&serde_json::json!([".txt", ".rst"]))
                 .unwrap(),
-            source_suffix_error: Some("unreadable".to_string()),
+            source_suffix_error: Some(SourceSuffixError::NotAString("int".to_string())),
             ..BuildConfig::default()
         };
         assert!(config.apply_override("project", "P").unwrap().is_none());
@@ -3021,7 +3204,10 @@ output:
             config.source_suffix.suffixes().collect::<Vec<_>>(),
             [".txt", ".rst"]
         );
-        assert_eq!(config.source_suffix_error.as_deref(), Some("unreadable"));
+        assert_eq!(
+            config.source_suffix_error,
+            Some(SourceSuffixError::NotAString("int".to_string()))
+        );
         assert_eq!(
             serde_json::to_value(&config.source_suffix).unwrap(),
             serde_json::json!([[".txt", "restructuredtext"], [".rst", "restructuredtext"]])
