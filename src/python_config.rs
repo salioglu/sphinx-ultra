@@ -1599,7 +1599,8 @@ enum Bound<'s> {
 /// an annotation or a lambda's parameter), `del`'s, a `for`'s, a `with`'s
 /// or an `except`'s target, an assignment expression, an import's names, a
 /// `def`'s or a `class`'s name, and a `setattr` call whose name is a string
-/// literal, not a method of that name. Each target that binds a key is a
+/// literal: the builtin, by its name or as `builtins.setattr`, not a method
+/// of that name ([`setattr_keys`]). Each target that binds a key is a
 /// binding of its own: a statement can bind the module's name and an
 /// attribute of that name both. A star import,
 /// `exec(...)`, and a key that a subscript or a `setattr` call names
@@ -1909,7 +1910,13 @@ fn item_binding<'s>(
 /// `t17b-fix3/specs/setattr_setup*`), and this reader cannot tell another
 /// object from Sphinx's configuration. A `setattr` after a `.` is a
 /// method of that name, no call of the builtin
-/// (`t17b-rr3/specs/dot_setattr*`).
+/// (`t17b-rr3/specs/dot_setattr*`), unless the object before the `.` is
+/// the bare name `builtins` ([`ends_in_bare_builtins`]):
+/// `builtins.setattr` is the builtin, reached through its module (scratch
+/// `t19b1-review/specs/builtins_setattr.json`,
+/// `t19b1-review/specs2/builtins_setattr_bytes.json`). The builtin
+/// reached otherwise, through an alias of that module, `(builtins)` or
+/// `getattr(builtins, 'setattr')`, is not seen.
 fn setattr_keys(text: &str) -> Vec<&'static str> {
     let bytes = text.as_bytes();
     let mut keys = Vec::new();
@@ -1925,7 +1932,10 @@ fn setattr_keys(text: &str) -> Vec<&'static str> {
                 while i < bytes.len() && is_identifier_byte(bytes[i]) {
                     i += 1;
                 }
-                let method = text[..start].trim_end().ends_with('.');
+                let method = text[..start]
+                    .trim_end()
+                    .strip_suffix('.')
+                    .is_some_and(|object| !ends_in_bare_builtins(object));
                 if &text[start..i] != "setattr" || method {
                     continue;
                 }
@@ -1943,6 +1953,19 @@ fn setattr_keys(text: &str) -> Vec<&'static str> {
         i += 1;
     }
     keys
+}
+
+/// Whether `object`, the text before an attribute's `.`, ends in the bare
+/// name `builtins`, spaced as it may be: the whole name, not the end of a
+/// longer one, and no attribute itself (`k.builtins`).
+fn ends_in_bare_builtins(object: &str) -> bool {
+    object
+        .trim_end()
+        .strip_suffix("builtins")
+        .is_some_and(|before| {
+            !before.bytes().next_back().is_some_and(is_identifier_byte)
+                && !before.trim_end().ends_with('.')
+        })
 }
 
 /// The arguments, trimmed, of the call whose `(` is at `open` in `text`:
@@ -4978,7 +5001,13 @@ e = 'esc\n'
     /// method's included, runs when something calls it, after every
     /// top-level statement. A method named `setattr` is no call of the
     /// builtin (`t17b-rr3/specs/dot_setattr*`,
-    /// `t19b1/specs/dot_setattr_spaced.json`).
+    /// `t19b1/specs/dot_setattr_spaced.json`), even when its object is an
+    /// attribute named `builtins` or a longer name ending in it
+    /// (`t19b1/fix2/specs/builtins_attr_setattr.json`); `setattr` of the
+    /// bare name `builtins` is the builtin, reached through its module
+    /// (`t19b1-review/specs/builtins_setattr.json`;
+    /// `t19b1/fix2/specs/builtins_setattr_D.json`,
+    /// `builtins_setattr_spaced.json`).
     #[test]
     fn items_and_setattr_calls_bind_as_sphinx_reads_them() {
         /// The bindings left as `(key, line, reason, overridable)`, or what
@@ -4987,7 +5016,7 @@ e = 'esc\n'
             Result<Option<&'static str>, &'static [(&'static str, usize, &'static str, bool)]>;
         const ITEM: &str = "an assignment to an item of that name";
         const SETATTR: &str = "a setattr call with that name";
-        let rows: [(&str, &str, Expected); 23] = [
+        let rows: [(&str, &str, Expected); 26] = [
             (
                 "item_setup",
                 "def setup(app):\n    app.config['rst_prolog'] = 'b'\n",
@@ -5087,6 +5116,25 @@ e = 'esc\n'
                 "a method named setattr, spaced",
                 "class K:\n    def setattr(self, *a): pass\nk = K()\n\
                  k . setattr(k, 'rst_prolog', 1)\nrst_prolog = 'a'\n",
+                Ok(Some("a")),
+            ),
+            (
+                "builtins_setattr",
+                "import builtins\ndef setup(app):\n    \
+                 builtins.setattr(app.config, 'rst_prolog', 'b')\n",
+                Err(&[("rst_prolog", 3, SETATTR, false)]),
+            ),
+            (
+                "builtins_setattr, spaced",
+                "import builtins\ndef setup(app):\n    \
+                 builtins . setattr(app.config, 'rst_prolog', 'b')\n",
+                Err(&[("rst_prolog", 3, SETATTR, false)]),
+            ),
+            (
+                "a method of an attribute named builtins, or of a longer name",
+                "class K:\n    def setattr(self, *a): pass\nk = K()\nk.builtins = k\n\
+                 mybuiltins = k\nk.builtins.setattr(k, 'rst_prolog', 1)\n\
+                 mybuiltins.setattr(k, 'rst_prolog', 1)\nrst_prolog = 'a'\n",
                 Ok(Some("a")),
             ),
             (
