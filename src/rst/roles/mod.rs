@@ -505,19 +505,20 @@ impl SphinxCrash {
     }
 
     /// The crash, its location rendered the way a warning's is, against
-    /// the document's source table and the project's source directory
-    /// ([`LogLocation::render`]), unless it was rendered where the crash
-    /// was raised.
+    /// the document's source table, the project's source directory and
+    /// `source_suffix[0]` ([`LogLocation::render`]), unless it was rendered
+    /// where the crash was raised.
     pub fn located(
         self,
         sources: &[String],
         srcdir: &std::path::Path,
         docname: &str,
+        first_suffix: &str,
     ) -> SphinxCrash {
         if self.rendered_location.is_some() {
             return self;
         }
-        let location = self.location.render(sources, srcdir, docname);
+        let location = self.location.render(sources, srcdir, docname, first_suffix);
         self.rendered_at(location)
     }
 

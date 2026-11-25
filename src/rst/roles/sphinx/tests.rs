@@ -4,9 +4,10 @@
 //! (`keep_warnings` on, smart quotes off), its expected value the body of
 //! the post-read doctree Sphinx's read gives the same line
 //! (`tools/gen_sphinx_fixture.py`'s harness; the report's pformat blocks).
-//! The `download` rows are the role's half: no file they name exists, so
-//! the download collector (T17c) adds nothing to Sphinx's tree either,
-//! except the `refuri` it gives a URL target (see that row).
+//! The `download` rows are the role's half, read before stage M, where
+//! Sphinx's `DownloadFileCollector` (880) gives a URL target its `refuri`
+//! (see that row); no file they name exists, so it adds nothing else
+//! ([`crate::env::collectors::downloads`] pins the collector's half).
 
 use crate::rst::{parse_rst_full, LogLocation, ParseLogWarning, ParseOptions, ReadConfig};
 use crate::transforms::test_support::{harness_settings, index_rst, DOC};
@@ -54,6 +55,17 @@ fn mismatches(rows: &[(&str, &str)], config: &ReadConfig) -> Vec<String> {
                 .then(|| format!("--- {rst:?}\n--- sphinx 9.1.0\n{expected}--- ours\n{body}"))
         })
         .collect()
+}
+
+/// The body of our tree of `rst` once stage R has read it, the role's
+/// output before stage M's collectors (880) see it.
+fn read_before_stage_m(rst: &str) -> String {
+    let read = crate::read::read_document(rst, &index_rst(), &harness_settings(true));
+    let pformat = read.doctree().root.pformat();
+    pformat
+        .strip_prefix(DOC)
+        .unwrap_or_else(|| panic!("{rst:?}: unexpected document line:\n{pformat}"))
+        .to_string()
 }
 
 /// Asserts every row of `rows` reads as Sphinx's under `config`.
@@ -259,11 +271,10 @@ const DOWNLOAD: &[(&str, &str)] = &[
      "    <paragraph>\n        <literal classes=\"xref download\">\n            f.txt\n"),
     (":download:`f  .txt`\n",
      "    <paragraph>\n        <download_reference refdoc=\"index\" refdomain=\"\" refexplicit=\"0\" reftarget=\"f .txt\" reftype=\"download\" refwarn=\"0\">\n            <literal classes=\"xref download\">\n                f  .txt\n"),
-    // P02 `r_download`, the role's half only. Sphinx's tree also has
-    // `refuri="https://example.com/x.zip"`, which its
-    // DownloadFileCollector adds to a URL target at 880 (Task 17c). This
-    // read does not run that collector yet, so the row leaves the
-    // attribute out; T17c adds it here.
+    // P02 `r_download`, the role's half only. Sphinx's post-read tree also
+    // has `refuri="https://example.com/x.zip"`, which its
+    // DownloadFileCollector adds to a URL target at 880, in stage M, after
+    // the read these rows are compared at ([`read_before_stage_m`]).
     (":download:`https://example.com/x.zip`\n",
      "    <paragraph>\n        <download_reference refdoc=\"index\" refdomain=\"\" refexplicit=\"0\" reftarget=\"https://example.com/x.zip\" reftype=\"download\" refwarn=\"0\">\n            <literal classes=\"xref download\">\n                https://example.com/x.zip\n"),
 ];
@@ -550,10 +561,18 @@ fn manpage_matches_sphinx() {
 
 /// [RC §3.8], the role's half: a `download_reference` registered without
 /// a domain, its target's whitespace collapsed, `!` the inner literal
-/// alone.
+/// alone, before stage M ([`read_before_stage_m`]).
 #[test]
 fn download_role_matches_sphinx() {
-    check(DOWNLOAD, ReadConfig::default());
+    let mismatches: Vec<String> = DOWNLOAD
+        .iter()
+        .filter_map(|(rst, expected)| {
+            let body = read_before_stage_m(rst);
+            (body != *expected)
+                .then(|| format!("--- {rst:?}\n--- sphinx 9.1.0\n{expected}--- ours\n{body}"))
+        })
+        .collect();
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
 }
 
 /// [RC §3.9]: P02 and P11's `:index:` lines.

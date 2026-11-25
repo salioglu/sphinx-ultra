@@ -47,7 +47,7 @@ use crate::doctree::messages;
 use crate::doctree::pending::PendingTransform;
 use crate::doctree::{kinds, AttrValue, Doctree, Node, Span};
 use crate::env::citation as env_citation;
-use crate::env::collectors::images;
+use crate::env::collectors::{downloads, images};
 use crate::env::dependencies as env_dependencies;
 use crate::env::genindex as env_genindex;
 use crate::env::math as env_math;
@@ -594,7 +594,7 @@ impl TransformCx<'_> {
     /// there (not the reporter's `source:0`); `<unknown>:line` with a line
     /// and no source; and nowhere, a bare record, with neither.
     pub fn warn(&mut self, node: TxId, message: String, category: Category) {
-        let location = node_location(self.tree, node, self.state, self.srcdir, self.docname);
+        let location = node_location(self.tree, node, self.state, self.srcdir);
         self.warn_at(location, message, category);
     }
 
@@ -626,7 +626,7 @@ impl TransformCx<'_> {
     /// transform, which returns at once, as Sphinx's does
     /// ([`DocumentState::raise`]).
     pub fn crash(&mut self, crash: crate::rst::SphinxCrash, node: TxId) {
-        let location = node_location(self.tree, node, self.state, self.srcdir, self.docname);
+        let location = node_location(self.tree, node, self.state, self.srcdir);
         self.state.raise(
             crash.rendered_at(location),
             self.key.priority,
@@ -668,21 +668,20 @@ impl TransformCx<'_> {
 /// Sphinx's `get_node_location(node)` (`SP/sphinx/util/logging.py:554-562`)
 /// for the node at `node`, the location a `location=node` warning prints:
 /// docutils' location for it ([`location::get_source_line`]), as
-/// `abspath(source):line` ([`LogLocation::Node`]), or `abspath(source):`
-/// when the line is missing or 0, which is falsy there; `<unknown>:line`
-/// with a line and no source; and none with neither.
+/// `abspath(source):line` ([`LogLocation::render_node`]), or
+/// `abspath(source):` when the line is missing or 0, which is falsy there;
+/// `<unknown>:line` with a line and no source; and none with neither.
 pub(crate) fn node_location(
     tree: &TxTree,
     node: TxId,
     state: &DocumentState,
     srcdir: &Path,
-    docname: &str,
 ) -> Location {
     let loc = location::get_source_line(tree, node, state);
     let line = loc.line.unwrap_or(0);
     match loc.source {
         Some(SourceRef::Table(source)) => {
-            LogLocation::Node { source, line }.render(tree.sources(), srcdir, docname)
+            LogLocation::render_node(tree.sources(), srcdir, source, line)
         }
         None if line != 0 => Location::Verbatim(format!("<unknown>:{line}")),
         None => Location::None,
@@ -904,7 +903,7 @@ pub fn run_merge_transforms(
                 );
             }
             TransformId::SphinxDomains => {
-                let label_locations = duplicate_label_locations(&mut doc, env, docname, inputs);
+                let label_locations = duplicate_label_locations(&mut doc, env, inputs);
                 let output = doc.output();
                 output.state.ids.set_phase(id.python_name().to_string());
                 sphinx_domains(output, env, docname, inputs, &label_locations, &mut records);
@@ -949,7 +948,6 @@ const PARSE: TransformKey = TransformKey::at(0, 0);
 fn duplicate_label_locations(
     doc: &mut MergeDocument<'_>,
     env: &BuildEnvironment,
-    docname: &str,
     inputs: &MergeInputs<'_>,
 ) -> HashMap<String, Location> {
     let ids: Vec<String> = doc
@@ -977,7 +975,7 @@ fn duplicate_label_locations(
                 node = real;
             }
         }
-        let location = node_location(tree, node, state, inputs.source_dir, docname);
+        let location = node_location(tree, node, state, inputs.source_dir);
         locations.insert(id, location);
     }
     locations
@@ -1042,7 +1040,8 @@ impl MergeDocument<'_> {
 ///    logs its records there, keyed `(880, 30, seq)`; a document without
 ///    an `image` node, which leaves it nothing to do, is not converted for
 ///    it;
-/// 3. DownloadFile (T17c);
+/// 3. DownloadFile, over the arena too ([`downloads::process_doc`]), keyed
+///    the same way, for a document with a `download_reference` node;
 /// 4. Metadata, which pops the docinfo out of the tree
 ///    ([`env_metadata::process_doc`]), so that the domains (850) and the
 ///    collectors before it see the docinfo and the two after it do not;
@@ -1066,9 +1065,21 @@ fn doctree_read_event(
         &output.registry.dependencies,
     );
 
-    if has_image(&output.doctree.root) {
+    // Neither collector adds or removes the other's nodes.
+    let with_images = has_kind(&output.doctree.root, kinds::IMAGE);
+    let with_downloads = has_kind(&output.doctree.root, kinds::DOWNLOAD_REFERENCE);
+    for (run, process_doc) in [
+        (
+            with_images,
+            images::process_doc as fn(&mut TransformCx<'_>, &mut BuildEnvironment),
+        ),
+        (with_downloads, downloads::process_doc),
+    ] {
+        if !run {
+            continue;
+        }
         let (tree, state) = doc.arena();
-        images::process_doc(
+        process_doc(
             &mut TransformCx {
                 tree,
                 state,
@@ -1126,9 +1137,9 @@ fn doctree_read_event(
     }
 }
 
-/// Whether the tree under `node` holds an `image` node.
-fn has_image(node: &Node) -> bool {
-    node.kind == kinds::IMAGE || node.children.iter().any(has_image)
+/// Whether the tree under `node` holds a node of `kind`.
+fn has_kind(node: &Node, kind: &str) -> bool {
+    node.kind == kind || node.children.iter().any(|child| has_kind(child, kind))
 }
 
 /// 850-040 `SphinxDomains`: the domains' `process_doc`, in the order

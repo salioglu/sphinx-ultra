@@ -7967,6 +7967,348 @@
         "index": ":dedication: For :red:`you` and `x^2`.\n\nIndex\n=====\n\n.. toctree::\n\n   a\n   b\n\nIndex :red:`i` and `i^2`.\n"
       },
       "name": "rst_prolog_first_read_fields"
+    },
+    {
+      "conf": {
+        "smartquotes": false
+      },
+      "data_files": {
+        "notes.txt": "Notes\n=====\n\nPlain *text* file.\n",
+        "readme.md": "# Readme\n\nSome *markdown*.\n"
+      },
+      "expect": {
+        "dependencies": {},
+        "files_to_rebuild": {},
+        "genindex": [],
+        "included": {},
+        "index_entries": {
+          "index": []
+        },
+        "py_modindex": {
+          "collapse": false,
+          "groups": []
+        },
+        "py_modules": [],
+        "py_objects": [],
+        "relations": {
+          "index": [
+            null,
+            null,
+            null
+          ]
+        },
+        "resolved_pformat": {
+          "index": "<document source=\"<project>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"index\" names=\"index\">\n        <title>\n            Index\n        <compound classes=\"toctree-wrapper\">\n        <paragraph>\n            <inline classes=\"xref std std-doc\">\n                notes\n             \n            <inline classes=\"xref std std-doc\">\n                readme\n"
+        },
+        "std": {
+          "anonlabels": {
+            "genindex": [
+              "genindex",
+              ""
+            ],
+            "modindex": [
+              "py-modindex",
+              ""
+            ],
+            "py-modindex": [
+              "py-modindex",
+              ""
+            ],
+            "search": [
+              "search",
+              ""
+            ]
+          },
+          "labels": {
+            "genindex": [
+              "genindex",
+              "",
+              "Index"
+            ],
+            "modindex": [
+              "py-modindex",
+              "",
+              "Module Index"
+            ],
+            "py-modindex": [
+              "py-modindex",
+              "",
+              "Python Module Index"
+            ],
+            "search": [
+              "search",
+              "",
+              "Search Page"
+            ]
+          },
+          "objects": [],
+          "progoptions": [],
+          "terms": {}
+        },
+        "toc_fignumbers": {},
+        "toc_num_entries": {
+          "index": 1
+        },
+        "toc_secnumbers": {},
+        "tocs_pformat": {
+          "index": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"index\">\n                Index\n        <bullet_list>\n            <toctree caption=\"True\" entries=\"\" glob=\"0\" hidden=\"0\" includefiles=\"\" includehidden=\"0\" maxdepth=\"-1\" numbered=\"0\" parent=\"index\" rawentries=\"\" titlesonly=\"0\">\n"
+        },
+        "toctree_includes": {
+          "index": []
+        },
+        "warnings": [
+          "<project>/index.rst:4: WARNING: toctree contains reference to nonexisting document 'notes' [toc.not_readable]",
+          "<project>/index.rst:4: WARNING: toctree contains reference to nonexisting document 'readme' [toc.not_readable]",
+          "<project>/index.rst:4: WARNING: toctree contains reference to nonexisting document 'notes.txt' [toc.not_readable]",
+          "<project>/index.rst:10: WARNING: unknown document: 'notes' [ref.doc]",
+          "<project>/index.rst:10: WARNING: unknown document: 'readme' [ref.doc]"
+        ]
+      },
+      "files": {
+        "index": "Index\n=====\n\n.. toctree::\n\n   notes\n   readme\n   notes.txt\n\n:doc:`notes` :doc:`readme`\n"
+      },
+      "name": "source_suffix_default"
+    },
+    {
+      "conf": {
+        "smartquotes": false,
+        "source_suffix": [
+          ".rst",
+          ".txt"
+        ]
+      },
+      "data_files": {
+        "notes.txt": "Notes\n=====\n\nPlain *text* file.\n",
+        "readme.md": "# Readme\n\nSome *markdown*.\n"
+      },
+      "expect": {
+        "dependencies": {},
+        "files_to_rebuild": {
+          "notes": [
+            "index"
+          ]
+        },
+        "genindex": [],
+        "included": {},
+        "index_entries": {
+          "index": [],
+          "notes": []
+        },
+        "py_modindex": {
+          "collapse": false,
+          "groups": []
+        },
+        "py_modules": [],
+        "py_objects": [],
+        "relations": {
+          "index": [
+            null,
+            null,
+            "notes"
+          ],
+          "notes": [
+            "index",
+            "index",
+            null
+          ]
+        },
+        "resolved_pformat": {
+          "index": "<document source=\"<project>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"index\" names=\"index\">\n        <title>\n            Index\n        <compound classes=\"toctree-wrapper\">\n            <compact_paragraph toctree=\"1\">\n                <bullet_list>\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                Notes\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                Notes\n        <paragraph>\n            <reference internal=\"1\" refuri=\"\">\n                <inline classes=\"doc\">\n                    Notes\n             \n            <inline classes=\"xref std std-doc\">\n                readme\n",
+          "notes": "<document source=\"<project>/notes.txt\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"notes\" names=\"notes\">\n        <title>\n            Notes\n        <paragraph>\n            Plain \n            <emphasis>\n                text\n             file.\n"
+        },
+        "std": {
+          "anonlabels": {
+            "genindex": [
+              "genindex",
+              ""
+            ],
+            "modindex": [
+              "py-modindex",
+              ""
+            ],
+            "py-modindex": [
+              "py-modindex",
+              ""
+            ],
+            "search": [
+              "search",
+              ""
+            ]
+          },
+          "labels": {
+            "genindex": [
+              "genindex",
+              "",
+              "Index"
+            ],
+            "modindex": [
+              "py-modindex",
+              "",
+              "Module Index"
+            ],
+            "py-modindex": [
+              "py-modindex",
+              "",
+              "Python Module Index"
+            ],
+            "search": [
+              "search",
+              "",
+              "Search Page"
+            ]
+          },
+          "objects": [],
+          "progoptions": [],
+          "terms": {}
+        },
+        "toc_fignumbers": {},
+        "toc_num_entries": {
+          "index": 1,
+          "notes": 1
+        },
+        "toc_secnumbers": {},
+        "tocs_pformat": {
+          "index": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"index\">\n                Index\n        <bullet_list>\n            <toctree caption=\"True\" entries=\"(None,\\ 'notes') (None,\\ 'notes')\" glob=\"0\" hidden=\"0\" includefiles=\"notes notes\" includehidden=\"0\" maxdepth=\"-1\" numbered=\"0\" parent=\"index\" rawentries=\"\" titlesonly=\"0\">\n",
+          "notes": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"notes\">\n                Notes\n"
+        },
+        "toctree_includes": {
+          "index": [
+            "notes",
+            "notes"
+          ]
+        },
+        "warnings": [
+          "<project>/index.rst:4: WARNING: toctree contains reference to nonexisting document 'readme' [toc.not_readable]",
+          "<project>/index.rst:4: WARNING: duplicated entry found in toctree: notes [toc.duplicate_entry]",
+          "<project>/index.rst:10: WARNING: unknown document: 'readme' [ref.doc]"
+        ]
+      },
+      "files": {
+        "index": "Index\n=====\n\n.. toctree::\n\n   notes\n   readme\n   notes.txt\n\n:doc:`notes` :doc:`readme`\n"
+      },
+      "name": "source_suffix_txt"
+    },
+    {
+      "conf": {
+        "smartquotes": false
+      },
+      "data_files": {
+        "f.txt": "f\n",
+        "sub/g.txt": "g\n"
+      },
+      "expect": {
+        "dependencies": {
+          "a": [
+            "<project>/f .txt",
+            "<project>/f.txt",
+            "<project>/missing.txt",
+            "<project>/sub/g.txt"
+          ]
+        },
+        "files_to_rebuild": {
+          "a": [
+            "index"
+          ]
+        },
+        "genindex": [],
+        "included": {},
+        "index_entries": {
+          "a": [],
+          "index": []
+        },
+        "py_modindex": {
+          "collapse": false,
+          "groups": []
+        },
+        "py_modules": [],
+        "py_objects": [],
+        "relations": {
+          "a": [
+            "index",
+            "index",
+            null
+          ],
+          "index": [
+            null,
+            null,
+            "a"
+          ]
+        },
+        "resolved_pformat": {
+          "a": "<document source=\"<project>/a.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <download_reference filename=\"8a7cbf1fec08be06692c97095048ab68/f.txt\" refdoc=\"a\" refdomain=\"\" refexplicit=\"0\" reftarget=\"f.txt\" reftype=\"download\" refwarn=\"0\">\n            <literal classes=\"xref download\">\n                f.txt\n    <paragraph>\n        <download_reference filename=\"8a7cbf1fec08be06692c97095048ab68/f.txt\" refdoc=\"a\" refdomain=\"\" refexplicit=\"1\" reftarget=\"f.txt\" reftype=\"download\" refwarn=\"0\">\n            <literal classes=\"xref download\">\n                the file\n    <paragraph>\n        <download_reference filename=\"feae585b0a17a20e9e41978e85bfc62f/g.txt\" refdoc=\"a\" refdomain=\"\" refexplicit=\"0\" reftarget=\"sub/g.txt\" reftype=\"download\" refwarn=\"0\">\n            <literal classes=\"xref download\">\n                sub/g.txt\n    <paragraph>\n        <download_reference filename=\"8a7cbf1fec08be06692c97095048ab68/f.txt\" refdoc=\"a\" refdomain=\"\" refexplicit=\"0\" reftarget=\"/f.txt\" reftype=\"download\" refwarn=\"0\">\n            <literal classes=\"xref download\">\n                /f.txt\n    <paragraph>\n        <download_reference refdoc=\"a\" refdomain=\"\" refexplicit=\"0\" reftarget=\"missing.txt\" reftype=\"download\" refwarn=\"0\">\n            <literal classes=\"xref download\">\n                missing.txt\n    <paragraph>\n        <download_reference refdoc=\"a\" refdomain=\"\" refexplicit=\"0\" reftarget=\"https://example.com/x.zip\" reftype=\"download\" refuri=\"https://example.com/x.zip\" refwarn=\"0\">\n            <literal classes=\"xref download\">\n                https://example.com/x.zip\n    <paragraph>\n        <literal classes=\"xref download\">\n            f.txt\n    <paragraph>\n        <download_reference refdoc=\"a\" refdomain=\"\" refexplicit=\"0\" reftarget=\"f .txt\" reftype=\"download\" refwarn=\"0\">\n            <literal classes=\"xref download\">\n                f  .txt\n",
+          "index": "<document source=\"<project>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"index\" names=\"index\">\n        <title>\n            Index\n        <compound classes=\"toctree-wrapper\">\n"
+        },
+        "std": {
+          "anonlabels": {
+            "genindex": [
+              "genindex",
+              ""
+            ],
+            "modindex": [
+              "py-modindex",
+              ""
+            ],
+            "py-modindex": [
+              "py-modindex",
+              ""
+            ],
+            "search": [
+              "search",
+              ""
+            ]
+          },
+          "labels": {
+            "genindex": [
+              "genindex",
+              "",
+              "Index"
+            ],
+            "modindex": [
+              "py-modindex",
+              "",
+              "Module Index"
+            ],
+            "py-modindex": [
+              "py-modindex",
+              "",
+              "Python Module Index"
+            ],
+            "search": [
+              "search",
+              "",
+              "Search Page"
+            ]
+          },
+          "objects": [],
+          "progoptions": [],
+          "terms": {}
+        },
+        "toc_fignumbers": {},
+        "toc_num_entries": {
+          "a": 0,
+          "index": 1
+        },
+        "toc_secnumbers": {},
+        "tocs_pformat": {
+          "a": "<bullet_list>\n",
+          "index": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"index\">\n                Index\n        <bullet_list>\n            <toctree caption=\"True\" entries=\"(None,\\ 'a')\" glob=\"0\" hidden=\"0\" includefiles=\"a\" includehidden=\"0\" maxdepth=\"-1\" numbered=\"0\" parent=\"index\" rawentries=\"\" titlesonly=\"0\">\n"
+        },
+        "toctree_includes": {
+          "index": [
+            "a"
+          ]
+        },
+        "warnings": [
+          "<project>/a.rst:9: WARNING: download file not readable: <project>/missing.txt [download.not_readable]",
+          "<project>/a.rst:15: WARNING: download file not readable: <project>/f .txt [download.not_readable]",
+          "<project>/index.rst:4: WARNING: toctree contains reference to document 'a' that doesn't have a title: no link will be generated [toc.no_title]"
+        ]
+      },
+      "files": {
+        "a": ":download:`f.txt`\n\n:download:`the file <f.txt>`\n\n:download:`sub/g.txt`\n\n:download:`/f.txt`\n\n:download:`missing.txt`\n\n:download:`https://example.com/x.zip`\n\n:download:`!f.txt`\n\n:download:`f  .txt`\n",
+        "index": "Index\n=====\n\n.. toctree::\n\n   a\n"
+      },
+      "name": "roles_download"
     }
   ],
   "sphinx_version": "9.1.0"

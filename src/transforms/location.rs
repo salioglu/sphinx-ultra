@@ -113,7 +113,9 @@ pub fn freeze_workaround(tree: &mut TxTree, id: TxId, state: &mut DocumentState)
 ///    `SP/sphinx/domains/index.py:113-116`). Those are mixed kinds, which
 ///    this rule leaves without a location (the census in [DS §6.1] has
 ///    102 `pending_xref`s with a source and a line and 65 with neither):
-///    they need overrides before anything relies on their location. The
+///    they need overrides before anything relies on their location, as
+///    the `download` role records one for each `download_reference`, which
+///    the `DownloadFileCollector`'s warnings are located at. The
 ///    children of a `versionmodified` are not in inline position: it is
 ///    the one `TextElement` that holds body elements, the content its
 ///    directive parses (`SP/sphinx/domains/changeset.py:82`), and they

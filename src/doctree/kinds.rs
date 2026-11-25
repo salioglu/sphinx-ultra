@@ -81,6 +81,7 @@ pub const IMAGE: &str = "image";
 // same pformat path as the docutils ones; the oracle fixtures pin them.
 pub const COMPACT_PARAGRAPH: &str = "compact_paragraph";
 pub const COMPOUND: &str = "compound";
+pub const DOWNLOAD_REFERENCE: &str = "download_reference";
 pub const ONLY: &str = "only";
 pub const PENDING_XREF: &str = "pending_xref";
 pub const TOCTREE: &str = "toctree";

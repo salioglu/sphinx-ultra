@@ -1127,8 +1127,6 @@ Term : "classifier" : 'c2'
     ('sx_smartquotes', 'escaped_whitespace_between_inlines', '*a*\\ *"b"* and **c**\\ ``d``\\ "e" and *f*\\\n*"g"*\n'),
     # ===== sx_sphinx_roles (wave 5a T17a; roles/config report §6.1) =====
     # The role functions, the role directive and the reference-role split.
-    # `download_unreadable_and_url` waits for T17c: Sphinx's
-    # DownloadFileCollector (880) gives a URL target its `refuri`.
     ('sx_sphinx_roles', 'generic_docroles', ':command:`ls -l` :dfn:`term` :mailheader:`Content-Type` :makevar:`CFLAGS` :mimetype:`text/plain` :newsgroup:`comp.lang.python` :program:`sphinx-build` :regexp:`^a.*b$`\n'),
     ('sx_sphinx_roles', 'generic_docroles_escapes_case', ':command:`a\\*b \\`x\\``\n\n:program:`!prog` :dfn:`a <b>`\n\n:COMMAND:`upper` `suffix`:makevar:\n'),
     ('sx_sphinx_roles', 'kbd_compound', ':kbd:`Ctrl`\n\n:kbd:`Ctrl+C`\n\n:kbd:`Ctrl+Alt+Del`\n\n:kbd:`Ctrl-x Ctrl-f`\n'),
@@ -1214,6 +1212,10 @@ Term : "classifier" : 'c2'
     ('sx_config', 'rst_prolog_trailing_spaces_line_block', 'T\n=\n\nText.\n', {'rst_prolog': '| line one   \n| line two\n'}),
     ('sx_config', 'rst_prolog_trailing_spaces_role_option', 'T\n=\n\nUse :py:`x`.\n', {'rst_prolog': '.. role:: py(code)   \n   :language: python   \n'}),
     ('sx_config', 'rst_epilog_trailing_spaces', 'T\n=\n\nText.\n', {'rst_epilog': 'Last para   \nend   \n'}),
+    # ===== sx_sphinx_roles, appended (wave 5a T17c): the download role
+    # once the DownloadFileCollector (880) runs, which gives a URL target
+    # its `refuri`; no file exists in this harness, so no `filename` =====
+    ('sx_sphinx_roles', 'download_unreadable_and_url', ':download:`missing.txt`\n\n:download:`https://example.com/x.zip`\n\n:download:`!f.txt`\n\n:download:`the file <f.txt>`\n\n:download:`f  .txt`\n'),
 ]
 
 

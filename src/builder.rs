@@ -302,38 +302,6 @@ pub struct SphinxBuilder {
 /// output.
 const EXCLUDED_FROM_FINGERPRINT: [&str; 2] = ["fail_on_warning", "nitpicky"];
 
-/// The extensions discovery treats as documents, in precedence order.
-///
-/// Sphinx drives this from `source_suffix` (default `{'.rst': ...}`); this
-/// crate still hard-codes the triple M1's discovery filter has always used,
-/// which `crate::rst`'s `SOURCE_SUFFIXES` mirrors for toctree entries. The
-/// *order* is load-bearing: it decides which file wins when two of them map
-/// to the same docname, the way `source_suffix`'s order decides Sphinx's
-/// `doc2path` fallback.
-const DISCOVERY_SUFFIXES: [&str; 3] = ["rst", "md", "txt"];
-
-/// Whether Sphinx's *default* `source_suffix` — `{'.rst':
-/// 'restructuredtext'}` (`config.py:243`) — covers `path`.
-///
-/// This crate's discovery is deliberately wider than that, and the two
-/// places where the difference would otherwise reach the user's warning
-/// stream both gate on this predicate: the orphan check in
-/// [`SphinxBuilder::resolve_phase`] and the docname-collision report in
-/// [`SphinxBuilder::dedup_by_docname`]. Neither may fail a `-W` build over
-/// a file Sphinx would not have read in the first place.
-fn is_default_source_suffix(path: &Path) -> bool {
-    path.extension().is_some_and(|extension| extension == "rst")
-}
-
-/// `path`'s position in [`DISCOVERY_SUFFIXES`], or `None` if it is not a
-/// document at all.
-fn suffix_rank(path: &Path) -> Option<usize> {
-    let extension = path.extension()?.to_string_lossy();
-    DISCOVERY_SUFFIXES
-        .iter()
-        .position(|suffix| *suffix == extension)
-}
-
 /// blake3 over the configuration minus [`EXCLUDED_FROM_FINGERPRINT`].
 ///
 /// The value is serialized through `serde_json::Value` before hashing, which
@@ -650,8 +618,10 @@ impl SphinxBuilder {
         config.init_intersphinx_mapping()?;
         // A `conf.py` prolog or epilog this crate could not evaluate, which
         // no override replaced, for a caller that has not checked: the CLI
-        // has, once its `-D` overrides were in.
+        // has, once its `-D` overrides were in. The same for a
+        // `source_suffix` this crate cannot read.
         config.check_evaluated()?;
+        config.check_source_suffix()?;
         // -d/doctree_dir relocates the cache (sphinx-build's doctree dir).
         let cache_dir = config
             .doctree_dir
@@ -1068,12 +1038,15 @@ impl SphinxBuilder {
     }
 
     /// Sphinx's `Project.discover` collision handling
-    /// (`project.py:64-79`): two files that map to one docname are not two
-    /// documents. Sphinx keeps whichever its directory walk yields first,
-    /// warns `multiple files found for the document "%s"` once, and names
-    /// the file it kept; this crate keeps the one whose suffix comes first
-    /// in [`DISCOVERY_SUFFIXES`], because a walk order is not something a
-    /// build should be allowed to depend on.
+    /// (`SP/sphinx/project.py:64-79`): two files that map to one docname
+    /// are not two documents. Sphinx keeps the first its directory walk
+    /// yields, which takes a directory's files in sorted order
+    /// (`get_matching_files`, `SP/sphinx/util/matching.py:115-160`), so of
+    /// `page.rst` and `page.txt` it keeps `page.rst`, whatever order
+    /// `source_suffix` names their suffixes in; and it warns `multiple files
+    /// found for the document "%s"` once and names the file it kept. Two
+    /// files can only collide when `source_suffix` names more than one
+    /// suffix: the docname is the file's path less its suffix.
     ///
     /// Everything downstream of discovery is keyed by docname alone — the
     /// persisted doctree, `env.all_docs`, `plan_read`'s source map, the
@@ -1081,26 +1054,13 @@ impl SphinxBuilder {
     /// alternated between them across builds, the loser's edits never
     /// invalidated anything, and two threads wrote one output path at once.
     ///
-    /// The *warning* is scoped the same way the orphan check is
-    /// ([`is_default_source_suffix`]): Sphinx's default `source_suffix` is
-    /// `.rst` alone, so a collision involving at most one `.rst` file is
-    /// not a collision Sphinx can see — it never discovered the `.md`/`.txt`
-    /// sibling at all, and builds `page.rst` beside `page.md` cleanly. Only
-    /// a collision between two files Sphinx would *both* have read is
-    /// reported; anything else drops its loser silently, so a wider
-    /// discovery set can never fail a `-W` build that Sphinx passes. No two
-    /// same-stem `.rst` files can exist in one directory, so today the
-    /// warning is unreachable by construction; it becomes reachable when
-    /// `source_suffix` turns configurable and a project names a second
-    /// restructuredtext suffix (wave 6, with MyST).
-    ///
     /// Two deliberate deviations from Sphinx's message, both because
     /// Sphinx's own rendering is an artifact rather than a contract: the
-    /// listed files are the colliding *documents* in the order this
-    /// function ranked them (Sphinx globs `docname.*`, so its list picks up
-    /// non-source neighbours and comes out in filesystem order), and the
-    /// kept path is rendered as a plain Python string repr (Sphinx's `%r`
-    /// hits `_StrPath.__repr__` and prints `_StrPath('/path')`).
+    /// listed files are the colliding *documents* in sorted order (Sphinx
+    /// globs `docname.*`, so its list picks up non-source neighbours and
+    /// comes out in filesystem order), and the kept path is rendered as a
+    /// plain Python string repr (Sphinx's `%r` hits `_StrPath.__repr__` and
+    /// prints `_StrPath('/path')`).
     fn dedup_by_docname(&self, files: Vec<PathBuf>, sink: &mut DiagnosticSink) -> Vec<PathBuf> {
         let mut by_docname: BTreeMap<String, Vec<PathBuf>> = BTreeMap::new();
         for path in &files {
@@ -1115,39 +1075,27 @@ impl SphinxBuilder {
             if candidates.len() < 2 {
                 continue;
             }
-            candidates.sort_by(|a, b| {
-                suffix_rank(a)
-                    .cmp(&suffix_rank(b))
-                    .then_with(|| a.as_path().cmp(b.as_path()))
-            });
-            // Only a collision Sphinx could see is worth a diagnostic.
-            if candidates
+            candidates.sort();
+            let listed: Vec<String> = candidates
                 .iter()
-                .filter(|path| is_default_source_suffix(path))
-                .count()
-                > 1
-            {
-                let listed: Vec<String> = candidates
-                    .iter()
-                    .map(|path| {
-                        path.strip_prefix(&self.source_dir)
-                            .unwrap_or(path)
-                            .display()
-                            .to_string()
-                    })
-                    .collect();
-                sink.push_next(BuildWarning::new(
-                    // Logged with no `location`, so it prints bare.
-                    PathBuf::new(),
-                    None,
-                    format!(
-                        "multiple files found for the document \"{docname}\": {}\nUse {} for the build.",
-                        listed.join(", "),
-                        py_repr_str(&candidates[0].display().to_string()),
-                    ),
-                    WarningType::Other,
-                ));
-            }
+                .map(|path| {
+                    path.strip_prefix(&self.source_dir)
+                        .unwrap_or(path)
+                        .display()
+                        .to_string()
+                })
+                .collect();
+            sink.push_next(BuildWarning::new(
+                // Logged with no `location`, so it prints bare.
+                PathBuf::new(),
+                None,
+                format!(
+                    "multiple files found for the document \"{docname}\": {}\nUse {} for the build.",
+                    listed.join(", "),
+                    py_repr_str(&candidates[0].display().to_string()),
+                ),
+                WarningType::Other,
+            ));
             dropped.extend(candidates.into_iter().skip(1));
         }
 
@@ -1186,10 +1134,19 @@ impl SphinxBuilder {
         Ok(())
     }
 
-    /// Whether discovery treats `path` as a document
-    /// ([`DISCOVERY_SUFFIXES`]).
+    /// Whether discovery treats `path` as a document: whether its name ends
+    /// with a `source_suffix` ([`Self::source_docname`]).
     fn is_source_file(&self, path: &Path) -> bool {
-        suffix_rank(path).is_some()
+        self.source_docname(path).is_some()
+    }
+
+    /// `Project.path2doc` (`SP/sphinx/project.py:94-112`): the docname of
+    /// the file at `path`, under the source directory, when its name ends
+    /// with a `source_suffix` ([`crate::config::SourceSuffix::docname`]).
+    fn source_docname(&self, path: &Path) -> Option<String> {
+        let relative = path.strip_prefix(&self.source_dir).unwrap_or(path);
+        let relative = relative.to_string_lossy().replace('\\', "/");
+        self.config.source_suffix.docname(&relative)
     }
 
     /// Which documents this build has to read
@@ -1584,10 +1541,10 @@ impl SphinxBuilder {
         let mut ordered: Vec<usize> = (0..results.len()).collect();
         ordered.sort_by(|a, b| results[*a].docname.cmp(&results[*b].docname));
 
-        // Sphinx's `env.doc2path`: the source file a docname was read from.
-        // Documents this build did not read fall back to the conventional
-        // `<srcdir>/<docname>.rst`, the same shape `doc2path` synthesizes
-        // from `source_suffix`.
+        // Sphinx's `env.doc2path`: the source file a docname was discovered
+        // in, and for a docname the project has no file for,
+        // `<srcdir>/<docname><source_suffix[0]>`, the path `doc2path`
+        // synthesizes (`SP/sphinx/project.py:114-128`).
         //
         // Owned rather than borrowed from `results`, which this loop holds
         // mutably: stage M changes each document's read.
@@ -1599,7 +1556,7 @@ impl SphinxBuilder {
             paths
                 .get(docname)
                 .cloned()
-                .unwrap_or_else(|| self.source_dir.join(format!("{docname}.rst")))
+                .unwrap_or_else(|| self.undiscovered_path(docname))
         };
         let settings = ReadSettings::from_config(&self.config, self.builder_kind);
 
@@ -1651,6 +1608,7 @@ impl SphinxBuilder {
                     &result.outcome.doctree().sources,
                     &self.source_dir,
                     docname,
+                    self.config.source_suffix.first(),
                 ));
             }
 
@@ -1721,18 +1679,8 @@ impl SphinxBuilder {
             .collect();
 
         self.number_phase(env, results);
-        // Sphinx's default `source_suffix` is `.rst` alone, so a `.md`/`.txt`
-        // this crate's wider discovery admitted is not a document Sphinx
-        // would warn about being orphaned. A docname with no source in this
-        // build (nothing was read for it) is treated as one, which is the
-        // pre-existing behavior.
-        let orphan_candidate = |docname: &str| {
-            sources
-                .get(docname)
-                .is_none_or(|path| is_default_source_suffix(path))
-        };
         let mut consistency = DiagnosticSink::default();
-        for message in env_toctree::check_consistency(env, &orphan_candidate) {
+        for message in env_toctree::check_consistency(env) {
             // Sphinx logs these with `location=docname`, which renders as
             // the document's source path with no line number.
             let source = sources
@@ -1758,7 +1706,7 @@ impl SphinxBuilder {
             sources
                 .get(docname)
                 .map(|path| path.to_path_buf())
-                .unwrap_or_else(|| self.source_dir.join(format!("{docname}.rst")))
+                .unwrap_or_else(|| self.undiscovered_path(docname))
         };
         for warning in env_citation::check_consistency(env, &doc2path) {
             consistency.push_next(warning);
@@ -2165,13 +2113,18 @@ impl SphinxBuilder {
         }
     }
 
+    /// The page of the document read from `source_path`:
+    /// `<outdir>/<docname>.html`. Swapping the file's extension for `.html`
+    /// would misname it for a `source_suffix` with a second dot or a comma
+    /// in it (`page.rst.txt`, `index.rst,.txt`).
     fn get_output_path(&self, source_path: &Path) -> Result<PathBuf> {
-        let relative_path = source_path.strip_prefix(&self.source_dir)?;
-        let mut output_path = self.output_dir.join(relative_path);
-
-        // Change extension to .html
-        output_path.set_extension("html");
-
+        // A file outside the source directory has no page in the output
+        // directory: its docname would be its absolute path.
+        source_path.strip_prefix(&self.source_dir)?;
+        let docname = self.docname_of_path(source_path);
+        let mut output_path = self.output_dir.clone();
+        output_path.extend(docname.split('/'));
+        output_path.as_mut_os_string().push(".html");
         Ok(output_path)
     }
 
@@ -2279,14 +2232,25 @@ impl SphinxBuilder {
         Ok(())
     }
 
-    /// Root-relative docname (no extension, forward slashes) for a source
-    /// path.
+    /// `doc2path(docname)` for a docname the project has no file for:
+    /// `<srcdir>/<docname><source_suffix[0]>` (`Project.doc2path`,
+    /// `SP/sphinx/project.py:114-128`).
+    fn undiscovered_path(&self, docname: &str) -> PathBuf {
+        self.source_dir
+            .join(format!("{docname}{}", self.config.source_suffix.first()))
+    }
+
+    /// Root-relative docname (forward slashes) for a source path: the path
+    /// less its `source_suffix` ([`Self::source_docname`]), or, for a path
+    /// discovery would not have admitted, less its extension.
     fn docname_of_path(&self, path: &Path) -> String {
-        let relative = path.strip_prefix(&self.source_dir).unwrap_or(path);
-        relative
-            .with_extension("")
-            .to_string_lossy()
-            .replace('\\', "/")
+        self.source_docname(path).unwrap_or_else(|| {
+            let relative = path.strip_prefix(&self.source_dir).unwrap_or(path);
+            relative
+                .with_extension("")
+                .to_string_lossy()
+                .replace('\\', "/")
+        })
     }
 
     /// Run the directive/role validation system over every RST document.
@@ -3068,6 +3032,17 @@ mod tests {
             baseline,
             "source_encoding"
         );
+
+        // So is `source_suffix` (`config.py:243`), whose order is data: it
+        // decides which suffix `doc2path` appends.
+        let suffixed = |suffixes: serde_json::Value| BuildConfig {
+            source_suffix: crate::config::SourceSuffix::from_conf_value(&suffixes).unwrap(),
+            ..base.clone()
+        };
+        let rst_txt = config_fingerprint(&suffixed(serde_json::json!([".rst", ".txt"]))).unwrap();
+        let txt_rst = config_fingerprint(&suffixed(serde_json::json!([".txt", ".rst"]))).unwrap();
+        assert_ne!(rst_txt, baseline, "source_suffix");
+        assert_ne!(rst_txt, txt_rst, "source_suffix order");
 
         // ...while the config-inited diagnostic record is not configuration
         // at all, and must not invalidate anything.

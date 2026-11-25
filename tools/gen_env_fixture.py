@@ -187,11 +187,10 @@ def tail():
 # BASE_CONFOVERRIDES; `files` maps docname -> rst source (nested docnames
 # like "sub/b" get written to sub/b.rst). An optional `data_files` map
 # (relative path -> literal text) ships non-document members -- the .py /
-# .inc / .png files the include and literalinclude projects read. Data
-# files must NOT use the .rst/.md/.txt suffixes: sphinx-ultra's discovery
-# is wider than Sphinx's default `source_suffix` (it also admits .md and
-# .txt), so a .txt member would become a document on one side only and the
-# resolved-document key sets would diverge by construction.
+# .inc / .png files the include and literalinclude projects read. A data
+# file is a document when its name ends with a `source_suffix`, `.rst`
+# alone by default: the source_suffix_* projects ship .txt and .md files,
+# which `source_suffix = ['.rst', '.txt']` makes documents in part.
 # ---------------------------------------------------------------------------
 
 PROJECTS = [
@@ -2004,6 +2003,100 @@ B
 
 Later :red:`y` and `b^3`.
 """,
+        },
+    },
+    {
+        # Wave 5a T17c (roles/config report §4.5, §6.2, P08): discovery
+        # keeps a file only when its name ends with a `source_suffix`,
+        # `.rst` alone by default, so `notes.txt` and `readme.md` are no
+        # documents: the toctree names three documents the project does not
+        # have, `notes.txt` unstripped, and `:doc:` two.
+        "name": "source_suffix_default",
+        "conf": {},
+        "files": {
+            "index": """\
+Index
+=====
+
+.. toctree::
+
+   notes
+   readme
+   notes.txt
+
+:doc:`notes` :doc:`readme`
+""",
+        },
+        "data_files": {
+            "notes.txt": "Notes\n=====\n\nPlain *text* file.\n",
+            "readme.md": "# Readme\n\nSome *markdown*.\n",
+        },
+    },
+    {
+        # Wave 5a T17c: the same files under `source_suffix = ['.rst',
+        # '.txt']`, which `notes.txt` ends with: it is the document `notes`,
+        # read as reStructuredText, and the toctree entry `notes.txt` is
+        # stripped of its suffix, a duplicate of `notes`.
+        "name": "source_suffix_txt",
+        "conf": {"source_suffix": [".rst", ".txt"]},
+        "files": {
+            "index": """\
+Index
+=====
+
+.. toctree::
+
+   notes
+   readme
+   notes.txt
+
+:doc:`notes` :doc:`readme`
+""",
+        },
+        "data_files": {
+            "notes.txt": "Notes\n=====\n\nPlain *text* file.\n",
+            "readme.md": "# Readme\n\nSome *markdown*.\n",
+        },
+    },
+    {
+        # Wave 5a T17c (roles/config report §3.8, §6.2, P02 `r_download`):
+        # the DownloadFileCollector at 880 gives a readable file's reference
+        # its `filename` (`<md5 of its srcdir-relative path>/<name>`,
+        # `f.txt` and `/f.txt` one file), a URL target its `refuri`, and an
+        # unreadable one a `download file not readable` warning at the
+        # node; every file target is a dependency of `a`.
+        "name": "roles_download",
+        "conf": {},
+        "files": {
+            "index": """\
+Index
+=====
+
+.. toctree::
+
+   a
+""",
+            "a": """\
+:download:`f.txt`
+
+:download:`the file <f.txt>`
+
+:download:`sub/g.txt`
+
+:download:`/f.txt`
+
+:download:`missing.txt`
+
+:download:`https://example.com/x.zip`
+
+:download:`!f.txt`
+
+:download:`f  .txt`
+""",
+        },
+        "data_files": {
+            "f.txt": "f\n",
+            "sub/g.txt": "g\n",
         },
     },
 ]

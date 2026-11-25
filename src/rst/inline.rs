@@ -1073,7 +1073,21 @@ impl<'a> Inliner<'a> {
             }
             RoleFn::Download => {
                 let env = self.xref_env();
-                let nodes = roles::sphinx::download(&call, &env, self.state);
+                let mut nodes = roles::sphinx::download(&call, &env, self.state);
+                // `XRefRole.create_xref_node` stamps the reference with the
+                // role's source and line (`set_source_info`,
+                // `SP/sphinx/roles.py:138-139`), the text block's, which it
+                // keeps wherever it goes: a substitution's copy is located
+                // at its definition, as the `DownloadFileCollector`'s
+                // warnings about it are.
+                let loc = self.loc();
+                for node in nodes
+                    .iter_mut()
+                    .filter(|node| node.kind == kinds::DOWNLOAD_REFERENCE)
+                {
+                    let uid = self.state.identify(node);
+                    self.state.loc_overrides.insert(uid, loc);
+                }
                 self.push_nodes(nodes);
             }
             RoleFn::Any | RoleFn::Eq => {

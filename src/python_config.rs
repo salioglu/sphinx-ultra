@@ -27,6 +27,11 @@ pub struct PythonConfigParser {
     /// form cannot always tell: a tuple's is an array, as a list's is, and
     /// an empty `bytes`, which reads as no value, has none.
     literal_types: HashMap<&'static str, &'static str>,
+    /// For a name the namespace holds a dict literal under, the order the
+    /// literal wrote its keys in, which the dict's JSON form, sorted by
+    /// key, does not keep: `source_suffix`'s first key is data
+    /// ([`crate::config::SourceSuffix`]).
+    dict_key_orders: HashMap<String, Vec<String>>,
 }
 
 /// An [`Unevaluable`] binding while the parse goes on.
@@ -154,7 +159,10 @@ pub struct ConfPyConfig {
     pub templates_path: Vec<String>,
     pub exclude_patterns: Vec<String>,
     pub include_patterns: Vec<String>,
-    pub source_suffix: HashMap<String, String>,
+    /// `source_suffix` as `convert_source_suffix` normalizes it, or the
+    /// `ConfigError` it raises for a value it cannot read; `None` when
+    /// conf.py said nothing.
+    pub source_suffix: Option<std::result::Result<crate::config::SourceSuffix, String>>,
     pub root_doc: Option<String>,
     pub language: Option<String>,
     pub locale_dirs: Vec<String>,
@@ -364,6 +372,7 @@ impl PythonConfigParser {
             warnings: Vec::new(),
             unevaluable: Vec::new(),
             literal_types: HashMap::new(),
+            dict_key_orders: HashMap::new(),
         })
     }
 
@@ -477,6 +486,10 @@ impl PythonConfigParser {
             match split_assignment(stmt) {
                 Some((name, value_src)) => match parse_python_literal(value_src) {
                     Ok(value) => {
+                        match python_dict_key_order(value_src).filter(|_| value.is_object()) {
+                            Some(order) => self.dict_key_orders.insert(name.to_string(), order),
+                            None => self.dict_key_orders.remove(name),
+                        };
                         self.conf_namespace.insert(name.to_string(), value);
                     }
                     Err(reason) => self.warnings.push(ConfigWarning {
@@ -720,6 +733,13 @@ impl PythonConfigParser {
         config.templates_path = extract_string_list("templates_path");
         config.exclude_patterns = extract_string_list("exclude_patterns");
         config.include_patterns = extract_string_list("include_patterns");
+        config.source_suffix = self.conf_namespace.get("source_suffix").map(|value| {
+            let source_suffix = crate::config::SourceSuffix::from_conf_value(value)?;
+            Ok(match self.dict_key_orders.get("source_suffix") {
+                Some(order) => source_suffix.in_order(order),
+                None => source_suffix,
+            })
+        });
         config.root_doc = extract_string("root_doc").or_else(|| extract_string("master_doc"));
         config.language = extract_string("language");
         config.locale_dirs = extract_string_list("locale_dirs");
@@ -1085,7 +1105,7 @@ impl PythonConfigParser {
 /// conf.py literal, by way of its JSON shape. A python tuple arrives as a
 /// list here, so it would be named `list` — a spelling-only difference in
 /// a warning about an already-rejected value.
-fn python_type_name(value: &serde_json::Value) -> &'static str {
+pub(crate) fn python_type_name(value: &serde_json::Value) -> &'static str {
     match value {
         serde_json::Value::Null => "NoneType",
         serde_json::Value::Bool(_) => "bool",
@@ -2340,19 +2360,24 @@ pub(crate) fn parse_python_literal(src: &str) -> std::result::Result<serde_json:
 pub(crate) fn parse_python_literal_typed(
     src: &str,
 ) -> std::result::Result<(serde_json::Value, &'static str), String> {
-    let chars: Vec<char> = src.chars().collect();
-    let mut p = PyLiteralParser {
-        chars,
-        pos: 0,
-        saw_comma: false,
-        type_name: "NoneType",
-    };
+    let mut p = PyLiteralParser::new(src);
     let value = p.parse_value()?;
     p.skip_ws();
     if p.pos < p.chars.len() {
         return Err("trailing expression".to_string());
     }
     Ok((value, p.type_name))
+}
+
+/// The keys of the dict literal `src`, in the order it writes them, each
+/// once; `None` when `src` is no dict literal this reader evaluates.
+fn python_dict_key_order(src: &str) -> Option<Vec<String>> {
+    let mut p = PyLiteralParser::new(src);
+    let value = p.parse_value().ok()?;
+    p.skip_ws();
+    (p.pos == p.chars.len() && value.is_object())
+        .then_some(p.outer_dict_keys)
+        .flatten()
 }
 
 /// Python's truth value of a literal: false for `None`, `False`, a zero,
@@ -2377,6 +2402,12 @@ struct PyLiteralParser {
     /// The Python type of the value parsed last: once the parse is done,
     /// the whole value's.
     type_name: &'static str,
+    /// How many dicts the parse is inside of.
+    dict_depth: usize,
+    /// The keys of the last outermost dict the parse closed, each once, in
+    /// the order the literal first wrote them (Python keeps a repeated
+    /// key where it first stood).
+    outer_dict_keys: Option<Vec<String>>,
 }
 
 /// What a string literal's prefix makes it.
@@ -2393,6 +2424,17 @@ struct StringKind {
 const BYTES_ASCII: &str = "bytes can only contain ASCII literal characters";
 
 impl PyLiteralParser {
+    fn new(src: &str) -> Self {
+        PyLiteralParser {
+            chars: src.chars().collect(),
+            pos: 0,
+            saw_comma: false,
+            type_name: "NoneType",
+            dict_depth: 0,
+            outer_dict_keys: None,
+        }
+    }
+
     fn peek(&self) -> Option<char> {
         self.chars.get(self.pos).copied()
     }
@@ -2759,11 +2801,17 @@ impl PyLiteralParser {
     fn parse_dict(&mut self) -> std::result::Result<serde_json::Value, String> {
         debug_assert_eq!(self.peek(), Some('{'));
         self.pos += 1;
+        self.dict_depth += 1;
         let mut map = serde_json::Map::new();
+        let mut keys: Vec<String> = Vec::new();
         loop {
             self.skip_ws();
             if self.peek() == Some('}') {
                 self.pos += 1;
+                self.dict_depth -= 1;
+                if self.dict_depth == 0 {
+                    self.outer_dict_keys = Some(keys);
+                }
                 return Ok(serde_json::Value::Object(map));
             }
             let key = match self.parse_value()? {
@@ -2776,6 +2824,9 @@ impl PyLiteralParser {
             }
             self.pos += 1;
             let value = self.parse_value()?;
+            if !keys.contains(&key) {
+                keys.push(key.clone());
+            }
             map.insert(key, value);
             self.skip_ws();
             match self.peek() {
@@ -2803,7 +2854,7 @@ impl Default for ConfPyConfig {
             templates_path: vec!["_templates".to_string()],
             exclude_patterns: Vec::new(),
             include_patterns: vec!["**".to_string()], // Sphinx default
-            source_suffix: HashMap::new(),
+            source_suffix: None,
             root_doc: Some("index".to_string()),
             language: None,
             locale_dirs: vec!["locales".to_string()],
@@ -3070,6 +3121,11 @@ impl ConfPyConfig {
         config.confval_type_mismatches = self.confval_type_mismatches.clone();
         if let Some(source_encoding) = &self.source_encoding {
             config.source_encoding = source_encoding.clone();
+        }
+        match &self.source_suffix {
+            Some(Ok(source_suffix)) => config.source_suffix = source_suffix.clone(),
+            Some(Err(error)) => config.source_suffix_error = Some(error.clone()),
+            None => {}
         }
         if let Some(trailing_comma) = self.python_trailing_comma_in_multi_line_signatures {
             config.python_trailing_comma_in_multi_line_signatures = trailing_comma;
@@ -3425,6 +3481,58 @@ mod tests {
         assert_eq!(config.numfig_format["table"], "Table {number}");
         assert_eq!(config.numfig_format["section"], "Section %s");
         assert_eq!(config.numfig_format["code-block"], "Listing %s");
+    }
+
+    /// `source_suffix` reaches the build configuration as
+    /// `convert_source_suffix` leaves it, a dict in the order `conf.py`
+    /// writes its keys, which the dict's JSON form, sorted, would lose: the
+    /// first suffix is data. A key written twice keeps its first place, as
+    /// in Python, and the last assignment wins. A value Sphinx cannot read
+    /// is its `ConfigError`, held until the `-D` overrides are in. Probed
+    /// on Sphinx 9.1.0 (`scratchpad/t17c/p1_suffix.py`).
+    #[test]
+    fn source_suffix_keeps_the_order_conf_py_writes() {
+        let config_of = |source: &str| {
+            parse(source)
+                .extract_configuration()
+                .unwrap()
+                .to_build_config()
+                .unwrap()
+        };
+        for (source, suffixes) in [
+            (
+                "source_suffix = {'.txt': 'restructuredtext', '.rst': 'restructuredtext'}\n",
+                vec![".txt", ".rst"],
+            ),
+            (
+                "source_suffix = {'.rst': None, '.rest': None, '.rst': ''}\n",
+                vec![".rst", ".rest"],
+            ),
+            ("source_suffix = ['.txt', '.rst']\n", vec![".txt", ".rst"]),
+            ("source_suffix = ('.txt', '.rst')\n", vec![".txt", ".rst"]),
+            ("source_suffix = '.txt'\n", vec![".txt"]),
+            (
+                "source_suffix = {'.txt': None, '.rst': None}\nsource_suffix = ['.rst']\n",
+                vec![".rst"],
+            ),
+            ("project = 'p'\n", vec![".rst"]),
+        ] {
+            let config = config_of(source);
+            assert_eq!(
+                config.source_suffix.suffixes().collect::<Vec<_>>(),
+                suffixes,
+                "{source}"
+            );
+            assert!(config.check_source_suffix().is_ok(), "{source}");
+        }
+
+        let config = config_of("source_suffix = 5\n");
+        assert_eq!(
+            config.check_source_suffix().unwrap_err().to_string(),
+            "The config value `source_suffix' expects a dictionary, a string, or a list of \
+             strings. Got `5' instead (type <class 'int'>)."
+        );
+        assert_eq!(config.source_suffix, crate::config::SourceSuffix::default());
     }
 
     /// `suppress_warnings` is a list or a tuple of patterns and

@@ -134,6 +134,13 @@ pub struct ReadConfig {
     /// document (`SP/sphinx/util/rst.py:98`, `:114`), which ends the build
     /// (decision 13; [`crate::config::BuildConfig::decoration_crashes`]).
     pub decoration_crash: Option<String>,
+    /// `source_suffix`'s suffixes (`config.py:243`, default `['.rst']`), in
+    /// order ([`crate::config::SourceSuffix`]): what a toctree entry is
+    /// stripped of (`SP/sphinx/directives/other.py:139-142`), what makes
+    /// an included file a document (`env.note_included`), and, the first
+    /// of them, what `doc2path` appends to a name no document has
+    /// ([`LogLocation::render`]).
+    pub source_suffix: Vec<String>,
 }
 
 impl Default for ReadConfig {
@@ -148,6 +155,7 @@ impl Default for ReadConfig {
             rst_prolog: None,
             rst_epilog: None,
             decoration_crash: None,
+            source_suffix: vec![".rst".to_string()],
         }
     }
 }
@@ -170,6 +178,11 @@ impl From<&crate::config::BuildConfig> for ReadConfig {
                     .find(|(crashing, _)| crashing == key)
                     .map(|(_, type_name)| type_name.clone())
             }),
+            source_suffix: config
+                .source_suffix
+                .suffixes()
+                .map(str::to_string)
+                .collect(),
         }
     }
 }
@@ -180,7 +193,8 @@ impl ReadConfig {
     /// is one of its keys: `Ok(true)` once set, `Ok(false)` for a key that
     /// is not, and an error naming the key for a value of the wrong shape.
     /// `primary_domain`, `default_role`, `manpages_url`, `rst_prolog` and
-    /// `rst_epilog` may be JSON `null`, Python's `None`.
+    /// `rst_epilog` may be JSON `null`, Python's `None`; `source_suffix` is
+    /// read as `conf.py`'s is ([`crate::config::SourceSuffix::from_conf_value`]).
     pub fn apply_conf_key(&mut self, key: &str, value: &serde_json::Value) -> Result<bool, String> {
         let string = || {
             value
@@ -199,6 +213,13 @@ impl ReadConfig {
             "manpages_url" => self.manpages_url = optional()?,
             "rst_prolog" => self.rst_prolog = optional()?,
             "rst_epilog" => self.rst_epilog = optional()?,
+            "source_suffix" => {
+                self.source_suffix = crate::config::SourceSuffix::from_conf_value(value)
+                    .map_err(|error| format!("conf key {key}: {error}"))?
+                    .suffixes()
+                    .map(str::to_string)
+                    .collect();
+            }
             _ => return Ok(false),
         }
         Ok(true)
@@ -553,21 +574,20 @@ pub enum LogLocation {
 
 impl LogLocation {
     /// The printed location, rendered against the document's source table,
-    /// the project's source directory and the document's name:
+    /// the project's source directory, the document's name and the first
+    /// `source_suffix` (`source_suffix[0]`):
     ///
-    /// - `Doc` and `DocLine` are `doc2path(docname)`, Sphinx's
-    ///   `srcdir / (docname + source_suffix[0])` (`.rst` until T17c),
-    ///   with `:lineno` when the line is non-zero;
+    /// - `Doc` and `DocLine` are `doc2path(docname)`: `srcdir /` the file
+    ///   the document was discovered in (`SP/sphinx/project.py:114-128`),
+    ///   `<srcdir>/<docname>` with the suffix of its own path, the table's
+    ///   first ([`own_suffix`]), and `:lineno` when the line is non-zero;
     /// - `Tuple` passes the source path as the docname: `doc2path` finds
-    ///   no such document and appends the suffix again
-    ///   (`SP/sphinx/project.py:114-128`), so the document itself, whose
-    ///   table path is absolute, prints `<srcdir>/index.rst.rst:N`, and an
-    ///   included file, whose table path is srcdir-relative, prints
+    ///   no such document and appends `source_suffix[0]` to it, so the
+    ///   document itself, whose table path is absolute, prints
+    ///   `<srcdir>/index.rst.rst:N` with `.rst` first, and an included
+    ///   file, whose table path is srcdir-relative, prints
     ///   `<srcdir>/part.rst.rst:N` ([INC §3.4]);
-    /// - `Node` is `get_node_location`'s `abspath(source)`
-    ///   ([`node_source_path`]), so `<srcdir>/part.rst:N` for an included
-    ///   file (`SP/sphinx/util/logging.py:554-562`); a node without a line
-    ///   prints `path:`;
+    /// - `Node` is `get_node_location`'s ([`Self::render_node`]);
     /// - `None` prints nothing.
     ///
     /// A path already under `srcdir` stands alone, as a rooted one does:
@@ -579,15 +599,10 @@ impl LogLocation {
         sources: &[String],
         srcdir: &std::path::Path,
         docname: &str,
+        first_suffix: &str,
     ) -> crate::diagnostics::Location {
         use crate::diagnostics::Location;
-        let table_path = |source: u16| {
-            sources
-                .get(usize::from(source))
-                .or_else(|| sources.first())
-                .map(String::as_str)
-                .unwrap_or_default()
-        };
+        let table_path = |source: u16| table_path(sources, source);
         let under_srcdir = |path: &str| {
             if std::path::Path::new(path).starts_with(srcdir) {
                 path.to_string()
@@ -595,23 +610,45 @@ impl LogLocation {
                 srcdir.join(path).display().to_string()
             }
         };
-        let doc2path = |name: &str| under_srcdir(&format!("{name}.rst"));
+        let own_path = || {
+            let suffix = own_suffix(docname, table_path(0)).unwrap_or(first_suffix);
+            under_srcdir(&format!("{docname}{suffix}"))
+        };
         let path_line = |path: String, line: u32| Location::Path {
             path,
             line: (line != 0).then_some(line),
         };
         match self {
             LogLocation::None => Location::None,
-            LogLocation::Doc => path_line(doc2path(docname), 0),
-            LogLocation::DocLine(line) => path_line(doc2path(docname), line),
-            LogLocation::Tuple { source, line } => path_line(doc2path(table_path(source)), line),
-            LogLocation::Node { source, line } => {
-                let path = node_source_path(table_path(source), srcdir);
-                match line {
-                    0 => Location::Verbatim(format!("{path}:")),
-                    line => path_line(path, line),
-                }
-            }
+            LogLocation::Doc => path_line(own_path(), 0),
+            LogLocation::DocLine(line) => path_line(own_path(), line),
+            LogLocation::Tuple { source, line } => path_line(
+                under_srcdir(&format!("{}{first_suffix}", table_path(source))),
+                line,
+            ),
+            LogLocation::Node { source, line } => Self::render_node(sources, srcdir, source, line),
+        }
+    }
+
+    /// `get_node_location(node)` for a node at `line` of the source-table
+    /// entry `source` ([`LogLocation::Node`]): `abspath(source)`
+    /// ([`node_source_path`]), so `<srcdir>/part.rst:N` for an included
+    /// file (`SP/sphinx/util/logging.py:554-562`), and `path:` for a node
+    /// without a line, which is falsy there. No `doc2path` reads it.
+    pub fn render_node(
+        sources: &[String],
+        srcdir: &std::path::Path,
+        source: u16,
+        line: u32,
+    ) -> crate::diagnostics::Location {
+        use crate::diagnostics::Location;
+        let path = node_source_path(table_path(sources, source), srcdir);
+        match line {
+            0 => Location::Verbatim(format!("{path}:")),
+            line => Location::Path {
+                path,
+                line: Some(line),
+            },
         }
     }
 
@@ -623,16 +660,58 @@ impl LogLocation {
         sources: &[String],
         srcdir: &std::path::Path,
         docname: &str,
+        first_suffix: &str,
         message: String,
         category: crate::diagnostics::Category,
     ) -> crate::diagnostics::Diagnostic {
         crate::diagnostics::Diagnostic {
-            location: self.render(sources, srcdir, docname),
+            location: self.render(sources, srcdir, docname, first_suffix),
             severity: crate::diagnostics::Severity::Warning,
             message,
             category,
         }
     }
+
+    /// The `WARNING` record of `logger.warning(message, location=node)`
+    /// about a node at `line` of the source-table entry `source`
+    /// ([`Self::render_node`]).
+    pub fn node_warning(
+        sources: &[String],
+        srcdir: &std::path::Path,
+        source: u16,
+        line: u32,
+        message: String,
+        category: crate::diagnostics::Category,
+    ) -> crate::diagnostics::Diagnostic {
+        crate::diagnostics::Diagnostic {
+            location: Self::render_node(sources, srcdir, source, line),
+            severity: crate::diagnostics::Severity::Warning,
+            message,
+            category,
+        }
+    }
+}
+
+/// The suffix of `own_path`, the file the document `docname` was read
+/// from, which its docname was made from (`Project.path2doc`): what its
+/// name has after the docname's last component. `None` when the name does
+/// not start with it.
+pub(crate) fn own_suffix<'a>(docname: &str, own_path: &'a str) -> Option<&'a str> {
+    let stem = docname.rsplit('/').next().unwrap_or(docname);
+    std::path::Path::new(own_path)
+        .file_name()?
+        .to_str()?
+        .strip_prefix(stem)
+}
+
+/// The path of the source-table entry `source`: the table's first, the
+/// document's own, for an id the table does not have.
+fn table_path(sources: &[String], source: u16) -> &str {
+    sources
+        .get(usize::from(source))
+        .or_else(|| sources.first())
+        .map(String::as_str)
+        .unwrap_or_default()
 }
 
 /// `os.path.abspath(source)`: the path Sphinx's `get_node_location`
@@ -707,11 +786,13 @@ impl ParseLogWarning {
         sources: &[String],
         srcdir: &std::path::Path,
         docname: &str,
+        first_suffix: &str,
     ) -> crate::diagnostics::Diagnostic {
         self.location.warning(
             sources,
             srcdir,
             docname,
+            first_suffix,
             self.message.clone(),
             crate::diagnostics::Category::None,
         )
@@ -2493,7 +2574,7 @@ pub(crate) mod tests {
         ];
         for (location, expected) in rows {
             assert_eq!(
-                location.render(&sources, srcdir, "index"),
+                location.render(&sources, srcdir, "index", ".rst"),
                 expected,
                 "{location:?}"
             );
@@ -2509,12 +2590,53 @@ pub(crate) mod tests {
             seq: 0,
         };
         assert_eq!(
-            warning.diagnostic(&sources, srcdir, "index").render(true),
+            warning
+                .diagnostic(&sources, srcdir, "index", ".rst")
+                .render(true),
             format!(
                 "{}:12: WARNING: non-whitespace stripped by dedent",
                 under("part.rst.rst")
             )
         );
+    }
+
+    /// `doc2path` with a `source_suffix` other than `.rst` first
+    /// (`Project.doc2path`, `SP/sphinx/project.py:114-128`): the document's
+    /// own name is the file it was discovered in, `notes.txt` whatever
+    /// comes first, and a tuple's source path, no document's name, takes
+    /// the first suffix, `.rst` or `.txt`. Probed on Sphinx 9.1.0
+    /// (`scratchpad/t17c/p3_misc.py`, `loc_rst_first`, `loc_txt_first`).
+    #[test]
+    fn logger_locations_name_the_discovered_file_and_the_first_suffix() {
+        use crate::diagnostics::Location;
+        let srcdir = std::path::Path::new("/src");
+        let sources = ["/src/notes.txt".to_string(), "part.inc".to_string()];
+        let path = |path: &str, line: Option<u32>| Location::Path {
+            path: path.to_string(),
+            line,
+        };
+        let under = |name: &str| srcdir.join(name).display().to_string();
+        for first in [".rst", ".txt"] {
+            let rows = [
+                (LogLocation::Doc, path(&under("notes.txt"), None)),
+                (LogLocation::DocLine(9), path(&under("notes.txt"), Some(9))),
+                (
+                    LogLocation::Tuple { source: 0, line: 4 },
+                    path(&format!("/src/notes.txt{first}"), Some(4)),
+                ),
+                (
+                    LogLocation::Tuple { source: 1, line: 2 },
+                    path(&under(&format!("part.inc{first}")), Some(2)),
+                ),
+            ];
+            for (location, expected) in rows {
+                assert_eq!(
+                    location.render(&sources, srcdir, "notes", first),
+                    expected,
+                    "{location:?}, {first} first"
+                );
+            }
+        }
     }
 
     /// A node location is the source made absolute as `os.path.abspath`
@@ -2579,7 +2701,7 @@ pub(crate) mod tests {
             (LogLocation::DocLine(2), path(&under("index.rst"), Some(2))),
         ] {
             assert_eq!(
-                location.render(&sources, srcdir, "index"),
+                location.render(&sources, srcdir, "index", ".rst"),
                 expected,
                 "{location:?}"
             );
@@ -4165,7 +4287,7 @@ pub(crate) mod tests {
         let sources = ["/src/index.rst".to_string()];
         assert_eq!(
             warning
-                .diagnostic(&sources, std::path::Path::new("/src"), "index")
+                .diagnostic(&sources, std::path::Path::new("/src"), "index", ".rst")
                 .render(true),
             "/src/index.rst.rst:3: WARNING: line number spec is out of range(1-2): '1,99'"
         );
@@ -4326,8 +4448,12 @@ pub(crate) mod tests {
         .map(|(key, diagnostic)| (key.seq, diagnostic.render(true)))
         .collect();
         keyed.extend(out.registry.log_warnings.iter().map(|warning| {
-            let diagnostic =
-                warning.diagnostic(&out.doctree.sources, std::path::Path::new("<SRC>"), "index");
+            let diagnostic = warning.diagnostic(
+                &out.doctree.sources,
+                std::path::Path::new("<SRC>"),
+                "index",
+                ".rst",
+            );
             (warning.seq, diagnostic.render(true))
         }));
         keyed.sort_by_key(|(seq, _)| *seq);

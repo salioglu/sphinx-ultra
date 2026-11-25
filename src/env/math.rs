@@ -81,16 +81,13 @@ pub fn process_doc(
             .math
             .note_equation(docname, &record.label, record.number)
         {
-            let location = LogLocation::Node {
-                source: record.source,
-                line: record.line,
-            };
             warnings.push((
                 record.seq,
-                location.warning(
+                LogLocation::node_warning(
                     sources,
                     srcdir,
-                    docname,
+                    record.source,
+                    record.line,
                     format!(
                         "duplicate label of equation {}, other instance in {other}",
                         record.label

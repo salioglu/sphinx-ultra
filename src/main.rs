@@ -375,6 +375,10 @@ struct Configured {
     records: Vec<Diagnostic>,
     /// The crash of a `config-inited` handler, which ends the records.
     crash: Option<SphinxCrash>,
+    /// The `ConfigError` of a `config-inited` handler, which ends the
+    /// records: `convert_source_suffix`'s
+    /// ([`BuildConfig::check_source_suffix`]).
+    error: Option<anyhow::Error>,
 }
 
 /// `SOURCE_DATE_EPOCH`, when it is set, as Python's `os.getenv` reads it
@@ -514,6 +518,17 @@ fn configure(args: &RunArgs) -> Result<Configured> {
             .into_iter()
             .map(config_record),
     );
+    // ... then `convert_source_suffix`, `sphinx.config`'s first at 800,
+    // whose `ConfigError` ends them ...
+    if let Err(error) = config.check_source_suffix() {
+        return Ok(Configured {
+            config,
+            confdir,
+            records,
+            crash: None,
+            error: Some(error),
+        });
+    }
     // ... `correct_copyright_year`, which crashes on a `SOURCE_DATE_EPOCH`
     // `int()` cannot read, ending the records ...
     let crash = source_date_epoch()
@@ -533,6 +548,7 @@ fn configure(args: &RunArgs) -> Result<Configured> {
         confdir,
         records,
         crash,
+        error: None,
     })
 }
 
@@ -552,6 +568,7 @@ async fn run_build(args: RunArgs) -> Result<i32> {
         confdir,
         records: config_records,
         crash: config_crash,
+        error: config_error,
     } = match configure(&args) {
         Ok(configured) => configured,
         Err(error) if sphinx_mode => {
@@ -610,6 +627,15 @@ async fn run_build(args: RunArgs) -> Result<i32> {
         } else {
             warn!("{}", record.message);
         }
+    }
+    // A `config-inited` handler's `ConfigError` ends the build after the
+    // records logged before it, with Sphinx's report.
+    if let Some(error) = config_error {
+        if !sphinx_mode {
+            return Err(error);
+        }
+        stream.raw(&config_error_report(&error))?;
+        return Ok(2);
     }
     // A `config-inited` handler that crashed Sphinx ends the build after
     // the records logged before it (decision 13).

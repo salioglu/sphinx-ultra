@@ -4438,7 +4438,9 @@ impl BlockParser {
             if self.sphinx {
                 if let Some(srcdir) = &self.srcdir {
                     let resolved_srcdir = crate::utils::resolve_path(srcdir);
-                    if let Some(docname) = crate::utils::path2doc(io_path, &resolved_srcdir) {
+                    if let Some(docname) =
+                        crate::utils::path2doc(io_path, &resolved_srcdir, &self.read.source_suffix)
+                    {
                         self.state.parse.included_records.push(docname);
                     }
                 }
@@ -7481,6 +7483,8 @@ impl BlockParser {
         // (`found_docs: None`) resolves nothing and leaves both empty.
         let mut resolved = match &self.found_docs {
             Some(found) => {
+                let source_suffixes: Vec<&str> =
+                    self.read.source_suffix.iter().map(String::as_str).collect();
                 crate::env::toctree::resolve_entries(&crate::env::toctree::ToctreeContent {
                     content: &raw_entries,
                     docname: &self.docname,
@@ -7489,7 +7493,7 @@ impl BlockParser {
                     source: input.span.source,
                     line: input.lineno,
                     found_docs: found,
-                    source_suffixes: SOURCE_SUFFIXES,
+                    source_suffixes: &source_suffixes,
                     exclude_patterns: &self.exclude_patterns,
                 })
             }
@@ -10633,11 +10637,6 @@ fn directive_spec_mode(lower: &str, sphinx: bool) -> Option<DirectiveSpec> {
     }
     directive_spec(lower)
 }
-
-/// Suffixes a toctree entry may spell out and still name a document
-/// (sphinx `config.source_suffix`, whose default is `{'.rst': ...}`). These
-/// are the extensions `SphinxBuilder::is_source_file` discovers.
-const SOURCE_SUFFIXES: &[&str] = &[".rst", ".md", ".txt"];
 
 const TOCTREE_OPTS: &[(&str, Conv)] = &[
     ("maxdepth", Conv::PyIntAny),
@@ -22932,7 +22931,7 @@ mod literalinclude_tests {
             assert_eq!(
                 warnings[0]
                     .location
-                    .render(&output.doctree.sources, tmp.path(), "main"),
+                    .render(&output.doctree.sources, tmp.path(), "main", ".rst"),
                 crate::diagnostics::Location::Path {
                     path: format!("{p}.rst"),
                     line: Some(line)
@@ -22964,7 +22963,7 @@ mod literalinclude_tests {
         assert_eq!(
             warnings[0]
                 .location
-                .render(&output.doctree.sources, tmp.path(), "main"),
+                .render(&output.doctree.sources, tmp.path(), "main", ".rst"),
             crate::diagnostics::Location::Path {
                 path: at(tmp.path(), "part.rst.rst"),
                 line: Some(3)

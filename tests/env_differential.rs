@@ -35,6 +35,7 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 use sphinx_ultra::builder::BuilderKind;
+use sphinx_ultra::config::SourceSuffix;
 use sphinx_ultra::diagnostics::Diagnostic;
 use sphinx_ultra::{BuildConfig, SphinxBuilder};
 
@@ -67,11 +68,11 @@ pub struct Project {
     /// docname -> rst source. Nested docnames (e.g. "sub/b") map to
     /// "sub/b.rst" when materialized.
     pub files: BTreeMap<String, String>,
-    /// relative path -> literal text of a non-document member (the `.py` /
-    /// `.inc` / `.png` files the include and literalinclude projects read),
-    /// written verbatim beside the sources. Never `.rst`/`.md`/`.txt`: this
-    /// crate's discovery is wider than Sphinx's default `source_suffix`, so
-    /// a `.txt` member would become a document on our side only.
+    /// relative path -> literal text of a member written verbatim beside
+    /// the sources: the `.py` / `.inc` / `.png` files the include and
+    /// literalinclude projects read, and the `.txt` / `.md` files the
+    /// `source_suffix_*` projects ship, which are documents on both sides
+    /// exactly when their name ends with a configured `source_suffix`.
     #[serde(default)]
     pub data_files: BTreeMap<String, String>,
     pub expect: Expect,
@@ -445,6 +446,16 @@ fn config_of(project: &Project) -> BuildConfig {
     for (key, value) in conf {
         if KNOWN_INERT_CONF.contains(&key.as_str()) {
             assert_inert_conf_is_sound(&project.name, key, value);
+            continue;
+        }
+        // `source_suffix` is typed `Any`, so `-D` carries one suffix, the
+        // text as given, where the generator hands Sphinx the fixture's
+        // list or dict as the Python object it is (`confoverrides`): the
+        // typed field takes such a value through the normalization a
+        // `conf.py` value gets.
+        if key == "source_suffix" && (value.is_array() || value.is_object()) {
+            config.source_suffix = SourceSuffix::from_conf_value(value)
+                .unwrap_or_else(|e| panic!("project {}: source_suffix: {e}", project.name));
             continue;
         }
         // A dict-valued setting is applied key by key (`-D numfig_format.figure=...`),
@@ -1395,12 +1406,12 @@ fn resolved_doctrees_match_oracle() {
 /// each table names a fixture document (or project) exactly once — so the
 /// table lengths ARE the exemption counts. Update the six constants and
 /// the doc sites together.
-const DOCUMENTED_PROJECTS: usize = 42;
-const DOCUMENTED_DOCUMENTS: usize = 123;
+const DOCUMENTED_PROJECTS: usize = 45;
+const DOCUMENTED_DOCUMENTS: usize = 128;
 const DOCUMENTED_WHOLESALE_EXEMPT_DOCUMENTS: usize = 0;
-const DOCUMENTED_BYTE_EXACT_DOCUMENTS: usize = 123;
+const DOCUMENTED_BYTE_EXACT_DOCUMENTS: usize = 128;
 const DOCUMENTED_WARNING_EXEMPT_PROJECTS: usize = 0;
-const DOCUMENTED_BYTE_EXACT_WARNING_PROJECTS: usize = 42;
+const DOCUMENTED_BYTE_EXACT_WARNING_PROJECTS: usize = 45;
 
 #[test]
 fn exemption_arithmetic_matches_the_documented_numbers() {

@@ -400,6 +400,7 @@ fn read_document_with(
 /// ([`source_dir_of`]).
 fn log_parse_warnings(output: &mut ParseOutput, parse: &ParseOptions) {
     let srcdir = source_dir_of(parse);
+    let first_suffix = first_source_suffix(&parse.read);
     let sources = &output.doctree.sources;
     let key = |seq| OrderKey {
         priority: 0,
@@ -410,7 +411,7 @@ fn log_parse_warnings(output: &mut ParseOutput, parse: &ParseOptions) {
         .into_iter()
         .map(|warning| LogRecord::Logger {
             key: key(warning.seq),
-            diagnostic: warning.diagnostic(sources, &srcdir, &parse.docname),
+            diagnostic: warning.diagnostic(sources, &srcdir, &parse.docname, first_suffix),
         });
     let toctree = output
         .toctrees
@@ -418,13 +419,37 @@ fn log_parse_warnings(output: &mut ParseOutput, parse: &ParseOptions) {
         .flat_map(|toctree| &toctree.warnings)
         .map(|warning| LogRecord::Logger {
             key: key(warning.seq),
-            diagnostic: warning.diagnostic(sources, &srcdir, &parse.docname),
+            diagnostic: warning.diagnostic(sources, &srcdir),
         });
     let log = &mut output.state.log;
     log.extend(logged.chain(toctree));
     // Every parse record drew its own seq: the stable sort restores the
     // creation order the reporter's records were logged in.
     log.sort_by_key(LogRecord::key);
+}
+
+/// `source_suffix[0]` of the read's configuration, `''` when it names no
+/// suffix: what `doc2path` appends to a name the project has no file for.
+fn first_source_suffix(read: &ReadConfig) -> &str {
+    read.source_suffix.first().map_or("", String::as_str)
+}
+
+/// `env.doc2path(docname)` for a project of one document, `own` read from
+/// `own_path`: `<srcdir>/<docname>` with the suffix of its own file for
+/// its own name, and with `source_suffix[0]` for any other, which it has
+/// no file for (`Project.doc2path`, `SP/sphinx/project.py:114-128`).
+fn standalone_doc2path(
+    docname: &str,
+    own: &str,
+    own_path: &Path,
+    source_dir: &Path,
+    read: &ReadConfig,
+) -> PathBuf {
+    let own_suffix = (docname == own)
+        .then(|| crate::rst::own_suffix(own, &own_path.to_string_lossy()).map(str::to_string))
+        .flatten();
+    let suffix = own_suffix.as_deref().unwrap_or(first_source_suffix(read));
+    source_dir.join(format!("{docname}{suffix}"))
 }
 
 /// The source directory a read's logger locations render against: the
@@ -546,7 +571,15 @@ fn read_standalone_with(
     let source_path = Path::new(&parse.source_path);
     let source_dir = source_dir_of(parse);
     let diagnostics = if parse.sphinx {
-        let doc2path = |docname: &str| source_dir.join(format!("{docname}.rst"));
+        let doc2path = |docname: &str| {
+            standalone_doc2path(
+                docname,
+                &parse.docname,
+                source_path,
+                &source_dir,
+                &parse.read,
+            )
+        };
         let inputs = MergeInputs {
             source_path,
             source_dir: &source_dir,
@@ -615,6 +648,7 @@ pub fn resolve_standalone(
                 &post_read.sources,
                 &read.source_dir,
                 &read.docname,
+                first_source_suffix(&read.read_config),
                 warning.message.clone(),
                 warning
                     .category
@@ -670,7 +704,15 @@ pub fn resolve_standalone(
     // patterns word: Sphinx's default patterns stand in for the snippets'
     // `exclude_patterns = ['_build']` (`tools/gen_sphinx_fixture.py`,
     // `tools/gen_html_oracle.py`) and change nothing.
-    let doc2path = |docname: &str| read.source_dir.join(format!("{docname}.rst"));
+    let doc2path = |docname: &str| {
+        standalone_doc2path(
+            docname,
+            &read.docname,
+            &read.source_path,
+            &read.source_dir,
+            &read.read_config,
+        )
+    };
     let sources = |docname: &str| (docname == read.docname).then_some(post_read.sources.as_slice());
     let include_patterns = ["**".to_string()];
     let locations = ToctreeLocations {

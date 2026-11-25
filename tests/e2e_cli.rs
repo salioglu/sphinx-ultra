@@ -877,11 +877,13 @@ fn touching_a_csv_or_raw_file_re_reads_the_page_that_reads_it() {
 /// [INC PROBE 6] matrix): a cold build records the include targets as
 /// dependencies, a warm build reads nothing, touching an included `.rst`
 /// re-reads the includer AND the included doc (it is discovered and read
-/// standalone too), and an included-only doc never earns the orphan
-/// warning. Divergence note: touching an included `.txt` re-reads the
-/// includer and the `.txt`'s own document — sphinx's default
-/// `source_suffix` does not read `.txt` standalone, this crate's wider
-/// discovery does.
+/// standalone too), touching an included `.txt`, which the default
+/// `source_suffix` makes no document, re-reads the includer alone, and an
+/// included-only doc never earns the orphan warning. Sphinx 9.1.0's
+/// `reading sources` lines on the same project read `a`, `index`, `part`
+/// cold, nothing warm, `a` and `part` after `part.rst` is touched, `a`
+/// alone after `snippet.txt` is, and nothing once settled (probe
+/// `scratchpad/t17c/p3_misc.py`, `touch`).
 #[test]
 fn touching_an_included_file_re_reads_the_documents_that_pull_it_in() {
     let src = out_dir("deps-include-src");
@@ -908,13 +910,12 @@ fn touching_an_included_file_re_reads_the_documents_that_pull_it_in() {
         stderr_of(&run1)
     );
 
-    // Warm no-op: all four discovered documents (snippet.txt included —
-    // this crate's discovery is wider than sphinx's) hit the cache, and
-    // the orphan check replayed from the persisted env stays quiet.
+    // Warm no-op: the three documents hit the cache, and the orphan check
+    // replayed from the persisted env stays quiet.
     let run2 = build(&src, &out, &["--incremental"]);
     let stderr2 = stderr_of(&run2);
     assert!(
-        stderr2.contains("Cache hits: 4"),
+        stderr2.contains("Cache hits: 3"),
         "an unchanged project reads nothing, stderr: {stderr2}"
     );
     assert!(
@@ -930,27 +931,27 @@ fn touching_an_included_file_re_reads_the_documents_that_pull_it_in() {
     std::fs::write(&part, &bytes).unwrap();
     let run3 = build(&src, &out, &["--incremental"]);
     assert!(
-        stderr_of(&run3).contains("Cache hits: 2"),
+        stderr_of(&run3).contains("Cache hits: 1"),
         "touch part.rst re-reads a + part, stderr: {}",
         stderr_of(&run3)
     );
 
-    // Touch the included .txt: outdates the includer; the .txt's own
-    // document is the divergence noted above.
+    // Touch the included .txt: outdates the includer, through
+    // env.dependencies, and nothing else — it is no document.
     let snippet = src.join("snippet.txt");
     let bytes = std::fs::read(&snippet).unwrap();
     std::fs::write(&snippet, &bytes).unwrap();
     let run4 = build(&src, &out, &["--incremental"]);
     assert!(
         stderr_of(&run4).contains("Cache hits: 2"),
-        "touch snippet.txt re-reads a + snippet, stderr: {}",
+        "touch snippet.txt re-reads a alone, stderr: {}",
         stderr_of(&run4)
     );
 
     // The re-reads settled every dependency.
     let run5 = build(&src, &out, &["--incremental"]);
     assert!(
-        stderr_of(&run5).contains("Cache hits: 4"),
+        stderr_of(&run5).contains("Cache hits: 3"),
         "stderr: {}",
         stderr_of(&run5)
     );
@@ -1002,11 +1003,9 @@ fn config_change_invalidates_cache() {
     );
 }
 
-/// This crate's discovery is wider than Sphinx's — it admits `.md` and
-/// `.txt` where Sphinx's default `source_suffix` is `.rst` alone — and the
-/// orphan check is where that difference reaches the user: a `README.md`
-/// must not earn a `toc.not_included` warning Sphinx never emits. An
-/// orphaned `.rst` still does.
+/// Sphinx's default `source_suffix` is `.rst` alone, so a `README.md` or
+/// a `.txt` in the source tree is no document, and no orphan: it earns no
+/// `toc.not_included` warning. An orphaned `.rst` still does.
 #[test]
 fn a_non_rst_file_is_not_reported_as_an_orphan() {
     let src = out_dir("orphan-suffixes-src");
@@ -1040,56 +1039,450 @@ fn a_non_rst_file_is_not_reported_as_an_orphan() {
     );
 }
 
-/// Two files mapping to one docname are not two documents: every piece of
-/// per-document state downstream of discovery is keyed by docname alone, so
-/// one of them has to go (`Project.discover`, `project.py:64-79`), and which
-/// one must not depend on directory walk order.
-///
-/// It must go **silently** here, though. Sphinx's default `source_suffix` is
-/// `.rst` alone, so it never discovers the `.md`/`.txt` sibling and builds
-/// this tree clean; warning about a collision Sphinx cannot see would fail
-/// `-W` on a build Sphinx passes. The report is reserved for a collision
-/// between two files Sphinx would both have read.
+/// Builds `src` in sphinx-build mode (`-q -w <file>`, then `extra`) into
+/// `name`'s output directory: the process's output, the text of the `-w`
+/// file, which these tests compare whole, and the output directory.
+fn sphinx_build_warnings(name: &str, src: &Path, extra: &[&str]) -> (Output, String, PathBuf) {
+    let out = out_dir(name);
+    let warnings = out_dir(&format!("{name}-log")).join("warnings.txt");
+    let mut args = vec![
+        src.to_str().unwrap(),
+        out.to_str().unwrap(),
+        "-q",
+        "-w",
+        warnings.to_str().unwrap(),
+    ];
+    args.extend_from_slice(extra);
+    let result = sphinx_build(&args);
+    let written = std::fs::read_to_string(&warnings).unwrap_or_default();
+    (result, written, out)
+}
+
+/// Discovery keeps a file only when its name ends with a `source_suffix`
+/// (`Project.discover`, `SP/sphinx/project.py:49-112`), `.rst` alone by
+/// default (`config.py:243`): neither the `.txt` an `include` reads nor a
+/// `README.md` is a document, so a toctree entry or a `:doc:` naming one
+/// names a document the project does not have. Sphinx 9.1.0 builds the
+/// same project with exactly these five records and writes no page for
+/// those files (P08, [RC §4.5]; probe `scratchpad/t17c/p3_misc.py`,
+/// `gate`). The native subcommand discovers the same way
+/// (`touching_an_included_file_re_reads_the_documents_that_pull_it_in`).
 #[test]
-fn two_files_for_one_docname_resolve_silently_and_deterministically() {
-    let src = out_dir("duplicate-docname-src");
-    std::fs::create_dir_all(&src).unwrap();
-    std::fs::write(src.join("conf.py"), "project = 'p'\n").unwrap();
-    std::fs::write(
-        src.join("index.rst"),
-        "Index\n=====\n\n.. toctree::\n\n   page\n",
-    )
-    .unwrap();
-    std::fs::write(src.join("page.rst"), "Page RST\n========\n\nrst body.\n").unwrap();
-    std::fs::write(src.join("page.md"), "Page MD\n=======\n\nmd body.\n").unwrap();
-    std::fs::write(src.join("page.txt"), "Page TXT\n========\n\ntxt body.\n").unwrap();
-
-    let out = out_dir("duplicate-docname-out");
-    let first = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap(), "-W"]);
-    let stderr = stderr_of(&first);
-
-    assert!(
-        !stderr.contains("multiple files found for the document"),
-        "sphinx sees no collision here, so neither may we, stderr: {stderr}"
+fn source_suffix_gates_discovery() {
+    let src = temp_source(
+        "source-suffix-gate",
+        &[
+            (
+                "index.rst",
+                "Index\n=====\n\n.. toctree::\n\n   notes\n   readme\n   notes.txt\n\n\
+                 :doc:`notes` :doc:`readme`\n\n.. include:: snippet.txt\n",
+            ),
+            ("notes.txt", "Notes\n=====\n\nPlain *text* file.\n"),
+            ("readme.md", "# Readme\n\nSome *markdown*.\n"),
+            ("snippet.txt", "Included *snippet*.\n"),
+            ("README.md", "# Project\n"),
+        ],
     );
-    assert!(
-        first.status.success(),
-        "sphinx builds this clean, so -W must pass, stderr: {stderr}"
-    );
+    let (result, written, out) = sphinx_build_warnings("source-suffix-gate", &src, &[]);
 
-    // The winner is `.rst` — first in the discovery suffix order — and is
-    // stable across builds, warm or cold. The defect this pins was an
-    // output page that alternated between the two sources.
-    let page = out.join("page.html");
-    let cold = std::fs::read_to_string(&page).unwrap();
-    assert!(cold.contains("rst body"), "first suffix wins: {cold}");
-    for _ in 0..2 {
-        let again = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap(), "-W"]);
-        assert!(again.status.success(), "stderr: {}", stderr_of(&again));
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    let index = sphinx_ultra::utils::canonicalize_simplified(&src)
+        .unwrap()
+        .join("index.rst");
+    let index = index.display();
+    assert_eq!(
+        written,
+        format!(
+            "{index}:4: WARNING: toctree contains reference to nonexisting document 'notes' \
+             [toc.not_readable]\n\
+             {index}:4: WARNING: toctree contains reference to nonexisting document 'readme' \
+             [toc.not_readable]\n\
+             {index}:4: WARNING: toctree contains reference to nonexisting document \
+             'notes.txt' [toc.not_readable]\n\
+             {index}:10: WARNING: unknown document: 'notes' [ref.doc]\n\
+             {index}:10: WARNING: unknown document: 'readme' [ref.doc]\n"
+        )
+    );
+    assert!(out.join("index.html").is_file());
+    for page in ["notes", "readme", "snippet", "README"] {
+        assert!(
+            !out.join(format!("{page}.html")).exists(),
+            "{page} is no document, so it has no page"
+        );
+    }
+}
+
+/// A logger warning's location goes through Sphinx's `doc2path`
+/// (`SphinxLogRecordTranslator`, `SP/sphinx/util/logging.py:500-525`;
+/// `Project.doc2path`, `SP/sphinx/project.py:114-128`): `location=docname`
+/// and `(docname, lineno)` name the file the document was discovered in,
+/// `.rst` or `.txt`, while a `(source, line)` tuple, which passes a source
+/// path where a docname goes, finds no document of that name and takes
+/// `source_suffix[0]` after it. Sphinx 9.1.0 prints exactly these records
+/// for both orders of the two suffixes (probe `scratchpad/t17c/p3_misc.py`,
+/// `loc_rst_first` and `loc_txt_first`).
+#[test]
+fn logger_locations_use_the_first_source_suffix() {
+    for (order, first) in [("'.rst', '.txt'", ".rst"), ("'.txt', '.rst'", ".txt")] {
+        let name = format!("first-source-suffix{first}");
+        let src = temp_source(
+            &name,
+            &[
+                (
+                    "conf.py",
+                    &format!(
+                        "project = 'p'\nsource_suffix = [{order}]\n\
+                         default_role = 'nonexistent'\n"
+                    ),
+                ),
+                (
+                    "index.rst",
+                    "Index\n=====\n\n.. toctree::\n\n   notes\n\n\
+                     .. code-block:: python\n   :emphasize-lines: 5\n\n   x = 1\n\n\
+                     .. hlist::\n\n   text\n",
+                ),
+                (
+                    "notes.txt",
+                    "Notes\n=====\n\n.. code-block:: python\n   :emphasize-lines: 7\n\n   \
+                     y = 2\n\n.. hlist::\n\n   more\n",
+                ),
+            ],
+        );
+        let (result, written, out) = sphinx_build_warnings(&name, &src, &[]);
+
+        assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+        let source = sphinx_ultra::utils::canonicalize_simplified(&src).unwrap();
+        let path = |name: String| source.join(name).display().to_string();
         assert_eq!(
-            std::fs::read_to_string(&page).unwrap(),
-            cold,
-            "the rendered page must not alternate between the two sources"
+            written,
+            format!(
+                "{index}: WARNING: default role nonexistent not found\n\
+                 {index_tuple}:8: WARNING: line number spec is out of range(1-1): '5'\n\
+                 {index}:13: WARNING: .. hlist content is not a list\n\
+                 {notes}: WARNING: default role nonexistent not found\n\
+                 {notes_tuple}:4: WARNING: line number spec is out of range(1-1): '7'\n\
+                 {notes}:9: WARNING: .. hlist content is not a list\n",
+                index = path("index.rst".to_string()),
+                index_tuple = path(format!("index.rst{first}")),
+                notes = path("notes.txt".to_string()),
+                notes_tuple = path(format!("notes.txt{first}")),
+            ),
+            "source_suffix = [{order}]"
+        );
+        assert!(out.join("notes.html").is_file(), "notes.txt is a document");
+    }
+}
+
+/// `-D source_suffix=<text>` sets one suffix: the option is typed `Any`
+/// (`SP/sphinx/config.py:243`), so `convert_overrides` passes the text as
+/// given and `convert_source_suffix` makes it `{text: 'restructuredtext'}`
+/// (`:354-358`, `:636-667`). With `.txt` the `.txt` files are the
+/// documents, the `.rst` beside them is none, and a toctree entry is
+/// stripped of `.txt`. Sphinx 9.1.0 prints exactly this record and writes
+/// these pages (probe `scratchpad/t17c/p3_misc.py`, `D_txt_design`).
+#[test]
+fn a_source_suffix_override_names_the_suffix_documents_end_with() {
+    let src = temp_source(
+        "source-suffix-override-txt",
+        &[
+            (
+                "index.txt",
+                "Index\n=====\n\n.. toctree::\n\n   page.txt\n   other\n",
+            ),
+            ("page.txt", "Page\n====\n\ntxt page.\n"),
+            ("other.rst", "Other\n=====\n\nrst page.\n"),
+        ],
+    );
+    let (result, written, out) = sphinx_build_warnings(
+        "source-suffix-override-txt",
+        &src,
+        &["-D", "source_suffix=.txt"],
+    );
+
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    let index = sphinx_ultra::utils::canonicalize_simplified(&src)
+        .unwrap()
+        .join("index.txt");
+    assert_eq!(
+        written,
+        format!(
+            "{}:4: WARNING: toctree contains reference to nonexisting document 'other' \
+             [toc.not_readable]\n",
+            index.display()
+        )
+    );
+    assert!(out.join("index.html").is_file() && out.join("page.html").is_file());
+    assert!(!out.join("other.html").exists(), "other.rst is no document");
+}
+
+/// `-D source_suffix=.rst,.txt` is the one suffix `.rst,.txt`: no comma
+/// splits it, as none splits Sphinx's (see the test above). The project's
+/// documents are the files whose name ends with it, `index.rst,.txt`
+/// alone, whose page is `index.html`; `page.rst` and `page.txt` are none,
+/// and the toctree entry `page.rst,.txt` is stripped to `page`. Sphinx
+/// 9.1.0 prints exactly these records and writes this page (probe
+/// `scratchpad/t17c/p3_misc.py`, `D_rst_txt_design`).
+#[test]
+fn a_source_suffix_override_is_not_split_on_commas() {
+    let src = temp_source(
+        "source-suffix-override-comma",
+        &[
+            (
+                "index.rst,.txt",
+                "Index\n=====\n\n.. toctree::\n\n   page\n   page.rst,.txt\n",
+            ),
+            ("page.rst", "Page\n====\n\nrst page.\n"),
+            ("page.txt", "Page\n====\n\ntxt page.\n"),
+        ],
+    );
+    let (result, written, out) = sphinx_build_warnings(
+        "source-suffix-override-comma",
+        &src,
+        &["-D", "source_suffix=.rst,.txt"],
+    );
+
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    let index = sphinx_ultra::utils::canonicalize_simplified(&src)
+        .unwrap()
+        .join("index.rst,.txt");
+    let record = format!(
+        "{}:4: WARNING: toctree contains reference to nonexisting document 'page' \
+         [toc.not_readable]\n",
+        index.display()
+    );
+    assert_eq!(written, format!("{record}{record}"));
+    assert!(out.join("index.html").is_file());
+    assert!(
+        !out.join("page.html").exists(),
+        "neither page file is a document"
+    );
+}
+
+/// A `source_suffix` this crate cannot build is a configuration error,
+/// raised where `convert_source_suffix` runs (`config-inited` @800,
+/// `SP/sphinx/config.py:636-667`), after the records logged before it
+/// (`deprecate_source_encoding` @790): a value that is no string, list or
+/// dict is Sphinx's own `ConfigError` (probe `scratchpad/t17c/
+/// p7_config_error.py`), and a file type other than `restructuredtext` is
+/// this crate's, as it has no parser for one, where Sphinx reads such a
+/// document through an extension's parser and stops without one (`Source
+/// parser for markdown not registered`, exit 2, P08). `-D source_suffix`
+/// replaces what `conf.py` says, as Sphinx's does: the project then builds
+/// with the records Sphinx prints for it (probe `scratchpad/t17c/
+/// p1_suffix.py`, `dict_md_D`).
+#[test]
+fn a_source_suffix_this_crate_cannot_build_is_a_configuration_error() {
+    let src = temp_source(
+        "source-suffix-int",
+        &[
+            (
+                "conf.py",
+                "project = 'p'\nsource_encoding = 'latin-1'\nsource_suffix = 5\n",
+            ),
+            ("index.rst", "Index\n=====\n"),
+        ],
+    );
+    let (result, written, _) = sphinx_build_warnings("source-suffix-int", &src, &[]);
+    assert_eq!(
+        result.status.code(),
+        Some(2),
+        "stderr: {}",
+        stderr_of(&result)
+    );
+    assert_eq!(
+        written,
+        "WARNING: Support for source encodings other than UTF-8 is deprecated and will be \
+         removed in Sphinx 10. Please comment at \
+         https://github.com/sphinx-doc/sphinx/issues/13665 if this causes a problem.\n\
+         \nConfiguration error!\n\n    sphinx.errors.ConfigError: The config value \
+         `source_suffix' expects a dictionary, a string, or a list of strings. Got `5' instead \
+         (type <class 'int'>).\n"
+    );
+
+    let src = temp_source(
+        "source-suffix-markdown",
+        &[
+            (
+                "conf.py",
+                "project = 'p'\n\
+                 source_suffix = {'.rst': 'restructuredtext', '.md': 'markdown'}\n",
+            ),
+            (
+                "index.rst",
+                "Index\n=====\n\n.. toctree::\n\n   notes\n   readme\n   notes.txt\n\n\
+                 :doc:`notes` :doc:`readme`\n",
+            ),
+            ("notes.txt", "Notes\n=====\n\nPlain *text* file.\n"),
+            ("readme.md", "# Readme\n\nSome *markdown*.\n"),
+        ],
+    );
+    let (result, written, _) = sphinx_build_warnings("source-suffix-markdown", &src, &[]);
+    assert_eq!(
+        result.status.code(),
+        Some(2),
+        "stderr: {}",
+        stderr_of(&result)
+    );
+    assert_eq!(
+        written,
+        "\nConfiguration error!\n\n    sphinx.errors.ConfigError: source_suffix maps '.md' to \
+         the file type markdown, which sphinx-ultra cannot read: its one parser is \
+         reStructuredText's; set -D source_suffix=<suffix> to build the documents of one \
+         suffix without editing conf.py\n"
+    );
+
+    let (result, written, out) = sphinx_build_warnings(
+        "source-suffix-markdown-override",
+        &src,
+        &["-D", "source_suffix=.rst"],
+    );
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    let index = sphinx_ultra::utils::canonicalize_simplified(&src)
+        .unwrap()
+        .join("index.rst");
+    let index = index.display();
+    assert_eq!(
+        written,
+        format!(
+            "{index}:4: WARNING: toctree contains reference to nonexisting document 'notes' \
+             [toc.not_readable]\n\
+             {index}:4: WARNING: toctree contains reference to nonexisting document 'readme' \
+             [toc.not_readable]\n\
+             {index}:4: WARNING: toctree contains reference to nonexisting document \
+             'notes.txt' [toc.not_readable]\n\
+             {index}:10: WARNING: unknown document: 'notes' [ref.doc]\n\
+             {index}:10: WARNING: unknown document: 'readme' [ref.doc]\n"
+        )
+    );
+    assert!(!out.join("readme.html").exists());
+}
+
+/// `TocTree.parse_content` tells an excluded entry from a nonexisting one
+/// by matching `exclude_patterns` against `doc2path(entry, False)`, which
+/// for a document the project does not have is the entry plus
+/// `source_suffix[0]` (`SP/sphinx/directives/other.py:150-166`): under
+/// `exclude_patterns = ['missing.txt']`, `missing` is excluded when `.txt`
+/// comes first and nonexisting when `.rst` does. Probed on Sphinx 9.1.0
+/// (`scratchpad/t17c/p3_misc.py`, `exc_rst_first` and `exc_txt_first`).
+#[test]
+fn a_toctree_entry_is_matched_against_exclude_patterns_with_the_first_source_suffix() {
+    for (order, first, verdict) in [
+        (
+            "'.rst', '.txt'",
+            "rst",
+            "nonexisting document 'missing' [toc.not_readable]",
+        ),
+        (
+            "'.txt', '.rst'",
+            "txt",
+            "excluded document 'missing' [toc.excluded]",
+        ),
+    ] {
+        let name = format!("toctree-excluded-first-suffix-{first}");
+        let src = temp_source(
+            &name,
+            &[
+                (
+                    "conf.py",
+                    &format!(
+                        "project = 'p'\nsource_suffix = [{order}]\n\
+                         exclude_patterns = ['missing.txt']\n"
+                    ),
+                ),
+                (
+                    "index.rst",
+                    "Index\n=====\n\n.. toctree::\n\n   missing\n   gone\n",
+                ),
+            ],
+        );
+        let (result, written, _) = sphinx_build_warnings(&name, &src, &[]);
+
+        assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+        let index = sphinx_ultra::utils::canonicalize_simplified(&src)
+            .unwrap()
+            .join("index.rst");
+        let index = index.display();
+        assert_eq!(
+            written,
+            format!(
+                "{index}:4: WARNING: toctree contains reference to {verdict}\n\
+                 {index}:4: WARNING: toctree contains reference to nonexisting document 'gone' \
+                 [toc.not_readable]\n"
+            ),
+            "source_suffix = [{order}]"
+        );
+    }
+}
+
+/// Two files mapping to one docname are not two documents: every piece of
+/// per-document state downstream of discovery is keyed by docname alone,
+/// so one of them has to go (`Project.discover`,
+/// `SP/sphinx/project.py:64-79`). Under `source_suffix = ['.rst', '.txt']`
+/// `page.rst` and `page.txt` collide (`page.md` beside them is no
+/// document), and Sphinx keeps the first its walk yields, which takes a
+/// directory's files in sorted order: `page.rst`, in either order of the
+/// suffixes. It warns `multiple files found for the document "page"` once
+/// on every build, cold or warm, since discovery runs on each, which `-W`
+/// turns into a failure. Probed on Sphinx 9.1.0 (`scratchpad/t17c/
+/// p3_misc.py`, `collision`, `collision_txt_first`).
+#[test]
+fn two_files_for_one_docname_warn_and_keep_the_first_in_sorted_order() {
+    for order in ["'.rst', '.txt'", "'.txt', '.rst'"] {
+        let name = format!("duplicate-docname-{}", &order[2..5]);
+        let src = out_dir(&format!("{name}-src"));
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(
+            src.join("conf.py"),
+            format!("project = 'p'\nsource_suffix = [{order}]\n"),
+        )
+        .unwrap();
+        std::fs::write(
+            src.join("index.rst"),
+            "Index\n=====\n\n.. toctree::\n\n   page\n",
+        )
+        .unwrap();
+        std::fs::write(src.join("page.rst"), "Page RST\n========\n\nrst body.\n").unwrap();
+        std::fs::write(src.join("page.md"), "Page MD\n=======\n\nmd body.\n").unwrap();
+        std::fs::write(src.join("page.txt"), "Page TXT\n========\n\ntxt body.\n").unwrap();
+
+        // The output directory persists across the two builds: the second
+        // is warm.
+        let out = out_dir(&format!("{name}-out"));
+        let page = out.join("page.html");
+        let mut cold = None;
+        for build in ["cold", "warm"] {
+            let result = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap()]);
+            let stderr = stderr_of(&result);
+            assert!(
+                result.status.success(),
+                "{order}, {build}: stderr: {stderr}"
+            );
+            assert_eq!(
+                stderr
+                    .matches("multiple files found for the document \"page\"")
+                    .count(),
+                1,
+                "{order}, {build}: one record, stderr: {stderr}"
+            );
+            let rendered = std::fs::read_to_string(&page).unwrap();
+            assert!(
+                rendered.contains("rst body"),
+                "{order}, {build}: page.rst wins: {rendered}"
+            );
+            // The defect this pins was an output page that alternated
+            // between the two sources.
+            assert_eq!(
+                cold.get_or_insert_with(|| rendered.clone()),
+                &rendered,
+                "{order}: the page must not alternate between the sources"
+            );
+        }
+        let strict = sphinx_build(&[src.to_str().unwrap(), out.to_str().unwrap(), "-W"]);
+        assert_eq!(
+            strict.status.code(),
+            Some(1),
+            "{order}: -W fails on the record, stderr: {}",
+            stderr_of(&strict)
         );
     }
 }

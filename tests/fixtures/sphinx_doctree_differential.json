@@ -3735,6 +3735,12 @@
       "name": "sx_config.rst_epilog_trailing_spaces",
       "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <paragraph>\n            Text.\n        <paragraph>\n            Last para   \n            end\n",
       "rst": "T\n=\n\nText.\n"
+    },
+    {
+      "family": "sx_sphinx_roles",
+      "name": "sx_sphinx_roles.download_unreadable_and_url",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <download_reference refdoc=\"index\" refdomain=\"\" refexplicit=\"0\" reftarget=\"missing.txt\" reftype=\"download\" refwarn=\"0\">\n            <literal classes=\"xref download\">\n                missing.txt\n    <paragraph>\n        <download_reference refdoc=\"index\" refdomain=\"\" refexplicit=\"0\" reftarget=\"https://example.com/x.zip\" reftype=\"download\" refuri=\"https://example.com/x.zip\" refwarn=\"0\">\n            <literal classes=\"xref download\">\n                https://example.com/x.zip\n    <paragraph>\n        <literal classes=\"xref download\">\n            f.txt\n    <paragraph>\n        <download_reference refdoc=\"index\" refdomain=\"\" refexplicit=\"1\" reftarget=\"f.txt\" reftype=\"download\" refwarn=\"0\">\n            <literal classes=\"xref download\">\n                the file\n    <paragraph>\n        <download_reference refdoc=\"index\" refdomain=\"\" refexplicit=\"0\" reftarget=\"f .txt\" reftype=\"download\" refwarn=\"0\">\n            <literal classes=\"xref download\">\n                f  .txt\n",
+      "rst": ":download:`missing.txt`\n\n:download:`https://example.com/x.zip`\n\n:download:`!f.txt`\n\n:download:`the file <f.txt>`\n\n:download:`f  .txt`\n"
     }
   ],
   "conf_semantics": "a case's optional 'conf' dict is confoverrides applied on top of the base settings above; absent = defaults. The consumers map every key onto the parse options (ParseOptions.py or ParseOptions.read) and error on unmapped keys.",

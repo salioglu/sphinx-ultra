@@ -146,17 +146,20 @@ pub struct ToctreeWarning {
 impl ToctreeWarning {
     /// The record Sphinx logs, `location=toctree`: a `WARNING` with the
     /// warning's category, located at the directive's node
-    /// ([`LogLocation::Node`]).
-    pub fn diagnostic(&self, sources: &[String], srcdir: &Path, docname: &str) -> Diagnostic {
-        let location = LogLocation::Node {
-            source: self.source,
-            line: self.line,
-        };
+    /// ([`LogLocation::node_warning`]).
+    pub fn diagnostic(&self, sources: &[String], srcdir: &Path) -> Diagnostic {
         let category = self
             .category
             .as_deref()
             .map_or(Category::None, Category::parse);
-        location.warning(sources, srcdir, docname, self.message.clone(), category)
+        LogLocation::node_warning(
+            sources,
+            srcdir,
+            self.source,
+            self.line,
+            self.message.clone(),
+            category,
+        )
     }
 }
 
@@ -885,21 +888,7 @@ pub struct ConsistencyMessage {
 /// ([`crate::env::citation::check_consistency`]); the
 /// `env-check-consistency` event, which no extension here listens to, is
 /// not ported.
-///
-/// `is_sphinx_source` answers, per docname, whether the file it came from
-/// carries a suffix Sphinx's `source_suffix` covers. This crate's discovery
-/// is deliberately wider than Sphinx's — it admits `.md` and `.txt`
-/// alongside `.rst`, where Sphinx's default `source_suffix` is `{'.rst':
-/// 'restructuredtext'}` (`config.py:243`, `project.py:49-88`) — and the
-/// orphan warning is the one check where that difference is user-visible:
-/// a `README.md` sitting in the source tree would earn a
-/// `toc.not_included` warning Sphinx never emits, failing `-W` on a build
-/// Sphinx passes. Everything else keeps treating those files as documents;
-/// full `source_suffix` semantics arrive with MyST in wave 6.
-pub fn check_consistency(
-    env: &BuildEnvironment,
-    is_sphinx_source: &dyn Fn(&str) -> bool,
-) -> Vec<ConsistencyMessage> {
+pub fn check_consistency(env: &BuildEnvironment) -> Vec<ConsistencyMessage> {
     let mut messages = Vec::new();
 
     let included: BTreeSet<&str> = env
@@ -913,7 +902,6 @@ pub fn check_consistency(
     for docname in env.all_docs.keys() {
         // Reachable from some toctree, the root itself, textually included
         // by another document, or explicitly marked `:orphan:`.
-        // ...or not a document Sphinx would have read at all.
         if env.files_to_rebuild.contains_key(docname)
             || *docname == env.root_doc
             || included.contains(docname.as_str())
@@ -921,7 +909,6 @@ pub fn check_consistency(
                 .metadata
                 .get(docname)
                 .is_some_and(|meta| meta.contains_key("orphan"))
-            || !is_sphinx_source(docname)
         {
             continue;
         }
@@ -1196,15 +1183,12 @@ impl ToctreeLocations<'_> {
     /// toctree in its own source.
     fn toctree(&self, toctree: &Node) -> Location {
         let parent = str_attr(toctree, "parent").unwrap_or_default();
-        let location = LogLocation::Node {
-            source: toctree.span.source,
-            line: toctree.span.line,
-        };
+        let (source, line) = (toctree.span.source, toctree.span.line);
         match (self.sources)(parent) {
-            Some(sources) => location.render(sources, self.source_dir, parent),
+            Some(sources) => LogLocation::render_node(sources, self.source_dir, source, line),
             None => {
                 let own = [(self.doc2path)(parent).display().to_string()];
-                location.render(&own, self.source_dir, parent)
+                LogLocation::render_node(&own, self.source_dir, source, line)
             }
         }
     }
@@ -2651,7 +2635,7 @@ mod tests {
             BTreeMap::from([("orphan".to_string(), String::new())]),
         );
 
-        let messages = check_consistency(&env, &|_| true);
+        let messages = check_consistency(&env);
         assert_eq!(
             messages
                 .iter()
@@ -2676,7 +2660,7 @@ mod tests {
             "index",
             &[("index", &["a", "b"]), ("a", &["c"]), ("b", &["c"])],
         );
-        let messages = check_consistency(&env, &|_| true);
+        let messages = check_consistency(&env);
         assert_eq!(messages.len(), 1, "{messages:?}");
         assert_eq!(messages[0].level, ConsistencyLevel::Info);
         assert_eq!(messages[0].docname, "c");
