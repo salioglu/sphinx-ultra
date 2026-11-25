@@ -336,8 +336,8 @@ pub struct BuildConfig {
     /// could not evaluate, the first by line first
     /// ([`crate::python_config::Unevaluable`]): a configuration error once
     /// the `-D` overrides are in, for a key no override set, and for a
-    /// binding Sphinx reads over any override
-    /// ([`crate::python_config::Unevaluable::overridable`],
+    /// binding no override replaces, of an attribute or an item of that
+    /// name ([`crate::python_config::Unevaluable::overridable`],
     /// [`Self::check_evaluated`]). Sphinx reads an override, never what
     /// `conf.py` bound the module's name to. Diagnostic state like
     /// [`Self::confval_type_mismatches`]: skipped by serde.
@@ -1012,8 +1012,8 @@ impl BuildConfig {
     /// Fails with the configuration error of the first `conf.py` binding
     /// of `rst_prolog` or `rst_epilog` this crate could not evaluate and no
     /// `-D` override replaced ([`Self::unevaluable`]): run once the
-    /// overrides are in. A binding Sphinx reads over any override comes
-    /// first, whatever its line
+    /// overrides are in. A binding no override replaces comes first,
+    /// whatever its line
     /// ([`crate::python_config::Unevaluable::overridable`]): no override
     /// builds while one stands, so no error that offers one is shown
     /// before it. The error names the key and, for a binding an override
@@ -1282,8 +1282,8 @@ impl BuildConfig {
         // Nor does Sphinx read the prolog or epilog `conf.py` bound the
         // module's name to, which this crate may not have evaluated, or on
         // which Sphinx's reader would crash: an override of the key
-        // replaces it. An assignment to an attribute of that name it reads
-        // over the override (`Unevaluable::overridable`): that binding
+        // replaces it. It does not replace a binding of an attribute or an
+        // item of that name (`Unevaluable::overridable`): that binding
         // stays.
         if matches!(key, "rst_prolog" | "rst_epilog") {
             applied
@@ -1856,8 +1856,8 @@ output:
         );
     }
 
-    /// An override of a key keeps the key's bindings Sphinx reads over
-    /// any override, assignments to an attribute
+    /// An override of a key keeps the key's bindings no override
+    /// replaces, of an attribute or an item of that name
     /// ([`crate::python_config::Unevaluable::overridable`]), and the
     /// configuration error reports such a binding before any other,
     /// whatever its line: no override builds while one stands, so its
@@ -1886,8 +1886,9 @@ output:
         };
         let attribute = "cannot evaluate rst_prolog (conf.py, line 5: an assignment to an \
                          attribute of that name): sphinx-ultra reads conf.py without running \
-                         it, so rst_prolog and rst_epilog must be string literals; Sphinx reads \
-                         this binding over any -D rst_prolog=... override, so edit conf.py";
+                         it, so rst_prolog and rst_epilog must be string literals; conf.py \
+                         changes an attribute or item of that name, which a -D rst_prolog=... \
+                         override does not replace, so edit conf.py";
         assert_eq!(config.check_evaluated().unwrap_err().to_string(), attribute);
         assert_eq!(config.apply_override("rst_prolog", "x").unwrap(), None);
         let left: Vec<(&str, usize)> = config

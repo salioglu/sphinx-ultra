@@ -5782,15 +5782,26 @@ fn a_d_override_rescues_an_unevaluable_rst_epilog() {
 /// rst_prolog=...`, and `config.rst_epilog += ...` in a `config-inited`
 /// handler extends the override as it extends `conf.py`'s value, exit 0
 /// with and without the override (scratch `t17b-fix2/specs/attr_setup*`,
-/// `attr_inited_lit*`). This crate evaluates neither, so each is the
-/// configuration error with the override as without it, and the error
-/// offers no `-D`. A function's `global` binding of the module's name is
-/// not such a binding: `Config.__getattr__` takes the override before the
-/// namespace that binding changes, and the override builds as Sphinx
-/// does (`global_setup_D.json`).
+/// `attr_inited_lit*`). So it does when the statement binds the name as
+/// well, in a chained assignment or a one-line `for` body
+/// (`t17b-fix3/specs/chain_local_attr*`, `chain_global_attr*`,
+/// `for_body_attr*`), and for an item of the configuration, which
+/// `Config.__setitem__` sets as an attribute, and a `setattr` call
+/// (`item_setup*`, `setattr_setup*`); a `del` of the attribute crashes
+/// Sphinx, exit 2 (`del_attr_setup*`). This crate evaluates none of them,
+/// so each is the configuration error with the override as without it,
+/// naming the line of the binding no override replaces, and the error
+/// offers no `-D`. A function's `global` binding of the module's name, or
+/// an item of `globals()`, is not such a binding: `Config.__getattr__`
+/// takes the override before the namespace that binding changes, and the
+/// override builds as Sphinx does (`t17b-fix2/specs/global_setup_D.json`,
+/// `t17b-fix3/specs/globals_setup_D.json`). An item of `vars()` in a
+/// function binds nothing, and the build reads no prolog, as Sphinx's
+/// (`vars_setup.json`).
 #[test]
 fn an_attribute_binding_is_fatal_even_with_a_d_override() {
     let index = ("index.rst", "T\n=\n\nText |a| |b|.\n");
+    let attribute = "an assignment to an attribute of that name";
     let cases = [
         (
             "t17b-attr-setup",
@@ -5798,6 +5809,7 @@ fn an_attribute_binding_is_fatal_even_with_a_d_override() {
              app.config.rst_prolog = '.. |a| replace:: A\\n'\n",
             "rst_prolog",
             3,
+            attribute,
         ),
         (
             "t17b-attr-inited",
@@ -5806,6 +5818,7 @@ fn an_attribute_binding_is_fatal_even_with_a_d_override() {
              def setup(app):\n    app.connect('config-inited', f)\n",
             "rst_epilog",
             4,
+            attribute,
         ),
         // After a binding of the key an override replaces, which neither
         // hides the attribute's nor is reported before it
@@ -5816,16 +5829,66 @@ fn an_attribute_binding_is_fatal_even_with_a_d_override() {
              def setup(app):\n    app.config.rst_prolog = '.. |a| replace:: A\\n'\n",
             "rst_prolog",
             5,
+            attribute,
+        ),
+        (
+            "t17b-chain-local-attr",
+            "extensions = []\ndef setup(app):\n    \
+             rst_prolog = app.config.rst_prolog = '.. |a| replace:: A\\n'\n",
+            "rst_prolog",
+            3,
+            attribute,
+        ),
+        // The `global` binding on the same line is one an override
+        // replaces; the attribute's is reported.
+        (
+            "t17b-chain-global-attr",
+            "extensions = []\ndef setup(app):\n    global rst_prolog\n    \
+             rst_prolog = app.config.rst_prolog = '.. |a| replace:: A\\n'\n",
+            "rst_prolog",
+            4,
+            attribute,
+        ),
+        (
+            "t17b-for-body-attr",
+            "extensions = []\ndef setup(app):\n    \
+             for rst_prolog in ['.. |a| replace:: A\\n']: app.config.rst_prolog = rst_prolog\n",
+            "rst_prolog",
+            3,
+            attribute,
+        ),
+        (
+            "t17b-item-setup",
+            "extensions = []\ndef setup(app):\n    \
+             app.config['rst_prolog'] = '.. |a| replace:: A\\n'\n",
+            "rst_prolog",
+            3,
+            "an assignment to an item of that name",
+        ),
+        (
+            "t17b-setattr-setup",
+            "extensions = []\ndef setup(app):\n    \
+             setattr(app.config, 'rst_prolog', '.. |a| replace:: A\\n')\n",
+            "rst_prolog",
+            3,
+            "a setattr call with that name",
+        ),
+        (
+            "t17b-del-attr-setup",
+            "extensions = []\ndef setup(app):\n    del app.config.rst_prolog\n",
+            "rst_prolog",
+            3,
+            "a del of an attribute of that name",
         ),
     ];
-    for (name, conf, key, line) in cases {
+    for (name, conf, key, line, reason) in cases {
         let src = temp_source(name, &[("conf.py", conf), index]);
         let out = out_dir(name);
         let error = format!(
             "\nConfiguration error!\n\n    sphinx.errors.ConfigError: cannot evaluate {key} \
-             (conf.py, line {line}: an assignment to an attribute of that name): sphinx-ultra \
-             reads conf.py without running it, so rst_prolog and rst_epilog must be string \
-             literals; Sphinx reads this binding over any -D {key}=... override, so edit \
+             (conf.py, line {line}: {reason}): sphinx-ultra reads conf.py without running it, \
+             so rst_prolog and rst_epilog must be string literals; conf.py changes an attribute \
+             or item of that name, which a -D {key}=... override does not replace, so edit \
              conf.py\n"
         );
         let override_ = format!("{key}=.. |b| replace:: B\n");
@@ -5847,26 +5910,98 @@ fn an_attribute_binding_is_fatal_even_with_a_d_override() {
         }
     }
 
+    let undefined = |name: &str| {
+        format!("<SRCDIR>/index.rst:4: ERROR: Undefined substitution referenced: \"{name}\". [docutils]\n")
+    };
+    let override_ = ["-D", "rst_prolog=.. |b| replace:: B\n"];
+    let boundaries = [
+        (
+            "t17b-global-setup",
+            "extensions = []\ndef setup(app):\n    global rst_prolog\n    \
+             rst_prolog = '.. |a| replace:: A\\n'\n",
+            &override_[..],
+            undefined("a"),
+        ),
+        (
+            "t17b-globals-setup",
+            "extensions = []\ndef setup(app):\n    \
+             globals()['rst_prolog'] = '.. |a| replace:: A\\n'\n",
+            &override_[..],
+            undefined("a"),
+        ),
+        (
+            "t17b-vars-setup",
+            "extensions = []\ndef setup(app):\n    \
+             vars()['rst_prolog'] = '.. |a| replace:: A\\n'\n",
+            &[][..],
+            undefined("a") + &undefined("b"),
+        ),
+    ];
+    for (name, conf, extra, expected) in boundaries {
+        let src = temp_source(name, &[("conf.py", conf), index]);
+        let (result, written) = warning_stream(&src, &out_dir(name), extra);
+        assert!(result.status.success(), "{name}: {}", stderr_of(&result));
+        assert_eq!(written, expected, "{name}");
+    }
+}
+
+/// A statement that binds `rst_epilog` and another name is the
+/// configuration error for the key, and the reader drops what else it
+/// binds, as it drops any statement it cannot read: with a `-D` override
+/// that lifts the error, the build reads the override as Sphinx 9.1.0
+/// does, and the dropped `html_title` still gets its notice, as the next
+/// line's `html_short_title` does (scratch `t17b-fix3/specs/chain_title*`).
+/// Without the override, the notice comes before the error.
+#[test]
+fn a_statement_binding_rst_epilog_and_another_name_notices_the_other() {
     let src = temp_source(
-        "t17b-global-setup",
+        "t17b-chain-title",
         &[
             (
                 "conf.py",
-                "extensions = []\ndef setup(app):\n    global rst_prolog\n    \
-                 rst_prolog = '.. |a| replace:: A\\n'\n",
+                "project = 'P'\nhtml_title = rst_epilog = f'{project} docs'\n\
+                 html_short_title = f'{project}'\n",
             ),
-            index,
+            ("index.rst", "T\n=\n\nText |a| |b|.\n"),
         ],
     );
-    let (result, written) = warning_stream(
-        &src,
-        &out_dir("t17b-global-setup"),
-        &["-D", "rst_prolog=.. |b| replace:: B\n"],
-    );
+    let out = out_dir("t17b-chain-title");
+    // The reader's notices name `conf.py` by the path the build was given.
+    let notice = "conf.py:2: unsupported statement dropped: \
+                  html_title = rst_epilog = f'{project} docs'\n";
+    let short_title = "conf.py:3: unsupported value for 'html_short_title' dropped \
+                       (unsupported expression): f'{project}'\n";
+
+    let (result, written) = warning_stream(&src, &out, &["-D", "rst_epilog=.. |b| replace:: B\n"]);
     assert!(result.status.success(), "stderr: {}", stderr_of(&result));
     assert_eq!(
         written,
         "<SRCDIR>/index.rst:4: ERROR: Undefined substitution referenced: \"a\". [docutils]\n"
+    );
+    let stderr = stderr_of(&result);
+    let at = |text: &str| {
+        stderr
+            .find(text)
+            .unwrap_or_else(|| panic!("{text}: {stderr}"))
+    };
+    assert!(at(notice) < at(short_title), "{stderr}");
+
+    let (result, written) = warning_stream(&src, &out, &[]);
+    assert_eq!(
+        result.status.code(),
+        Some(2),
+        "stderr: {}",
+        stderr_of(&result)
+    );
+    let error = "\nConfiguration error!\n\n    sphinx.errors.ConfigError: cannot evaluate \
+                 rst_epilog (conf.py, line 2: an assignment it cannot evaluate): sphinx-ultra \
+                 reads conf.py without running it, so rst_prolog and rst_epilog must be string \
+                 literals; set it with -D rst_epilog=... to build without editing conf.py\n";
+    assert_eq!(written, error);
+    let stderr = stderr_of(&result);
+    assert!(
+        stderr.contains(notice) && stderr.ends_with(error),
+        "{stderr}"
     );
 }
 

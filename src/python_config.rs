@@ -38,8 +38,9 @@ struct Pending {
     /// a block may not.
     definite: bool,
     /// Whether the binding runs when something calls the function it is
-    /// in (`setup(app)`, an event handler), or changes an attribute of
-    /// another object (`app.config.rst_prolog`): after every top-level
+    /// in (`setup(app)`, an event handler), or changes an attribute or an
+    /// item of another object (`app.config.rst_prolog`,
+    /// `app.config['rst_prolog']`, `setattr(...)`): after every top-level
     /// statement, so no later statement binds the key again.
     deferred: bool,
 }
@@ -78,13 +79,22 @@ pub struct Unevaluable {
     /// Whether a `-D` override of the key replaces the binding, as it
     /// replaces any binding of the module's name: Sphinx 9.1.0's
     /// `Config.__getattr__` takes the override before `conf.py`'s
-    /// namespace (`config.py:446-465`). An assignment to an attribute
-    /// (`app.config.rst_prolog = ...` in `setup(app)`, `config.rst_epilog
-    /// += ...` in a `config-inited` handler) is not replaced:
-    /// `Config.__setattr__` (`:434-444`) stores it in the instance's
+    /// namespace (`config.py:446-465`), which an item of `globals()`
+    /// binds too, and one of `vars()` or `locals()` at the top level
+    /// (scratch `t17b-fix3/specs/globals_*`, `vars_module*`,
+    /// `locals_module*`). A binding of an attribute or an item named like
+    /// the key, or a `setattr` call naming it, is not replaced. On
+    /// Sphinx's configuration (`app.config.rst_prolog = ...` in
+    /// `setup(app)`, `config.rst_epilog += ...` in a `config-inited`
+    /// handler, `app.config['rst_prolog'] = ...`, `setattr(app.config,
+    /// 'rst_prolog', ...)`), `Config.__setattr__` (`:434-444`, which
+    /// `__setitem__` calls, `:481-482`) stores it in the instance's
     /// `__dict__`, which Python reads before it ever calls `__getattr__`,
-    /// so Sphinx reads it over any override (scratch
-    /// `t17b-fix2/specs/attr_*`).
+    /// so Sphinx reads it over any override (`t17b-fix2/specs/attr_*`,
+    /// `t17b-fix3/specs/item_setup*`, `setattr_setup*`); a `del` of it
+    /// crashes Sphinx (`del_item_setup*`). This reader cannot tell any
+    /// other object from Sphinx's configuration, so it takes no override
+    /// for those either.
     pub overridable: bool,
 }
 
@@ -92,7 +102,9 @@ impl std::fmt::Display for Unevaluable {
     /// The configuration error: Sphinx names its configuration file the
     /// same way when it cannot compile it, `(conf.py, line N)`. It offers
     /// the `-D` override that builds without an edit to `conf.py` only for
-    /// a binding the override replaces.
+    /// a binding the override replaces; any other changes an attribute or
+    /// an item of that name, of Sphinx's configuration or of an object
+    /// this reader cannot tell from it, which no override replaces.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let file = if self.file.is_empty() {
             "conf.py"
@@ -115,7 +127,8 @@ impl std::fmt::Display for Unevaluable {
         } else {
             write!(
                 f,
-                "Sphinx reads this binding over any -D {key}=... override, so edit conf.py"
+                "conf.py changes an attribute or item of that name, which a -D {key}=... \
+                 override does not replace, so edit conf.py"
             )
         }
     }
@@ -421,9 +434,12 @@ impl PythonConfigParser {
     }
 
     /// Parse the declarative subset of a conf.py: literal assignments, with a
-    /// warning recorded for every construct that had to be dropped, except
-    /// the statements that bind a key of [`MUST_EVALUATE`] ([`bindings`]),
-    /// which are evaluated or recorded as [`Self::unevaluable`].
+    /// warning recorded for every construct that had to be dropped. A
+    /// statement that binds a key of [`MUST_EVALUATE`] ([`bindings`]) is
+    /// evaluated or recorded as [`Self::unevaluable`] for the key, and is
+    /// warned about only when it binds anything else, which this reader
+    /// drops: a `-D` override of the key may lift the error, never the
+    /// drop.
     fn parse_statements(&mut self, content: &str) -> Result<()> {
         // The `def` and `class` statements whose bodies the statements are
         // in, innermost last.
@@ -438,10 +454,16 @@ impl PythonConfigParser {
                 scopes.pop();
             }
 
-            let found = bindings(stmt, indent, &mut scopes);
+            let (found, others) = bindings(stmt, indent, &mut scopes);
             if !found.is_empty() {
                 for (key, binding) in found {
                     self.bind(line, key, binding);
+                }
+                if others {
+                    self.warnings.push(ConfigWarning {
+                        line,
+                        message: format!("unsupported statement dropped: {}", snippet(stmt)),
+                    });
                 }
                 continue;
             }
@@ -1307,36 +1329,60 @@ enum Bound<'s> {
         reason: &'static str,
         definite: bool,
     },
-    /// A target that is an attribute named like the key: Sphinx 9.1.0 reads
-    /// `app.config.rst_prolog = ...` in `setup(app)`, and `config.rst_epilog
-    /// = ...` in a `config-inited` handler (scratch `t17b-fix1/specs/attr_*`),
-    /// over any `-D` override (`t17b-fix2/specs/attr_*`).
-    Attribute,
+    /// An item named like the key of `conf.py`'s namespace,
+    /// `globals()['rst_prolog'] = ...`: a binding of the name, as [`Self::Other`]
+    /// is at the top level. In a function or a class body, `globals()` is
+    /// still the module's namespace (`everywhere`), but `vars()` and
+    /// `locals()` are the body's own, where an item binds nothing (Sphinx
+    /// 9.1.0, scratch `t17b-fix3/specs/globals_*`, `vars_*`, `locals_*`).
+    Namespace {
+        reason: &'static str,
+        definite: bool,
+        everywhere: bool,
+    },
+    /// A binding no `-D` override replaces ([`Unevaluable::overridable`]):
+    /// an attribute or an item named like the key, or a `setattr` call
+    /// naming it, of any object but `conf.py`'s namespace, and why. Sphinx
+    /// 9.1.0 reads `app.config.rst_prolog = ...` in `setup(app)`, and
+    /// `config.rst_epilog = ...` in a `config-inited` handler (scratch
+    /// `t17b-fix1/specs/attr_*`), over any override
+    /// (`t17b-fix2/specs/attr_*`), and `app.config['rst_prolog'] = ...`
+    /// and `setattr(app.config, 'rst_prolog', ...)` alike
+    /// (`t17b-fix3/specs/item_setup*`, `setattr_setup*`).
+    Attribute {
+        reason: &'static str,
+    },
 }
 
 /// The keys of [`MUST_EVALUATE`] that `stmt`, a logical statement at
 /// `indent`, binds, and what each binding binds in the scope it runs in:
 /// `scopes`, which a `def` or `class` header opens one in and a `global`
-/// statement declares names in. A statement that binds neither key
-/// returns nothing.
+/// statement declares names in; and whether the statement binds anything
+/// else, which this reader drops ([`statement_bindings`]). A statement
+/// that binds neither key returns no binding.
 ///
 /// The bindings it sees are an assignment's targets (`=`, `op=`, a tuple,
-/// starred or chained target, but not a subscript's key or a lambda's
+/// starred or chained target; a name, an attribute, or an item whose
+/// subscript is a string literal, but not a subscript's key or a lambda's
 /// parameter), `del`'s, a `for`'s, a `with`'s or an `except`'s target, an
-/// assignment expression, an import's names, and a `def`'s or a `class`'s
-/// name. A star import and `exec(...)` bind names it cannot see.
+/// assignment expression, an import's names, a `def`'s or a `class`'s
+/// name, and a `setattr` call whose name is a string literal. Each target
+/// that binds a key is a binding of its own: a statement can bind the
+/// module's name and an attribute of that name both. A star import,
+/// `exec(...)`, and a key that a subscript or a `setattr` call names
+/// otherwise than by a literal bind names it cannot see.
 fn bindings<'s>(
     stmt: &'s str,
     indent: usize,
     scopes: &mut Vec<Scope>,
-) -> Vec<(&'static str, Binding<'s>)> {
+) -> (Vec<(&'static str, Binding<'s>)>, bool) {
     let in_block = indent > 0;
     let Some(header) = compound_header(stmt) else {
         return simple_bindings(stmt, scopes, in_block);
     };
     // A header binds in the scope around it.
-    let mut found: Vec<(&'static str, Binding<'s>)> = header
-        .bindings()
+    let (bound, mut others) = header.bindings();
+    let mut found: Vec<(&'static str, Binding<'s>)> = bound
         .into_iter()
         .map(|(key, bound)| (key, resolve(bound, key, scopes, in_block)))
         .collect();
@@ -1349,17 +1395,18 @@ fn bindings<'s>(
     }
     if !header.body.is_empty() {
         // A one-line compound statement: its body is in the scope the
-        // header opens, or in a block.
-        for (key, binding) in simple_bindings(header.body, scopes, true) {
-            if !found.iter().any(|(bound, _)| *bound == key) {
-                found.push((key, binding));
-            }
-        }
+        // header opens, or in a block. Its bindings stand beside the
+        // header's, of the same key too, as each target's does
+        // ([`PythonConfigParser::opaque`] keeps a key's first of each
+        // kind).
+        let (body, body_others) = simple_bindings(header.body, scopes, true);
+        found.extend(body);
+        others |= body_others;
         if opens_scope {
             scopes.pop();
         }
     }
-    found
+    (found, others)
 }
 
 /// [`bindings`] of a simple statement, in `scopes`, `in_block` when a
@@ -1369,7 +1416,7 @@ fn simple_bindings<'s>(
     stmt: &'s str,
     scopes: &mut [Scope],
     in_block: bool,
-) -> Vec<(&'static str, Binding<'s>)> {
+) -> (Vec<(&'static str, Binding<'s>)>, bool) {
     if let Some(names) = keyword_rest(stmt, "global") {
         if let Some(scope) = scopes.last_mut() {
             for name in names.split(',').map(str::trim) {
@@ -1380,20 +1427,24 @@ fn simple_bindings<'s>(
                 }
             }
         }
-        return Vec::new();
+        return (Vec::new(), false);
     }
-    statement_bindings(stmt)
+    let (bound, others) = statement_bindings(stmt);
+    let found = bound
         .into_iter()
         .map(|(key, bound)| (key, resolve(bound, key, scopes, in_block)))
-        .collect()
+        .collect();
+    (found, others)
 }
 
 /// What `bound`, a statement's binding of `key`, binds in the scope it
-/// runs in. An attribute's runs after every top-level statement (in a
-/// function Sphinx calls), and Sphinx reads it over any `-D` override; so
-/// does a function's own binding of the module's name, which a `global`
-/// statement makes, but an override replaces it; in a function or a class
-/// body otherwise, a name is the scope's own. At the top level, in a
+/// runs in. An attribute's or an item's of any object but `conf.py`'s
+/// namespace runs after every top-level statement (in a function Sphinx
+/// calls), and no `-D` override replaces it; a function's own binding of
+/// the module's name, which a `global` statement or an item of
+/// `globals()` makes, runs after them too, but an override replaces it;
+/// in a function or a class body otherwise, a name, or an item of
+/// `vars()` or `locals()`, is the scope's own. At the top level, in a
 /// block, a statement may run once, many times or not at all.
 fn resolve<'s>(
     bound: Bound<'s>,
@@ -1401,13 +1452,29 @@ fn resolve<'s>(
     scopes: &[Scope],
     in_block: bool,
 ) -> Binding<'s> {
-    if let Bound::Attribute = bound {
-        return Binding::Opaque {
-            reason: "an assignment to an attribute of that name",
-            definite: false,
-            deferred: true,
-            overridable: false,
-        };
+    match bound {
+        Bound::Attribute { reason } => {
+            return Binding::Opaque {
+                reason,
+                definite: false,
+                deferred: true,
+                overridable: false,
+            };
+        }
+        Bound::Namespace {
+            reason, everywhere, ..
+        } if !scopes.is_empty() => {
+            return match everywhere {
+                true => Binding::Opaque {
+                    reason,
+                    definite: false,
+                    deferred: true,
+                    overridable: true,
+                },
+                false => Binding::Local,
+            };
+        }
+        _ => {}
     }
     match scopes.last() {
         Some(scope) if !scope.globals.contains(&key) => Binding::Local,
@@ -1420,6 +1487,7 @@ fn resolve<'s>(
         None if in_block => Binding::Opaque {
             reason: match bound {
                 Bound::Delete => "a del inside a block",
+                Bound::Namespace { reason, .. } => reason,
                 _ => "an assignment inside a block",
             },
             definite: false,
@@ -1430,21 +1498,28 @@ fn resolve<'s>(
             Bound::Assign(value_src) => Binding::Assign(value_src),
             Bound::Augment { plus, value_src } => Binding::Augment { plus, value_src },
             Bound::Delete => Binding::Delete,
-            Bound::Other { reason, definite } => Binding::Opaque {
+            Bound::Other { reason, definite }
+            | Bound::Namespace {
+                reason, definite, ..
+            } => Binding::Opaque {
                 reason,
                 definite,
                 deferred: false,
                 overridable: true,
             },
-            Bound::Attribute => unreachable!("handled above"),
+            Bound::Attribute { .. } => unreachable!("handled above"),
         },
     }
 }
 
 /// The bindings of the keys of [`MUST_EVALUATE`] that the simple statement
 /// `stmt` makes, as the statement alone tells them: an import's names,
-/// `del`'s targets, an assignment's targets, an assignment expression's.
-fn statement_bindings(stmt: &str) -> Vec<(&'static str, Bound<'_>)> {
+/// `del`'s targets, an assignment's targets, an assignment expression's, a
+/// `setattr` call's. Also whether it binds anything else (another name,
+/// an attribute of another name, an item a string literal naming a key
+/// does not subscript), which this reader drops; an import's other names
+/// aside, as this reader drops any import unwarned.
+fn statement_bindings(stmt: &str) -> (Vec<(&'static str, Bound<'_>)>, bool) {
     let mut found: Vec<(&'static str, Bound<'_>)> = Vec::new();
     if let Some(names) = imported_names(stmt) {
         for key in MUST_EVALUATE {
@@ -1453,18 +1528,21 @@ fn statement_bindings(stmt: &str) -> Vec<(&'static str, Bound<'_>)> {
                 found.push((key, Bound::Other { reason, definite }));
             }
         }
-        return found;
+        return (found, false);
     }
     if let Some(targets) = keyword_rest(stmt, "del") {
         let targets = target_bindings(targets);
         for key in MUST_EVALUATE {
             if targets.names.contains(&key) {
                 found.push((key, Bound::Delete));
-            } else if targets.attributes.contains(&key) {
-                found.push((key, Bound::Attribute));
+            }
+            if targets.attributes.contains(&key) {
+                let reason = "a del of an attribute of that name";
+                found.push((key, Bound::Attribute { reason }));
             }
         }
-        return found;
+        found.extend(targets.item_bindings(true, false));
+        return (found, targets.binds_others());
     }
     let assignment = assignment(stmt);
     let targets: Vec<TargetBindings<'_>> = assignment
@@ -1472,6 +1550,7 @@ fn statement_bindings(stmt: &str) -> Vec<(&'static str, Bound<'_>)> {
         .iter()
         .map(|target| target_bindings(target))
         .collect();
+    let walrus = walrus_targets(stmt);
     for key in MUST_EVALUATE {
         if targets.iter().any(|target| target.names.contains(&key)) {
             let alone = matches!(assignment.targets[..], [target] if target.trim() == key);
@@ -1492,17 +1571,161 @@ fn statement_bindings(stmt: &str) -> Vec<(&'static str, Bound<'_>)> {
                 },
             };
             found.push((key, bound));
-        } else if targets
-            .iter()
-            .any(|target| target.attributes.contains(&key))
-        {
-            found.push((key, Bound::Attribute));
-        } else if walrus_targets(stmt).contains(&key) {
+        } else if walrus.contains(&key) {
             let (reason, definite) = ("an assignment expression", false);
             found.push((key, Bound::Other { reason, definite }));
         }
+        if targets
+            .iter()
+            .any(|target| target.attributes.contains(&key))
+        {
+            let reason = "an assignment to an attribute of that name";
+            found.push((key, Bound::Attribute { reason }));
+        }
     }
-    found
+    for target in &targets {
+        found.extend(target.item_bindings(false, true));
+    }
+    for key in setattr_keys(stmt) {
+        let reason = "a setattr call with that name";
+        found.push((key, Bound::Attribute { reason }));
+    }
+    let others = targets.iter().any(TargetBindings::binds_others) || binds_other_names(&walrus);
+    (found, others)
+}
+
+/// Whether `names`, the names a statement binds with assignment
+/// expressions ([`walrus_targets`]), hold one that is no key of
+/// [`MUST_EVALUATE`].
+fn binds_other_names(names: &[&str]) -> bool {
+    names
+        .iter()
+        .any(|name| !name.is_empty() && !MUST_EVALUATE.contains(name))
+}
+
+/// The key of [`MUST_EVALUATE`] that `text`, a `str` literal, names.
+fn key_named(text: &str) -> Option<&'static str> {
+    match parse_python_literal_typed(text) {
+        Ok((serde_json::Value::String(name), "str")) => {
+            MUST_EVALUATE.into_iter().find(|key| *key == name)
+        }
+        _ => None,
+    }
+}
+
+/// Which of `globals()`, `vars()` and `locals()` the text `base` calls,
+/// spaced or parenthesized as it may be: `conf.py`'s namespace, at its top
+/// level.
+fn namespace_call(base: &str) -> Option<&'static str> {
+    let compact: String = base.chars().filter(|c| !c.is_whitespace()).collect();
+    let mut call = compact.as_str();
+    while let Some(inner) = call
+        .strip_prefix('(')
+        .and_then(|call| call.strip_suffix(')'))
+    {
+        call = inner;
+    }
+    ["globals", "vars", "locals"]
+        .into_iter()
+        .find(|name| call.strip_prefix(name) == Some("()"))
+}
+
+/// What `base[index]`, an item a target binds (or a `del` deletes),
+/// binds of a key of [`MUST_EVALUATE`]: nothing unless `index` is a `str`
+/// literal naming the key ([`key_named`]). An item of `globals()`,
+/// `vars()` or `locals()` binds the module's name ([`Bound::Namespace`],
+/// `definite` as the statement's target binds it); an item of any other
+/// object is a binding no `-D` override replaces ([`Bound::Attribute`]):
+/// `Config.__setitem__` sets Sphinx's configuration's attribute
+/// (`config.py:481-482`), and this reader cannot tell another object from
+/// that configuration.
+fn item_binding<'s>(
+    base: &str,
+    index: &str,
+    del: bool,
+    definite: bool,
+) -> Option<(&'static str, Bound<'s>)> {
+    let key = key_named(index)?;
+    let reason = match del {
+        true => "a del of an item of that name",
+        false => "an assignment to an item of that name",
+    };
+    let bound = match namespace_call(base) {
+        Some(call) => Bound::Namespace {
+            reason,
+            definite,
+            everywhere: call == "globals",
+        },
+        None => Bound::Attribute { reason },
+    };
+    Some((key, bound))
+}
+
+/// The keys of [`MUST_EVALUATE`] that the `setattr(<object>, <name>,
+/// <value>)` calls in `text` name, with a `str` literal as the second
+/// argument, outside strings. Sphinx reads `setattr(app.config,
+/// 'rst_prolog', ...)` in `setup(app)` over any `-D` override (scratch
+/// `t17b-fix3/specs/setattr_setup*`), and this reader cannot tell another
+/// object from Sphinx's configuration.
+fn setattr_keys(text: &str) -> Vec<&'static str> {
+    let bytes = text.as_bytes();
+    let mut keys = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            quote @ (b'\'' | b'"') => {
+                i = skip_string(bytes, i, quote);
+                continue;
+            }
+            byte if is_identifier_byte(byte) => {
+                let start = i;
+                while i < bytes.len() && is_identifier_byte(bytes[i]) {
+                    i += 1;
+                }
+                if &text[start..i] != "setattr" {
+                    continue;
+                }
+                let open = i + text[i..].len() - text[i..].trim_start().len();
+                if bytes.get(open) == Some(&b'(') {
+                    let arguments = call_arguments(text, open);
+                    if let Some(key) = arguments.get(1).and_then(|name| key_named(name)) {
+                        keys.push(key);
+                    }
+                }
+                continue;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    keys
+}
+
+/// The arguments, trimmed, of the call whose `(` is at `open` in `text`:
+/// split at its commas outside strings and brackets.
+fn call_arguments(text: &str, open: usize) -> Vec<&str> {
+    let bytes = text.as_bytes();
+    let mut arguments = Vec::new();
+    let (mut depth, mut start, mut i) = (0i32, open + 1, open + 1);
+    while i < bytes.len() {
+        match bytes[i] {
+            quote @ (b'\'' | b'"') => {
+                i = skip_string(bytes, i, quote);
+                continue;
+            }
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' if depth > 0 => depth -= 1,
+            b')' | b']' | b'}' => break,
+            b',' if depth == 0 => {
+                arguments.push(text[start..i].trim());
+                start = i + 1;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    arguments.push(text[start..i.min(bytes.len())].trim());
+    arguments
 }
 
 /// A compound statement's header: its keyword (`async` dropped), the text
@@ -1559,21 +1782,25 @@ fn compound_header(stmt: &str) -> Option<Header<'_>> {
 
 impl<'s> Header<'s> {
     /// The keys of [`MUST_EVALUATE`] the header binds: a `for`'s target, a
-    /// `with`'s or an `except`'s `as` target, a `def`'s or a `class`'s
-    /// name, an assignment expression in its expressions.
-    fn bindings(&self) -> Vec<(&'static str, Bound<'s>)> {
+    /// `with`'s or an `except`'s `as` target (a name, an attribute or an
+    /// item, as an assignment's, [`statement_bindings`]), a `def`'s or a
+    /// `class`'s name, an assignment expression or a `setattr` call in its
+    /// expressions; and whether it binds anything else.
+    fn bindings(&self) -> (Vec<(&'static str, Bound<'s>)>, bool) {
         let mut found: Vec<(&'static str, Bound<'s>)> = Vec::new();
+        let mut others = false;
         let mut targets = |targets: TargetBindings<'_>, reason: &'static str, definite: bool| {
             for key in MUST_EVALUATE {
-                if found.iter().any(|(bound, _)| *bound == key) {
-                    continue;
-                }
                 if targets.names.contains(&key) {
                     found.push((key, Bound::Other { reason, definite }));
-                } else if targets.attributes.contains(&key) {
-                    found.push((key, Bound::Attribute));
+                }
+                if targets.attributes.contains(&key) {
+                    let reason = "an assignment to an attribute of that name";
+                    found.push((key, Bound::Attribute { reason }));
                 }
             }
+            found.extend(targets.item_bindings(false, definite));
+            others |= targets.binds_others();
         };
         match self.keyword {
             "for" => targets(
@@ -1607,15 +1834,21 @@ impl<'s> Header<'s> {
             }
             _ => {}
         }
+        let walrus = walrus_targets(self.text);
         for key in MUST_EVALUATE {
-            if !found.iter().any(|(bound, _)| *bound == key)
-                && walrus_targets(self.text).contains(&key)
-            {
+            let named = found.iter().any(|(bound, binding)| {
+                *bound == key && !matches!(binding, Bound::Attribute { .. })
+            });
+            if !named && walrus.contains(&key) {
                 let (reason, definite) = ("an assignment expression", false);
                 found.push((key, Bound::Other { reason, definite }));
             }
         }
-        found
+        for key in setattr_keys(self.text) {
+            let reason = "a setattr call with that name";
+            found.push((key, Bound::Attribute { reason }));
+        }
+        (found, others || binds_other_names(&walrus))
     }
 }
 
@@ -1914,19 +2147,49 @@ fn skip_string(bytes: &[u8], start: usize, quote: u8) -> usize {
     bytes.len()
 }
 
-/// The names and attributes a target binds.
+/// The names, attributes and items a target binds.
 struct TargetBindings<'s> {
     /// The names it binds: the target itself, or a tuple's or list's items.
     names: Vec<&'s str>,
     /// The attributes it binds: `name` of `x.name`.
     attributes: Vec<&'s str>,
+    /// The items it binds: `("x", "'key'")` of `x['key']`, the text of the
+    /// object subscripted and of the subscript, trimmed.
+    items: Vec<(&'s str, &'s str)>,
 }
 
-/// What `target` binds: each name or attribute that ends a target, outside
-/// strings and the brackets of a call or a subscript, whose content is
-/// read, not bound (`x[rst_prolog]` binds nothing by name). A bracket that
-/// follows a name, a closing bracket or a string opens a call or a
-/// subscript; any other opens a tuple or a list, whose items are targets.
+impl TargetBindings<'_> {
+    /// The bindings of the keys of [`MUST_EVALUATE`] its items make
+    /// ([`item_binding`]), each `definite` as the statement binds it, or
+    /// unbound by a `del`.
+    fn item_bindings<'b>(&self, del: bool, definite: bool) -> Vec<(&'static str, Bound<'b>)> {
+        self.items
+            .iter()
+            .filter_map(|(base, index)| item_binding(base, index, del, definite))
+            .collect()
+    }
+
+    /// Whether it binds anything but a key of [`MUST_EVALUATE`]: another
+    /// name, an attribute of another name, or an item that a `str` literal
+    /// naming a key does not subscript.
+    fn binds_others(&self) -> bool {
+        self.names
+            .iter()
+            .chain(&self.attributes)
+            .any(|name| !MUST_EVALUATE.contains(name))
+            || self
+                .items
+                .iter()
+                .any(|(_, index)| key_named(index).is_none())
+    }
+}
+
+/// What `target` binds: each name, attribute or item that ends a target,
+/// outside strings and the brackets of a call or a subscript, whose content
+/// is read, not bound (`x[rst_prolog]` binds an item of `x`, not the name).
+/// A bracket that follows a name, a closing bracket or a string opens a
+/// call or a subscript; any other opens a tuple or a list, whose items are
+/// targets.
 fn target_bindings(target: &str) -> TargetBindings<'_> {
     #[derive(Clone, Copy, PartialEq)]
     enum Prev {
@@ -1936,27 +2199,43 @@ fn target_bindings(target: &str) -> TargetBindings<'_> {
         Dot,
         Other,
     }
+    /// What ends a target unless `.`, `(` or `[` follows it.
+    enum Waiting<'s> {
+        /// A name, and whether it is an attribute.
+        Name(&'s str, bool),
+        /// A subscript: the object's text and the subscript's.
+        Item(&'s str, &'s str),
+    }
     let bytes = target.as_bytes();
     let mut bound = TargetBindings {
         names: Vec::new(),
         attributes: Vec::new(),
+        items: Vec::new(),
     };
-    // For each open bracket, whether it is a tuple's or a list's.
-    let mut displays: Vec<bool> = Vec::new();
+    // For each open bracket, whether it is a tuple's or a list's, and where
+    // it opens.
+    let mut brackets: Vec<(bool, usize)> = Vec::new();
+    let read = |brackets: &[(bool, usize)]| brackets.iter().any(|(display, _)| !display);
     let mut prev = Prev::Start;
-    // A name, and whether it is an attribute, until what follows it tells
-    // whether it ends a target: what `.`, `(` or `[` follows is read.
-    let mut waiting: Option<(&str, bool)> = None;
+    // Where the target the scan is in starts: after a tuple's or a list's
+    // opening bracket, a `,` or a `*` outside calls and subscripts, or at a
+    // tuple or a list once it closes.
+    let mut element = 0;
+    // The subscript open outside calls and subscripts, which may end a
+    // target: where its `[` is, and how many brackets are open around it.
+    let mut subscript: Option<(usize, usize)> = None;
+    let mut waiting: Option<Waiting<'_>> = None;
     fn flush<'s>(
-        waiting: &mut Option<(&'s str, bool)>,
+        waiting: &mut Option<Waiting<'s>>,
         next: Option<u8>,
         bound: &mut TargetBindings<'s>,
     ) {
-        if let Some((name, attribute)) = waiting.take() {
+        if let Some(found) = waiting.take() {
             if !matches!(next, Some(b'.' | b'(' | b'[')) {
-                match attribute {
-                    true => bound.attributes.push(name),
-                    false => bound.names.push(name),
+                match found {
+                    Waiting::Name(name, true) => bound.attributes.push(name),
+                    Waiting::Name(name, false) => bound.names.push(name),
+                    Waiting::Item(base, index) => bound.items.push((base, index)),
                 }
             }
         }
@@ -1979,20 +2258,43 @@ fn target_bindings(target: &str) -> TargetBindings<'_> {
             while i < bytes.len() && is_identifier_byte(bytes[i]) {
                 i += 1;
             }
-            if !byte.is_ascii_digit() && !displays.contains(&false) {
-                waiting = Some((&target[start..i], prev == Prev::Dot));
+            if !byte.is_ascii_digit() && !read(&brackets) {
+                waiting = Some(Waiting::Name(&target[start..i], prev == Prev::Dot));
             }
             prev = Prev::Name;
             continue;
         }
         match byte {
             b'(' | b'[' | b'{' => {
-                displays.push(!matches!(prev, Prev::Name | Prev::Close));
+                let display = !matches!(prev, Prev::Name | Prev::Close);
+                if !read(&brackets) {
+                    if display {
+                        element = i + 1;
+                    } else if byte == b'[' {
+                        subscript = Some((i, brackets.len()));
+                    }
+                }
+                brackets.push((display, i));
                 prev = Prev::Other;
             }
             b')' | b']' | b'}' => {
-                displays.pop();
+                if let Some((display, open)) = brackets.pop() {
+                    if display && !read(&brackets) {
+                        element = open;
+                    }
+                }
+                if let Some((open, depth)) = subscript {
+                    if brackets.len() == depth {
+                        subscript = None;
+                        let (base, index) = (&target[element..open], &target[open + 1..i]);
+                        waiting = Some(Waiting::Item(base.trim(), index.trim()));
+                    }
+                }
                 prev = Prev::Close;
+            }
+            b',' | b'*' if !read(&brackets) => {
+                element = i + 1;
+                prev = Prev::Other;
             }
             b'.' => prev = Prev::Dot,
             _ => prev = Prev::Other,
@@ -3548,19 +3850,40 @@ e = 'esc\n'
     /// or a `class` of the name, a binding in a function that declares it
     /// global, and an assignment to an attribute of that name, which
     /// Sphinx 9.1.0 reads in `setup(app)` (scratch
-    /// `t17b-fix1/specs/attr_*`, `def_*`, `del_prolog`). A later top-level
-    /// assignment it can evaluate is the value Python's last binding
-    /// leaves, unless the earlier binding runs later, in a function; `del`
-    /// of a bound name leaves Sphinx's `None`. Reading the keys binds
-    /// nothing, nor does a subscript's key, a lambda's parameter, a call's
-    /// keyword argument, or an assignment in a function or a class body,
-    /// which binds a local variable or a class attribute.
+    /// `t17b-fix1/specs/attr_*`, `def_*`, `del_prolog`), alone or beside
+    /// the name in one statement (`t17b-fix3/specs/chain_local_attr*`;
+    /// items and `setattr` calls are in
+    /// [`items_and_setattr_calls_bind_as_sphinx_reads_them`]). A later
+    /// top-level assignment it can evaluate is the value Python's last
+    /// binding leaves, unless the earlier binding runs later, in a
+    /// function; `del` of a bound name leaves Sphinx's `None`. Reading the
+    /// keys binds nothing, nor does a subscript's key, a lambda's
+    /// parameter, a call's keyword argument, or an assignment in a function
+    /// or a class body, which binds a local variable or a class attribute.
+    ///
+    /// The configuration error replaces the drop warning of a statement
+    /// that binds the keys only. One that binds anything else as well gets
+    /// it, as the reader drops those other bindings: a `-D` override of the
+    /// key lifts the error, never the drop (`t17b-fix3/specs/chain_title*`,
+    /// `tuple_title*`).
     #[test]
     fn unevaluable_prolog_or_epilog_fails_the_parse() {
         /// The pending binding, or what `rst_prolog` holds (`None`: unset
         /// or `None`).
         type Expected = Result<Option<&'static str>, (&'static str, usize, &'static str)>;
-        let rows: [(&str, &str, Expected); 68] = [
+        // The rows whose statement binds a name, attribute or item besides
+        // the keys, which the drop warning names.
+        const OTHERS: [&str; 8] = [
+            "a parenthesized tuple target",
+            "a starred target",
+            "a chained assignment",
+            "a chained assignment with the HTML title",
+            "a tuple target with the HTML title",
+            "a for target in a tuple",
+            "a parenthesized with target",
+            "an assignment expression after a character that is no ASCII",
+        ];
+        let rows: [(&str, &str, Expected); 72] = [
             (
                 "f-string",
                 "rst_prolog = f\"x {version}\"\n",
@@ -3656,6 +3979,26 @@ e = 'esc\n'
                 "a chained assignment",
                 "a = rst_epilog = 'x'\n",
                 Err(("rst_epilog", 1, "an assignment it cannot evaluate")),
+            ),
+            (
+                "a chained assignment with the HTML title",
+                "project = 'P'\nhtml_title = rst_epilog = f'{project} docs'\n",
+                Err(("rst_epilog", 2, "an assignment it cannot evaluate")),
+            ),
+            (
+                "a tuple target with the HTML title",
+                "project = 'P'\nrst_epilog, html_title = 'x', f'{project} docs'\n",
+                Err(("rst_epilog", 2, "an assignment it cannot evaluate")),
+            ),
+            (
+                "the name and an attribute of it in setup",
+                "def setup(app):\n    rst_prolog = app.config.rst_prolog = 'b'\n",
+                Err(("rst_prolog", 2, "an assignment to an attribute of that name")),
+            ),
+            (
+                "a one-line for body after its target",
+                "def setup(app):\n    for rst_prolog in ['b']: app.config.rst_prolog = rst_prolog\n",
+                Err(("rst_prolog", 2, "an assignment to an attribute of that name")),
             ),
             (
                 "an unevaluable binding after the last evaluated one",
@@ -3762,7 +4105,7 @@ e = 'esc\n'
             ),
             (
                 "del after a binding it cannot evaluate",
-                "rst_prolog = f'x'\ndel x, (rst_prolog)\n",
+                "x = 1\nrst_prolog = f\"x\"\ndel x, (rst_prolog)\n",
                 Ok(None),
             ),
             (
@@ -3925,13 +4268,23 @@ e = 'esc\n'
             match expected {
                 Err(binding) => {
                     assert_eq!(unevaluable, Some(binding), "{name}");
-                    // The configuration error replaces the statement's
-                    // drop warning.
-                    assert!(
-                        p.warnings().iter().all(|warning| warning.line != binding.1),
-                        "{name}: {:?}",
-                        p.warnings()
-                    );
+                    // The configuration error replaces the drop warning of
+                    // a statement that binds the keys only; one that binds
+                    // anything else gets it.
+                    let dropped: Vec<&str> = p
+                        .warnings()
+                        .iter()
+                        .filter(|warning| warning.line == binding.1)
+                        .map(|warning| warning.message.as_str())
+                        .collect();
+                    match OTHERS.contains(&name) {
+                        true => assert!(
+                            matches!(&dropped[..], [message]
+                                if message.starts_with("unsupported statement dropped: ")),
+                            "{name}: {dropped:?}"
+                        ),
+                        false => assert!(dropped.is_empty(), "{name}: {dropped:?}"),
+                    }
                 }
                 Ok(value) => {
                     assert_eq!(unevaluable, None, "{name}");
@@ -4076,31 +4429,60 @@ e = 'esc\n'
     /// the name global (scratch `t17b-fix2/specs/mixed_top_attr_D.json`,
     /// `global_then_attr_D.json`, `attr_then_global_D.json`). So it stands
     /// beside the key's first binding an override replaces, never merged
-    /// into it, and a key keeps its first binding of each kind. Its message
-    /// offers no `-D`.
+    /// into it, and a key keeps its first binding of each kind: in one
+    /// statement too, which binds the name and the attribute in a chained
+    /// assignment, a `for` target, or a one-line body after a header that
+    /// binds the name, where Sphinx reads the attribute with and without
+    /// the override (`t17b-fix3/specs/chain_local_attr*`,
+    /// `chain_global_attr*`, `for_body_attr*`, `for_tuple_attr*`). Its
+    /// message offers no `-D`.
     #[test]
     fn an_attribute_binding_stands_beside_the_keys_other_bindings() {
-        for (content, expected) in [
+        /// A `conf.py` text, and the bindings left as `(key, line,
+        /// overridable)`.
+        type Row = (&'static str, &'static [(&'static str, usize, bool)]);
+        let rows: [Row; 8] = [
             (
                 "rst_prolog = f'{x}'\ndef setup(app):\n    app.config.rst_prolog = 'b'\n",
-                [("rst_prolog", 1, true), ("rst_prolog", 3, false)],
+                &[("rst_prolog", 1, true), ("rst_prolog", 3, false)],
             ),
             (
                 "def setup(app):\n    global rst_prolog\n    rst_prolog = 'c'\n    \
                  app.config.rst_prolog = 'b'\n",
-                [("rst_prolog", 3, true), ("rst_prolog", 4, false)],
+                &[("rst_prolog", 3, true), ("rst_prolog", 4, false)],
             ),
             (
                 "def setup(app):\n    app.config.rst_prolog = 'b'\n    global rst_prolog\n    \
                  rst_prolog = 'c'\n",
-                [("rst_prolog", 2, false), ("rst_prolog", 4, true)],
+                &[("rst_prolog", 2, false), ("rst_prolog", 4, true)],
             ),
             (
                 "def inited(app, config):\n    config.rst_epilog = 'a'\n    \
                  config.rst_epilog += 'b'\nrst_epilog = f'{x}'\nrst_epilog += 'c'\n",
-                [("rst_epilog", 2, false), ("rst_epilog", 4, true)],
+                &[("rst_epilog", 2, false), ("rst_epilog", 4, true)],
             ),
-        ] {
+            (
+                "extensions = []\ndef setup(app):\n    \
+                 rst_prolog = app.config.rst_prolog = '.. |a| replace:: A\\n'\n",
+                &[("rst_prolog", 3, false)],
+            ),
+            (
+                "extensions = []\ndef setup(app):\n    global rst_prolog\n    \
+                 rst_prolog = app.config.rst_prolog = '.. |a| replace:: A\\n'\n",
+                &[("rst_prolog", 4, true), ("rst_prolog", 4, false)],
+            ),
+            (
+                "extensions = []\ndef setup(app):\n    for rst_prolog in ['.. |a| replace:: A\\n']: \
+                 app.config.rst_prolog = rst_prolog\n",
+                &[("rst_prolog", 3, false)],
+            ),
+            (
+                "extensions = []\ndef setup(app):\n    \
+                 for rst_prolog, app.config.rst_prolog in [('x', '.. |a| replace:: A\\n')]: pass\n",
+                &[("rst_prolog", 3, false)],
+            ),
+        ];
+        for (content, expected) in rows {
             let p = parse(content);
             let bindings: Vec<(&str, usize, bool)> = p
                 .unevaluable_bindings()
@@ -4114,9 +4496,160 @@ e = 'esc\n'
             p.unevaluable().unwrap().to_string(),
             "cannot evaluate rst_prolog (conf.py, line 2: an assignment to an attribute of that \
              name): sphinx-ultra reads conf.py without running it, so rst_prolog and rst_epilog \
-             must be string literals; Sphinx reads this binding over any -D rst_prolog=... \
-             override, so edit conf.py"
+             must be string literals; conf.py changes an attribute or item of that name, which \
+             a -D rst_prolog=... override does not replace, so edit conf.py"
         );
+    }
+
+    /// An item named like the key, its subscript a `str` literal, and a
+    /// `setattr` call naming it, bind the key as Sphinx 9.1.0 reads them
+    /// (scratch `t17b-fix3/specs/`, each without and with `-D`). Of
+    /// Sphinx's configuration, `app.config['rst_prolog']` (which
+    /// `Config.__setitem__` sets as an attribute, `config.py:481-482`) and
+    /// `setattr(app.config, 'rst_prolog', ...)` are read over any `-D`
+    /// override, as an attribute is, and their `del` crashes Sphinx; an
+    /// item or a `setattr` of any other object this reader cannot tell
+    /// from that configuration, so none of them takes an override
+    /// ([`Unevaluable::overridable`]). An item of `globals()` binds the
+    /// module's name wherever it runs, and one of `vars()` or `locals()`
+    /// at the top level: an override replaces it, and a later literal
+    /// does. In a function or a class body, `vars()` and `locals()` are the
+    /// body's own namespace, where an item binds nothing. An item whose
+    /// subscript names the key otherwise, or names another key, binds
+    /// nothing of it. A `del` of an attribute has a reason of its own.
+    #[test]
+    fn items_and_setattr_calls_bind_as_sphinx_reads_them() {
+        /// The bindings left as `(key, line, reason, overridable)`, or what
+        /// `rst_prolog` holds when there is none.
+        type Expected =
+            Result<Option<&'static str>, &'static [(&'static str, usize, &'static str, bool)]>;
+        const ITEM: &str = "an assignment to an item of that name";
+        const SETATTR: &str = "a setattr call with that name";
+        let rows: [(&str, &str, Expected); 19] = [
+            (
+                "item_setup",
+                "def setup(app):\n    app.config['rst_prolog'] = 'b'\n",
+                Err(&[("rst_prolog", 2, ITEM, false)]),
+            ),
+            (
+                "item_module",
+                "app.config['rst_prolog'] = 'b'\n",
+                Err(&[("rst_prolog", 1, ITEM, false)]),
+            ),
+            (
+                "an item with an attribute or a subscript after it",
+                "import types\nrst_prolog = 'a'\nx = {'rst_prolog': types.SimpleNamespace()}\n\
+                 y = {'rst_prolog': [0]}\nx['rst_prolog'].y = 1\ny['rst_prolog'][0] = 1\n",
+                Ok(Some("a")),
+            ),
+            (
+                "globals_module",
+                "globals()['rst_prolog'] = 'b'\n",
+                Err(&[("rst_prolog", 1, ITEM, true)]),
+            ),
+            (
+                "globals_then_literal",
+                "globals()['rst_prolog'] = 'x'\nrst_prolog = 'a'\n",
+                Ok(Some("a")),
+            ),
+            (
+                "globals_setup",
+                "def setup(app):\n    globals()['rst_prolog'] = 'b'\nrst_prolog = 'a'\n",
+                Err(&[("rst_prolog", 2, ITEM, true)]),
+            ),
+            (
+                "globals_class",
+                "class C:\n    globals ( ) [\"rst_prolog\"] = 'b'\n",
+                Err(&[("rst_prolog", 2, ITEM, true)]),
+            ),
+            (
+                "vars_module",
+                "vars()['rst_epilog'] = 'b'\n",
+                Err(&[("rst_epilog", 1, ITEM, true)]),
+            ),
+            (
+                "locals_module, parenthesized",
+                "(locals())['rst_prolog'] = 'b'\n",
+                Err(&[("rst_prolog", 1, ITEM, true)]),
+            ),
+            (
+                "vars_setup",
+                "rst_prolog = 'a'\ndef setup(app):\n    vars()['rst_prolog'] = 'b'\n",
+                Ok(Some("a")),
+            ),
+            (
+                "vars_class",
+                "rst_prolog = 'a'\nclass C:\n    vars()['rst_prolog'] = 'b'\n",
+                Ok(Some("a")),
+            ),
+            (
+                "locals_setup",
+                "rst_prolog = 'a'\ndef setup(app):\n    locals()['rst_prolog'] = 'b'\n",
+                Ok(Some("a")),
+            ),
+            (
+                "setattr_setup",
+                "def setup(app):\n    setattr(app.config, 'rst_prolog', 'b')\n",
+                Err(&[("rst_prolog", 2, SETATTR, false)]),
+            ),
+            (
+                "setattr_module",
+                "import types\nns = types.SimpleNamespace()\nsetattr(ns, \"rst_\" 'epilog', 'b')\n",
+                Err(&[("rst_epilog", 3, SETATTR, false)]),
+            ),
+            (
+                "a setattr call in a handler",
+                "def setup(app):\n    app.connect('config-inited', lambda app, config: \
+                 setattr(config, 'rst_epilog', 'b'))\n",
+                Err(&[("rst_epilog", 2, SETATTR, false)]),
+            ),
+            (
+                "item_other_key, and setattr of another key or by a name",
+                "import types\nrst_prolog = 'a'\nd = {}\nd['html_title'] = 'x'\n\
+                 d[b'rst_prolog'] = 1\nns = types.SimpleNamespace()\nname = 'rst_prolog'\n\
+                 setattr(ns, 'html_title', 'x')\nsetattr(ns, name, 'x')\n",
+                Ok(Some("a")),
+            ),
+            (
+                "del_item_setup",
+                "def setup(app):\n    del app.config['rst_prolog']\n",
+                Err(&[("rst_prolog", 2, "a del of an item of that name", false)]),
+            ),
+            (
+                "del_globals_module",
+                "rst_prolog = 'a'\ndel globals()['rst_prolog']\n",
+                Err(&[("rst_prolog", 2, "a del of an item of that name", true)]),
+            ),
+            (
+                "del_attr_setup",
+                "def setup(app):\n    del app.config.rst_prolog\n",
+                Err(&[("rst_prolog", 2, "a del of an attribute of that name", false)]),
+            ),
+        ];
+        for (name, content, expected) in rows {
+            let p = parse(content);
+            let bindings: Vec<(&str, usize, &str, bool)> = p
+                .unevaluable_bindings()
+                .into_iter()
+                .map(|binding| {
+                    let (key, line) = (binding.key, binding.line);
+                    (key, line, binding.reason.as_str(), binding.overridable)
+                })
+                .collect();
+            match expected {
+                Err(expected) => assert_eq!(bindings, expected, "{name}"),
+                Ok(value) => {
+                    assert!(bindings.is_empty(), "{name}: {bindings:?}");
+                    assert_eq!(
+                        p.conf_namespace.get("rst_prolog"),
+                        value
+                            .map(|value| serde_json::Value::String(value.to_string()))
+                            .as_ref(),
+                        "{name}"
+                    );
+                }
+            }
+        }
     }
 
     /// The conf.py reader's string literals, as CPython 3.12.2 compiles
