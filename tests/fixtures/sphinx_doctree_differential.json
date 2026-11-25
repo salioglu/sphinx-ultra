@@ -3843,6 +3843,24 @@
       "name": "sx_plain.inline_dash_and_ellipsis_before_start_string",
       "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        x —\n        <emphasis>\n            b\n         y, x—\n        <emphasis>\n            b\n        —y and x…\n        <literal>\n            b\n        …y.\n",
       "rst": "x —*b* y, x—*b*—y and x…``b``…y.\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.meta_before_docinfo",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <meta content=\"k\" name=\"keywords\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Body.\n",
+      "rst": ".. meta::\n   :keywords: k\n\n:author: Me\n:date: 2020\n\nTitle\n=====\n\nBody.\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.header_before_docinfo",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <decoration>\n        <header>\n            <paragraph>\n                H\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Body.\n",
+      "rst": ".. header:: H\n\n:author: Me\n\nTitle\n=====\n\nBody.\n"
+    },
+    {
+      "family": "sx_parts",
+      "name": "sx_parts.docinfo_then_meta",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <meta content=\"k\" name=\"keywords\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Body.\n",
+      "rst": ":author: Me\n\n.. meta::\n   :keywords: k\n\nTitle\n=====\n\nBody.\n"
     }
   ],
   "conf_semantics": "a case's optional 'conf' dict is confoverrides applied on top of the base settings above; absent = defaults. The consumers map every key onto the parse options (ParseOptions.py or ParseOptions.read) and error on unmapped keys.",

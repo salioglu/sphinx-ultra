@@ -1249,6 +1249,13 @@ Term : "classifier" : 'c2'
     # holds ranges, the dashes and the ellipsis among them =====
     ('sx_plain', 'inline_dash_and_ellipsis_after_end_string', 'Types of *b*—but, **b**–x, ``b``… and *b*―y.\n'),
     ('sx_plain', 'inline_dash_and_ellipsis_before_start_string', 'x —*b* y, x—*b*—y and x…``b``…y.\n'),
+    # ===== sx_parts, appended (wave 5a T18a): metas and the decoration
+    # are PreBibliographic, so a field list after them, or before a meta,
+    # is still the docinfo DocInfo (340) makes and the metadata collector
+    # (880) pops =====
+    ('sx_parts', 'meta_before_docinfo', '.. meta::\n   :keywords: k\n\n:author: Me\n:date: 2020\n\nTitle\n=====\n\nBody.\n'),
+    ('sx_parts', 'header_before_docinfo', '.. header:: H\n\n:author: Me\n\nTitle\n=====\n\nBody.\n'),
+    ('sx_parts', 'docinfo_then_meta', ':author: Me\n\n.. meta::\n   :keywords: k\n\nTitle\n=====\n\nBody.\n'),
 ]
 
 
@@ -1483,7 +1490,7 @@ def generate_sphinx_snippets() -> int:
         "sx_smartquotes": 26,
         "sx_sphinx_roles": 28,
         "sx_config": 16,
-        "sx_parts": 13,
+        "sx_parts": 16,
     }
     counts: dict = {}
     for case in CASES:
