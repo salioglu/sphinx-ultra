@@ -1874,6 +1874,91 @@ A
 """,
         },
     },
+    {
+        # Wave 5a T17b, roles/config report §6.2 (P04a): `rst_prolog` and
+        # `rst_epilog` read around every document. Their records print
+        # `<rst_prologue>:3` and `<rst_epilogue>:3` once per document, in
+        # read order; the document's own lines keep their numbers; the
+        # prolog goes after `docinfo`'s field list and the epilog joins the
+        # last section.
+        "name": "rst_prolog_epilog",
+        "conf": {
+            "rst_prolog": ".. |psub| replace:: prolog text\n\n*unclosed prolog emphasis\n",
+            "rst_epilog": ".. |esub| replace:: epilog text\n\n*unclosed epilog emphasis\n",
+        },
+        "files": {
+            "index": """\
+Title
+=====
+
+Body |psub| and |esub|.
+
+*unclosed body emphasis
+
+See :ref:`nolabel`.
+
+.. image:: missing.png
+
+.. _dup:
+
+Para.
+
+.. _dup:
+
+Para2.
+
+.. toctree::
+
+   docinfo
+   missing_doc
+""",
+            "docinfo": """\
+:author: Me
+:date: 2020
+
+Second
+======
+
+*unclosed after docinfo
+""",
+        },
+    },
+    {
+        # Wave 5a T17b, roles/config report §6.2 (P18): a warning Sphinx
+        # logs at a directive's raw line (`location=(docname, self.lineno)`)
+        # counts a 3-line `rst_prolog` and the blank line after it, and one
+        # more after a leading field-marker line (`.. hlist content is not
+        # a list`: index line 4 at 8, orphan line 6 at 11); the reporter's
+        # own records keep the document's lines.
+        "name": "rst_prolog_raw_lineno",
+        "conf": {
+            "rst_prolog": ".. |a| replace:: A\n.. |b| replace:: B\n.. |c| replace:: C\n",
+        },
+        "files": {
+            "index": """\
+T
+=
+
+.. hlist::
+
+   not a list
+
+See :external:py:func:`f`.
+""",
+            "orphan": """\
+:orphan:
+
+T
+=
+
+.. hlist::
+
+   not a list
+
+See :external:py:func:`f`.
+""",
+        },
+    },
 ]
 
 

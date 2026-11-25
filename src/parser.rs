@@ -49,9 +49,14 @@ pub struct Parser {
     /// The build configuration the Sphinx-mode parse reads
     /// ([`crate::rst::ReadConfig`]), projected out of it once.
     read_config: rst::ReadConfig,
-    /// The role registries every document of the build starts from
+    /// The role registries the first document a build reads starts from:
+    /// those of a default Sphinx build, which no document has changed yet.
+    fresh_roles: Arc<rst::roles::RoleTable>,
+    /// The role registries every other document of the build starts from
     /// unless a document read before it changed them (decision 14): the
-    /// registries of a default Sphinx build.
+    /// fresh ones with the role and default-role definitions of
+    /// `rst_prolog`, which every document makes before its own text
+    /// ([`Self::prolog_baseline`]).
     baseline_roles: Arc<rst::roles::RoleTable>,
 }
 
@@ -71,24 +76,71 @@ pub struct ParsedFile {
 
 impl Parser {
     pub fn new(config: &BuildConfig) -> Result<Self> {
-        Ok(Self {
+        let fresh_roles = rst::roles::RoleTable::builtin(true);
+        let mut parser = Self {
             exclude_patterns: config.exclude_patterns.clone(),
             py: crate::py::PySigConfig::from(config),
             srcdir: None,
             source_encoding: config.source_encoding.clone(),
             read: ReadSettings::from_config(config, BuilderKind::default()),
             read_config: rst::ReadConfig::from(config),
-            baseline_roles: rst::roles::RoleTable::builtin(true),
-        })
+            baseline_roles: Arc::clone(&fresh_roles),
+            fresh_roles,
+        };
+        parser.baseline_roles = parser.prolog_baseline();
+        Ok(parser)
     }
 
-    /// The role registries a document starts from when no document read
-    /// before it in this build changed them (decision 14): what
-    /// [`Self::parse_full`] parses with, and what a document's
-    /// `roles_after` is compared with to decide whether the documents
-    /// after it must be read again from its registries.
+    /// The role registries the first document a build reads starts from,
+    /// as Sphinx's first read does: the registries no document has
+    /// changed (decision 14). What [`Self::parse_full`] parses with.
+    pub(crate) fn fresh_roles(&self) -> &Arc<rst::roles::RoleTable> {
+        &self.fresh_roles
+    }
+
+    /// The role registries every other document starts from when no
+    /// document read before it in this build changed them (decision 14):
+    /// the fresh ones with `rst_prolog`'s own role and default-role
+    /// definitions, which each document makes again before its own text.
+    /// The registries a document leaves are compared with them to decide
+    /// whether the documents after it must be read again from its
+    /// registries.
     pub(crate) fn baseline_roles(&self) -> &Arc<rst::roles::RoleTable> {
         &self.baseline_roles
+    }
+
+    /// The registries a read of `rst_prolog` alone leaves, from the fresh
+    /// ones: an empty document, decorated with the prolog and no epilog
+    /// ([`rst::prolog`]), read where a document at the root of the source
+    /// directory is, so a prolog's `include` finds what it does there.
+    /// Its records are not the build's. Without a prolog, the fresh
+    /// registries.
+    fn prolog_baseline(&self) -> Arc<rst::roles::RoleTable> {
+        if self
+            .read_config
+            .rst_prolog
+            .as_deref()
+            .is_none_or(str::is_empty)
+        {
+            return Arc::clone(&self.fresh_roles);
+        }
+        let output = rst::parse_rst_full(
+            "",
+            &rst::ParseOptions {
+                sphinx: true,
+                exclude_patterns: self.exclude_patterns.clone(),
+                py: self.py.clone(),
+                srcdir: self.srcdir.clone(),
+                source_encoding: self.source_encoding.clone(),
+                read: rst::ReadConfig {
+                    rst_epilog: None,
+                    ..self.read_config.clone()
+                },
+                roles: Some(Arc::clone(&self.fresh_roles)),
+                ..rst::ParseOptions::default()
+            },
+        );
+        Arc::new(output.roles_after)
     }
 
     /// Read for the builder `kind` of a build configured by `config`
@@ -102,6 +154,8 @@ impl Parser {
     /// `included`/`dependencies` recording.
     pub fn with_srcdir(mut self, srcdir: std::path::PathBuf) -> Self {
         self.srcdir = Some(srcdir);
+        // A prolog's `include` now resolves in the source directory.
+        self.baseline_roles = self.prolog_baseline();
         self
     }
 
@@ -109,7 +163,8 @@ impl Parser {
         Ok(self.parse_full(file_path, content, docname, None)?.document)
     }
 
-    /// Read one source file, keeping the read ([`ParsedFile::outcome`]).
+    /// Read one source file, keeping the read ([`ParsedFile::outcome`]),
+    /// as a build's first read: from the fresh role registries.
     ///
     /// `found_docs` is the project's full docname set (sphinx
     /// `env.found_docs`), which the `toctree` directive resolves its entries
@@ -122,7 +177,7 @@ impl Parser {
         docname: &str,
         found_docs: Option<Arc<BTreeSet<String>>>,
     ) -> Result<ParsedFile> {
-        let roles = Arc::clone(&self.baseline_roles);
+        let roles = Arc::clone(&self.fresh_roles);
         self.parse_full_from(file_path, content, docname, found_docs, roles)
     }
 
@@ -184,8 +239,7 @@ impl Parser {
         Ok(ParsedFile { document, outcome })
     }
 
-    /// [`Self::parse_rst_into_from`], from the build's baseline role
-    /// registries.
+    /// [`Self::parse_rst_into_from`], from the fresh role registries.
     #[cfg(test)]
     fn parse_rst_into(
         &self,
@@ -195,7 +249,7 @@ impl Parser {
         found_docs: Option<Arc<BTreeSet<String>>>,
         document: &mut Document,
     ) -> ReadOutcome {
-        let roles = Arc::clone(&self.baseline_roles);
+        let roles = Arc::clone(&self.fresh_roles);
         self.parse_rst_into_from(content, file_path, docname, found_docs, roles, document)
     }
 

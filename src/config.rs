@@ -246,6 +246,19 @@ pub struct BuildConfig {
     /// ([`crate::rst::ReadConfig::manpages_url`]).
     pub manpages_url: Option<String>,
 
+    /// `rst_prolog`, default `None` (`config.py:266`, rebuild class
+    /// `'env'`): text read before every document's own lines
+    /// ([`crate::rst::ReadConfig::rst_prolog`]). A `conf.py` value this
+    /// crate cannot evaluate is a configuration error, never dropped
+    /// ([`crate::python_config`]).
+    pub rst_prolog: Option<String>,
+
+    /// `rst_epilog`, default `None` (`config.py:265`, rebuild class
+    /// `'env'`): text read after every document's last line
+    /// ([`crate::rst::ReadConfig::rst_epilog`]), evaluated as `rst_prolog`
+    /// is.
+    pub rst_epilog: Option<String>,
+
     /// `math_number_all`, default `False` (`config.py:282`, rebuild class
     /// `'env'`): the `math` directive numbers an equation with no label
     /// too ([`crate::rst::ReadConfig::math_number_all`]). A `-D` override
@@ -311,7 +324,9 @@ pub struct BuildConfig {
     /// default is `None` and returns the raw string, `config.py:397`) or a
     /// mistyped `conf.py` assignment; for `smartquotes`, a `conf.py`
     /// assignment of a type that shares no base with `bool` (an `int`
-    /// does), which a `-D smartquotes=0|1` override replaces. Diagnostic
+    /// does), which a `-D smartquotes=0|1` override replaces; for
+    /// `rst_prolog` and `rst_epilog`, a `conf.py` value that is neither a
+    /// `str` nor `None` (a `-D` override is a `str`). Diagnostic
     /// state rather than configuration: skipped by serde, so it neither
     /// enters the cache fingerprint nor survives a save/load.
     #[serde(skip)]
@@ -434,11 +449,14 @@ const NONE_DEFAULT_INT_KEYS: [&str; 2] = [
 /// The keys whose value `check_confval_types` (`config.py:775-847`) can
 /// find mistyped here ([`BuildConfig::confval_type_mismatches`]), in
 /// Sphinx's registration order, the order it reports them in, each with the
-/// types its warning names, `sorted` by their backticked spelling: the two
-/// `int | None` keys ([`NONE_DEFAULT_INT_KEYS`]) and, between them,
+/// types its warning names, `sorted` by their backticked spelling:
+/// `rst_epilog` and `rst_prolog` (`config.py:265-266`), the two
+/// `int | None` keys ([`NONE_DEFAULT_INT_KEYS`]) and, between those,
 /// `smartquotes` (`config.py:289`), a core key, where the python domain
 /// registers the second when it is set up.
-const CONFVAL_TYPE_CHECKED_KEYS: [(&str, &str); 3] = [
+const CONFVAL_TYPE_CHECKED_KEYS: [(&str, &str); 5] = [
+    ("rst_epilog", "`str'"),
+    ("rst_prolog", "`str'"),
     ("maximum_signature_line_length", "`NoneType' or `int'"),
     ("smartquotes", "`bool'"),
     (
@@ -690,6 +708,8 @@ impl Default for BuildConfig {
             highlight_language: "default".to_string(),
             default_role: None,
             manpages_url: None,
+            rst_prolog: None,
+            rst_epilog: None,
             math_number_all: false,
             math_eqref_format: None,
             math_numfig: true,
@@ -793,9 +813,10 @@ impl BuildConfig {
     pub fn from_conf_py<P: AsRef<std::path::Path>>(conf_py_path: P) -> Result<Self> {
         let conf_py_path = conf_py_path.as_ref();
         let mut parser = PythonConfigParser::new()?;
-        let conf_py_config = parser.parse_conf_py(conf_py_path)?;
+        let parsed = parser.parse_conf_py(conf_py_path);
         // Silent dropping is banned: surface every construct the parser
-        // could not handle.
+        // could not handle, before the configuration error a value it must
+        // evaluate and cannot makes.
         for warning in parser.warnings() {
             log::warn!(
                 "{}:{}: {}",
@@ -804,7 +825,7 @@ impl BuildConfig {
                 warning.message
             );
         }
-        conf_py_config.to_build_config()
+        parsed?.to_build_config()
     }
 
     /// Try to auto-detect and load configuration from various sources
@@ -1203,8 +1224,9 @@ impl BuildConfig {
         applied.confval_type_mismatches = std::mem::take(&mut self.confval_type_mismatches);
         // `check_confval_types` reads the override, which `Config.__getattr__`
         // takes before `conf.py`'s value, and a bool override has the one
-        // type the key allows: nothing to report about conf.py's value.
-        if STRICT_BOOL_KEYS.contains(&key) {
+        // type the key allows, as a `str` key's does: nothing to report
+        // about conf.py's value.
+        if STRICT_BOOL_KEYS.contains(&key) || matches!(key, "rst_prolog" | "rst_epilog") {
             applied
                 .confval_type_mismatches
                 .retain(|(mismatched, _)| mismatched != key);
@@ -1686,6 +1708,33 @@ output:
         };
         assert_eq!(unset.apply_override("primary_domain", "c").unwrap(), None);
         assert_eq!(unset.primary_domain.as_deref(), Some("c"));
+    }
+
+    /// `-D rst_prolog=...` and `-D rst_epilog=...` are the string as given
+    /// (`convert_overrides`: a `str` key, `config.py:395-396`), even one
+    /// that spells a number, and reach the parse through
+    /// [`crate::rst::ReadConfig`]. `check_confval_types` then reads the
+    /// override, a `str`: a mistyped `conf.py` value is not reported.
+    #[test]
+    fn prolog_and_epilog_take_overrides() {
+        let mut config = BuildConfig::default();
+        config.note_confval_type_mismatch("rst_epilog", "int");
+        for (key, value) in [("rst_prolog", ".. |a| replace:: A"), ("rst_epilog", "1")] {
+            assert_eq!(config.apply_override(key, value).unwrap(), None, "{key}");
+        }
+        assert_eq!(config.validate_confval_types(), Vec::<String>::new());
+        assert_eq!(
+            crate::rst::ReadConfig::from(&config),
+            crate::rst::ReadConfig {
+                rst_prolog: Some(".. |a| replace:: A".to_string()),
+                rst_epilog: Some("1".to_string()),
+                ..crate::rst::ReadConfig::from(&BuildConfig::default())
+            }
+        );
+        assert_eq!(
+            config.conf_values.get("rst_epilog"),
+            Some(&serde_json::Value::String("1".to_string()))
+        );
     }
 
     /// The read-side keys of wave 5a T17a take a `-D` override as Sphinx's

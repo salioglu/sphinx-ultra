@@ -570,10 +570,28 @@ fn current_after(lines: &[LineRec], ending: Ending) -> DocLoc {
     }
 }
 
+/// The source table the `rst_prolog`/`rst_epilog` decoration reads the
+/// document's lines from and adds its own sources to.
+impl super::prolog::Sources for BlockParser {
+    fn line_text(&self, line: LineRec) -> &str {
+        self.sources.line_text(line)
+    }
+
+    fn add_source(&mut self, path: &str, lines: &[&str]) -> Option<(u16, Vec<LineRec>)> {
+        self.push_lines(Arc::from(path), lines, 1)
+    }
+}
+
 impl BlockParser {
     /// Parser over one document: the single-source form (entry 0 = the
-    /// document, linenos `1..=n`).
-    pub(crate) fn new(source: &str, source_path: &str) -> Self {
+    /// document, linenos `1..=n`), decorated as Sphinx's reader decorates
+    /// it with `rst_prolog` and `rst_epilog` ([`super::prolog`]; nothing
+    /// in docutils mode).
+    pub(crate) fn new(
+        source: &str,
+        source_path: &str,
+        decoration: super::prolog::Decoration<'_>,
+    ) -> Self {
         let (text, top) = Lines::new(source).into_parts();
         let mut sources = SourceTable::default();
         let path: Arc<str> = Arc::from(source_path);
@@ -582,6 +600,9 @@ impl BlockParser {
             .expect("a fresh table accepts entry 0");
         let mut parser = BlockParser::from_parts(top, sources);
         parser.state.parse.sources.push(path);
+        let mut top = std::mem::take(&mut parser.top);
+        super::prolog::decorate(&mut top, &mut parser, decoration);
+        parser.top = top;
         parser
     }
 
@@ -988,6 +1009,25 @@ impl BlockParser {
         nodes
     }
 
+    /// [`Self::push_source`] over `lines` joined, numbered from
+    /// `first_lineno`, with one record per line: `Lines` never yields a
+    /// line after the final newline (and an all-empty text yields none at
+    /// all), so trailing blank lines come back as zero-width views.
+    fn push_lines<S: std::borrow::Borrow<str>>(
+        &mut self,
+        path: Arc<str>,
+        lines: &[S],
+        first_lineno: u32,
+    ) -> Option<(u16, Vec<LineRec>)> {
+        let (id, mut recs) = self.push_source(path, &lines.join("\n"), first_lineno)?;
+        while recs.len() < lines.len() {
+            let lineno = first_lineno + recs.len() as u32;
+            let end = self.sources.text(id).len() as u32;
+            recs.push(LineRec::new(id, lineno, end, end, ""));
+        }
+        Some((id, recs))
+    }
+
     /// Process `text` into a new source-table entry named `path`; returns
     /// the entry's id and record stream (`None` when the id space is
     /// exhausted).
@@ -1030,21 +1070,13 @@ impl BlockParser {
                 source_path,
                 first_lineno,
             } = segment;
-            let text = raw_lines.join("\n");
-            let Some((id, mut segment_recs)) =
-                self.push_source(Arc::from(source_path), &text, first_lineno)
+            // A segment's line count is authoritative — a padding segment
+            // IS one blank line ([`Self::push_lines`]).
+            let Some((_, segment_recs)) =
+                self.push_lines(Arc::from(source_path), &raw_lines, first_lineno)
             else {
                 break;
             };
-            // `Lines` never yields a line after the final newline (and an
-            // all-empty text yields none at all), but a segment's line
-            // count is authoritative — a padding segment IS one blank
-            // line. Restore trailing blanks as zero-width views.
-            while segment_recs.len() < raw_lines.len() {
-                let lineno = first_lineno + segment_recs.len() as u32;
-                let end = self.sources.text(id).len() as u32;
-                segment_recs.push(LineRec::new(id, lineno, end, end, ""));
-            }
             recs.extend(segment_recs);
         }
         let at = at.min(lines.len());
@@ -5659,9 +5691,16 @@ impl BlockParser {
         let current = current_after(&input.content, self.ending);
         let one_list = children.len() == 1 && children[0].kind == kinds::BULLET_LIST;
         if !one_list {
-            // logger.warning('.. hlist content is not a list') goes to the
-            // log stream, not the tree; `return []` drops the parsed
-            // content, its registrations kept.
+            // `logger.warning(__('.. hlist content is not a list'),
+            // location=(docname, self.lineno))` goes to the log stream, not
+            // the tree, at the directive's raw line
+            // (`SP/sphinx/directives/other.py:291-294`, [RC §4.1]); `return
+            // []` drops the parsed content, its registrations kept.
+            let line = self.abs_line_number(input.span.source, input.lineno);
+            self.state.log_warning(
+                ".. hlist content is not a list".to_string(),
+                super::LogLocation::DocLine(line),
+            );
             self.state.detach(children);
             return;
         }
@@ -8527,6 +8566,36 @@ impl BlockParser {
         });
     }
 
+    /// docutils' `abs_line_number()` while the parse is at the line
+    /// `lineno` of `source`, as Sphinx's directives take it for
+    /// `self.lineno`: the 1-based index of the line in the top-level input
+    /// as it stands ([`Self::input`]: the document's lines decorated with
+    /// `rst_prolog` and `rst_epilog`, every inclusion read so far spliced
+    /// in), plus a table cell's count ([`Self::line_bias`]); in a glossary
+    /// definition its line in its own file plus the count that accrued
+    /// inside the definition ([`Self::definition_bias_base`]); a line the
+    /// input does not hold, a detached parse's, keeps its own line — as
+    /// [`Self::resolve_absolute_lines`] counts. A few Sphinx warnings print
+    /// it as is, with `location=(docname, self.lineno)`, which no reporter
+    /// maps back to a line of its file: the raw-`lineno` sites of [RC §4.1]
+    /// (`hlist`; `acks` once it exists).
+    fn abs_line_number(&self, source: u16, lineno: u32) -> u32 {
+        if let Some(base) = self.definition_bias_base {
+            return lineno.saturating_add(self.line_bias.saturating_sub(base));
+        }
+        match self
+            .input
+            .iter()
+            .position(|line| (line.source, line.lineno) == (source, lineno))
+        {
+            Some(offset) => u32::try_from(offset)
+                .unwrap_or(u32::MAX)
+                .saturating_add(1)
+                .saturating_add(self.line_bias),
+            None => lineno,
+        }
+    }
+
     /// Gives each node [`Self::note_absolute_line`] recorded its docutils
     /// location, now that the top-level input ([`Self::input`]) is
     /// complete: the 1-based index of its line there, or its line in its
@@ -9934,7 +10003,7 @@ fn keeps_duplicate_name_message(node: &Node) -> bool {
 /// may not end with a space, and interior `:` is allowed unless followed
 /// by space, backtick, or EOL. The marker must close with `:` + space/EOL.
 /// Returns (raw name, byte index just past the closing colon).
-fn field_marker(text: &str) -> Option<(String, usize)> {
+pub(super) fn field_marker(text: &str) -> Option<(String, usize)> {
     let mut chars = text.char_indices();
     let (_, first) = chars.next()?;
     if first != ':' {
@@ -15713,7 +15782,7 @@ mod tests {
 
     #[test]
     fn splicing_a_pushed_source_inserts_its_recs_at_the_cursor() {
-        let mut p = BlockParser::new("one\ntwo\nthree", "<doc>");
+        let mut p = BlockParser::new("one\ntwo\nthree", "<doc>", Default::default());
         let mut stream = std::mem::take(&mut p.top);
         assert_eq!(stream_of(&stream), vec![(0, 1), (0, 2), (0, 3)]);
 
@@ -20337,6 +20406,7 @@ mod include_tests {
         let mut p = BlockParser::new(
             "before para\n\n.. include:: inc.rst\n\nafter para\n",
             "main.rst",
+            Default::default(),
         );
         let request = SpliceRequest {
             segments: vec![

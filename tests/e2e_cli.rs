@@ -5690,3 +5690,113 @@ fn conf_py_floats_with_a_signed_exponent_are_read() {
         "f61e44fa098222f240ecbdf89dc96a4d"
     );
 }
+
+// ---------------------------------------------------------------------------
+// rst_prolog and rst_epilog (wave 5a T17b)
+// ---------------------------------------------------------------------------
+
+/// An `rst_prolog` this crate's `conf.py` reader cannot evaluate — here an
+/// f-string, which Python formats and this reader, which runs no Python,
+/// cannot — is a fatal configuration error naming the key, never dropped:
+/// the prolog is read before every document, so a build without it would
+/// read every document differently from Sphinx. The report is the one a
+/// configuration that fails to load gets, on stderr and in the `-w`
+/// file, exit 2.
+#[test]
+fn unevaluable_rst_prolog_is_a_configuration_error() {
+    let src = temp_source(
+        "t17b-unevaluable-prolog",
+        &[
+            (
+                "conf.py",
+                "project = 'P'\nversion = '1.0'\n\
+                 rst_prolog = f\"\"\"\n.. |version| replace:: {version}\n\"\"\"\n",
+            ),
+            ("index.rst", "Title\n=====\n\nVersion |version|.\n"),
+        ],
+    );
+    let (result, written) = warning_stream(&src, &out_dir("t17b-unevaluable-prolog"), &[]);
+    assert_eq!(
+        result.status.code(),
+        Some(2),
+        "stderr: {}",
+        stderr_of(&result)
+    );
+    assert_eq!(
+        written,
+        "\nConfiguration error!\n\n    sphinx.errors.ConfigError: cannot evaluate rst_prolog \
+         (conf.py, line 3: unsupported expression): sphinx-ultra reads conf.py without \
+         running it, so rst_prolog and rst_epilog must be string literals\n"
+    );
+    assert_eq!(String::from_utf8(result.stderr).unwrap(), written);
+}
+
+/// A hyperlink target's location is docutils' `abs_line_number()`, its
+/// line in the decorated input, so `rst_prolog`'s lines and the blank line
+/// after them move it down: Sphinx 9.1.0 (`-q -w`, `-j 1`, scratch
+/// `t17b/specs/a1_e2e.json`) prints the target on `index.rst` line 4 at
+/// line 6, and the duplicate label on `z.rst` line 6 at line 8 (wave 5a
+/// final review A1).
+#[test]
+fn explicit_target_lines_count_the_prolog() {
+    let src = temp_source(
+        "t17b-target-lines",
+        &[
+            (
+                "conf.py",
+                "project = 'P'\nrst_prolog = '.. |p| replace:: P\\n'\n",
+            ),
+            (
+                "index.rst",
+                "Title\n=====\n\n.. _x: y_\n\n.. toctree::\n\n   a\n   z\n",
+            ),
+            ("a.rst", ".. _dup:\n\nA\n=\n\nText.\n"),
+            ("z.rst", "Z\n=\n\nText.\n\n.. _dup:\n"),
+        ],
+    );
+    let (result, written) = warning_stream(&src, &out_dir("t17b-target-lines"), &[]);
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert_eq!(
+        written,
+        "\
+<SRCDIR>/index.rst:6: ERROR: Indirect hyperlink target \"x\" (id=\"x\") refers to target \"y\", which does not exist. [docutils]
+<SRCDIR>/z.rst:8: WARNING: duplicate label dup, other instance in <SRCDIR>/a.rst
+"
+    );
+}
+
+/// Sphinx reads the first document of each read before any other has
+/// registered a role, so only that document's leading field-marker lines,
+/// which come before `rst_prolog`, miss the prolog's role: `a` on a cold
+/// build, and `b`, the one document a warm build re-reads, once `b` is
+/// touched (Sphinx 9.1.0, `-q`, cold then warm, scratch `t17b/incr`).
+#[test]
+fn the_first_document_read_misses_the_prolog_roles_in_its_field_lines() {
+    let src = temp_source(
+        "t17b-first-read",
+        &[
+            (
+                "conf.py",
+                "project = 'P'\nrst_prolog = '.. role:: red\\n'\n",
+            ),
+            ("index.rst", "Index\n=====\n\n.. toctree::\n\n   a\n   b\n"),
+            ("a.rst", ":author: :red:`me`\n\nA\n=\n\nText.\n"),
+            ("b.rst", ":author: :red:`me`\n\nB\n=\n\nText.\n"),
+        ],
+    );
+    let records = |doc: &str| {
+        format!(
+            "<SRCDIR>/{doc}.rst:1: ERROR: Unknown interpreted text role \"red\". [docutils]\n\
+             <SRCDIR>/{doc}.rst:1: WARNING: Bibliographic field \"author\"\n\
+             must contain a single <paragraph>, not a <paragraph>. [docutils]\n"
+        )
+    };
+    let out = out_dir("t17b-first-read");
+    let (result, written) = warning_stream(&src, &out, &[]);
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert_eq!(written, records("a"), "cold");
+    touch(&src.join("b.rst"));
+    let (result, written) = warning_stream(&src, &out, &[]);
+    assert!(result.status.success(), "stderr: {}", stderr_of(&result));
+    assert_eq!(written, records("b"), "warm, b touched");
+}

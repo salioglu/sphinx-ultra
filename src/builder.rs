@@ -130,29 +130,38 @@ impl BuilderKind {
 }
 
 /// Decision 14's read schedule: whether the parallel parses of a build
-/// stand, given the role registries each document left
-/// ([`crate::rst::ParseOutput::roles_after`]).
+/// stand, given the role registries each document started from and the
+/// ones it left ([`crate::rst::ParseOutput::roles_after`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ReadSchedule {
-    /// No document left registries other than the ones every parse
-    /// started from: each parse saw what Sphinx's read would have.
+    /// Every document started from the registries Sphinx's read would
+    /// have given it: each parse saw what Sphinx's read would have.
     Parallel,
-    /// The document at `changed`, in sorted docname order, is the first
-    /// to leave other registries: every document after it is parsed
-    /// again, in order, each from the registries the one before it left.
-    Reparse { changed: usize },
+    /// The document at `from`, in sorted docname order, is the first that
+    /// started from other registries: it and every document after it are
+    /// parsed again, in order, each from the registries the one before it
+    /// left (the first document of the build from the fresh ones).
+    Reparse { from: usize },
 }
 
 impl ReadSchedule {
-    /// The schedule for the documents a build parsed, given the
-    /// registries each one left, in sorted docname order, and the ones
-    /// every parse started from.
+    /// The schedule for the documents a build parsed, in sorted docname
+    /// order, given the registries each one started from and the ones it
+    /// left. Sphinx reads them in that order in one process, so the first
+    /// starts from the registries no document has changed (`fresh`), and
+    /// every other from the ones the document before it left.
     fn plan(
-        baseline: &crate::rst::roles::RoleTable,
+        fresh: &crate::rst::roles::RoleTable,
+        starts: &[&crate::rst::roles::RoleTable],
         roles_after: &[&crate::rst::roles::RoleTable],
     ) -> ReadSchedule {
-        match roles_after.iter().position(|after| *after != baseline) {
-            Some(changed) => ReadSchedule::Reparse { changed },
+        let expected = std::iter::once(fresh).chain(roles_after.iter().copied());
+        match starts
+            .iter()
+            .zip(expected)
+            .position(|(start, expected)| *start != expected)
+        {
+            Some(from) => ReadSchedule::Reparse { from },
             None => ReadSchedule::Parallel,
         }
     }
@@ -261,6 +270,10 @@ pub struct SphinxBuilder {
     /// The cross-project inventories `intersphinx_mapping` names, loaded
     /// once per build. Empty (and inert) unless a mapping is configured.
     intersphinx: Intersphinx,
+    /// How many documents the last read phase parsed a second time, in
+    /// sorted docname order, to follow decision 14's schedule
+    /// ([`Self::reparsed_documents`]).
+    reparsed: std::sync::atomic::AtomicUsize,
 }
 
 /// [`BuildConfig`] fields deliberately kept *out* of the cache fingerprint.
@@ -702,7 +715,16 @@ impl SphinxBuilder {
             genindex: Mutex::new(Vec::new()),
             py_modindex: Mutex::new(env_py_domain::PyModindex::default()),
             intersphinx: Intersphinx::default(),
+            reparsed: std::sync::atomic::AtomicUsize::new(0),
         })
+    }
+
+    /// How many documents the last build's read phase parsed a second
+    /// time, in sorted docname order, because one read before them left
+    /// role registries other than the ones they started from (decision
+    /// 14): 0 while the parallel parses stand.
+    pub fn reparsed_documents(&self) -> usize {
+        self.reparsed.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Read every inventory `intersphinx_mapping` names — Sphinx's
@@ -1238,15 +1260,18 @@ impl SphinxBuilder {
     /// parse every outdated one, in parallel, then follow decision 14's
     /// schedule ([`ReadSchedule`]): the role registries are build-scoped,
     /// as docutils' `_roles` is for Sphinx, whose read is in sorted
-    /// docname order. Each parse starts from the build's baseline
-    /// registries ([`Parser::baseline_roles`]); once a document leaves
-    /// others (a `.. role::`, a `.. default-role::` without
-    /// `default_role` set), every document parsed after it in sorted
-    /// docname order is parsed again, in that order, each from the
-    /// registries the one before it left. Like Sphinx's, only the
-    /// documents read in this build contribute: one recovered from the
-    /// cache adds nothing. An incremental build then stores each parsed
-    /// document in the cache once, as its last parse left it.
+    /// docname order. The first document to read starts from the fresh
+    /// registries ([`Parser::fresh_roles`]), every other from the build's
+    /// baseline ([`Parser::baseline_roles`]), which adds `rst_prolog`'s
+    /// own definitions, the ones every document made before its own text;
+    /// once a document leaves others (a `.. role::`, a `.. default-role::`
+    /// without `default_role` set, a definition in `rst_epilog`), every
+    /// document parsed after it in sorted docname order is parsed again,
+    /// in that order, each from the registries the one before it left.
+    /// Like Sphinx's, only the documents read in this build contribute:
+    /// one recovered from the cache adds nothing. An incremental build then
+    /// stores each parsed document in the cache once, as its last parse
+    /// left it.
     ///
     /// One file failing must not abort the build: failures become
     /// `BuildErrorReport`s (and a non-zero exit) while the rest continue.
@@ -1275,16 +1300,31 @@ impl SphinxBuilder {
             .num_threads(self.parallel_jobs)
             .build()?;
 
+        let fresh = Arc::clone(self.parser.fresh_roles());
         let baseline = Arc::clone(self.parser.baseline_roles());
+        // Sphinx reads the first document of its read before any other has
+        // registered a role, so only that one starts from the fresh
+        // registries: its leading field-marker lines, which come before
+        // `rst_prolog`, see none of the prolog's definitions. The schedule
+        // below parses it again if another document turns out to be first.
+        let first_read = to_read.first().cloned();
+        let start_of = |docname: &str| {
+            if first_read.as_deref() == Some(docname) {
+                &fresh
+            } else {
+                &baseline
+            }
+        };
         let mut results: Vec<(PathBuf, Result<ReadResult>)> = pool.install(|| {
             files
                 .par_iter()
                 .map(|file_path| {
                     let docname = self.docname_of_path(file_path);
                     let outdated = to_read.contains(&docname);
+                    let start = start_of(&docname);
                     (
                         file_path.clone(),
-                        self.read_one_file(file_path, docname, &found_docs, outdated, &baseline),
+                        self.read_one_file(file_path, docname, &found_docs, outdated, start),
                     )
                 })
                 .collect()
@@ -1300,6 +1340,10 @@ impl SphinxBuilder {
             })
             .collect();
         parsed.sort();
+        let starts: Vec<&crate::rst::roles::RoleTable> = parsed
+            .iter()
+            .map(|(docname, _)| start_of(docname).as_ref())
+            .collect();
         let roles_after: Vec<&crate::rst::roles::RoleTable> = parsed
             .iter()
             .map(|(_, index)| match &results[*index].1 {
@@ -1307,17 +1351,24 @@ impl SphinxBuilder {
                 Err(_) => unreachable!("only successful reads are listed"),
             })
             .collect();
-        if let ReadSchedule::Reparse { changed } = ReadSchedule::plan(&baseline, &roles_after) {
-            let mut roles = Arc::new(roles_after[changed].clone());
-            for (docname, index) in &parsed[changed + 1..] {
+        let mut reparsed = 0;
+        if let ReadSchedule::Reparse { from } = ReadSchedule::plan(&fresh, &starts, &roles_after) {
+            let mut roles = match from.checked_sub(1) {
+                Some(before) => Arc::new(roles_after[before].clone()),
+                None => Arc::clone(&fresh),
+            };
+            for (docname, index) in &parsed[from..] {
                 let file_path = results[*index].0.clone();
                 let result = self.parse_one_file(&file_path, docname.clone(), &found_docs, &roles);
                 if let Ok(read) = &result {
                     roles = Arc::new(read.outcome.output.roles_after.clone());
                 }
                 results[*index].1 = result;
+                reparsed += 1;
             }
         }
+        self.reparsed
+            .store(reparsed, std::sync::atomic::Ordering::Relaxed);
 
         // The cache stores each parsed document once, as the schedule left
         // it, in parallel: a parse the schedule redid never reaches it. A
@@ -2506,6 +2557,18 @@ mod tests {
         files: &[(&str, &str)],
         jobs: usize,
     ) -> (BTreeMap<String, String>, Vec<String>) {
+        let (resolved, warnings, _) = build_roles_project_with(BuildConfig::default(), files, jobs);
+        (resolved, warnings)
+    }
+
+    /// [`build_roles_project`] under `config`, M1's validation off, with
+    /// how many documents the read schedule parsed a second time
+    /// ([`SphinxBuilder::reparsed_documents`]).
+    fn build_roles_project_with(
+        config: BuildConfig,
+        files: &[(&str, &str)],
+        jobs: usize,
+    ) -> (BTreeMap<String, String>, Vec<String>, usize) {
         let tmp = TempDir::new().unwrap();
         let source_dir = tmp.path().join("src");
         for (path, text) in files {
@@ -2515,7 +2578,7 @@ mod tests {
         }
         let config = BuildConfig {
             validate_directives: false,
-            ..BuildConfig::default()
+            ..config
         };
         let mut builder = SphinxBuilder::new(config, source_dir, tmp.path().join("out")).unwrap();
         builder.set_parallel_jobs(jobs);
@@ -2531,7 +2594,7 @@ mod tests {
             .iter()
             .map(|record| record.message.clone())
             .collect();
-        (resolved, warnings)
+        (resolved, warnings, builder.reparsed_documents())
     }
 
     /// The lines of `resolved`'s document `docname` after its first
@@ -2550,8 +2613,9 @@ mod tests {
     /// documents in sorted docname order, so a custom role exists in every
     /// document after the one that defines it and in none before; so does
     /// a `.. default-role::` while `default_role` is unset ([RC §4.2]).
-    /// The parallel parse starts every document from the baseline registry
-    /// and reads each one after the first to change it again, in order.
+    /// The parallel parse starts the first document from the fresh registry
+    /// and every other from the baseline, and reads each one after the
+    /// first to change it again, in order.
     #[test]
     fn custom_role_defined_in_earlier_doc_applies_to_later_doc() {
         let files = [
@@ -2621,37 +2685,222 @@ mod tests {
         );
     }
 
+    /// Decision 14: a role `rst_epilog` defines is registered after each
+    /// document's own text, so the first document read cannot use it and
+    /// every later one can (Sphinx 9.1.0 `-j 1`, scratch
+    /// `t17b/specs/epilog_role.json`: only `a.rst:4` errors).
+    #[test]
+    fn rst_epilog_role_applies_to_later_docs_only() {
+        let config = BuildConfig {
+            rst_epilog: Some(".. role:: red\n".to_string()),
+            ..BuildConfig::default()
+        };
+        let files = [
+            (
+                "index.rst",
+                "Index\n=====\n\n.. toctree::\n\n   a\n   b\n\nIndex :red:`i`.\n",
+            ),
+            ("a.rst", "A\n=\n\nEarly :red:`x`.\n"),
+            ("b.rst", "B\n=\n\nLater :red:`y`.\n"),
+        ];
+        for jobs in [4, 1] {
+            let (resolved, warnings, reparsed) =
+                build_roles_project_with(config.clone(), &files, jobs);
+            assert_eq!(
+                warnings,
+                ["Unknown interpreted text role \"red\"."],
+                "-j {jobs}"
+            );
+            // `a` leaves the registries with `red`: `b` and `index` are
+            // read again from them.
+            assert_eq!(reparsed, 2, "-j {jobs}");
+            assert_eq!(
+                paragraph(&resolved, "b")[..3],
+                [
+                    "            Later ",
+                    "            <inline classes=\"red\">",
+                    "                y"
+                ],
+                "-j {jobs}"
+            );
+            let index = &resolved["index"];
+            assert!(
+                index.contains("<inline classes=\"red\">\n                i"),
+                "-j {jobs}: {index}"
+            );
+        }
+    }
+
+    /// Decision 14's baseline: every document makes `rst_prolog`'s role
+    /// and default-role definitions again before its own text, so each
+    /// one leaves the registries the build's baseline holds, every
+    /// document after the first starts from them, and the parallel parses
+    /// stand. (Godot's prolog defines four roles this way.)
+    #[test]
+    fn prolog_only_roles_keep_reads_parallel() {
+        use crate::rst::{parse_rst_full, ParseOptions, ReadConfig};
+        let config = BuildConfig {
+            rst_prolog: Some(
+                ".. role:: button\n   :class: role-button role-ui\n\n.. default-role:: math\n"
+                    .to_string(),
+            ),
+            ..BuildConfig::default()
+        };
+        let docs = [
+            ("a", "A\n=\n\nPress :button:`a` for `a^2`.\n"),
+            ("b", "B\n=\n\nPress :button:`b` for `b^2`.\n"),
+            ("c", "C\n=\n\nPress :button:`c` for `c^2`.\n"),
+        ];
+
+        let parser = Parser::new(&config).unwrap();
+        let (fresh, baseline) = (parser.fresh_roles(), parser.baseline_roles());
+        assert_ne!(fresh, baseline, "the prolog defines roles");
+        let starts = [fresh.as_ref(), baseline.as_ref(), baseline.as_ref()];
+        let after: Vec<_> = docs
+            .iter()
+            .zip(starts)
+            .map(|((docname, text), start)| {
+                let opts = ParseOptions {
+                    sphinx: true,
+                    docname: docname.to_string(),
+                    read: ReadConfig::from(&config),
+                    roles: Some(Arc::new(start.clone())),
+                    ..ParseOptions::default()
+                };
+                parse_rst_full(text, &opts).roles_after
+            })
+            .collect();
+        let after: Vec<_> = after.iter().collect();
+        assert_eq!(
+            ReadSchedule::plan(fresh, &starts, &after),
+            ReadSchedule::Parallel
+        );
+
+        let mut files = vec![(
+            "index.rst",
+            "Index\n=====\n\n.. toctree::\n\n   a\n   b\n   c\n",
+        )];
+        let names = docs.map(|(docname, _)| format!("{docname}.rst"));
+        files.extend(
+            names
+                .iter()
+                .map(String::as_str)
+                .zip(docs.map(|(_, text)| text)),
+        );
+        for jobs in [4, 1] {
+            let (resolved, warnings, reparsed) =
+                build_roles_project_with(config.clone(), &files, jobs);
+            assert_eq!(warnings, Vec::<String>::new(), "-j {jobs}");
+            assert_eq!(reparsed, 0, "-j {jobs}: the parallel parses stand");
+            for (docname, _) in docs {
+                assert_eq!(
+                    paragraph(&resolved, docname)[..6].join("\n"),
+                    format!(
+                        "            Press \n\
+                         \x20           <inline classes=\"role-button role-ui\">\n\
+                         \x20               {docname}\n\
+                         \x20            for \n\
+                         \x20           <math>\n\
+                         \x20               {docname}^2"
+                    ),
+                    "-j {jobs}"
+                );
+            }
+        }
+    }
+
+    /// The first document Sphinx reads starts from the registries no
+    /// document has changed, so the leading field-marker lines of that
+    /// one alone, which come before `rst_prolog`, see none of its
+    /// definitions; every later document's do (Sphinx 9.1.0 `-j 1`,
+    /// scratch `t17b/specs/prolog_role_fieldline.json`: only `a.rst:1`
+    /// errors).
+    #[test]
+    fn the_first_read_starts_from_the_fresh_registries() {
+        let config = BuildConfig {
+            rst_prolog: Some(".. role:: red\n\n.. default-role:: math\n".to_string()),
+            ..BuildConfig::default()
+        };
+        let files = [
+            (
+                "index.rst",
+                ":author: :red:`me` `a^2`\n\nIndex\n=====\n\n.. toctree::\n\n   a\n   b\n\n\
+                 Index :red:`i` `x`.\n",
+            ),
+            (
+                "a.rst",
+                ":author: :red:`me` `a^2`\n\nA\n=\n\nEarly :red:`x`.\n",
+            ),
+            (
+                "b.rst",
+                ":author: :red:`me` `b^2`\n\nB\n=\n\nLater :red:`y`.\n",
+            ),
+        ];
+        for jobs in [4, 1] {
+            let (_, warnings, reparsed) = build_roles_project_with(config.clone(), &files, jobs);
+            assert_eq!(
+                warnings,
+                [
+                    "Unknown interpreted text role \"red\".",
+                    "Bibliographic field \"author\"\nmust contain a single <paragraph>, not a \
+                     <paragraph>.",
+                ],
+                "-j {jobs}"
+            );
+            // `a` read first, from the fresh registries, and the others
+            // from the baseline: the parallel parses stand.
+            assert_eq!(reparsed, 0, "-j {jobs}");
+        }
+    }
+
     /// Decision 14's schedule as a unit ([`ReadSchedule::plan`]): the
-    /// parallel parses stand while every document left the baseline
-    /// registry as it found it; otherwise every document after the first
-    /// that changed it is read again. And the build's re-read threads the
-    /// registry from document to document: `c` uses `blue`, which `b`
-    /// defines over `a`'s `red`, so `b` must be read from `a`'s registry
-    /// and `c` from `b`'s.
+    /// parallel parses stand while each document started from the
+    /// registry Sphinx's read in sorted docname order gives it, the fresh
+    /// one for the first and the one the document before left for every
+    /// other; otherwise the first that did not, and every document after
+    /// it, are read again. And the build's re-read threads the registry
+    /// from document to document: `c` uses `blue`, which `b` defines over
+    /// `a`'s `red`, so `b` must be read from `a`'s registry and `c` from
+    /// `b`'s.
     #[test]
     fn read_schedule_follows_role_table_changes() {
         use crate::rst::roles::{RoleFn, RoleTable};
-        let baseline = RoleTable::sphinx();
+        let fresh = RoleTable::sphinx();
         let mut red = RoleTable::sphinx();
         red.register_local("red", RoleFn::GenericCustom);
         let mut math = RoleTable::sphinx();
         math.set_default(Some(RoleFn::Math));
-        assert_eq!(ReadSchedule::plan(&baseline, &[]), ReadSchedule::Parallel);
+        let plan =
+            |starts: &[&RoleTable], after: &[&RoleTable]| ReadSchedule::plan(&fresh, starts, after);
+        assert_eq!(plan(&[], &[]), ReadSchedule::Parallel);
         assert_eq!(
-            ReadSchedule::plan(&baseline, &[&baseline, &baseline, &baseline]),
+            plan(&[&fresh; 3], &[&fresh, &fresh, &fresh]),
             ReadSchedule::Parallel
         );
         assert_eq!(
-            ReadSchedule::plan(&baseline, &[&baseline, &red, &red, &math]),
-            ReadSchedule::Reparse { changed: 1 }
+            plan(&[&fresh; 4], &[&fresh, &red, &red, &math]),
+            ReadSchedule::Reparse { from: 2 }
         );
         assert_eq!(
-            ReadSchedule::plan(&baseline, &[&math, &math]),
-            ReadSchedule::Reparse { changed: 0 }
+            plan(&[&fresh; 2], &[&math, &math]),
+            ReadSchedule::Reparse { from: 1 }
         );
+        // What the last document leaves reaches no document of this read.
+        assert_eq!(plan(&[&fresh; 2], &[&fresh, &red]), ReadSchedule::Parallel);
+        // The first document read starts from the fresh registry: one that
+        // started from another is read again, and every document after it.
         assert_eq!(
-            ReadSchedule::plan(&baseline, &[&baseline, &red]),
-            ReadSchedule::Reparse { changed: 1 }
+            plan(&[&red, &red], &[&red, &red]),
+            ReadSchedule::Reparse { from: 0 }
+        );
+        // `rst_prolog`'s own definitions: every document makes them again,
+        // so each one after the first starts from the registry they leave
+        // (the build's baseline), and the parallel parses stand.
+        let mut prolog = RoleTable::sphinx();
+        prolog.register_local("button", RoleFn::GenericCustom);
+        assert_eq!(
+            plan(&[&fresh, &prolog, &prolog], &[&prolog, &prolog, &prolog]),
+            ReadSchedule::Parallel
         );
 
         let files = [
@@ -2833,6 +3082,21 @@ mod tests {
                 "math_numsep",
                 BuildConfig {
                     math_numsep: "-".to_string(),
+                    ..base.clone()
+                },
+            ),
+            // T17b's keys (`config.py:265-266`).
+            (
+                "rst_prolog",
+                BuildConfig {
+                    rst_prolog: Some(".. |a| replace:: A\n".to_string()),
+                    ..base.clone()
+                },
+            ),
+            (
+                "rst_epilog",
+                BuildConfig {
+                    rst_epilog: Some(String::new()),
                     ..base.clone()
                 },
             ),

@@ -16,7 +16,17 @@ use crate::config::BuildConfig;
 pub struct PythonConfigParser {
     conf_namespace: HashMap<String, serde_json::Value>,
     warnings: Vec<ConfigWarning>,
+    /// For a key of [`MUST_EVALUATE`], the first statement since the last
+    /// one this reader evaluated for it that binds it to something it
+    /// cannot evaluate: at most one per key.
+    unevaluable: Vec<Unevaluable>,
 }
+
+/// The keys whose `conf.py` value this reader must evaluate or fail the
+/// configuration with (wave 5a T17b): Sphinx reads `rst_prolog` and
+/// `rst_epilog` around every document, so a value dropped would read every
+/// document differently.
+const MUST_EVALUATE: [&str; 2] = ["rst_prolog", "rst_epilog"];
 
 /// A conf.py construct that could not be parsed and was dropped.
 #[derive(Debug, Clone)]
@@ -24,6 +34,18 @@ pub struct ConfigWarning {
     /// 1-based line in conf.py where the construct starts.
     pub line: usize,
     pub message: String,
+}
+
+/// A statement binding `rst_prolog` or `rst_epilog` that this reader
+/// cannot evaluate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unevaluable {
+    /// The key the statement binds.
+    pub key: &'static str,
+    /// 1-based line in conf.py where the statement starts.
+    pub line: usize,
+    /// Why the reader cannot evaluate it.
+    pub reason: String,
 }
 
 /// Represents a parsed conf.py configuration
@@ -181,6 +203,13 @@ pub struct ConfPyConfig {
     pub default_role: Option<Option<String>>,
     /// `math_numsep`, `None` when conf.py said nothing.
     pub math_numsep: Option<String>,
+    /// `rst_prolog` (`config.py:266`): `None` when conf.py said nothing or
+    /// set it to `None`, which Sphinx's reader reads alike. A value this
+    /// reader cannot evaluate fails the parse
+    /// ([`PythonConfigParser::parse_conf_py`]).
+    pub rst_prolog: Option<String>,
+    /// `rst_epilog` (`config.py:265`), read as `rst_prolog` is.
+    pub rst_epilog: Option<String>,
 
     // Object-signature / py-domain family. `None` means "conf.py did not
     // mention it", which is what keeps sphinx's own default in place —
@@ -238,6 +267,7 @@ impl PythonConfigParser {
         Ok(Self {
             conf_namespace: HashMap::new(),
             warnings: Vec::new(),
+            unevaluable: Vec::new(),
         })
     }
 
@@ -246,7 +276,17 @@ impl PythonConfigParser {
         &self.warnings
     }
 
-    /// Parse a conf.py file and extract configuration
+    /// The first statement binding `rst_prolog` or `rst_epilog` that the
+    /// last parse could not evaluate, and that no later statement it could
+    /// evaluate bound again (by line; at one line, `rst_prolog` first).
+    pub fn unevaluable(&self) -> Option<&Unevaluable> {
+        self.unevaluable.iter().min_by_key(|binding| binding.line)
+    }
+
+    /// Parse a conf.py file and extract configuration. A value of
+    /// `rst_prolog` or `rst_epilog` it cannot evaluate fails it, naming
+    /// the key ([`Self::unevaluable`]); [`Self::warnings`] still holds what
+    /// the parse dropped.
     pub fn parse_conf_py<P: AsRef<Path>>(&mut self, conf_py_path: P) -> Result<ConfPyConfig> {
         let conf_py_path = conf_py_path.as_ref();
         let _conf_dir = conf_py_path
@@ -257,22 +297,72 @@ impl PythonConfigParser {
         let conf_py_content = std::fs::read_to_string(conf_py_path)?;
 
         self.parse_statements(&conf_py_content)?;
+        if let Some(binding) = self.unevaluable() {
+            // Sphinx names its configuration file the same way when it
+            // cannot compile it: `(conf.py, line N)`.
+            let file = conf_py_path
+                .file_name()
+                .map_or_else(|| "conf.py".into(), |name| name.to_string_lossy());
+            anyhow::bail!(
+                "cannot evaluate {} ({file}, line {}: {}): sphinx-ultra reads conf.py without \
+                 running it, so rst_prolog and rst_epilog must be string literals",
+                binding.key,
+                binding.line,
+                binding.reason
+            );
+        }
 
         // Extract configuration values
         self.extract_configuration()
     }
 
     /// Parse the declarative subset of a conf.py: literal assignments, with a
-    /// warning recorded for every construct that had to be dropped.
+    /// warning recorded for every construct that had to be dropped, except
+    /// the statements that bind a key of [`MUST_EVALUATE`], which are
+    /// evaluated or recorded as [`Self::unevaluable`].
     fn parse_statements(&mut self, content: &str) -> Result<()> {
-        for (line, stmt) in logical_statements(content) {
-            let stmt = stmt.trim();
+        for (line, raw) in logical_statements(content) {
+            let stmt = raw.trim();
             if stmt.is_empty() {
                 continue;
             }
 
-            // Imports set no configuration values; ignoring them loses nothing.
+            // Imports set no configuration values; ignoring them loses
+            // nothing, except an import that binds a key this reader must
+            // evaluate (a star import names nothing it can tell).
             if stmt.starts_with("import ") || stmt.starts_with("from ") {
+                let imported = imported_names(stmt);
+                for key in MUST_EVALUATE {
+                    if imported.contains(&key)
+                        && !self.unevaluable.iter().any(|binding| binding.key == key)
+                    {
+                        let reason = "an import".to_string();
+                        self.unevaluable.push(Unevaluable { key, line, reason });
+                    }
+                }
+                continue;
+            }
+
+            // A statement indented under a compound statement's header,
+            // which this reader drops: it may run once, many times or not
+            // at all.
+            let indented = raw.starts_with([' ', '\t']);
+            let assignment = assignment(stmt);
+            let bound: Vec<&'static str> = MUST_EVALUATE
+                .into_iter()
+                .filter(|key| assignment.binds(key))
+                .collect();
+            if !bound.is_empty() {
+                for key in bound {
+                    match self.evaluate_binding(stmt, &assignment, key, indented) {
+                        Ok(()) => self.unevaluable.retain(|binding| binding.key != key),
+                        Err(reason) => {
+                            if !self.unevaluable.iter().any(|binding| binding.key == key) {
+                                self.unevaluable.push(Unevaluable { key, line, reason });
+                            }
+                        }
+                    }
+                }
                 continue;
             }
 
@@ -299,6 +389,55 @@ impl PythonConfigParser {
         }
 
         Ok(())
+    }
+
+    /// Evaluates `stmt`, whose `assignment` binds `key` (a key of
+    /// [`MUST_EVALUATE`]), into the namespace, or says why it cannot. Only
+    /// two statements are evaluated, both at the top level: an assignment
+    /// of a literal to the key alone, and `key += <string literal>` while
+    /// the key holds a string (Python's concatenation; implicit
+    /// concatenation of literals included).
+    fn evaluate_binding(
+        &mut self,
+        stmt: &str,
+        assignment: &Assignment<'_>,
+        key: &'static str,
+        indented: bool,
+    ) -> std::result::Result<(), String> {
+        if indented {
+            return Err("an assignment inside a block".to_string());
+        }
+        if assignment.augmented {
+            // What the key holds, unless a binding since the last value
+            // this reader evaluated left it unknown.
+            let held = if self.unevaluable.iter().any(|binding| binding.key == key) {
+                None
+            } else {
+                self.conf_namespace
+                    .get(key)
+                    .and_then(serde_json::Value::as_str)
+            };
+            let added = stmt
+                .strip_prefix(key)
+                .and_then(|rest| rest.trim_start().strip_prefix("+="))
+                .map(|value_src| parse_python_literal(value_src.trim()));
+            return match (held, added) {
+                (Some(held), Some(Ok(serde_json::Value::String(added)))) => {
+                    let joined = serde_json::Value::String(format!("{held}{added}"));
+                    self.conf_namespace.insert(key.to_string(), joined);
+                    Ok(())
+                }
+                _ => Err("an augmented assignment".to_string()),
+            };
+        }
+        match split_assignment(stmt) {
+            Some((name, value_src)) if name == key => {
+                let value = parse_python_literal(value_src)?;
+                self.conf_namespace.insert(key.to_string(), value);
+                Ok(())
+            }
+            _ => Err("an assignment it cannot evaluate".to_string()),
+        }
     }
 
     /// Extract configuration values from the parsed Python namespace
@@ -519,6 +658,25 @@ impl PythonConfigParser {
                 mismatches.push(("smartquotes".to_string(), type_name.to_string()));
             }
         }
+        // `rst_prolog` and `rst_epilog` are `str` (`config.py:265-266`):
+        // any other value but `None` is what `check_confval_types`
+        // reports, and Sphinx's reader adds nothing for a false one (`if
+        // not prologue: return`, `SP/sphinx/util/rst.py:82-83`). A true one
+        // makes Sphinx's reader raise `AttributeError` (`splitlines`),
+        // which is not modelled: it reads as `None` here.
+        for (key, slot) in [
+            ("rst_prolog", &mut config.rst_prolog),
+            ("rst_epilog", &mut config.rst_epilog),
+        ] {
+            *slot = match self.conf_namespace.get(key) {
+                None | Some(serde_json::Value::Null) => None,
+                Some(serde_json::Value::String(text)) => Some(text.clone()),
+                Some(value) => {
+                    mismatches.push((key.to_string(), python_type_name(value).to_string()));
+                    None
+                }
+            };
+        }
 
         // Object-signature / py-domain family. The two line-length keys are
         // `int | None`, so they read through `as_i64` rather than
@@ -691,6 +849,8 @@ impl PythonConfigParser {
                 | "highlight_language"
                 | "default_role"
                 | "math_numsep"
+                | "rst_prolog"
+                | "rst_epilog"
                 | "intersphinx_mapping"
                 | "intersphinx_disabled_reftypes"
                 | "intersphinx_resolve_self"
@@ -884,6 +1044,163 @@ fn split_assignment(stmt: &str) -> Option<(&str, &str)> {
         }
     }
     None
+}
+
+/// What an assignment statement assigns to, as far as a key of
+/// [`MUST_EVALUATE`] needs telling: the text of each of its targets and
+/// whether it is an augmented assignment (`+=`, `-=`, ...).
+struct Assignment<'s> {
+    /// The text before each top-level `=` (a chained assignment has
+    /// several), or before the augmented operator; empty for a statement
+    /// with neither.
+    targets: Vec<&'s str>,
+    augmented: bool,
+}
+
+impl Assignment<'_> {
+    /// Whether one of the targets names `key`, outside strings and
+    /// attribute access (`x.key`): a plain or augmented assignment to it,
+    /// a tuple or a chained target holding it, or one written after a
+    /// compound statement's header on the same line (`if x: key = ...`).
+    fn binds(&self, key: &str) -> bool {
+        self.targets
+            .iter()
+            .any(|target| target_names(target).any(|name| name == key))
+    }
+}
+
+/// The assignment `stmt` makes, from its top-level `=` signs: outside
+/// strings and brackets, and none of `==`, `!=`, `<=`, `>=` or `:=`. An
+/// `=` that a binary operator precedes (`+=`, `//=`, `>>=`, ...) makes it
+/// an augmented assignment, whose one target stops before the operator.
+/// A `for` or `with` target, a `def`, an import and a `del` are not
+/// assignments here.
+fn assignment(stmt: &str) -> Assignment<'_> {
+    let bytes = stmt.as_bytes();
+    let mut targets = Vec::new();
+    let (mut depth, mut start, mut i) = (0i32, 0usize, 0usize);
+    while i < bytes.len() {
+        match bytes[i] {
+            quote @ (b'\'' | b'"') => {
+                i = skip_string(bytes, i, quote);
+                continue;
+            }
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth -= 1,
+            b'=' if depth == 0 => {
+                if bytes.get(i + 1) == Some(&b'=') {
+                    i += 2;
+                    continue;
+                }
+                let prev = i.checked_sub(1).map(|j| bytes[j]);
+                let doubled = prev.is_some() && i.checked_sub(2).map(|j| bytes[j]) == prev;
+                let operator = match prev {
+                    Some(b'<' | b'>') if doubled => 2,
+                    Some(b'=' | b'!' | b'<' | b'>' | b':') => {
+                        i += 1;
+                        continue;
+                    }
+                    Some(b'*' | b'/') if doubled => 2,
+                    Some(b'+' | b'-' | b'*' | b'/' | b'%' | b'&' | b'|' | b'^' | b'@') => 1,
+                    _ => 0,
+                };
+                targets.push(&stmt[start..i - operator]);
+                if operator > 0 {
+                    return Assignment {
+                        targets,
+                        augmented: true,
+                    };
+                }
+                start = i + 1;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    Assignment {
+        targets,
+        augmented: false,
+    }
+}
+
+/// The names the import statement `stmt` binds: each name (or its `as`
+/// alias) of `from m import a, b as c`, parenthesized or not, and the
+/// first component (or the alias) of each module of `import a.b, d as e`.
+/// A star import binds nothing this reader can name.
+fn imported_names(stmt: &str) -> Vec<&str> {
+    let (items, from) = match stmt.strip_prefix("from ") {
+        Some(rest) => match rest.split_once(" import ") {
+            Some((_, names)) => (names, true),
+            None => return Vec::new(),
+        },
+        None => match stmt.strip_prefix("import ") {
+            Some(modules) => (modules, false),
+            None => return Vec::new(),
+        },
+    };
+    let items = items.trim().trim_start_matches('(').trim_end_matches(')');
+    items
+        .split(',')
+        .filter_map(|item| {
+            let mut words = item.split_whitespace();
+            let name = words.next()?;
+            match (words.next(), words.next()) {
+                (Some("as"), Some(alias)) => Some(alias),
+                _ if from => Some(name),
+                _ => name.split('.').next(),
+            }
+        })
+        .collect()
+}
+
+/// The index just past the Python string literal whose opening quote,
+/// `quote`, is at `start` (triple-quoted when three open it); a backslash
+/// escapes the next byte, as it does even in a raw string's termination.
+fn skip_string(bytes: &[u8], start: usize, quote: u8) -> usize {
+    let triple = bytes.get(start + 1) == Some(&quote) && bytes.get(start + 2) == Some(&quote);
+    let width = if triple { 3 } else { 1 };
+    let mut i = start + width;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'\\' => i += 2,
+            byte if byte == quote
+                && (!triple
+                    || (bytes.get(i + 1) == Some(&quote) && bytes.get(i + 2) == Some(&quote))) =>
+            {
+                return i + width;
+            }
+            _ => i += 1,
+        }
+    }
+    bytes.len()
+}
+
+/// The names `target` holds, outside strings and attribute names (the
+/// `name` of `x.name`): every identifier, whether the target binds it or
+/// only reads it (a subscript's key).
+fn target_names(target: &str) -> impl Iterator<Item = &str> {
+    let bytes = target.as_bytes();
+    let identifier = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_' || byte >= 0x80;
+    let mut names = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        let byte = bytes[i];
+        if byte == b'\'' || byte == b'"' {
+            i = skip_string(bytes, i, byte);
+        } else if identifier(byte) {
+            let start = i;
+            while i < bytes.len() && identifier(bytes[i]) {
+                i += 1;
+            }
+            let attribute = target[..start].trim_end().ends_with('.');
+            if !byte.is_ascii_digit() && !attribute {
+                names.push(&target[start..i]);
+            }
+        } else {
+            i += 1;
+        }
+    }
+    names.into_iter()
 }
 
 /// Python 3.12's decimal number literals, unsigned: `Decnumber` and
@@ -1314,6 +1631,8 @@ impl Default for ConfPyConfig {
             highlight_language: None,
             default_role: None,
             math_numsep: None,
+            rst_prolog: None,
+            rst_epilog: None,
             // `None` = "conf.py said nothing", which leaves
             // `BuildConfig::default()`'s sphinx defaults untouched.
             maximum_signature_line_length: None,
@@ -1542,6 +1861,8 @@ impl ConfPyConfig {
         if self.manpages_url.is_some() {
             config.manpages_url = self.manpages_url.clone();
         }
+        config.rst_prolog = self.rst_prolog.clone();
+        config.rst_epilog = self.rst_epilog.clone();
         if let Some(math_number_all) = self.math_number_all {
             config.math_number_all = math_number_all;
         }
@@ -2194,6 +2515,211 @@ e = 'esc\n'
             ),
             (None, None, false, None, true, ".")
         );
+    }
+
+    /// `rst_prolog` and `rst_epilog` (`config.py:265-266`) are standard keys
+    /// read into the build configuration, `None` unset or set to `None`.
+    #[test]
+    fn prolog_and_epilog_reach_the_build_config() {
+        let p = parse(
+            "rst_prolog = '.. |a| replace:: A\\n'\n\
+             rst_epilog = \"\"\"\n.. |b| replace:: B\n\"\"\"\n",
+        );
+        let config = p.extract_configuration().unwrap();
+        for key in ["rst_prolog", "rst_epilog"] {
+            assert!(!config.custom_configs.contains_key(key), "{key}");
+        }
+        let config = config.to_build_config().unwrap();
+        assert_eq!(config.rst_prolog.as_deref(), Some(".. |a| replace:: A\n"));
+        assert_eq!(config.rst_epilog.as_deref(), Some("\n.. |b| replace:: B\n"));
+
+        for content in ["rst_prolog = None\nrst_epilog = None\n", "project = 'x'\n"] {
+            let config = parse(content)
+                .extract_configuration()
+                .unwrap()
+                .to_build_config()
+                .unwrap();
+            assert_eq!((config.rst_prolog, config.rst_epilog), (None, None));
+        }
+    }
+
+    /// `check_confval_types` warns about a prolog or epilog that is no
+    /// `str`, `rst_epilog` first (`config.py:265-266`); Sphinx's reader
+    /// then adds nothing for a false value (Sphinx 9.1.0, scratch
+    /// `t17b/specs/prolog_false.json`).
+    #[test]
+    fn a_mistyped_prolog_or_epilog_is_recorded_not_read() {
+        let config = parse("rst_prolog = False\nrst_epilog = 0\n")
+            .extract_configuration()
+            .unwrap()
+            .to_build_config()
+            .unwrap();
+        assert_eq!((&config.rst_prolog, &config.rst_epilog), (&None, &None));
+        assert_eq!(
+            config.validate(),
+            [
+                "The config value `rst_epilog' has type `int'; expected `str'.",
+                "The config value `rst_prolog' has type `bool'; expected `str'.",
+            ]
+        );
+    }
+
+    /// `rst_prolog` and `rst_epilog` are read before every document, so a
+    /// value this reader cannot evaluate fails the configuration, naming
+    /// the key, instead of being dropped (wave 5a T17b): an expression it
+    /// cannot evaluate, an augmented assignment other than a top-level
+    /// `+=` of a string literal to a string it holds, an assignment inside
+    /// a block, one it cannot split, or an import of the name. A later
+    /// top-level assignment it can evaluate is the value Python's last
+    /// binding leaves, and reading the keys binds nothing.
+    #[test]
+    fn unevaluable_prolog_or_epilog_fails_the_parse() {
+        type Expected = Result<&'static str, (&'static str, usize, &'static str)>;
+        let rows: [(&str, &str, Expected); 23] = [
+            (
+                "f-string",
+                "rst_prolog = f\"x {version}\"\n",
+                Err(("rst_prolog", 1, "unsupported expression")),
+            ),
+            (
+                "str.format",
+                "version = '1'\nrst_epilog = \"\"\"a{v}\"\"\".format(v=version)\n",
+                Err(("rst_epilog", 2, "trailing expression")),
+            ),
+            (
+                "a name",
+                "PROLOG = 'a'\nrst_prolog = PROLOG\n",
+                Err(("rst_prolog", 2, "unsupported expression")),
+            ),
+            (
+                "+= of an f-string",
+                "rst_epilog = 'a'\nrst_epilog += f'b'\n",
+                Err(("rst_epilog", 2, "an augmented assignment")),
+            ),
+            (
+                "+= to an unset name",
+                "rst_epilog += 'b'\n",
+                Err(("rst_epilog", 1, "an augmented assignment")),
+            ),
+            (
+                "+= to None",
+                "rst_prolog = None\nrst_prolog += 'b'\n",
+                Err(("rst_prolog", 2, "an augmented assignment")),
+            ),
+            (
+                "+= of a number",
+                "rst_prolog = 'a'\nrst_prolog += 1\n",
+                Err(("rst_prolog", 2, "an augmented assignment")),
+            ),
+            (
+                "*=",
+                "rst_prolog = 'a'\nrst_prolog *= 2\n",
+                Err(("rst_prolog", 2, "an augmented assignment")),
+            ),
+            (
+                "in an if block",
+                "if x:\n    rst_prolog = 'a'\n",
+                Err(("rst_prolog", 2, "an assignment inside a block")),
+            ),
+            (
+                "in a try block",
+                "try:\n    rst_prolog = 'a'\nexcept ImportError:\n    pass\n",
+                Err(("rst_prolog", 2, "an assignment inside a block")),
+            ),
+            (
+                "+= in a with block",
+                "with open('defs.rst.inc') as f:\n    rst_epilog += f.read()\n",
+                Err(("rst_epilog", 2, "an assignment inside a block")),
+            ),
+            (
+                "CPython's conf.py",
+                "rst_epilog = f\"\"\"\n|{v}|\n\"\"\"\nif lc:\n    rst_epilog += f\"\"\"\\\n.. _T: x\n\"\"\"\n\
+                 else:\n    rst_epilog += \"\"\"\\\n.. _T: y\n\"\"\"\n",
+                Err(("rst_epilog", 1, "unsupported expression")),
+            ),
+            (
+                "a tuple target",
+                "rst_prolog, rst_epilog = make()\n",
+                Err(("rst_prolog", 1, "an assignment it cannot evaluate")),
+            ),
+            (
+                "a chained assignment",
+                "a = rst_epilog = 'x'\n",
+                Err(("rst_epilog", 1, "an assignment it cannot evaluate")),
+            ),
+            (
+                "an unevaluable binding after the last evaluated one",
+                "rst_prolog = f'x'\nrst_prolog = 'a'\nif y:\n    rst_prolog += 'b'\n",
+                Err(("rst_prolog", 4, "an assignment inside a block")),
+            ),
+            (
+                "a later literal",
+                "rst_prolog = f'x'\nrst_prolog = 'plain'\n",
+                Ok("plain"),
+            ),
+            (
+                "+= of string literals",
+                "rst_prolog = 'a'\nrst_prolog += 'b' 'c'\nrst_prolog += \"\"\"\nd\"\"\"\n",
+                Ok("abc\nd"),
+            ),
+            (
+                "reads bind nothing",
+                "rst_prolog = 'a'\nx = rst_prolog + 'b'\nhtml_context = {'p': rst_prolog}\n",
+                Ok("a"),
+            ),
+            (
+                "an unrelated block",
+                "rst_prolog = 'a'\nif x:\n    y = rst_prolog\n",
+                Ok("a"),
+            ),
+            (
+                "an import",
+                "rst_prolog = 'a'\nfrom shared import rst_prolog\n",
+                Err(("rst_prolog", 2, "an import")),
+            ),
+            (
+                "an import's alias, parenthesized",
+                "from shared import (\n    x as rst_epilog,\n    y,\n)\n",
+                Err(("rst_epilog", 1, "an import")),
+            ),
+            (
+                "an import before a literal",
+                "from shared import rst_prolog\nrst_prolog = 'plain'\n",
+                Ok("plain"),
+            ),
+            (
+                "importing other names",
+                "import rst_prolog_tools as tools\nfrom shared import rst_prologue\n\
+                 rst_prolog = 'a'\n",
+                Ok("a"),
+            ),
+        ];
+        for (name, content, expected) in rows {
+            let p = parse(content);
+            let unevaluable = p
+                .unevaluable()
+                .map(|binding| (binding.key, binding.line, binding.reason.as_str()));
+            match expected {
+                Err(binding) => {
+                    assert_eq!(unevaluable, Some(binding), "{name}");
+                    // The configuration error replaces the statement's
+                    // drop warning.
+                    assert!(
+                        p.warnings().iter().all(|warning| warning.line != binding.1),
+                        "{name}: {:?}",
+                        p.warnings()
+                    );
+                }
+                Ok(value) => {
+                    assert_eq!(unevaluable, None, "{name}");
+                    assert_eq!(
+                        p.conf_namespace.get("rst_prolog"),
+                        Some(&serde_json::Value::String(value.to_string())),
+                        "{name}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

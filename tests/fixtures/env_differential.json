@@ -7617,6 +7617,232 @@
         "index": "Index\n=====\n\n.. toctree::\n\n   a\n"
       },
       "name": "primary_domain_js_roles"
+    },
+    {
+      "conf": {
+        "rst_epilog": ".. |esub| replace:: epilog text\n\n*unclosed epilog emphasis\n",
+        "rst_prolog": ".. |psub| replace:: prolog text\n\n*unclosed prolog emphasis\n",
+        "smartquotes": false
+      },
+      "expect": {
+        "dependencies": {
+          "index": [
+            "<project>/missing.png"
+          ]
+        },
+        "files_to_rebuild": {
+          "docinfo": [
+            "index"
+          ]
+        },
+        "genindex": [],
+        "included": {},
+        "index_entries": {
+          "docinfo": [],
+          "index": []
+        },
+        "py_modindex": {
+          "collapse": false,
+          "groups": []
+        },
+        "py_modules": [],
+        "py_objects": [],
+        "relations": {
+          "docinfo": [
+            "index",
+            "index",
+            null
+          ],
+          "index": [
+            null,
+            null,
+            "docinfo"
+          ]
+        },
+        "resolved_pformat": {
+          "docinfo": "<document source=\"<project>/docinfo.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <substitution_definition names=\"psub\">\n        prolog text\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            *\n        unclosed prolog emphasis\n    <section ids=\"second\" names=\"second\">\n        <title>\n            Second\n        <paragraph>\n            <problematic ids=\"id4\" refid=\"id3\">\n                *\n            unclosed after docinfo\n        <substitution_definition names=\"esub\">\n            epilog text\n        <paragraph>\n            <problematic ids=\"id6\" refid=\"id5\">\n                *\n            unclosed epilog emphasis\n",
+          "index": "<document source=\"<project>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <substitution_definition names=\"psub\">\n        prolog text\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            *\n        unclosed prolog emphasis\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Body \n            prolog text\n             and \n            epilog text\n            .\n        <paragraph>\n            <problematic ids=\"id4\" refid=\"id3\">\n                *\n            unclosed body emphasis\n        <paragraph>\n            See \n            <inline classes=\"xref std std-ref\">\n                nolabel\n            .\n        <image candidates=\"{'*': 'missing.png'}\" uri=\"missing.png\">\n        <target dupnames=\"dup\" refid=\"dup\">\n        <paragraph ids=\"dup\">\n            Para.\n        <target dupnames=\"dup\" refid=\"id5\">\n        <paragraph ids=\"id5\">\n            Para2.\n        <compound classes=\"toctree-wrapper\">\n            <compact_paragraph toctree=\"1\">\n                <bullet_list>\n                    <list_item classes=\"toctree-l1\">\n                        <compact_paragraph classes=\"toctree-l1\">\n                            <reference anchorname=\"\" internal=\"1\" refuri=\"\">\n                                Second\n        <substitution_definition names=\"esub\">\n            epilog text\n        <paragraph>\n            <problematic ids=\"id7\" refid=\"id6\">\n                *\n            unclosed epilog emphasis\n"
+        },
+        "std": {
+          "anonlabels": {
+            "genindex": [
+              "genindex",
+              ""
+            ],
+            "modindex": [
+              "py-modindex",
+              ""
+            ],
+            "py-modindex": [
+              "py-modindex",
+              ""
+            ],
+            "search": [
+              "search",
+              ""
+            ]
+          },
+          "labels": {
+            "genindex": [
+              "genindex",
+              "",
+              "Index"
+            ],
+            "modindex": [
+              "py-modindex",
+              "",
+              "Module Index"
+            ],
+            "py-modindex": [
+              "py-modindex",
+              "",
+              "Python Module Index"
+            ],
+            "search": [
+              "search",
+              "",
+              "Search Page"
+            ]
+          },
+          "objects": [],
+          "progoptions": [],
+          "terms": {}
+        },
+        "toc_fignumbers": {},
+        "toc_num_entries": {
+          "docinfo": 1,
+          "index": 1
+        },
+        "toc_secnumbers": {},
+        "tocs_pformat": {
+          "docinfo": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"docinfo\">\n                Second\n",
+          "index": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"index\">\n                Title\n        <bullet_list>\n            <toctree caption=\"True\" entries=\"(None,\\ 'docinfo')\" glob=\"0\" hidden=\"0\" includefiles=\"docinfo\" includehidden=\"0\" maxdepth=\"-1\" numbered=\"0\" parent=\"index\" rawentries=\"\" titlesonly=\"0\">\n"
+        },
+        "toctree_includes": {
+          "index": [
+            "docinfo"
+          ]
+        },
+        "warnings": [
+          "<rst_prologue>:3: WARNING: Inline emphasis start-string without end-string. [docutils]",
+          "<project>/docinfo.rst:7: WARNING: Inline emphasis start-string without end-string. [docutils]",
+          "<rst_epilogue>:3: WARNING: Inline emphasis start-string without end-string. [docutils]",
+          "<rst_prologue>:3: WARNING: Inline emphasis start-string without end-string. [docutils]",
+          "<project>/index.rst:6: WARNING: Inline emphasis start-string without end-string. [docutils]",
+          "<project>/index.rst:16: WARNING: Duplicate explicit target name: \"dup\". [docutils]",
+          "<project>/index.rst:20: WARNING: toctree contains reference to nonexisting document 'missing_doc' [toc.not_readable]",
+          "<rst_epilogue>:3: WARNING: Inline emphasis start-string without end-string. [docutils]",
+          "<project>/index.rst:10: WARNING: image file not readable: missing.png [image.not_readable]",
+          "<project>/index.rst:8: WARNING: undefined label: 'nolabel' [ref.ref]"
+        ]
+      },
+      "files": {
+        "docinfo": ":author: Me\n:date: 2020\n\nSecond\n======\n\n*unclosed after docinfo\n",
+        "index": "Title\n=====\n\nBody |psub| and |esub|.\n\n*unclosed body emphasis\n\nSee :ref:`nolabel`.\n\n.. image:: missing.png\n\n.. _dup:\n\nPara.\n\n.. _dup:\n\nPara2.\n\n.. toctree::\n\n   docinfo\n   missing_doc\n"
+      },
+      "name": "rst_prolog_epilog"
+    },
+    {
+      "conf": {
+        "rst_prolog": ".. |a| replace:: A\n.. |b| replace:: B\n.. |c| replace:: C\n",
+        "smartquotes": false
+      },
+      "expect": {
+        "dependencies": {},
+        "files_to_rebuild": {},
+        "genindex": [],
+        "included": {},
+        "index_entries": {
+          "index": [],
+          "orphan": []
+        },
+        "py_modindex": {
+          "collapse": false,
+          "groups": []
+        },
+        "py_modules": [],
+        "py_objects": [],
+        "relations": {
+          "index": [
+            null,
+            null,
+            null
+          ]
+        },
+        "resolved_pformat": {
+          "index": "<document source=\"<project>/index.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <substitution_definition names=\"a\">\n        A\n    <substitution_definition names=\"b\">\n        B\n    <substitution_definition names=\"c\">\n        C\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <paragraph>\n            See \n            <problematic ids=\"id2\" refid=\"id1\">\n                :external:py:func:`f`\n            .\n",
+          "orphan": "<document source=\"<project>/orphan.rst\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <substitution_definition names=\"a\">\n        A\n    <substitution_definition names=\"b\">\n        B\n    <substitution_definition names=\"c\">\n        C\n    <section ids=\"t\" names=\"t\">\n        <title>\n            T\n        <paragraph>\n            See \n            <problematic ids=\"id2\" refid=\"id1\">\n                :external:py:func:`f`\n            .\n"
+        },
+        "std": {
+          "anonlabels": {
+            "genindex": [
+              "genindex",
+              ""
+            ],
+            "modindex": [
+              "py-modindex",
+              ""
+            ],
+            "py-modindex": [
+              "py-modindex",
+              ""
+            ],
+            "search": [
+              "search",
+              ""
+            ]
+          },
+          "labels": {
+            "genindex": [
+              "genindex",
+              "",
+              "Index"
+            ],
+            "modindex": [
+              "py-modindex",
+              "",
+              "Module Index"
+            ],
+            "py-modindex": [
+              "py-modindex",
+              "",
+              "Python Module Index"
+            ],
+            "search": [
+              "search",
+              "",
+              "Search Page"
+            ]
+          },
+          "objects": [],
+          "progoptions": [],
+          "terms": {}
+        },
+        "toc_fignumbers": {},
+        "toc_num_entries": {
+          "index": 1,
+          "orphan": 1
+        },
+        "toc_secnumbers": {},
+        "tocs_pformat": {
+          "index": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"index\">\n                T\n",
+          "orphan": "<bullet_list>\n    <list_item>\n        <compact_paragraph>\n            <reference anchorname=\"\" internal=\"1\" refuri=\"orphan\">\n                T\n"
+        },
+        "toctree_includes": {},
+        "warnings": [
+          "<project>/index.rst:8: WARNING: .. hlist content is not a list",
+          "WARNING: unknown role name: external:py:func",
+          "<project>/index.rst:8: ERROR: Unknown interpreted text role \"external:py:func\". [docutils]",
+          "<project>/orphan.rst:11: WARNING: .. hlist content is not a list",
+          "WARNING: unknown role name: external:py:func",
+          "<project>/orphan.rst:10: ERROR: Unknown interpreted text role \"external:py:func\". [docutils]"
+        ]
+      },
+      "files": {
+        "index": "T\n=\n\n.. hlist::\n\n   not a list\n\nSee :external:py:func:`f`.\n",
+        "orphan": ":orphan:\n\nT\n=\n\n.. hlist::\n\n   not a list\n\nSee :external:py:func:`f`.\n"
+      },
+      "name": "rst_prolog_raw_lineno"
     }
   ],
   "sphinx_version": "9.1.0"

@@ -3582,6 +3582,42 @@
       "name": "sx_smartquotes.generic_sphinx_roles",
       "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <abbreviation explanation=\"explanation \"x\"\">\n            \"A\"\n         \n        <inline classes=\"guilabel\" rawtext=\":guilabel:`\"G\" --`\">\n            \"G\" --\n         \n        <inline classes=\"menuselection\" rawtext=\":menuselection:`\"A\" --> \"B\"`\">\n            \"A\" ‣ \"B\"\n         \n        <emphasis classes=\"dfn\">\n            \"d\"\n         \n        <literal classes=\"kbd\">\n            \"k\"\n         \n        <literal classes=\"file\" role=\"file\">\n            \"f\"\n         \n        <inline classes=\"guilabel\" rawtext=\":guilabel:`a\\\\\"b`\">\n            a\\\"b\n",
       "rst": ":abbr:`\"A\" (explanation \"x\")` :guilabel:`\"G\" --` :menuselection:`\"A\" --> \"B\"` :dfn:`\"d\"` :kbd:`\"k\"` :file:`\"f\"` :guilabel:`a\\\\\"b`\n"
+    },
+    {
+      "conf": {
+        "rst_prolog": "*unclosed prolog emphasis\n"
+      },
+      "family": "sx_config",
+      "name": "sx_config.rst_prolog_message_source",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            *\n        unclosed prolog emphasis\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"1\" source=\"<rst_prologue>\" type=\"WARNING\">\n        <paragraph>\n            Inline emphasis start-string without end-string.\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Body.\n",
+      "rst": "Title\n=====\n\nBody.\n"
+    },
+    {
+      "conf": {
+        "rst_prolog": ".. role:: python(code)\n   :language: python\n"
+      },
+      "family": "sx_config",
+      "name": "sx_config.rst_prolog_role",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            <literal classes=\"code highlight python\" language=\"python\">\n                print(1)\n",
+      "rst": "Title\n=====\n\n:python:`print(1)`\n"
+    },
+    {
+      "conf": {
+        "rst_epilog": "*unclosed epilog emphasis\n"
+      },
+      "family": "sx_config",
+      "name": "sx_config.rst_epilog_joins_last_section",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <section ids=\"title\" names=\"title\">\n        <title>\n            Title\n        <paragraph>\n            Body.\n        <section ids=\"sub\" names=\"sub\">\n            <title>\n                Sub\n            <paragraph>\n                Last.\n            <paragraph>\n                <problematic ids=\"id2\" refid=\"id1\">\n                    *\n                unclosed epilog emphasis\n            <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"1\" source=\"<rst_epilogue>\" type=\"WARNING\">\n                <paragraph>\n                    Inline emphasis start-string without end-string.\n",
+      "rst": "Title\n=====\n\nBody.\n\nSub\n---\n\nLast.\n"
+    },
+    {
+      "conf": {
+        "rst_prolog": "*unclosed prolog emphasis\n"
+      },
+      "family": "sx_config",
+      "name": "sx_config.rst_prolog_after_docinfo",
+      "pseudo_xml": "<document source=\"<snippet>\" translation_progress=\"{'total': 0, 'translated': 0}\">\n    <paragraph>\n        <problematic ids=\"id2\" refid=\"id1\">\n            *\n        unclosed prolog emphasis\n    <system_message backrefs=\"id2\" ids=\"id1\" level=\"2\" line=\"1\" source=\"<rst_prologue>\" type=\"WARNING\">\n        <paragraph>\n            Inline emphasis start-string without end-string.\n    <section ids=\"second\" names=\"second\">\n        <title>\n            Second\n        <paragraph>\n            text\n",
+      "rst": ":author: Me\n:date: 2020\n\nSecond\n======\n\ntext\n"
     }
   ],
   "conf_semantics": "a case's optional 'conf' dict is confoverrides applied on top of the base settings above; absent = defaults. The consumers map every key onto the parse options (ParseOptions.py or ParseOptions.read) and error on unmapped keys.",

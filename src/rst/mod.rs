@@ -13,6 +13,7 @@ pub(crate) mod block;
 pub(crate) mod digits;
 pub mod inline;
 pub mod lines;
+pub(crate) mod prolog;
 mod punctuation;
 pub(crate) mod pygments_aliases;
 pub(crate) mod roles;
@@ -119,6 +120,14 @@ pub struct ReadConfig {
     /// `math_number_all` (`config.py:282`, default `False`): whether the
     /// `math` directive numbers an equation that has no label.
     pub math_number_all: bool,
+    /// `rst_prolog` (`config.py:266`, default `None`): text Sphinx's reader
+    /// puts before every document's own lines, after its leading
+    /// field-marker lines ([`prolog`], [RC §4.1]). An empty string adds
+    /// nothing.
+    pub rst_prolog: Option<String>,
+    /// `rst_epilog` (`config.py:265`, default `None`): text it puts after
+    /// every document's last line ([`prolog`]).
+    pub rst_epilog: Option<String>,
 }
 
 impl Default for ReadConfig {
@@ -130,6 +139,8 @@ impl Default for ReadConfig {
             default_role: None,
             manpages_url: None,
             math_number_all: false,
+            rst_prolog: None,
+            rst_epilog: None,
         }
     }
 }
@@ -143,6 +154,8 @@ impl From<&crate::config::BuildConfig> for ReadConfig {
             default_role: config.default_role.clone(),
             manpages_url: config.manpages_url.clone(),
             math_number_all: config.math_number_all,
+            rst_prolog: config.rst_prolog.clone(),
+            rst_epilog: config.rst_epilog.clone(),
         }
     }
 }
@@ -152,8 +165,8 @@ impl ReadConfig {
     /// confoverrides its generator applied) on this configuration, when it
     /// is one of its keys: `Ok(true)` once set, `Ok(false)` for a key that
     /// is not, and an error naming the key for a value of the wrong shape.
-    /// `primary_domain`, `default_role` and `manpages_url` may be JSON
-    /// `null`, Python's `None`.
+    /// `primary_domain`, `default_role`, `manpages_url`, `rst_prolog` and
+    /// `rst_epilog` may be JSON `null`, Python's `None`.
     pub fn apply_conf_key(&mut self, key: &str, value: &serde_json::Value) -> Result<bool, String> {
         let string = || {
             value
@@ -170,6 +183,8 @@ impl ReadConfig {
             "highlight_language" => self.highlight_language = string()?,
             "default_role" => self.default_role = optional()?,
             "manpages_url" => self.manpages_url = optional()?,
+            "rst_prolog" => self.rst_prolog = optional()?,
+            "rst_epilog" => self.rst_epilog = optional()?,
             _ => return Ok(false),
         }
         Ok(true)
@@ -861,7 +876,14 @@ pub fn parse_rst(source: &str, opts: &ParseOptions) -> Doctree {
 }
 
 pub fn parse_rst_full(source: &str, opts: &ParseOptions) -> ParseOutput {
-    let mut parser = block::BlockParser::new(source, &opts.source_path);
+    // Sphinx's reader decorates the input with `rst_prolog` and
+    // `rst_epilog` before the state machine runs ([`prolog`]).
+    let decoration = if opts.sphinx {
+        prolog::Decoration::of(&opts.read)
+    } else {
+        prolog::Decoration::default()
+    };
+    let mut parser = block::BlockParser::new(source, &opts.source_path, decoration);
     parser.sphinx = opts.sphinx;
     parser.docname = opts.docname.clone();
     parser.found_docs = opts.found_docs.clone();

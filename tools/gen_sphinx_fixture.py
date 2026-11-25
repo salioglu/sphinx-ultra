@@ -1186,6 +1186,15 @@ Term : "classifier" : 'c2'
     # §6.4): Sphinx's generic roles, which smart quotes educate unless
     # their node is a literal =====
     ('sx_smartquotes', 'generic_sphinx_roles', ':abbr:`"A" (explanation "x")` :guilabel:`"G" --` :menuselection:`"A" --> "B"` :dfn:`"d"` :kbd:`"k"` :file:`"f"` :guilabel:`a\\\\"b`\n'),
+    # ===== sx_config, appended (wave 5a T17b; roles/config report §6.1):
+    # rst_prolog and rst_epilog — the generated message source, a prolog's
+    # role, the epilog joining the last section, the prolog after docinfo
+    # (DocInfo and the MetadataCollector, which removes the docinfo, have
+    # landed) =====
+    ('sx_config', 'rst_prolog_message_source', 'Title\n=====\n\nBody.\n', {'rst_prolog': '*unclosed prolog emphasis\n'}),
+    ('sx_config', 'rst_prolog_role', 'Title\n=====\n\n:python:`print(1)`\n', {'rst_prolog': '.. role:: python(code)\n   :language: python\n'}),
+    ('sx_config', 'rst_epilog_joins_last_section', 'Title\n=====\n\nBody.\n\nSub\n---\n\nLast.\n', {'rst_epilog': '*unclosed epilog emphasis\n'}),
+    ('sx_config', 'rst_prolog_after_docinfo', ':author: Me\n:date: 2020\n\nSecond\n======\n\ntext\n', {'rst_prolog': '*unclosed prolog emphasis\n'}),
 ]
 
 

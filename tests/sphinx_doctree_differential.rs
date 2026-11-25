@@ -99,6 +99,7 @@ fn an_unmapped_conf_key_fails() {
         ("add_function_parentheses", serde_json::json!("yes")),
         ("maximum_signature_line_length", serde_json::json!(8.5)),
         ("default_role", serde_json::json!(1)),
+        ("rst_prolog", serde_json::json!(["x"])),
     ] {
         let conf = BTreeMap::from([(key.to_string(), value)]);
         assert!(
@@ -120,7 +121,9 @@ fn a_mapped_conf_translates_onto_the_parse_options() {
             "default_role": "any",
             "primary_domain": null,
             "highlight_language": "python3",
-            "manpages_url": "https://man.example/{page}"
+            "manpages_url": "https://man.example/{page}",
+            "rst_prolog": ".. role:: python(code)\n",
+            "rst_epilog": null
         }"#,
     )
     .unwrap();
@@ -143,6 +146,8 @@ fn a_mapped_conf_translates_onto_the_parse_options() {
             primary_domain: None,
             highlight_language: "python3".to_string(),
             manpages_url: Some("https://man.example/{page}".to_string()),
+            rst_prolog: Some(".. role:: python(code)\n".to_string()),
+            rst_epilog: None,
             ..ReadConfig::default()
         }
     );
